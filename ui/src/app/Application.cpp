@@ -3433,19 +3433,6 @@ bool Application::validateTransportConfiguration(const QString& endpoint,
 {
     QStringList errors;
 
-    auto requireExistingFile = [&](const QString& path, const QString& description) {
-        const QString trimmed = path.trimmed();
-        if (trimmed.isEmpty()) {
-            errors.append(description);
-            return;
-        }
-        const QFileInfo info(trimmed);
-        if (!info.exists() || !info.isFile()) {
-            errors.append(QStringLiteral("Plik '%1' wskazany dla %2 nie istnieje lub nie jest regularnym plikiem.")
-                              .arg(trimmed, description));
-        }
-    };
-
     auto validateGrpcTls = [&](const TradingClient::TlsConfig& tls, const QString& contextLabel) {
         if (!tls.enabled) {
             if (tls.requireClientAuth) {
@@ -3460,8 +3447,6 @@ bool Application::validateTransportConfiguration(const QString& endpoint,
 
         if (tls.rootCertificatePath.trimmed().isEmpty()) {
             errors.append(QStringLiteral("Brak ścieżki root CA dla %1 (pole --tls-root-cert lub grpc.tls.root_cert).").arg(contextLabel));
-        } else {
-            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (%1)").arg(contextLabel));
         }
 
         const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
@@ -3474,12 +3459,6 @@ bool Application::validateTransportConfiguration(const QString& endpoint,
         }
         if (certEmpty != keyEmpty) {
             errors.append(QStringLiteral("Podano tylko część materiału klienta (certyfikat/klucz) dla %1.").arg(contextLabel));
-        }
-        if (!certEmpty) {
-            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (%1)").arg(contextLabel));
-        }
-        if (!keyEmpty) {
-            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (%1)").arg(contextLabel));
         }
     };
 
@@ -3497,8 +3476,6 @@ bool Application::validateTransportConfiguration(const QString& endpoint,
 
         if (tls.rootCertificatePath.trimmed().isEmpty()) {
             errors.append(QStringLiteral("Brak ścieżki root CA dla %1 (parametr --health-tls-root-cert / grpc.tls.root_cert).").arg(contextLabel));
-        } else {
-            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (%1)").arg(contextLabel));
         }
 
         const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
@@ -3510,12 +3487,6 @@ bool Application::validateTransportConfiguration(const QString& endpoint,
         }
         if (certEmpty != keyEmpty) {
             errors.append(QStringLiteral("Podano tylko certyfikat lub tylko klucz klienta dla %1.").arg(contextLabel));
-        }
-        if (!certEmpty) {
-            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (%1)").arg(contextLabel));
-        }
-        if (!keyEmpty) {
-            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (%1)").arg(contextLabel));
         }
     };
 
@@ -3530,20 +3501,12 @@ bool Application::validateTransportConfiguration(const QString& endpoint,
 
         if (tls.rootCertificatePath.trimmed().isEmpty()) {
             errors.append(QStringLiteral("Brak ścieżki root CA dla MetricsService (--metrics-root-cert / telemetry.root_cert)."));
-        } else {
-            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (MetricsService)"));
         }
 
         const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
         const bool keyEmpty = tls.clientKeyPath.trimmed().isEmpty();
         if (certEmpty != keyEmpty) {
             errors.append(QStringLiteral("Podano tylko certyfikat lub tylko klucz klienta dla MetricsService."));
-        }
-        if (!certEmpty) {
-            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (MetricsService)"));
-        }
-        if (!keyEmpty) {
-            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (MetricsService)"));
         }
     };
 
