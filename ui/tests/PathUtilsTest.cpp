@@ -76,6 +76,12 @@ private Q_SLOTS:
         QCOMPARE(unc, QStringLiteral("//SERVER/Share/licenses"));
     }
 
+    void expandPath_preservesForwardSlashUncShares()
+    {
+        const QString unc = expandPath(QStringLiteral("//SERVER/Share/licenses"));
+        QCOMPARE(unc, QStringLiteral("//SERVER/Share/licenses"));
+    }
+
     void expandPath_resolvesFileUrl()
     {
         QTemporaryDir dir;

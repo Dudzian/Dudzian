@@ -786,4 +786,19 @@ if(BUILD_TESTING)
     target_include_directories(support_bundle_controller_tests PRIVATE src ${GENERATED_DIR})
     target_link_libraries(support_bundle_controller_tests PRIVATE ui_tests_qt_base)
     add_test(NAME support_bundle_controller_tests COMMAND support_bundle_controller_tests)
+
+    set(UI_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+    set(UI_TESTS_REPO_ROOT
+        ui_ApplicationTelemetryTest
+        ui_ApplicationHealthConfigTest
+        ui_ApplicationAuthTokenWatcherTest
+        application_decision_log_tests
+        security_admin_controller_tests
+        report_center_controller_tests
+        strategy_config_controller_tests
+        support_bundle_controller_tests
+    )
+    set_tests_properties(${UI_TESTS_REPO_ROOT} PROPERTIES
+        WORKING_DIRECTORY "${UI_REPO_ROOT}"
+    )
 endif()
