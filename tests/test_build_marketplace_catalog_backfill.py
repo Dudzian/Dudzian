@@ -162,12 +162,7 @@ def test_validate_release_metadata_accepts_repo_root_keyword_alias(tmp_path: Pat
     )
 
     source_path = (
-        tmp_path
-        / "config"
-        / "marketplace"
-        / "presets"
-        / "exchanges"
-        / "exchange_binance.json"
+        tmp_path / "config" / "marketplace" / "presets" / "exchanges" / "exchange_binance.json"
     )
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text("{}", encoding="utf-8")
