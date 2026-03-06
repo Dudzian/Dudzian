@@ -1249,6 +1249,7 @@ jobs:
         run: python scripts/marketplace_cli.py validate --key dev-hmac:config/marketplace/keys/dev-hmac.key --allow-fingerprint-mismatch
 
       - name: Run marketplace catalog tests
+        shell: bash
         run: |
           python -m pytest \
             tests/test_marketplace_catalog.py \
