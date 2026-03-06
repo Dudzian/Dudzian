@@ -74,6 +74,7 @@ class MarketplaceRepository:
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or _MARKETPLACE_DIR
+        self.presets_root = self.root / "presets"
         self.catalog_path = self.root / "catalog.json"
         self.config_path = self.root / "repository.json"
 
@@ -188,13 +189,37 @@ def _load_preset_spec(path: Path) -> Mapping[str, Any]:
 
 def _validate_release_metadata(
     catalog: MarketplaceCatalog,
-    repo_root: Path,
+    project_root: Path | None = None,
+    presets_root: Path | None = None,
+    *,
+    repo_root: Path | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Waliduje dodatkowe pola release/versioning katalogu."""
+    """Waliduje dodatkowe pola release/versioning katalogu.
+
+    Args:
+        catalog: Załadowany katalog Marketplace.
+        project_root: Root repozytorium projektu (preferowany parametr).
+        presets_root: Jawny katalog presetów; gdy brak, używany jest
+            ``project_root / "config" / "marketplace" / "presets"``.
+        repo_root: Alias kompatybilności dla starszych wywołań keywordowych.
+    """
+
+    if project_root is not None and repo_root is not None and project_root != repo_root:
+        raise MarketplaceVerificationError(
+            "Podano jednocześnie project_root i repo_root z różnymi wartościami."
+        )
+
+    effective_project_root = project_root or repo_root
+    if effective_project_root is None:
+        raise MarketplaceVerificationError(
+            "Brak roota projektu: podaj project_root (lub alias repo_root)."
+        )
 
     errors: list[str] = []
     warnings: list[str] = []
-    presets_root = repo_root / "config" / "marketplace" / "presets"
+    resolved_presets_root = presets_root or (
+        effective_project_root / "config" / "marketplace" / "presets"
+    )
 
     for package in catalog.packages:
         review_status = (package.release.review_status or "").strip().lower()
@@ -225,7 +250,7 @@ def _validate_release_metadata(
 
         source = package.versioning.source
         if source:
-            spec_path = presets_root / source
+            spec_path = resolved_presets_root / source
             if not spec_path.exists():
                 errors.append(
                     f"{package.package_id}: wskazana ścieżka presetu '{source}' nie istnieje."
@@ -292,7 +317,11 @@ def _cmd_validate(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
         for error in result.errors:
             failures += 1
             print(f"  ✖ {error}")
-    rel_errors, rel_warnings = _validate_release_metadata(catalog, repo.root)
+    rel_errors, rel_warnings = _validate_release_metadata(
+        catalog,
+        repo.root,
+        presets_root=repo.presets_root,
+    )
     for warning in rel_warnings:
         print(f"[META] ⚠ {warning}")
     for error in rel_errors:
