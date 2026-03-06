@@ -172,7 +172,7 @@ QString expandPath(const QString& path)
     };
 
     const bool isDrivePrefixed = expanded.size() >= 2 && isAsciiLetter(expanded.at(0)) && expanded.at(1) == QLatin1Char(':');
-    const bool isUncPath = expanded.startsWith(QStringLiteral("\\\\"));
+    const bool isUncPath = expanded.startsWith(QStringLiteral("\\\\")) || expanded.startsWith(QStringLiteral("//"));
 
     if (isDrivePrefixed || isUncPath) {
         QString normalized = expanded;
@@ -181,7 +181,11 @@ QString expandPath(const QString& path)
         if (isDrivePrefixed && normalized.size() == 2)
             normalized.append(QLatin1Char('/'));
 
-        return QDir::cleanPath(normalized);
+        const QString cleaned = QDir::cleanPath(normalized);
+        if (isUncPath && cleaned.startsWith(QLatin1Char('/')) && !cleaned.startsWith(QStringLiteral("//")))
+            return QStringLiteral("/") + cleaned;
+
+        return cleaned;
     }
 
     QFileInfo info(expanded);
