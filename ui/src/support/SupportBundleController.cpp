@@ -338,6 +338,16 @@ bool SupportBundleController::exportBundle(const QUrl& destination, bool dryRun)
     }
     if (m_scriptPath.trimmed().isEmpty()) {
         qCWarning(lcSupportBundle) << "Support bundle script path is not configured";
+        m_lastErrorMessage = tr("Ścieżka do skryptu eksportu pakietu wsparcia nie jest skonfigurowana");
+        Q_EMIT lastErrorMessageChanged();
+        return false;
+    }
+
+    const QFileInfo scriptInfo(m_scriptPath);
+    if (!scriptInfo.exists() || !scriptInfo.isFile()) {
+        qCWarning(lcSupportBundle) << "Support bundle script path is invalid:" << m_scriptPath;
+        m_lastErrorMessage = tr("Skrypt eksportu pakietu wsparcia nie istnieje: %1").arg(m_scriptPath);
+        Q_EMIT lastErrorMessageChanged();
         return false;
     }
 
