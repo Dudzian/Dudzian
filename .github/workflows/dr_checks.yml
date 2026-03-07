@@ -57,13 +57,11 @@ jobs:
         id: validate_probe_secrets
         env:
           DR_GRPC_ENDPOINT: ${{ secrets.DR_GRPC_ENDPOINT }}
-          DR_PROMETHEUS_URL: ${{ secrets.DR_PROMETHEUS_URL }}
         run: |
           ./scripts/validate_dr_secrets.sh \
             "Missing DR probe secrets" \
             "Cloud DR probe summary" \
-            DR_GRPC_ENDPOINT \
-            DR_PROMETHEUS_URL
+            DR_GRPC_ENDPOINT
 
       - name: Set up Python for DR probes
         id: setup_python_probes
