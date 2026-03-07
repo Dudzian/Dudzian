@@ -5282,9 +5282,17 @@ void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& par
                                                     bool cliTokenFileProvided,
                                                     QString& metricsToken,
                                                     QString& metricsTokenFile) {
-    if (const auto endpointEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_METRICS_ENDPOINT"));
-        endpointEnv.has_value()) {
-        applyMetricsEndpoint(endpointEnv->trimmed());
+    const bool cliMetricsEndpointProvided = parser.isSet(QStringLiteral("metrics-endpoint"));
+    if (!cliMetricsEndpointProvided) {
+        if (const auto endpointEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_METRICS_ENDPOINT"));
+            endpointEnv.has_value()) {
+            if (m_transportMode == TradingClient::TransportMode::InProcess) {
+                qCDebug(lcAppMetrics)
+                    << "Ignoruję BOT_CORE_UI_METRICS_ENDPOINT w trybie in-process (wymagany endpoint 'in-process').";
+            } else {
+                applyMetricsEndpoint(endpointEnv->trimmed());
+            }
+        }
     }
 
     if (const auto tagEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_METRICS_TAG")); tagEnv.has_value()) {
@@ -6113,6 +6121,15 @@ void Application::updateScreenInfo(QScreen* screen)
 
     TelemetryReporter::ScreenInfo info;
     info.name = screen->name();
+    if (info.name.trimmed().isEmpty()) {
+        if (const QList<QScreen*> screens = QGuiApplication::screens(); !screens.isEmpty()) {
+            const int index = screens.indexOf(screen);
+            info.name = index >= 0 ? QStringLiteral("screen-%1").arg(index)
+                                   : QStringLiteral("screen-unknown");
+        } else {
+            info.name = QStringLiteral("screen-unknown");
+        }
+    }
     info.manufacturer = screen->manufacturer();
     info.model = screen->model();
     info.serialNumber = screen->serialNumber();

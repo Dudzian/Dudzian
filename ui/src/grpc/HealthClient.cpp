@@ -203,10 +203,21 @@ HealthClient::PreflightResult HealthClient::runPreflightChecklist() const
             result.errors.append(QStringLiteral("Plik root CA HealthService nie istnieje: %1").arg(rootPath));
         }
 
-        const bool certProvided = !tls.clientCertificatePath.trimmed().isEmpty();
-        const bool keyProvided = !tls.clientKeyPath.trimmed().isEmpty();
-        if (tls.requireClientAuth && certProvided != keyProvided) {
+        const QString certPath = tls.clientCertificatePath.trimmed();
+        const QString keyPath = tls.clientKeyPath.trimmed();
+        const bool certProvided = !certPath.isEmpty();
+        const bool keyProvided = !keyPath.isEmpty();
+        if (tls.requireClientAuth && (!certProvided || !keyProvided)) {
             result.errors.append(QStringLiteral("Konfiguracja mTLS HealthService wymaga certyfikatu i klucza klienta."));
+        } else if (certProvided != keyProvided) {
+            result.errors.append(QStringLiteral("Podano tylko część materiału klienta TLS dla HealthService (certyfikat/klucz)."));
+        }
+
+        if (certProvided && !QFileInfo::exists(certPath)) {
+            result.errors.append(QStringLiteral("Plik certyfikatu klienta HealthService nie istnieje: %1").arg(certPath));
+        }
+        if (keyProvided && !QFileInfo::exists(keyPath)) {
+            result.errors.append(QStringLiteral("Plik klucza klienta HealthService nie istnieje: %1").arg(keyPath));
         }
 
         if (!tls.pinnedServerFingerprint.trimmed().isEmpty() && rootPath.isEmpty()) {
@@ -322,4 +333,3 @@ QDateTime HealthClient::convertTimestamp(const botcore::trading::v1::HealthCheck
     msecs += nanos / 1000000;
     return QDateTime::fromMSecsSinceEpoch(msecs, Qt::UTC);
 }
-
