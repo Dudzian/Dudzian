@@ -65,7 +65,6 @@ class SidePanelTest final : public QObject {
     Q_OBJECT
 
 private slots:
-    static void initTestCase();
     void init();
     void showsPlaceholdersWithoutRiskData();
     void rendersRiskSnapshotAndExposures();
@@ -80,12 +79,6 @@ private:
     StubOhlcvModel m_ohlcvModel;
 };
 
-void SidePanelTest::initTestCase() {
-    Q_INIT_RESOURCE(side_panel_qml);
-    qmlRegisterUncreatableType<PerformanceGuard>(
-        "BotCore", 1, 0, "PerformanceGuard", QStringLiteral("PerformanceGuard is provided by the controller"));
-}
-
 void SidePanelTest::init() {
     // Odśwież kontekst QML przed każdym testem, aby uniknąć wycieków bindingów.
     m_engine.rootContext()->setContextProperty(QStringLiteral("appController"), &m_appController);
@@ -99,13 +92,16 @@ QObject* SidePanelTest::createPanel() {
         qWarning() << component.errorString();
     }
     QObject* object = component.create();
-    Q_ASSERT(object);
+    if (!object) {
+        qWarning() << component.errorString();
+        return nullptr;
+    }
     return object;
 }
 
 void SidePanelTest::showsPlaceholdersWithoutRiskData() {
     std::unique_ptr<QObject> panel(createPanel());
-    QVERIFY(panel != nullptr);
+    QVERIFY2(panel != nullptr, "Failed to create SidePanel QML component");
 
     auto* profileLabel = panel->findChild<QObject*>(QStringLiteral("riskProfileLabel"));
     QVERIFY(profileLabel != nullptr);
@@ -128,7 +124,7 @@ void SidePanelTest::showsPlaceholdersWithoutRiskData() {
 
 void SidePanelTest::rendersRiskSnapshotAndExposures() {
     std::unique_ptr<QObject> panel(createPanel());
-    QVERIFY(panel != nullptr);
+    QVERIFY2(panel != nullptr, "Failed to create SidePanel QML component");
 
     RiskSnapshotData snapshot;
     snapshot.profileLabel = QStringLiteral("Zbalansowany");
@@ -170,7 +166,7 @@ void SidePanelTest::formatsPerformanceGuardValues() {
     m_ohlcvModel.setLatestClose(101.234);
 
     std::unique_ptr<QObject> panel(createPanel());
-    QVERIFY(panel != nullptr);
+    QVERIFY2(panel != nullptr, "Failed to create SidePanel QML component");
 
     PerformanceGuard guard;
     guard.fpsTarget = 120;

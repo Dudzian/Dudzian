@@ -174,7 +174,7 @@ ApplicationWindow {
 
     Item {
         id: guardModel
-        property PerformanceGuard guard: appController.performanceGuard
+        property var guard: appController.performanceGuard
 
         Connections {
             target: appController

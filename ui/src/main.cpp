@@ -11,7 +11,6 @@
 #include <QTranslator>
 
 #include "app/Application.hpp"
-#include "utils/PerformanceGuard.hpp"
 #include "utils/RuntimeUtils.hpp"
 
 int main(int argc, char* argv[]) {
@@ -90,8 +89,6 @@ int main(int argc, char* argv[]) {
 
         return EXIT_FAILURE;
     }
-
-    qmlRegisterUncreatableType<PerformanceGuard>("BotCore", 1, 0, "PerformanceGuard", QStringLiteral("PerformanceGuard is provided by the controller"));
 
     QQmlApplicationEngine engine;
     Application controller(engine);

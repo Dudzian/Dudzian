@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 Pane {
     id: root
-    property PerformanceGuard performanceGuard
+    property var performanceGuard
     property string instrumentLabel: appController.instrumentLabel
     signal openWindowRequested()
 

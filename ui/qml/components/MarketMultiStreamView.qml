@@ -10,7 +10,7 @@ Item {
     property var indicatorModel: null
     property var signalModel: null
     property var regimeModel: null
-    property PerformanceGuard performanceGuard
+    property var performanceGuard
     property bool reduceMotion: false
 
     function latestRegimeSnapshot() {
