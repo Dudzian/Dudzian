@@ -11,6 +11,7 @@ import logging
 from dataclasses import MISSING, fields
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any, Mapping, Optional, Sequence
 
 try:  # pragma: no cover - PyYAML może być opcjonalny w środowiskach light
@@ -118,8 +119,40 @@ def _require_yaml():
         raise RuntimeError(
             "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać konfigurację."
         )
-
     return yaml
+
+
+def _coerce_float(value: object | None, default: float) -> float:
+    if value in (None, ""):
+        return default
+    if isinstance(value, (int, float, str, bytes, bytearray)):
+        return float(value)
+    return float(str(value))
+
+
+def _coerce_int(value: object | None, default: int) -> int:
+    if value in (None, ""):
+        return default
+    if isinstance(value, (int, float, str, bytes, bytearray)):
+        return int(value)
+    return int(str(value))
+
+
+def _coerce_str_list(value: object | None) -> list[str]:
+    if value in (None, "", False):
+        return []
+    if isinstance(value, str):
+        candidates: Iterable[object] = (value,)
+    elif isinstance(value, Iterable):
+        candidates = value
+    else:
+        candidates = (value,)
+    normalized: list[str] = []
+    for item in candidates:
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return normalized
 
 
 _ALLOWED_ENSEMBLE_AGGREGATIONS = {"mean", "median", "max", "min", "weighted"}
@@ -796,12 +829,12 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
         if not values:
             return ()
         if isinstance(values, str):
-            iterable = (values,)
+            normalized_values: Sequence[Any] = (values,)
         elif isinstance(values, (list, tuple, set)):
-            iterable = values
+            normalized_values = tuple(values)
         else:
             raise TypeError("Strategy definition field must be a sequence of strings")
-        return tuple(dict.fromkeys(str(item).strip() for item in iterable if str(item).strip()))
+        return tuple(dict.fromkeys(str(item).strip() for item in normalized_values if str(item).strip()))
 
     definitions: dict[str, StrategyDefinitionConfig] = {}
 
@@ -1099,7 +1132,7 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                 or entry.get("initial_signal_limit_overrides")
             )
             initial_signal_limits = _collect_signal_limit_configs(initial_signal_limits_entry)
-            signal_limits: dict[str, dict[str, int]] = {}
+            signal_limits_raw: dict[str, dict[str, int]] = {}
             if isinstance(signal_limits_entry, Mapping):
                 for strategy_key, profile_entry in signal_limits_entry.items():
                     if not isinstance(profile_entry, Mapping):
@@ -1111,7 +1144,7 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                             continue
                         profiles[str(profile_key)] = max(0, int(parsed))
                     if profiles:
-                        signal_limits[str(strategy_key)] = profiles
+                        signal_limits_raw[str(strategy_key)] = profiles
 
             capital_policy_entry = entry.get("capital_policy")
             if isinstance(capital_policy_entry, Mapping):
@@ -1119,7 +1152,7 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
             elif capital_policy_entry in (None, ""):
                 capital_policy = None
             else:
-                capital_policy = str(capital_policy_entry)
+                capital_policy = {"mode": str(capital_policy_entry)}
 
             allocation_rebalance_value = entry.get("allocation_rebalance_seconds") or entry.get(
                 "capital_rebalance_seconds"
@@ -1172,7 +1205,7 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
     if target_cls is None:
         return {}
 
-    governors: dict[str, object] = {}
+    governors: dict[str, PortfolioGovernorV6Config | PortfolioGovernorConfig] = {}
     for name, entry in entries.items():
         if not isinstance(entry, Mapping):
             continue
@@ -1274,7 +1307,7 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
                 lookback_value or intel_entry.get("lookback_bars") or intel_entry.get("lookback")
             )
         try:
-            lookback_bars = int(lookback_value) if lookback_value not in (None, "") else 168
+            lookback_bars = _coerce_int(lookback_value, 168)
         except (TypeError, ValueError):  # pragma: no cover - diagnostyka konfiguracji
             lookback_bars = 168
 
@@ -1348,9 +1381,9 @@ def _load_license_config(section: Mapping[str, Any] | None):
             candidates = [value]
         else:
             try:
-                candidates = list(value)  # type: ignore[arg-type]
+                candidates = _coerce_str_list(value)
             except TypeError:
-                candidates = [value]
+                candidates = [str(value)]
         normalized: list[str] = []
         for item in candidates:
             text = str(item).strip()
@@ -1361,7 +1394,7 @@ def _load_license_config(section: Mapping[str, Any] | None):
     def _normalize_float(value: object | None) -> float | None:
         if value in (None, "", False):
             return None
-        return float(value)
+        return _coerce_float(value, 0.0)
 
     def _normalize_string(value: object | None) -> str | None:
         if value in (None, "", False):
@@ -1443,7 +1476,7 @@ def _load_alert_audit(entry: Optional[Mapping[str, Any]]):
     directory = str(directory_value) if directory_value is not None else None
     filename_pattern = str(entry.get("filename_pattern", "alerts-%Y%m%d.jsonl"))
     retention_value = entry.get("retention_days")
-    retention_days = None if retention_value in (None, "") else int(retention_value)
+    retention_days = None if retention_value in (None, "") else _coerce_int(retention_value, 0)
     fsync = bool(entry.get("fsync", False))
 
     if backend == "file" and not directory:
@@ -1467,13 +1500,13 @@ def _load_data_quality(entry: Optional[Mapping[str, Any]]):
     if max_gap in (None, ""):
         max_gap_value = None
     else:
-        max_gap_value = float(max_gap)
+        max_gap_value = _coerce_float(max_gap, 0.0)
 
     min_ok_ratio = entry.get("min_ok_ratio")
     if min_ok_ratio in (None, ""):
         min_ok_ratio_value = None
     else:
-        min_ok_ratio_value = float(min_ok_ratio)
+        min_ok_ratio_value = _coerce_float(min_ok_ratio, 0.0)
 
     return EnvironmentDataQualityConfig(
         max_gap_minutes=max_gap_value,
@@ -1520,14 +1553,14 @@ def _load_environment_stream(entry: Optional[Mapping[str, Any]]):
     retry_after = None
     if retry_after_raw not in (None, ""):
         try:
-            retry_after = float(retry_after_raw)
+            retry_after = _coerce_float(retry_after_raw, 0.0)
         except (TypeError, ValueError) as exc:
             raise ValueError("environment.stream.retry_after musi być liczbą") from exc
     poll_interval_raw = entry.get("poll_interval")
     poll_interval = None
     if poll_interval_raw not in (None, ""):
         try:
-            poll_interval = float(poll_interval_raw)
+            poll_interval = _coerce_float(poll_interval_raw, 0.0)
         except (TypeError, ValueError) as exc:
             raise ValueError("environment.stream.poll_interval musi być liczbą") from exc
 
@@ -1558,7 +1591,7 @@ def _load_report_storage(entry: Optional[Mapping[str, Any]]):
     directory = str(directory_raw) if directory_raw not in (None, "") else None
     filename_pattern = str(entry.get("filename_pattern", "reports-%Y%m%d.json"))
     retention_raw = entry.get("retention_days")
-    retention_days = None if retention_raw in (None, "") else int(retention_raw)
+    retention_days = None if retention_raw in (None, "") else _coerce_int(retention_raw, 0)
     fsync = bool(entry.get("fsync", False))
 
     return EnvironmentReportStorageConfig(
@@ -1592,9 +1625,9 @@ def _load_live_readiness(entry: Optional[Mapping[str, Any]]):
             candidates = [value]
         else:
             try:
-                candidates = list(value)  # type: ignore[arg-type]
+                candidates = _coerce_str_list(value)
             except TypeError:
-                candidates = [value]
+                candidates = [str(value)]
         normalized: list[str] = []
         for item in candidates:
             text = str(item).strip()
@@ -1667,7 +1700,7 @@ def _load_decision_journal(entry: Optional[Mapping[str, Any]]):
     directory = str(directory_value) if directory_value is not None else None
     filename_pattern = str(entry.get("filename_pattern", "decisions-%Y%m%d.jsonl"))
     retention_value = entry.get("retention_days")
-    retention_days = None if retention_value in (None, "") else int(retention_value)
+    retention_days = None if retention_value in (None, "") else _coerce_int(retention_value, 0)
     fsync = bool(entry.get("fsync", False))
 
     if backend == "file" and not directory:
@@ -1699,7 +1732,7 @@ def _load_environment_ai(
 
     enabled = bool(entry.get("enabled", True))
     threshold_raw = entry.get("threshold_bps", entry.get("threshold"))
-    threshold_bps = float(threshold_raw) if threshold_raw not in (None, "") else 5.0
+    threshold_bps = _coerce_float(threshold_raw, 5.0)
     model_dir = _resolve_optional_path(entry.get("model_dir"), base_dir=base_dir)
     default_strategy_value = entry.get("default_strategy")
     default_strategy = str(default_strategy_value).strip() if default_strategy_value else None
@@ -1707,7 +1740,7 @@ def _load_environment_ai(
     default_risk_profile = str(default_profile_value).strip() if default_profile_value else None
     default_notional_raw = entry.get("default_notional")
     default_notional = (
-        float(default_notional_raw) if default_notional_raw not in (None, "") else None
+        _coerce_float(default_notional_raw, 0.0) if default_notional_raw not in (None, "") else None
     )
     default_action_value = entry.get("default_action", "enter")
     default_action = str(default_action_value) or "enter"
@@ -1740,7 +1773,7 @@ def _load_environment_ai(
                 path=path,
                 strategy=str(strategy_value).strip() if strategy_value else None,
                 risk_profile=(str(risk_profile_value).strip() if risk_profile_value else None),
-                notional=(float(notional_raw) if notional_raw not in (None, "") else None),
+                notional=(_coerce_float(notional_raw, 0.0) if notional_raw not in (None, "") else None),
                 action=str(action_value) if action_value else None,
             )
         )
@@ -1769,7 +1802,7 @@ def _load_environment_ai(
             )
         weights_raw = ensemble_entry.get("weights")
         weights = (
-            tuple(float(value) for value in weights_raw) if weights_raw not in (None, ()) else None
+            tuple(_coerce_float(value, 0.0) for value in weights_raw) if weights_raw not in (None, ()) else None
         )
         if weights is not None and len(weights) != len(components):
             raise ValueError(
@@ -1947,7 +1980,7 @@ def _parse_duration_seconds(value: Any | None) -> float | None:
     if value in (None, ""):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        return _coerce_float(value, 0.0)
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -3359,7 +3392,7 @@ def _load_observability_config(
                 logging.getLogger("config-loader").warning(
                     "Pomijam brakujący plik definicji SLO: %s", slo_path
                 )
-                slo_payload = {}
+                slo_payload: dict[str, Any] = {}
             else:
                 _yaml = _require_yaml()
                 slo_payload = _yaml.safe_load(raw_text) or {}
@@ -4098,20 +4131,20 @@ def _load_resilience_config(
             config_kwargs["description"] = description
         drills.append(ResilienceDrillConfig(**config_kwargs))
 
-    config_kwargs: dict[str, Any] = {
+    resilience_config_kwargs: dict[str, Any] = {
         "enabled": enabled,
         "require_success": require_success,
         "report_directory": report_directory,
         "drills": tuple(drills),
     }
     if signing_key_env is not None:
-        config_kwargs["signing_key_env"] = signing_key_env
+        resilience_config_kwargs["signing_key_env"] = signing_key_env
     if signing_key_path is not None:
-        config_kwargs["signing_key_path"] = signing_key_path
+        resilience_config_kwargs["signing_key_path"] = signing_key_path
     if signing_key_id is not None:
-        config_kwargs["signing_key_id"] = signing_key_id
+        resilience_config_kwargs["signing_key_id"] = signing_key_id
 
-    return ResilienceConfig(**config_kwargs)  # type: ignore[arg-type]
+    return ResilienceConfig(**resilience_config_kwargs)  # type: ignore[arg-type]
 
 
 def _load_risk_decision_log(
@@ -4555,6 +4588,16 @@ def load_core_config(path: str | Path) -> CoreConfig:
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 
 
+
+def _load_runtime_auto_trader_settings(entry: object | None) -> RuntimeAutoTraderSettings | None:
+    if RuntimeAutoTraderSettings is None or not isinstance(entry, Mapping):
+        return None
+    mode_raw = entry.get("mode")
+    mode = str(mode_raw).strip() if mode_raw not in (None, "") else ""
+    if not mode:
+        return None
+    return RuntimeAutoTraderSettings(mode=mode)
+
 def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     """Wczytaj zunifikowaną konfigurację runtime z ``config/runtime.yaml``."""
 
@@ -4593,9 +4636,9 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             candidates = [value]
         else:
             try:
-                candidates = list(value)  # type: ignore[arg-type]
+                candidates = _coerce_str_list(value)
             except TypeError:
-                candidates = [value]
+                candidates = [str(value)]
         normalized: list[str] = []
         for candidate in candidates:
             text = str(candidate).strip()
@@ -4750,7 +4793,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     )
 
     try:
-        auto_trader_settings = _load_auto_trader_settings(raw.get("auto_trader"))
+        auto_trader_settings = _load_runtime_auto_trader_settings(raw.get("auto_trader"))
     except NameError:
         auto_trader_settings = None
 
@@ -4770,7 +4813,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             if entry in (None, ""):
                 continue
             try:
-                latency_buckets.append(float(entry))
+                latency_buckets.append(_coerce_float(entry, 0.0))
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     "execution.live.latency_histogram_buckets musi zawierać wartości liczbowe"
@@ -4788,7 +4831,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             decision_log_rotate_bytes=int(
                 live_section.get("decision_log_rotate_bytes", 8 * 1024 * 1024)
             ),
-            decision_log_keep=int(live_section.get("decision_log_keep", 3)),
+            decision_log_keep=_coerce_int(live_section.get("decision_log_keep", 3), 3),
             latency_histogram_buckets=tuple(latency_buckets),
         )
 
@@ -4802,7 +4845,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             normalized: dict[str, Any] = {}
             for key, value in payload.items():
                 if isinstance(value, Mapping):
-                    normalized[str(key)] = dict(value)
+                    normalized[str(key)] = dict(value.items())
                 elif isinstance(value, (list, tuple)):
                     normalized[str(key)] = tuple(value)
                 else:
@@ -4833,13 +4876,13 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         if "host" in service_fields:
             service_kwargs["host"] = str(service_raw.get("host", "127.0.0.1"))
         if "port" in service_fields and service_raw.get("port") not in (None, ""):
-            service_kwargs["port"] = int(service_raw.get("port", 0))
+            service_kwargs["port"] = _coerce_int(service_raw.get("port", 0), 0)
         if "history_size" in service_fields and service_raw.get("history_size") not in (None, ""):
-            service_kwargs["history_size"] = int(service_raw.get("history_size", 0))
+            service_kwargs["history_size"] = _coerce_int(service_raw.get("history_size", 0), 0)
         if "publish_interval_seconds" in service_fields:
             publish_raw = service_raw.get("publish_interval_seconds")
             service_kwargs["publish_interval_seconds"] = (
-                float(publish_raw) if publish_raw not in (None, "") else 5.0
+                _coerce_float(publish_raw, 5.0)
             )
         if "profiles" in service_fields:
             service_kwargs["profiles"] = _as_tuple(service_raw.get("profiles"))
@@ -4858,7 +4901,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         if "path" in field_names:
             kwargs["path"] = _normalize_path(section.get("path"))
         if "max_entries" in field_names and section.get("max_entries") not in (None, ""):
-            kwargs["max_entries"] = int(section.get("max_entries"))
+            kwargs["max_entries"] = _coerce_int(section.get("max_entries"), 0)
         if "signing_key_env" in field_names:
             kwargs["signing_key_env"] = _as_optional_str(section.get("signing_key_env"))
         if "signing_key_path" in field_names:
