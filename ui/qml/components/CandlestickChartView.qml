@@ -49,7 +49,6 @@ ChartView {
     // --- Overlays (lines) -----------------------------------------------------
     LineSeries {
         id: emaFastSeries
-        objectName: "emaFastSeries"
         color: chartView.overlayDefinitions[0].color
         width: 1.6
         useOpenGL: false
@@ -62,7 +61,6 @@ ChartView {
     }
     LineSeries {
         id: emaSlowSeries
-        objectName: "emaSlowSeries"
         color: chartView.overlayDefinitions[1].color
         width: 1.3
         useOpenGL: false
@@ -75,7 +73,6 @@ ChartView {
     }
     LineSeries {
         id: vwapSeries
-        objectName: "vwapSeries"
         color: chartView.overlayDefinitions[2].color
         width: 1.1
         useOpenGL: false
@@ -88,6 +85,22 @@ ChartView {
     }
 
     readonly property var overlaySeriesList: [emaFastSeries, emaSlowSeries, vwapSeries]
+
+    // Test hooks: QAbstractSeries nie zawsze pojawia się w drzewie QObject,
+    // więc ekspozycja stanu widoczności przez zwykłe obiekty pozwala stabilnie
+    // odczytać status w testach C++ przez findChild(objectName).
+    QtObject {
+        objectName: "emaFastSeries"
+        property bool visible: emaFastSeries.visible
+    }
+    QtObject {
+        objectName: "emaSlowSeries"
+        property bool visible: emaSlowSeries.visible
+    }
+    QtObject {
+        objectName: "vwapSeries"
+        property bool visible: vwapSeries.visible
+    }
 
     // --- Crosshair + tooltip --------------------------------------------------
     Item {

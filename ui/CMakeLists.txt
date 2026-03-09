@@ -15,6 +15,11 @@ set(UI_TRANSLATIONS
     ${CMAKE_CURRENT_SOURCE_DIR}/i18n/bot_trading_shell_pl.ts
 )
 
+qt_add_lrelease(
+    TS_FILES ${UI_TRANSLATIONS}
+    QM_FILES_OUTPUT_VARIABLE UI_TRANSLATION_QM
+)
+
 # --- Testing toggle ---
 include(CTest)
 if(BUILD_TESTING)

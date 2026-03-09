@@ -46,7 +46,7 @@ Item {
         return ""
     }
 
-    function storeActiveLicense() {
+    function storeActiveLicense(): bool {
         if (!licenseControllerRef || !licenseControllerRef.licenseActive)
             return false
         var snapshot = {
