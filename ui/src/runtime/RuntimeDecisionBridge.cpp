@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -346,8 +347,11 @@ QVariantList RuntimeDecisionBridge::readDecisions(int limit, QString* error) con
         error->clear();
 
     const QStringList files = resolveCandidateFiles();
-    if (files.isEmpty())
+    if (files.isEmpty()) {
+        if (!m_logPath.trimmed().isEmpty() && error)
+            *error = tr("Nie znaleziono pliku dziennika decyzji: %1").arg(normalizePath(m_logPath));
         return {};
+    }
 
     QVector<QVariantMap> records;
     for (const QString& filePath : files) {
@@ -361,16 +365,38 @@ QVariantList RuntimeDecisionBridge::readDecisions(int limit, QString* error) con
             return {};
         }
 
-        while (!file.atEnd()) {
-            const QByteArray line = file.readLine();
+        const QByteArray content = file.readAll();
+        int parsedForFile = 0;
+        const QList<QByteArray> lines = content.split('\n');
+        for (const QByteArray& line : lines) {
             const QByteArray trimmed = line.trimmed();
             if (trimmed.isEmpty())
                 continue;
             QJsonParseError parseError{};
             const QJsonDocument document = QJsonDocument::fromJson(trimmed, &parseError);
-            if (parseError.error != QJsonParseError::NoError || !document.isObject())
-                continue;
-            records.append(document.object().toVariantMap());
+            if (parseError.error == QJsonParseError::NoError && document.isObject()) {
+                records.append(document.object().toVariantMap());
+                ++parsedForFile;
+            }
+        }
+
+        if (parsedForFile == 0) {
+            QJsonParseError parseError{};
+            const QJsonDocument document = QJsonDocument::fromJson(content, &parseError);
+            if (parseError.error == QJsonParseError::NoError) {
+                if (document.isObject()) {
+                    records.append(document.object().toVariantMap());
+                    ++parsedForFile;
+                } else if (document.isArray()) {
+                    const QJsonArray array = document.array();
+                    for (const QJsonValue& value : array) {
+                        if (!value.isObject())
+                            continue;
+                        records.append(value.toObject().toVariantMap());
+                        ++parsedForFile;
+                    }
+                }
+            }
         }
     }
 

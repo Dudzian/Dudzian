@@ -1486,7 +1486,9 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_healthTlsConfig = GrpcTlsConfig{};
         m_tradingRbacRole.clear();
         m_tradingRbacScopes.clear();
-        QString metricsEndpointCli = parser.value("metrics-endpoint");
+        QString metricsEndpointCli = parser.isSet(QStringLiteral("metrics-endpoint"))
+                                       ? parser.value(QStringLiteral("metrics-endpoint"))
+                                       : QStringLiteral("in-process");
         if (metricsEndpointCli.trimmed().isEmpty())
             metricsEndpointCli = QStringLiteral("in-process");
         applyMetricsEndpoint(metricsEndpointCli);
@@ -2882,7 +2884,6 @@ void Application::initializeSecurityRefresh()
         m_licenseRefreshIntervalSeconds = 0;
         ensureLicenseRefreshTimerConfigured();
         m_licenseRefreshTimer.stop();
-        m_nextLicenseRefreshUtc = QDateTime();
         updateSecurityCacheFromControllers();
         Q_EMIT licenseRefreshScheduleChanged();
         return;

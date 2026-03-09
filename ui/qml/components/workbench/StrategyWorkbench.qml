@@ -21,6 +21,8 @@ Item {
     property string quickMarketplacePortfolioId: ""
 
     implicitWidth: 960
+    readonly property var safeLicenseStatus: viewModel && viewModel.licenseStatus ? viewModel.licenseStatus : ({})
+
     implicitHeight: 540
 
     Workbench.StrategyWorkbenchViewModel {
@@ -112,13 +114,14 @@ Item {
                         ComboBox {
                             id: demoPresetSelector
                             objectName: "demoPresetSelector"
-                            model: viewModel.demoPresets
+                            model: viewModel && viewModel.demoPresets ? viewModel.demoPresets : []
                             textRole: "title"
                             Layout.preferredWidth: 220
                             onActivated: function(index) {
-                                if (index < 0 || index >= viewModel.demoPresets.length)
+                                var presets = viewModel && viewModel.demoPresets ? viewModel.demoPresets : []
+                                if (index < 0 || index >= presets.length)
                                     return
-                                viewModel.activateDemoMode(viewModel.demoPresets[index].id)
+                                viewModel.activateDemoMode(presets[index].id)
                             }
                         }
 
@@ -255,7 +258,7 @@ Item {
                                     width: parent.width
                                     height: 1
                                     color: palette.mid
-                                    opacity: index === (viewModel.exchangeConnections.length - 1) ? 0 : 0.4
+                                    opacity: index === (((viewModel && viewModel.exchangeConnections) ? viewModel.exchangeConnections : []).length - 1) ? 0 : 0.4
                                 }
                             }
                         }
@@ -549,25 +552,25 @@ Item {
                         rowSpacing: 4
 
                         Label { text: qsTr("Aktywna") ; font.bold: true }
-                        Label { text: viewModel.licenseStatus.active ? qsTr("tak") : qsTr("nie") }
+                        Label { text: safeLicenseStatus.active ? qsTr("tak") : qsTr("nie") }
 
                         Label { text: qsTr("Edycja") ; font.bold: true }
-                        Label { text: viewModel.licenseStatus.edition || qsTr("brak") }
+                        Label { text: safeLicenseStatus.edition || qsTr("brak") }
 
                         Label { text: qsTr("ID") ; font.bold: true }
-                        Label { text: viewModel.licenseStatus.licenseId || qsTr("brak") }
+                        Label { text: safeLicenseStatus.licenseId || qsTr("brak") }
 
                         Label { text: qsTr("Użytkownik") ; font.bold: true }
-                        Label { text: viewModel.licenseStatus.holderName || qsTr("brak") }
+                        Label { text: safeLicenseStatus.holderName || qsTr("brak") }
 
                         Label { text: qsTr("Seat'y") ; font.bold: true }
-                        Label { text: viewModel.licenseStatus.seats || 0 }
+                        Label { text: safeLicenseStatus.seats || 0 }
 
                         Label { text: qsTr("Moduły") ; font.bold: true }
-                        Label { text: (viewModel.licenseStatus.modules || []).join(", ") }
+                        Label { text: (safeLicenseStatus.modules || []).join(", ") }
 
                         Label { text: qsTr("Runtime") ; font.bold: true }
-                        Label { text: (viewModel.licenseStatus.runtime || []).join(", ") }
+                        Label { text: (safeLicenseStatus.runtime || []).join(", ") }
                     }
                 }
             }
@@ -576,7 +579,7 @@ Item {
 
     Frame {
         id: workbenchErrorBanner
-        visible: viewModel.catalogReady && viewModel.workbenchError.length > 0
+        visible: viewModel.catalogReady && ((viewModel.workbenchError || "").length > 0)
         anchors {
             left: parent.left
             right: parent.right
@@ -597,7 +600,7 @@ Item {
             spacing: 12
 
             Label {
-                text: viewModel.workbenchError
+                text: viewModel.workbenchError || ""
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
                 color: "#ffd7d7"
@@ -605,7 +608,7 @@ Item {
 
             Button {
                 text: qsTr("Ukryj")
-                visible: viewModel.workbenchError.length > 0
+                visible: (viewModel.workbenchError || "").length > 0
                 onClicked: viewModel.clearWorkbenchError()
             }
         }
@@ -642,8 +645,8 @@ Item {
             }
 
             Label {
-                visible: viewModel.workbenchError.length > 0
-                text: viewModel.workbenchError
+                visible: (viewModel.workbenchError || "").length > 0
+                text: viewModel.workbenchError || ""
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
                 color: "#ffd7d7"

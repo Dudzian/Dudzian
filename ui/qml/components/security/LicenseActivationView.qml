@@ -331,8 +331,9 @@ Item {
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            visible: licenseControllerRef && licenseControllerRef.statusMessage.length > 0
-            text: licenseControllerRef ? licenseControllerRef.statusMessage : ""
+            property string statusText: licenseControllerRef && licenseControllerRef.statusMessage ? licenseControllerRef.statusMessage : ""
+            visible: licenseControllerRef && statusText.length > 0
+            text: statusText
             color: licenseControllerRef && licenseControllerRef.statusIsError
                     ? Qt.rgba(0.9, 0.35, 0.35, 1)
                     : Qt.rgba(0.35, 0.75, 0.45, 1)

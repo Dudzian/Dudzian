@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QHash>
 #include <QPointer>
+#include <QSet>
 #include <QStringList>
 #include <QUrl>
 #include <QVariantMap>
@@ -82,6 +83,10 @@ private:
     QVariantMap serializeService(const ServiceDescriptor& descriptor, const QString& moduleId) const;
     QObject* ensureServiceInstance(const ServiceEntry& entry) const;
     bool isValidLibraryPath(const QString& path) const;
+
+    bool m_collectPluginEntries = false;
+    QSet<QString> m_pluginViewIds;
+    QSet<QString> m_pluginServiceIds;
 
     QHash<QString, ViewEntry> m_views;
     QHash<QString, ServiceEntry> m_services;

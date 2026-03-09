@@ -51,6 +51,8 @@ bool UiModuleManager::registerView(const QString& moduleId, const ViewDescriptor
 
     ViewEntry entry{moduleId, descriptor};
     m_views.insert(descriptor.id, entry);
+    if (m_collectPluginEntries)
+        m_pluginViewIds.insert(descriptor.id);
     emit viewRegistered(moduleId, serializeView(descriptor, moduleId));
     return true;
 }
@@ -79,6 +81,8 @@ bool UiModuleManager::registerService(const QString& moduleId, const ServiceDesc
 
     ServiceEntry entry{moduleId, descriptor, {}};
     m_services.insert(descriptor.id, entry);
+    if (m_collectPluginEntries)
+        m_pluginServiceIds.insert(descriptor.id);
     emit serviceRegistered(moduleId, serializeService(descriptor, moduleId));
     return true;
 }
@@ -219,7 +223,9 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
             auto loader = std::make_unique<QPluginLoader>(info.absoluteFilePath());
             if (QObject* plugin = loader->instance()) {
                 if (auto module = qobject_cast<UiModuleInterface*>(plugin)) {
+                    m_collectPluginEntries = true;
                     module->registerComponents(*this);
+                    m_collectPluginEntries = false;
                     m_pluginLoaders.push_back(std::move(loader));
                     appendLoadedPlugin(info);
                 } else {
@@ -244,7 +250,9 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
             auto loader = std::make_unique<QPluginLoader>(fileInfo.absoluteFilePath());
             if (QObject* plugin = loader->instance()) {
                 if (auto module = qobject_cast<UiModuleInterface*>(plugin)) {
+                    m_collectPluginEntries = true;
                     module->registerComponents(*this);
+                    m_collectPluginEntries = false;
                     m_pluginLoaders.push_back(std::move(loader));
                     appendLoadedPlugin(fileInfo);
                 } else {
@@ -261,6 +269,8 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
         }
     }
 
+    m_collectPluginEntries = false;
+
     m_lastLoadReport.insert(QStringLiteral("ok"), success);
     m_lastLoadReport.insert(QStringLiteral("loadedCount"), static_cast<int>(m_pluginLoaders.size()));
     m_lastLoadReport.insert(QStringLiteral("pluginPaths"), targets);
@@ -271,23 +281,29 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
 
 void UiModuleManager::unloadPlugins()
 {
-    for (auto it = m_services.begin(); it != m_services.end(); ++it) {
-        if (QObject* instance = it->instance) {
+    for (const QString& serviceId : m_pluginServiceIds) {
+        const auto it = m_services.find(serviceId);
+        if (it == m_services.end())
+            continue;
+        if (QObject* instance = it->instance)
             instance->deleteLater();
-        }
-        emit serviceUnregistered(it->moduleId, it.key());
+        emit serviceUnregistered(it->moduleId, serviceId);
+        m_services.erase(it);
     }
-    m_services.clear();
+    m_pluginServiceIds.clear();
 
-    for (auto it = m_views.begin(); it != m_views.end(); ++it) {
-        emit viewUnregistered(it->moduleId, it.key());
+    for (const QString& viewId : m_pluginViewIds) {
+        const auto it = m_views.find(viewId);
+        if (it == m_views.end())
+            continue;
+        emit viewUnregistered(it->moduleId, viewId);
+        m_views.erase(it);
     }
-    m_views.clear();
+    m_pluginViewIds.clear();
 
     for (auto& loader : m_pluginLoaders) {
-        if (loader) {
+        if (loader)
             loader->unload();
-        }
     }
     m_pluginLoaders.clear();
 }
