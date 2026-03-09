@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Pane {
     id: root
     property var performanceGuard
+    property var alertsModel: null
     property string instrumentLabel: appController.instrumentLabel
     signal openWindowRequested()
 
@@ -85,9 +86,13 @@ Pane {
 
         Label {
             objectName: "latestCloseLabel"
+            readonly property var latestCloseValue: ohlcvModel ? ohlcvModel.latestClose() : undefined
             text: qsTr("Latest close: %1")
-                  .arg(ohlcvModel && ohlcvModel.latestClose() !== undefined
-                           ? Number(ohlcvModel.latestClose()).toFixed(2)
+                  .arg(latestCloseValue !== undefined
+                           && latestCloseValue !== null
+                           && latestCloseValue !== ""
+                           && isFinite(Number(latestCloseValue))
+                           ? Number(latestCloseValue).toFixed(2)
                            : qsTr("--"))
             font.pixelSize: 16
         }
@@ -150,9 +155,10 @@ Pane {
 
         Label {
             objectName: "riskGeneratedAtLabel"
+            readonly property var generatedAtValue: (typeof riskModel !== "undefined") ? riskModel.generatedAt : undefined
             visible: typeof riskModel !== "undefined"
             text: (typeof riskModel !== "undefined" && riskModel.hasData)
-                    ? qsTr("Aktualizacja: %1").arg(riskModel.generatedAt.toString(Qt.ISODate))
+                    ? qsTr("Aktualizacja: %1").arg(formatTimestamp(generatedAtValue))
                     : qsTr("Aktualizacja: —")
         }
 
@@ -249,5 +255,17 @@ Pane {
 
     function currentInstrumentLabel() {
         return instrumentLabel && instrumentLabel.length > 0 ? instrumentLabel : qsTr("Wykres")
+    }
+
+    function formatTimestamp(value) {
+        if (value === undefined || value === null)
+            return "—"
+        if (value instanceof Date)
+            return Qt.formatDateTime(value, "yyyy-MM-ddTHH:mm:ssZ")
+        if (typeof value === "string")
+            return value
+        if (value.toString)
+            return value.toString(Qt.ISODate)
+        return "—"
     }
 }

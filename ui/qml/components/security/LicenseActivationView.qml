@@ -490,7 +490,7 @@ Item {
     FolderDialog {
         id: auditExportDialog
         title: qsTr("Wybierz katalog eksportu logów bezpieczeństwa")
-        folder: QtCore.StandardPaths.writableLocation(QtCore.StandardPaths.DocumentsLocation)
+        currentFolder: QtCore.StandardPaths.writableLocation(QtCore.StandardPaths.DocumentsLocation)
         onAccepted: {
             if (securityController)
                 securityController.exportSignedAuditLog(auditExportDialog.selectedFolder)

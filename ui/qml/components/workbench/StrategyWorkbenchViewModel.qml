@@ -628,7 +628,7 @@ QtObject {
         syncPresetHistory()
     }
 
-    Connections {
+    property Connections runtimeConnections: Connections {
         id: runtimeConnections
         target: root.appController
         function onConnectionStatusChanged() { root.refreshFromLive() }
@@ -640,14 +640,14 @@ QtObject {
         function onReduceMotionActiveChanged() { root.refreshFromLive() }
     }
 
-    Connections {
+    property Connections strategyConnections: Connections {
         id: strategyConnections
         target: root.strategyController
         function onSchedulerListChanged() { root.refreshFromLive() }
         function onDecisionConfigChanged() { root.refreshFromLive() }
     }
 
-    Connections {
+    property Connections workbenchConnections: Connections {
         id: workbenchConnections
         target: root.workbenchController
         function onCatalogChanged() { root.syncCatalog() }
@@ -655,20 +655,20 @@ QtObject {
         function onPresetHistoryChanged() { root.syncPresetHistory() }
     }
 
-    Connections {
+    property Connections riskConnections: Connections {
         id: riskConnections
         target: root.riskModel
         function onRiskStateChanged() { root.refreshFromLive() }
     }
 
-    Connections {
+    property Connections riskHistoryConnections: Connections {
         id: riskHistoryConnections
         target: root.riskHistoryModel
         function onSummaryChanged() { root.refreshFromLive() }
         function onHistoryChanged() { root.refreshFromLive() }
     }
 
-    Connections {
+    property Connections licenseConnections: Connections {
         id: licenseConnections
         target: root.licenseController
         function onLicenseActiveChanged() { root.refreshFromLive() }
