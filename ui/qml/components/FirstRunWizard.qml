@@ -10,18 +10,35 @@ FocusScope {
     visible: !licenseController.licenseActive
     enabled: visible
     property int step: 0
+    property bool activationStarted: false
     property string fingerprintValue: activationController && activationController.fingerprint
                                       && activationController.fingerprint.payload
                                       ? activationController.fingerprint.payload.fingerprint || ""
                                       : ""
 
+    function beginActivationFlow() {
+        step = 0
+        if (activationController)
+            activationController.refresh()
+        if (licenseController)
+            licenseController.autoProvision(activationController ? activationController.fingerprint : ({}))
+    }
+
     onVisibleChanged: {
-        if (visible) {
-            step = 0
-            if (activationController)
-                activationController.refresh()
-            if (licenseController)
-                licenseController.autoProvision(activationController ? activationController.fingerprint : ({}))
+        if (!visible) {
+            activationStarted = false
+            return
+        }
+        if (!activationStarted) {
+            activationStarted = true
+            beginActivationFlow()
+        }
+    }
+
+    Component.onCompleted: {
+        if (visible && !activationStarted) {
+            activationStarted = true
+            beginActivationFlow()
         }
     }
 

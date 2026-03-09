@@ -165,7 +165,7 @@ Pane {
         ListView {
             objectName: "riskExposureList"
             Layout.fillWidth: true
-            visible: typeof riskModel !== "undefined" && riskModel.hasData && riskModel.count > 0
+            visible: typeof riskModel !== "undefined" && riskModel.hasData && count > 0
             implicitHeight: contentHeight
             model: (typeof riskModel !== "undefined") ? riskModel : null
 

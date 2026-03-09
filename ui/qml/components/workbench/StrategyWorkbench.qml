@@ -75,9 +75,9 @@ Item {
 
         ColumnLayout {
             id: content
-            width: parent.width
+            anchors.fill: parent
+            anchors.margins: 16
             spacing: 16
-            padding: 16
 
             Frame {
                 Layout.fillWidth: true
