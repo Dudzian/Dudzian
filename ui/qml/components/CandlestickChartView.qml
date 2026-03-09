@@ -133,9 +133,13 @@ ChartView {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.margins: 12
-            padding: 8
+            implicitWidth: tooltipContent.implicitWidth + 16
+            implicitHeight: tooltipContent.implicitHeight + 16
 
             Column {
+                id: tooltipContent
+                anchors.fill: parent
+                anchors.margins: 8
                 spacing: 2
                 Label { text: Qt.formatDateTime(new Date(crosshairData.timestamp), "yyyy-MM-dd HH:mm") }
                 Label {

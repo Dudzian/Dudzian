@@ -188,10 +188,11 @@ Item {
                             }
                         }
                     }
-                    PlaceholderMessage {
+                    Label {
                         anchors.centerIn: parent
                         text: qsTr("Brak aktywnych sygnałów")
                         visible: !signalModel || signalModel.count === undefined || signalModel.count === 0
+                        color: Qt.rgba(0.72, 0.76, 0.82, 1)
                     }
                 }
             }

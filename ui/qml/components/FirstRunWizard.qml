@@ -241,11 +241,14 @@ FocusScope {
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            visible: licenseController.statusMessage.length > 0
-                            text: licenseController.statusMessage
+                            readonly property string statusText: (licenseController && licenseController.statusMessage)
+                                                                 ? licenseController.statusMessage
+                                                                 : ""
+                            visible: statusText.length > 0
+                            text: statusText
                             font.family: Styles.AppTheme.fontFamily
                             font.pixelSize: Styles.AppTheme.fontSizeBody
-                            color: licenseController.statusIsError
+                            color: licenseController && licenseController.statusIsError
                                    ? Styles.AppTheme.negative
                                    : Styles.AppTheme.positive
                         }

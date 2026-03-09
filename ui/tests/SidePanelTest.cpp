@@ -54,10 +54,25 @@ public:
     explicit StubOhlcvModel(QObject* parent = nullptr)
         : QObject(parent) {}
 
-    Q_INVOKABLE double latestClose() const { return m_latestClose; }
-    void setLatestClose(double value) { m_latestClose = value; }
+    Q_INVOKABLE QVariant latestClose() const {
+        if (!m_hasLatestClose) {
+            return {};
+        }
+        return m_latestClose;
+    }
+
+    void setLatestClose(double value) {
+        m_latestClose = value;
+        m_hasLatestClose = true;
+    }
+
+    void clearLatestClose() {
+        m_hasLatestClose = false;
+        m_latestClose = 0.0;
+    }
 
 private:
+    bool m_hasLatestClose = false;
     double m_latestClose = 0.0;
 };
 
@@ -84,6 +99,7 @@ void SidePanelTest::init() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("appController"), &m_appController);
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("ohlcvModel"), &m_ohlcvModel);
+    m_ohlcvModel.clearLatestClose();
 }
 
 QObject* SidePanelTest::createPanel() {
