@@ -35,6 +35,7 @@ if (
 from packaging.version import InvalidVersion, Version
 
 from bot_core.config.loader import load_core_config
+from bot_core.config.long_poll import LONG_POLL_MAX_AGE_MINUTES
 from bot_core.exchanges.bitmex.futures import BitmexFuturesAdapter
 from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator
@@ -42,7 +43,7 @@ from bot_core.exchanges.paper_simulator import PaperFuturesSimulator
 LongPollMetrics = dict[tuple[str, str, str], dict[str, Any]]
 
 _DEFAULT_LONG_POLL_METRICS_PATH = "var/metrics/long_poll_snapshots.json"
-_DEFAULT_LONG_POLL_TTL_MINUTES = 720.0
+_DEFAULT_LONG_POLL_TTL_MINUTES = LONG_POLL_MAX_AGE_MINUTES
 _DEFAULT_SIGNAL_QUALITY_DIR = "reports/exchanges/signal_quality"
 _DEFAULT_SIGNAL_QUALITY_TTL_HOURS = 48.0
 _DEFAULT_HYPERCARE_DIR = "reports/exchanges/hypercare"

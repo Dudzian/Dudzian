@@ -23,11 +23,39 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
+
+      - name: Set long-poll freshness thresholds
+        run: |
+          python - <<"PY"
+          import os
+          from bot_core.config.long_poll import (
+              LONG_POLL_FUTURE_GRACE_MINUTES,
+              LONG_POLL_MAX_AGE_MINUTES,
+          )
+
+          github_env = os.environ["GITHUB_ENV"]
+          with open(github_env, "a", encoding="utf-8") as env_file:
+              env_file.write(f"LONG_POLL_MAX_AGE_MINUTES={LONG_POLL_MAX_AGE_MINUTES}\n")
+              env_file.write(
+                  f"LONG_POLL_FUTURE_GRACE_MINUTES={LONG_POLL_FUTURE_GRACE_MINUTES}\n"
+              )
+          PY
+
+      - name: Validate long-poll snapshots
+        run: |
+          python scripts/validate_long_poll_snapshots.py \
+            --input var/metrics/long_poll_snapshots.json \
+            --output var/metrics/long_poll_snapshots.json \
+            --max-age-minutes "${LONG_POLL_MAX_AGE_MINUTES}" \
+            --future-grace-minutes "${LONG_POLL_FUTURE_GRACE_MINUTES}"
+
       - name: Generate exchange report
         run: |
           REPORT_DATE=$(date -I)
           python scripts/list_exchange_adapters.py \
             --report-date "$REPORT_DATE" \
+            --long-poll-metrics var/metrics/long_poll_snapshots.json \
+            --long-poll-ttl-minutes "${LONG_POLL_MAX_AGE_MINUTES}" \
             --generate-hypercare-assets
 
       - name: Upload exchange report artifacts

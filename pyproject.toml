@@ -28,6 +28,7 @@ files = [
   "bot_core/ai",
   "bot_core/risk",
   "bot_core/execution",
+  "bot_core/config",
   "core/config",
   "core/reporting",
   "core/security",
@@ -39,6 +40,7 @@ files = [
   "scripts/run_ai_governor_cycle.py",
   "scripts/validate_marketplace_presets.py",
   "scripts/list_exchange_adapters.py",
+  "scripts/validate_long_poll_snapshots.py",
   "scripts/run_local_bot.py",
   "scripts/run_cloud_service.py",
   "scripts/run_stage6_resilience_cycle.py",
@@ -115,6 +117,7 @@ disable_error_code = [
 [[tool.mypy.overrides]]
 module = [
   "scripts.list_exchange_adapters",
+  "scripts.validate_long_poll_snapshots",
   "scripts.run_ai_governor_cycle",
   "core.reporting.guardrails_reporter",
   "core.reporting.retraining_reporter",

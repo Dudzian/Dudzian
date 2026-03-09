@@ -92,12 +92,12 @@ wiązań importowych do aktywnego kodu.
 ### Statyczne typowanie
 
 - `python -m mypy` obejmuje teraz pakiety `bot_core.auto_trader`, `bot_core.ai`,
-  `bot_core.risk`, `bot_core.execution`, warstwy `core/config`, `core/reporting`,
+  `bot_core.risk`, `bot_core.execution`, `bot_core/config`, warstwy `core/config`, `core/reporting`,
   `core/security`, `core/licensing`, a także kluczowe moduły packagingu desktopu
   (`deploy/packaging/*`) oraz wybrane skrypty runtime (`run_cloud_service.py`,
   `run_stage6_resilience_cycle.py`, `run_stage6_observability_cycle.py`,
-  `run_local_bot.py`, `list_exchange_adapters.py`, `run_ai_governor_cycle.py`,
-  `validate_marketplace_presets.py`).
+  `run_local_bot.py`, `list_exchange_adapters.py`, `validate_long_poll_snapshots.py`,
+  `run_ai_governor_cycle.py`, `validate_marketplace_presets.py`).
 - `reports/__init__.py` utrzymuje katalog artefaktów raportowych w zakresie mypy,
   aby potwierdzić kompletność instalacji z pełnymi informacjami o typach.
 - Wyjątki importowe dopuszczalne są wyłącznie w dedykowanych override'ach dla
