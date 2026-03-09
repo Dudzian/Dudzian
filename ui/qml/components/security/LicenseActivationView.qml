@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
-import QtCore
 import "./LocalSecurityStore.js" as SecurityStore
 
 Item {
@@ -10,6 +9,7 @@ Item {
     property var licenseControllerRef: typeof licenseController !== "undefined" ? licenseController : null
     property var activationControllerRef: typeof activationController !== "undefined" ? activationController : null
     property var appControllerRef: typeof appController !== "undefined" ? appController : null
+    property var securityControllerRef: typeof securityController !== "undefined" ? securityController : null
     property alias auditModel: auditEntries
     property int auditTotal: 0
     property bool scheduleAutoEnabled: false
@@ -59,7 +59,7 @@ Item {
         var stored = SecurityStore.addLicenseSnapshot(snapshot)
         if (stored)
             refreshAudit()
-        return stored
+        return stored === true
     }
 
     function licenseSchedule() {
@@ -156,9 +156,9 @@ Item {
             Label { text: qsTr("Polityka licencji") }
             Label {
                 text: {
-                    if (!securityController || !securityController.licenseInfo)
+                    if (!securityControllerRef || !securityControllerRef.licenseInfo)
                         return qsTr("n/d")
-                    var policy = securityController.licenseInfo.policy || {}
+                    var policy = securityControllerRef.licenseInfo.policy || {}
                     var state = policy.state || "n/d"
                     var remaining = policy.days_remaining
                     if (remaining === undefined || remaining === null)
@@ -167,9 +167,9 @@ Item {
                 }
                 font.bold: true
                 color: {
-                    if (!securityController || !securityController.licenseInfo)
+                    if (!securityControllerRef || !securityControllerRef.licenseInfo)
                         return palette.text
-                    var policy = securityController.licenseInfo.policy || {}
+                    var policy = securityControllerRef.licenseInfo.policy || {}
                     var state = (policy.state || "").toLowerCase()
                     if (state === "critical" || state === "expired")
                         return Qt.rgba(0.9, 0.35, 0.35, 1)
@@ -429,13 +429,13 @@ Item {
 
                     Button {
                         text: qsTr("Odśwież")
-                        enabled: securityController && !securityController.busy
-                        onClicked: securityController && securityController.refresh()
+                        enabled: securityControllerRef && !securityControllerRef.busy
+                        onClicked: securityControllerRef && securityControllerRef.refresh()
                     }
 
                     Button {
                         text: qsTr("Eksportuj podpisany log")
-                        enabled: securityController && !securityController.busy
+                        enabled: securityControllerRef && !securityControllerRef.busy
                         onClicked: auditExportDialog.open()
                     }
 
@@ -446,7 +446,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    model: securityController ? securityController.auditLog : []
+                    model: securityControllerRef ? securityControllerRef.auditLog : []
                     delegate: Frame {
                         required property var modelData
                         Layout.fillWidth: true
@@ -490,10 +490,9 @@ Item {
     FolderDialog {
         id: auditExportDialog
         title: qsTr("Wybierz katalog eksportu logów bezpieczeństwa")
-        currentFolder: QtCore.StandardPaths.writableLocation(QtCore.StandardPaths.DocumentsLocation)
         onAccepted: {
-            if (securityController)
-                securityController.exportSignedAuditLog(auditExportDialog.selectedFolder)
+            if (securityControllerRef)
+                securityControllerRef.exportSignedAuditLog(auditExportDialog.selectedFolder)
         }
     }
 

@@ -91,11 +91,12 @@ ChartView {
 
     // --- Crosshair + tooltip --------------------------------------------------
     Item {
+        id: crosshairLayer
         anchors.fill: parent
         z: 2
         property bool crosshairVisible: false
         property real crosshairX: 0
-        property var crosshairData: ({})
+        property var crosshairData: chartView.emptyCrosshairData()
 
         Behavior on crosshairX {
             enabled: !chartView.reduceMotion
@@ -109,25 +110,26 @@ ChartView {
                 anchors.fill: parent
                 hoverEnabled: true
                 onPositionChanged: {
-                    crosshairVisible = true
-                    crosshairX = mouse.x
-                    crosshairData = chartView.sampleAt(mouse.x)
+                    crosshairLayer.crosshairVisible = true
+                    crosshairLayer.crosshairX = mouse.x
+                    var sample = chartView.sampleAt(mouse.x)
+                    crosshairLayer.crosshairData = sample ? sample : chartView.emptyCrosshairData()
                 }
-                onExited: crosshairVisible = false
+                onExited: crosshairLayer.crosshairVisible = false
             }
         }
 
         Rectangle {
-            visible: crosshairVisible
+            visible: crosshairLayer.crosshairVisible
             width: 1
             color: Qt.rgba(1, 1, 1, 0.35)
-            x: crosshairX
+            x: crosshairLayer.crosshairX
             anchors.top: parent.top
             anchors.bottom: parent.bottom
         }
 
         Rectangle {
-            visible: crosshairVisible && crosshairData.timestamp !== undefined
+            visible: crosshairLayer.crosshairVisible && crosshairLayer.crosshairData.timestamp !== undefined
             color: Qt.rgba(0, 0, 0, 0.65)
             radius: 4
             anchors.right: parent.right
@@ -141,15 +143,15 @@ ChartView {
                 anchors.fill: parent
                 anchors.margins: 8
                 spacing: 2
-                Label { text: Qt.formatDateTime(new Date(crosshairData.timestamp), "yyyy-MM-dd HH:mm") }
+                Label { text: Qt.formatDateTime(new Date(crosshairLayer.crosshairData.timestamp), "yyyy-MM-dd HH:mm") }
                 Label {
                     text: qsTr("O %1 H %2 L %3 C %4")
-                          .arg(crosshairData.open.toFixed(2))
-                          .arg(crosshairData.high.toFixed(2))
-                          .arg(crosshairData.low.toFixed(2))
-                          .arg(crosshairData.close.toFixed(2))
+                          .arg(crosshairLayer.crosshairData.open.toFixed(2))
+                          .arg(crosshairLayer.crosshairData.high.toFixed(2))
+                          .arg(crosshairLayer.crosshairData.low.toFixed(2))
+                          .arg(crosshairLayer.crosshairData.close.toFixed(2))
                 }
-                Label { text: qsTr("Vol %1").arg(crosshairData.volume.toFixed(2)) }
+                Label { text: qsTr("Vol %1").arg(crosshairLayer.crosshairData.volume.toFixed(2)) }
             }
         }
     }
@@ -167,7 +169,8 @@ ChartView {
 
     // --- Model signal handlers ------------------------------------------------
     Connections {
-        target: model
+        target: model ? model : null
+        ignoreUnknownSignals: true
         function onModelReset() { chartView.rebuild() }
         function onRowsInserted(parent, first, last) {
             for (let row = first; row <= last; ++row) chartView.appendRow(row)
@@ -197,7 +200,8 @@ ChartView {
     }
 
     Connections {
-        target: indicatorModel
+        target: indicatorModel ? indicatorModel : null
+        ignoreUnknownSignals: true
         function onModelReset() { chartView.updateOverlays() }
         function onRowsInserted() { chartView.updateOverlays() }
         function onRowsRemoved() { chartView.updateOverlays() }
@@ -246,8 +250,19 @@ ChartView {
         }
     }
 
+    function emptyCrosshairData() {
+        return ({
+            timestamp: undefined,
+            open: 0,
+            high: 0,
+            low: 0,
+            close: 0,
+            volume: 0
+        })
+    }
+
     function sampleAt(x) {
-        if (!model || model.count === 0) return ({})
+        if (!model || model.count === 0) return emptyCrosshairData()
         const point = chartView.mapToValue(Qt.point(x, height / 2), candleSeries)
         const timestamp = point.x
         var closest = null
@@ -261,7 +276,7 @@ ChartView {
                 closest = candle
             }
         }
-        return closest || ({})
+        return closest || emptyCrosshairData()
     }
 
     // --- Overlay logic --------------------------------------------------------
