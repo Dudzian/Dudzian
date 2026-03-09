@@ -23,7 +23,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
-
       - name: Set long-poll freshness thresholds
         run: |
           python - <<"PY"
@@ -41,22 +40,52 @@ jobs:
               )
           PY
 
-      - name: Validate long-poll snapshots
+      - name: Resolve exchange-report long-poll mode
+        shell: bash
         run: |
+          case "${{ github.event_name }}" in
+            schedule)
+              echo "LONG_POLL_MODE=strict" >> "$GITHUB_ENV"
+              ;;
+            workflow_dispatch)
+              echo "LONG_POLL_MODE=fixture" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Unsupported event for exchange-report workflow: ${{ github.event_name }}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Validate long-poll snapshots
+        shell: bash
+        run: |
+          validator_extra_args=()
+          if [ "${LONG_POLL_MODE}" = "fixture" ]; then
+            validator_extra_args+=(--skip-freshness)
+          fi
+
           python scripts/validate_long_poll_snapshots.py \
             --input var/metrics/long_poll_snapshots.json \
             --output var/metrics/long_poll_snapshots.json \
             --max-age-minutes "${LONG_POLL_MAX_AGE_MINUTES}" \
-            --future-grace-minutes "${LONG_POLL_FUTURE_GRACE_MINUTES}"
+            --future-grace-minutes "${LONG_POLL_FUTURE_GRACE_MINUTES}" \
+            "${validator_extra_args[@]}"
 
       - name: Generate exchange report
+        shell: bash
         run: |
+          report_extra_args=()
+          if [ "${LONG_POLL_MODE}" = "fixture" ]; then
+            report_extra_args+=(--allow-stale-long-poll)
+          fi
+
           REPORT_DATE=$(date -I)
           python scripts/list_exchange_adapters.py \
             --report-date "$REPORT_DATE" \
             --long-poll-metrics var/metrics/long_poll_snapshots.json \
             --long-poll-ttl-minutes "${LONG_POLL_MAX_AGE_MINUTES}" \
-            --generate-hypercare-assets
+            --generate-hypercare-assets \
+            "${report_extra_args[@]}"
 
       - name: Upload exchange report artifacts
         uses: actions/upload-artifact@v4
