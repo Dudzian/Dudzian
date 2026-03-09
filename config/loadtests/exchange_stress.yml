@@ -7,6 +7,10 @@ defaults:
   jitter_ms: 8.0
   error_rate: 0.02
   throttle_rate: 0.05
+  max_retries: 2
+  backoff_base_ms: 20.0
+  backoff_jitter_ms: 5.0
+  timeout_ms: 500.0
 
 # Scenariusze dla poszczególnych giełd (mockowanych endpointów)
 exchanges:

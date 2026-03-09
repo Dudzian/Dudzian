@@ -48,16 +48,30 @@ class ExchangeScenario:
     throttle_rate: float
     max_concurrency: int | None = None
     burst: int | None = None
+    max_retries: int = 2
+    backoff_base_ms: float = 20.0
+    backoff_jitter_ms: float = 5.0
+    timeout_ms: float = 500.0
 
 
 @dataclass(slots=True)
 class ExchangeMetrics:
-    """Metryki uzyskane w trakcie testu obciążeniowego."""
+    """Metryki uzyskane w trakcie testu obciążeniowego.
+
+    Uwaga: `latency_ms` reprezentuje czas end-to-end pojedynczego żądania widziany
+    przez runner (łącznie z retry oraz backoff), a nie wyłącznie pojedynczą latencję
+    usługi dla jednego podejścia.
+    """
 
     total_requests: int
     successes: int
     errors: int
     throttled: int
+    retry_attempts: int = 0
+    transient_5xx: int = 0
+    throttle_events: int = 0
+    transient_transport_errors: int = 0
+    recovered_after_retry: int = 0
     latencies_ms: list[float] = field(default_factory=list)
     queue_wait_ms: list[float] = field(default_factory=list)
 
@@ -99,6 +113,11 @@ class ExchangeMetrics:
             "successes": self.successes,
             "errors": self.errors,
             "throttled": self.throttled,
+            "retry_attempts": self.retry_attempts,
+            "transient_5xx": self.transient_5xx,
+            "throttle_events": self.throttle_events,
+            "transient_transport_errors": self.transient_transport_errors,
+            "recovered_after_retry": self.recovered_after_retry,
             "latency_ms": self.latency_summary(),
             "queue_wait_ms": self.queue_wait_summary(),
         }
@@ -117,6 +136,11 @@ class RequestOutcome:
     status_code: int | None
     latency_ms: float
     queue_wait_ms: float
+    retry_attempts: int = 0
+    transient_5xx: int = 0
+    throttle_events: int = 0
+    transient_transport_errors: int = 0
+    recovered_after_retry: bool = False
     error: str | None = None
 
 
@@ -166,6 +190,10 @@ def load_config(path: Path) -> ExchangeStressConfig:
     default_jitter = _normalize_float(defaults.get("jitter_ms"), 5.0)
     default_error_rate = _normalize_float(defaults.get("error_rate"), 0.0)
     default_throttle_rate = _normalize_float(defaults.get("throttle_rate"), 0.0)
+    default_max_retries = _normalize_int(defaults.get("max_retries"), 2)
+    default_backoff_base_ms = _normalize_float(defaults.get("backoff_base_ms"), 20.0)
+    default_backoff_jitter_ms = _normalize_float(defaults.get("backoff_jitter_ms"), 5.0)
+    default_timeout_ms = _normalize_float(defaults.get("timeout_ms"), 500.0)
 
     scenarios_data = raw.get("exchanges", [])
     if not isinstance(scenarios_data, Iterable):
@@ -188,6 +216,14 @@ def load_config(path: Path) -> ExchangeStressConfig:
             throttle_rate=_normalize_float(item.get("throttle_rate"), default_throttle_rate),
             max_concurrency=(_normalize_int(item.get("max_concurrency"), 0) or None),
             burst=(_normalize_int(item.get("burst"), 0) or None),
+            max_retries=_normalize_int(item.get("max_retries"), default_max_retries),
+            backoff_base_ms=_normalize_float(
+                item.get("backoff_base_ms"), default_backoff_base_ms
+            ),
+            backoff_jitter_ms=_normalize_float(
+                item.get("backoff_jitter_ms"), default_backoff_jitter_ms
+            ),
+            timeout_ms=_normalize_float(item.get("timeout_ms"), default_timeout_ms),
         )
         scenarios.append(scenario)
 
@@ -197,33 +233,28 @@ def load_config(path: Path) -> ExchangeStressConfig:
     return ExchangeStressConfig(queue_defaults=queue_defaults, scenarios=scenarios)
 
 
-def _build_random_generators(
-    scenarios: Iterable[ExchangeScenario],
-    *,
-    seed: int | None,
-) -> Mapping[str, random.Random]:
-    base_seed = seed or 0
-    generators: dict[str, random.Random] = {}
-    for scenario in scenarios:
-        scenario_seed = (base_seed + zlib.crc32(scenario.name.encode("utf-8"))) & 0xFFFFFFFF
-        generators[scenario.name] = random.Random(scenario_seed)
-    return generators
-
-
 def build_mock_transport(
     scenarios: Iterable[ExchangeScenario],
     *,
     seed: int | None,
 ) -> httpx.MockTransport:
     scenario_map = {scenario.name: scenario for scenario in scenarios}
-    generators = _build_random_generators(scenarios, seed=seed)
+    base_seed = seed or 0
+    scenario_seeds = {
+        scenario.name: (base_seed + zlib.crc32(scenario.name.encode("utf-8"))) & 0xFFFFFFFF
+        for scenario in scenarios
+    }
 
     async def handler(request: httpx.Request) -> httpx.Response:
         name = request.url.path.lstrip("/") or request.headers.get("X-Exchange", "")
         scenario = scenario_map.get(name)
         if scenario is None:
             return httpx.Response(404, json={"error": "unknown_exchange", "exchange": name})
-        rng = generators[name]
+        scenario_seed = scenario_seeds[name]
+        request_index = _normalize_int(request.headers.get("X-Request-Index"), 0)
+        retry_attempt = _normalize_int(request.headers.get("X-Retry-Attempt"), 0)
+        request_seed = (scenario_seed + request_index * 1009 + retry_attempt * 9176) & 0xFFFFFFFF
+        rng = random.Random(request_seed)
         latency = max(0.0, rng.gauss(scenario.base_latency_ms, scenario.jitter_ms))
         await asyncio.sleep(latency / 1000.0)
         roll = rng.random()
@@ -244,21 +275,57 @@ async def _execute_request(
     scenario: ExchangeScenario,
     index: int,
     enqueued_at: float,
+    seed: int,
 ) -> RequestOutcome:
     start = time.perf_counter()
     queue_wait_ms = max((start - enqueued_at) * 1000.0, 0.0)
-    try:
-        response = await client.get(f"/{scenario.name}", headers={"X-Request-Index": str(index)})
-        status_code = response.status_code
-        error: str | None = None
-    except Exception as exc:  # pragma: no cover - defensywne logowanie błędów transportu
-        status_code = None
-        error = str(exc)
+    rng_seed = (seed + zlib.crc32(f"{scenario.name}:{index}".encode("utf-8"))) & 0xFFFFFFFF
+    rng = random.Random(rng_seed)
+    status_code: int | None = None
+    error: str | None = None
+    attempts = 0
+    transient_5xx = 0
+    throttle_events = 0
+    transient_transport_errors = 0
+    retried = False
+    for attempt in range(max(0, scenario.max_retries) + 1):
+        attempts = attempt + 1
+        try:
+            response = await client.get(
+                f"/{scenario.name}",
+                headers={"X-Request-Index": str(index), "X-Retry-Attempt": str(attempt)},
+                timeout=max(scenario.timeout_ms / 1000.0, 0.001),
+            )
+            status_code = response.status_code
+            error = None
+            if status_code == 429:
+                throttle_events += 1
+            if status_code in (500, 502, 503, 504):
+                transient_5xx += 1
+            if status_code not in (429, 500, 502, 503, 504):
+                break
+        except (httpx.TimeoutException, httpx.NetworkError, asyncio.TimeoutError) as exc:
+            status_code = None
+            error = str(exc)
+            transient_transport_errors += 1
+
+        if attempt >= max(0, scenario.max_retries):
+            break
+        retried = True
+        jitter = rng.uniform(0.0, max(scenario.backoff_jitter_ms, 0.0))
+        delay_ms = max(scenario.backoff_base_ms, 0.0) * (2**attempt) + jitter
+        await asyncio.sleep(delay_ms / 1000.0)
+
     latency_ms = (time.perf_counter() - start) * 1000.0
     return RequestOutcome(
         status_code=status_code,
         latency_ms=latency_ms,
         queue_wait_ms=queue_wait_ms,
+        retry_attempts=max(attempts - 1, 0),
+        transient_5xx=transient_5xx,
+        throttle_events=throttle_events,
+        transient_transport_errors=transient_transport_errors,
+        recovered_after_retry=bool(retried and status_code == 200),
         error=error,
     )
 
@@ -267,6 +334,7 @@ async def _run_scenario(
     queue: AsyncIOTaskQueue,
     client: httpx.AsyncClient,
     scenario: ExchangeScenario,
+    seed: int,
 ) -> ExchangeMetrics:
     tasks = []
     for index in range(scenario.request_count):
@@ -279,6 +347,7 @@ async def _run_scenario(
                     scenario,
                     index,
                     enqueued_at=enqueued_at,
+                    seed=seed,
                 ),
             )
         )
@@ -287,6 +356,11 @@ async def _run_scenario(
     for outcome in outcomes:
         metrics.latencies_ms.append(outcome.latency_ms)
         metrics.queue_wait_ms.append(outcome.queue_wait_ms)
+        metrics.retry_attempts += outcome.retry_attempts
+        metrics.transient_5xx += outcome.transient_5xx
+        metrics.throttle_events += outcome.throttle_events
+        metrics.transient_transport_errors += outcome.transient_transport_errors
+        metrics.recovered_after_retry += int(outcome.recovered_after_retry)
         if outcome.status_code == 200:
             metrics.successes += 1
         elif outcome.status_code == 429:
@@ -303,6 +377,7 @@ async def run_exchange_stress(
     *,
     seed: int | None = None,
 ) -> ExchangeStressResult:
+    base_seed = seed or 0
     queue = AsyncIOTaskQueue(
         default_max_concurrency=config.queue_defaults.max_concurrency,
         default_burst=config.queue_defaults.burst,
@@ -322,7 +397,8 @@ async def run_exchange_stress(
     ) as client:
         metrics: dict[str, ExchangeMetrics] = {}
         for scenario in config.scenarios:
-            metrics[scenario.name] = await _run_scenario(queue, client, scenario)
+            scenario_seed = (base_seed + zlib.crc32(scenario.name.encode("utf-8"))) & 0xFFFFFFFF
+            metrics[scenario.name] = await _run_scenario(queue, client, scenario, scenario_seed)
     finished_at = time.time()
     return ExchangeStressResult(started_at=started_at, finished_at=finished_at, metrics=metrics)
 
