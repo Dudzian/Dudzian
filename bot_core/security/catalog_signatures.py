@@ -22,6 +22,15 @@ except ModuleNotFoundError:  # pragma: no cover
     ed25519 = None  # type: ignore[assignment]
 
 
+RETRY_MARKERS = (
+    "unknown option",
+    "invalid option",
+    "unsupported option",
+    "unrecognized flag",
+    "illegal option",
+)
+
+
 def _run_openssl_verify(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
@@ -142,15 +151,8 @@ def _verify_ed25519_with_openssl(
                 last_details = details
 
                 details_lc = details.lower()
-                retry_markers = (
-                    "unknown option",
-                    "invalid option",
-                    "unsupported option",
-                    "unrecognized flag",
-                    "illegal option",
-                )
                 if "-rawin" in command and "-rawin" in details_lc and any(
-                    marker in details_lc for marker in retry_markers
+                    marker in details_lc for marker in RETRY_MARKERS
                 ):
                     continue
 
