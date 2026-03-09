@@ -7,12 +7,19 @@ import binascii
 import hashlib
 import hmac
 import json
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519
+try:  # pragma: no cover - fallback dla minimalnych środowisk CI bez cryptography
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+except ModuleNotFoundError:  # pragma: no cover
+    InvalidSignature = Exception  # type: ignore[assignment]
+    serialization = None  # type: ignore[assignment]
+    ed25519 = None  # type: ignore[assignment]
 
 
 def _load_signature(path: Path) -> Mapping[str, Any]:
@@ -23,6 +30,8 @@ def _load_signature(path: Path) -> Mapping[str, Any]:
 
 
 def _load_ed25519_public_key(data: bytes) -> ed25519.Ed25519PublicKey:
+    if ed25519 is None or serialization is None:
+        raise ValueError("Brak zależności 'cryptography' do weryfikacji Ed25519")
     if isinstance(data, (bytes, bytearray)):
         if len(data) == 32:
             return ed25519.Ed25519PublicKey.from_public_bytes(bytes(data))
@@ -41,6 +50,23 @@ def _load_ed25519_public_key(data: bytes) -> ed25519.Ed25519PublicKey:
         return serialization.load_pem_public_key(payload)
     except Exception as exc:  # noqa: BLE001 - defensywne
         raise ValueError("Niepoprawny klucz publiczny Ed25519 dla katalogu Marketplace") from exc
+
+
+def _ed25519_public_key_to_pem(data: bytes) -> bytes:
+    payload = bytes(data).strip()
+    if payload.startswith(b"-----BEGIN"):
+        return payload
+    if len(payload) != 32:
+        try:
+            payload = base64.b64decode(payload, validate=False)
+        except Exception as exc:  # noqa: BLE001 - defensywne
+            raise ValueError("Niepoprawny klucz publiczny Ed25519 dla katalogu Marketplace") from exc
+    if len(payload) != 32:
+        raise ValueError("Niepoprawny klucz publiczny Ed25519 dla katalogu Marketplace")
+    der = bytes.fromhex("302a300506032b6570032100") + payload
+    body = base64.encodebytes(der).replace(b"\n", b"")
+    lines = [body[i : i + 64] for i in range(0, len(body), 64)]
+    return b"-----BEGIN PUBLIC KEY-----\n" + b"\n".join(lines) + b"\n-----END PUBLIC KEY-----\n"
 
 
 def _verify_hmac_block(
@@ -62,6 +88,60 @@ def _verify_hmac_block(
     return []
 
 
+def _verify_ed25519_with_openssl(
+    *,
+    content: bytes,
+    signature_bytes: bytes,
+    public_key_pem: bytes,
+) -> list[str]:
+    with tempfile.TemporaryDirectory(prefix="catalog-signature-") as tmp_dir:
+        root = Path(tmp_dir)
+        pub_path = root / "catalog-ed25519.pub"
+        sig_path = root / "catalog-ed25519.sig"
+        content_path = root / "catalog-content.bin"
+        pub_path.write_bytes(public_key_pem)
+        sig_path.write_bytes(signature_bytes)
+        content_path.write_bytes(content)
+
+        command = [
+            "openssl",
+            "pkeyutl",
+            "-verify",
+            "-pubin",
+            "-inkey",
+            str(pub_path),
+            "-sigfile",
+            str(sig_path),
+            "-rawin",
+            "-in",
+            str(content_path),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return [
+                "Nie można zweryfikować podpisu Ed25519 katalogu: brak narzędzia 'openssl' w PATH."
+            ]
+        except OSError as exc:
+            return [f"Nie można uruchomić 'openssl' do weryfikacji podpisu Ed25519: {exc}"]
+
+    if result.returncode == 0:
+        return []
+
+    details = (result.stderr or result.stdout or "").strip()
+    if details:
+        return [
+            "Podpis Ed25519 katalogu jest niepoprawny lub nie można go zweryfikować przez openssl: "
+            + details
+        ]
+    return ["Podpis Ed25519 katalogu jest niepoprawny (signature mismatch)."]
+
+
 def _verify_ed25519_block(
     content: bytes, signature: Mapping[str, Any], key: bytes | None
 ) -> list[str]:
@@ -69,11 +149,6 @@ def _verify_ed25519_block(
         return []
     if key is None:
         return ["Brak klucza publicznego Ed25519 do weryfikacji katalogu Marketplace."]
-    try:
-        public_key = _load_ed25519_public_key(key)
-    except ValueError as exc:
-        return [str(exc)]
-
     value = signature.get("value")
     if not isinstance(value, str):
         return ["Podpis Ed25519 katalogu nie zawiera wartości 'value'."]
@@ -84,11 +159,28 @@ def _verify_ed25519_block(
     algorithm = str(signature.get("algorithm") or "").lower() or "ed25519"
     if algorithm != "ed25519":
         return [f"Nieobsługiwany algorytm podpisu katalogu: {algorithm}"]
+
+    if ed25519 is not None and serialization is not None:
+        try:
+            public_key = _load_ed25519_public_key(key)
+        except ValueError as exc:
+            return [str(exc)]
+        try:
+            public_key.verify(signature_bytes, content)
+        except InvalidSignature:
+            return ["Podpis Ed25519 katalogu jest niepoprawny (signature mismatch)."]
+        return []
+
     try:
-        public_key.verify(signature_bytes, content)
-    except InvalidSignature:
-        return ["Podpis Ed25519 katalogu jest niepoprawny (signature mismatch)."]
-    return []
+        pem_key = _ed25519_public_key_to_pem(key)
+    except ValueError as exc:
+        return [str(exc)]
+
+    return _verify_ed25519_with_openssl(
+        content=content,
+        signature_bytes=signature_bytes,
+        public_key_pem=pem_key,
+    )
 
 
 def verify_catalog_signature(

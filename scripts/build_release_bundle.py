@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -32,7 +33,17 @@ def _strip_conflicting_paths() -> None:
 
 _strip_conflicting_paths()
 import packaging.version  # ensure zależność dostępna zanim załadujemy bot_core
-from bot_core.security.catalog_signatures import verify_catalog_signature_file
+
+_CATALOG_SIGNATURES_PATH = REPO_ROOT / "bot_core" / "security" / "catalog_signatures.py"
+_catalog_signatures_spec = importlib.util.spec_from_file_location(
+    "bot_core.security.catalog_signatures", _CATALOG_SIGNATURES_PATH
+)
+if _catalog_signatures_spec is None or _catalog_signatures_spec.loader is None:
+    raise ImportError(f"Nie można wczytać modułu katalogu z {_CATALOG_SIGNATURES_PATH}")
+_catalog_signatures = importlib.util.module_from_spec(_catalog_signatures_spec)
+_catalog_signatures_spec.loader.exec_module(_catalog_signatures)
+
+verify_catalog_signature_file = _catalog_signatures.verify_catalog_signature_file
 
 DEFAULT_MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
 DEFAULT_INSTALLER_ROOT = REPO_ROOT / "deploy" / "packaging" / "samples"
