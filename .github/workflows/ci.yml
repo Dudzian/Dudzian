@@ -670,7 +670,8 @@ jobs:
             --input var/metrics/long_poll_snapshots.json \
             --output var/metrics/long_poll_snapshots.json \
             --max-age-minutes "${LONG_POLL_MAX_AGE_MINUTES}" \
-            --future-grace-minutes "${LONG_POLL_FUTURE_GRACE_MINUTES}"
+            --future-grace-minutes "${LONG_POLL_FUTURE_GRACE_MINUTES}" \
+            --skip-freshness
 
       - name: Generate exchange adapter report
         run: |
@@ -685,7 +686,8 @@ jobs:
             --daily-csv-dir reports/exchanges \
             --long-poll-metrics var/metrics/long_poll_snapshots.json \
             --long-poll-ttl-minutes "${LONG_POLL_MAX_AGE_MINUTES}" \
-            --generate-hypercare-assets
+            --generate-hypercare-assets \
+            --allow-stale-long-poll
 
       - name: Inspect signal quality snapshots
         run: ls -l reports/exchanges/signal_quality

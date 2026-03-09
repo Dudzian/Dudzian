@@ -203,11 +203,17 @@ def _push_dashboard_snapshot(
             ) from exc
 
 
-def _validate_monitored_rows(rows: Sequence[Mapping[str, Any]]) -> None:
+def _validate_monitored_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    allow_stale_long_poll: bool = False,
+) -> None:
     """Wymusza dostępność krytycznych metryk dla monitorowanych adapterów.
 
-    Wymagamy świeżych metryk long-poll oraz skonfigurowanych statusów HyperCare
+    Domyślnie wymagamy świeżych metryk long-poll oraz skonfigurowanych statusów HyperCare
     (failover/latency/cost) dla profili paper/live nowych adapterów futures.
+    W trybie fixture (`allow_stale_long_poll=True`) dopuszczamy status `stale`
+    wyłącznie dla long-polla; pozostałe guardy pozostają strict.
     """
 
     required: Sequence[tuple[str, str]] = (
@@ -231,7 +237,10 @@ def _validate_monitored_rows(rows: Sequence[Mapping[str, Any]]) -> None:
             continue
 
         lp_status = row.get("long_poll_metrics_status")
-        if lp_status != "fresh":
+        accepted_long_poll = {"fresh"}
+        if allow_stale_long_poll:
+            accepted_long_poll.add("stale")
+        if lp_status not in accepted_long_poll:
             errors.append(f"{exchange}:{profile} long_poll_metrics_status={lp_status or 'missing'}")
 
         lp_age = row.get("long_poll_snapshot_age_minutes")
@@ -589,6 +598,7 @@ def build_rows(
     signal_quality_dir: str | os.PathLike[str] | None = None,
     signal_quality_ttl_hours: float | None = None,
     hypercare_assets: Mapping[str, tuple[str, str | None]] | None = None,
+    allow_stale_long_poll: bool = False,
 ) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
     rows: list[dict[str, Any]] = []
     metrics = dict(long_poll_metrics or {})
@@ -700,7 +710,10 @@ def build_rows(
 
             if exchange in {"deribit", "bitmex"} and env_cfg.environment.value in {"live", "paper"}:
                 status = long_poll_summary.get("long_poll_metrics_status")
-                if status in {"missing", "unknown", "stale"}:
+                invalid_statuses = {"missing", "unknown"}
+                if not allow_stale_long_poll:
+                    invalid_statuses.add("stale")
+                if status in invalid_statuses:
                     raise RuntimeError(
                         "Brak świeżych metryk long-pollowych dla "
                         f"{exchange}:{profile_name} (status={status})."
@@ -825,6 +838,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Maksymalny wiek metryk long-polla (w minutach) zanim status stanie się 'stale'.",
     )
     parser.add_argument(
+        "--allow-stale-long-poll",
+        action="store_true",
+        help=(
+            "Akceptuje status stale dla long-polla w workflow opartych o fixture'y. "
+            "Nie zmienia statusu na fresh; tylko wyłącza fail-fast dla stale."
+        ),
+    )
+    parser.add_argument(
         "--signal-quality-dir",
         default=_DEFAULT_SIGNAL_QUALITY_DIR,
         help="Katalog ze snapshotami jakości sygnałów (domyślnie reports/exchanges/signal_quality).",
@@ -860,8 +881,9 @@ def main(argv: list[str] | None = None) -> int:
         signal_quality_dir=args.signal_quality_dir,
         signal_quality_ttl_hours=args.signal_quality_ttl_hours,
         hypercare_assets=hypercare_assets,
+        allow_stale_long_poll=bool(args.allow_stale_long_poll),
     )
-    _validate_monitored_rows(rows)
+    _validate_monitored_rows(rows, allow_stale_long_poll=bool(args.allow_stale_long_poll))
 
     fieldnames = [
         "exchange",
