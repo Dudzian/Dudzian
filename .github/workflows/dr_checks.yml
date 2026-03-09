@@ -8,6 +8,11 @@ name: DR Checks
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "GitHub Environment for DR secrets/protection rules"
+        required: false
+        default: dr
   schedule:
     - cron: "30 2 * * *"
     - cron: "0 3 * * 1"
@@ -17,12 +22,14 @@ jobs:
   dr-probes:
     name: Cloud DR synthetic probes
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dr' }}
 
     steps:
       - name: Show workflow run revision details
         shell: bash
         run: |
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          resolved_environment="${{ github.event.inputs.environment || 'dr' }}"
 
           echo "::group::Workflow run revision details"
           echo "event=${GITHUB_EVENT_NAME}"
@@ -37,12 +44,14 @@ jobs:
           echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
           echo "run_number=${GITHUB_RUN_NUMBER}"
           echo "run_url=${run_url}"
+          echo "environment=${resolved_environment}"
           echo "::endgroup::"
 
           if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
             {
               echo "### Workflow run revision details"
               echo "- job: \`${GITHUB_JOB}\`"
+              echo "- environment: \`${resolved_environment}\`"
               echo "- sha: \`${GITHUB_SHA}\`"
               echo "- run_number: \`${GITHUB_RUN_NUMBER}\`"
               echo "- run_attempt: \`${GITHUB_RUN_ATTEMPT}\`"
@@ -233,12 +242,14 @@ jobs:
     name: Alerting DR failover validation
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 * * 1'
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dr' }}
 
     steps:
       - name: Show workflow run revision details
         shell: bash
         run: |
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          resolved_environment="${{ github.event.inputs.environment || 'dr' }}"
 
           echo "::group::Workflow run revision details"
           echo "event=${GITHUB_EVENT_NAME}"
@@ -253,12 +264,14 @@ jobs:
           echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
           echo "run_number=${GITHUB_RUN_NUMBER}"
           echo "run_url=${run_url}"
+          echo "environment=${resolved_environment}"
           echo "::endgroup::"
 
           if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
             {
               echo "### Workflow run revision details"
               echo "- job: \`${GITHUB_JOB}\`"
+              echo "- environment: \`${resolved_environment}\`"
               echo "- sha: \`${GITHUB_SHA}\`"
               echo "- run_number: \`${GITHUB_RUN_NUMBER}\`"
               echo "- run_attempt: \`${GITHUB_RUN_ATTEMPT}\`"
@@ -381,12 +394,14 @@ jobs:
     name: Weekly DR failover snapshots
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '15 4 * * 0'
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dr' }}
 
     steps:
       - name: Show workflow run revision details
         shell: bash
         run: |
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          resolved_environment="${{ github.event.inputs.environment || 'dr' }}"
 
           echo "::group::Workflow run revision details"
           echo "event=${GITHUB_EVENT_NAME}"
@@ -401,12 +416,14 @@ jobs:
           echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
           echo "run_number=${GITHUB_RUN_NUMBER}"
           echo "run_url=${run_url}"
+          echo "environment=${resolved_environment}"
           echo "::endgroup::"
 
           if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
             {
               echo "### Workflow run revision details"
               echo "- job: \`${GITHUB_JOB}\`"
+              echo "- environment: \`${resolved_environment}\`"
               echo "- sha: \`${GITHUB_SHA}\`"
               echo "- run_number: \`${GITHUB_RUN_NUMBER}\`"
               echo "- run_attempt: \`${GITHUB_RUN_ATTEMPT}\`"
@@ -532,12 +549,14 @@ jobs:
     name: DR weekly failover (runbook)
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '15 4 * * 0'
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dr' }}
 
     steps:
       - name: Show workflow run revision details
         shell: bash
         run: |
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          resolved_environment="${{ github.event.inputs.environment || 'dr' }}"
 
           echo "::group::Workflow run revision details"
           echo "event=${GITHUB_EVENT_NAME}"
@@ -552,12 +571,14 @@ jobs:
           echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
           echo "run_number=${GITHUB_RUN_NUMBER}"
           echo "run_url=${run_url}"
+          echo "environment=${resolved_environment}"
           echo "::endgroup::"
 
           if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
             {
               echo "### Workflow run revision details"
               echo "- job: \`${GITHUB_JOB}\`"
+              echo "- environment: \`${resolved_environment}\`"
               echo "- sha: \`${GITHUB_SHA}\`"
               echo "- run_number: \`${GITHUB_RUN_NUMBER}\`"
               echo "- run_attempt: \`${GITHUB_RUN_ATTEMPT}\`"
