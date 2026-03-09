@@ -117,7 +117,9 @@ def _validate_required_snapshots(snapshots: Sequence[Mapping[str, Any]]) -> None
         if (adapter, environment) not in seen
     ]
     if missing:
-        raise SnapshotValidationError(f"Brak wymaganych snapshotów long-polla: {', '.join(missing)}")
+        raise SnapshotValidationError(
+            f"Brak wymaganych snapshotów long-polla: {', '.join(missing)}"
+        )
 
 
 def _validate_freshness(
@@ -152,7 +154,9 @@ def _validate_freshness(
 
         age_minutes = max(0.0, (now - collected_at).total_seconds() / 60.0)
         if age_minutes > max_age_minutes:
-            issues.append(f"{adapter}:{environment} ({age_minutes:.2f} min > {max_age_minutes:.2f} min)")
+            issues.append(
+                f"{adapter}:{environment} ({age_minutes:.2f} min > {max_age_minutes:.2f} min)"
+            )
 
     if issues:
         raise SnapshotValidationError(
@@ -180,19 +184,30 @@ def prepare_snapshots(
 
     output_payload = {
         "collected_at": (
-            default_collected_at.isoformat().replace("+00:00", "Z") if default_collected_at else None
+            default_collected_at.isoformat().replace("+00:00", "Z")
+            if default_collected_at
+            else None
         ),
-        "snapshots": [{key: value for key, value in snapshot.items() if key != "_collected_at"} for snapshot in snapshots],
+        "snapshots": [
+            {key: value for key, value in snapshot.items() if key != "_collected_at"}
+            for snapshot in snapshots
+        ],
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(output_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output_path.write_text(
+        json.dumps(output_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return output_path
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="Źródłowy plik JSON snapshotów")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Docelowy plik JSON snapshotów")
+    parser.add_argument(
+        "--input", type=Path, default=DEFAULT_INPUT, help="Źródłowy plik JSON snapshotów"
+    )
+    parser.add_argument(
+        "--output", type=Path, default=DEFAULT_OUTPUT, help="Docelowy plik JSON snapshotów"
+    )
     parser.add_argument("--max-age-minutes", type=float, default=DEFAULT_MAX_AGE_MINUTES)
     parser.add_argument(
         "--future-grace-minutes",

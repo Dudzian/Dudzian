@@ -1295,10 +1295,10 @@ def _validate_decision_engine(config: CoreConfig, errors: list[str], warnings: l
             "decision_engine.tco.warn_report_age_hours nie może przekraczać max_report_age_hours"
         )
 
+
 def _coerce_float(value: object | None, default: float) -> float:
     if value in (None, ""):
         return default
     if isinstance(value, (int, float, str, bytes, bytearray)):
         return float(value)
     return float(str(value))
-

@@ -834,7 +834,9 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             normalized_values = tuple(values)
         else:
             raise TypeError("Strategy definition field must be a sequence of strings")
-        return tuple(dict.fromkeys(str(item).strip() for item in normalized_values if str(item).strip()))
+        return tuple(
+            dict.fromkeys(str(item).strip() for item in normalized_values if str(item).strip())
+        )
 
     definitions: dict[str, StrategyDefinitionConfig] = {}
 
@@ -1777,7 +1779,9 @@ def _load_environment_ai(
                 path=path,
                 strategy=str(strategy_value).strip() if strategy_value else None,
                 risk_profile=(str(risk_profile_value).strip() if risk_profile_value else None),
-                notional=(_coerce_float(notional_raw, 0.0) if notional_raw not in (None, "") else None),
+                notional=(
+                    _coerce_float(notional_raw, 0.0) if notional_raw not in (None, "") else None
+                ),
                 action=str(action_value) if action_value else None,
             )
         )
@@ -1807,7 +1811,9 @@ def _load_environment_ai(
         weights_raw = ensemble_entry.get("weights")
         if weights_raw in (None, ()):
             weights = None
-        elif isinstance(weights_raw, Sequence) and not isinstance(weights_raw, (str, bytes, bytearray)):
+        elif isinstance(weights_raw, Sequence) and not isinstance(
+            weights_raw, (str, bytes, bytearray)
+        ):
             weights = tuple(_coerce_float(value, 0.0) for value in weights_raw)
         else:
             raise ValueError("environment.ai.ensembles[].weights musi być listą liczb")
@@ -3294,7 +3300,9 @@ def _load_decision_engine_config(
             None,
             "",
         ):
-            tco_kwargs["runtime_cost_limit_bps"] = _coerce_float(tco_raw.get("runtime_cost_limit_bps"), 0.0)
+            tco_kwargs["runtime_cost_limit_bps"] = _coerce_float(
+                tco_raw.get("runtime_cost_limit_bps"), 0.0
+            )
         warn_age_raw = tco_raw.get("warn_report_age_hours")
         if "warn_report_age_hours" in tco_fields and warn_age_raw not in (None, ""):
             tco_kwargs["warn_report_age_hours"] = _coerce_float(warn_age_raw, 0.0)
@@ -3351,8 +3359,12 @@ def _load_key_rotation_config(
             KeyRotationEntryConfig(
                 key=key_value,
                 purpose=purpose_value,
-                interval_days=(None if interval_value in (None, "") else _coerce_float(interval_value, 0.0)),
-                warn_within_days=(None if warn_value in (None, "") else _coerce_float(warn_value, 0.0)),
+                interval_days=(
+                    None if interval_value in (None, "") else _coerce_float(interval_value, 0.0)
+                ),
+                warn_within_days=(
+                    None if warn_value in (None, "") else _coerce_float(warn_value, 0.0)
+                ),
             )
         )
 
@@ -4599,7 +4611,6 @@ def load_core_config(path: str | Path) -> CoreConfig:
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 
 
-
 def _load_runtime_auto_trader_settings(entry: object | None) -> RuntimeAutoTraderSettings | None:
     if RuntimeAutoTraderSettings is None or not isinstance(entry, Mapping):
         return None
@@ -4608,6 +4619,7 @@ def _load_runtime_auto_trader_settings(entry: object | None) -> RuntimeAutoTrade
     if not mode:
         return None
     return RuntimeAutoTraderSettings(default_mode=mode)
+
 
 def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     """Wczytaj zunifikowaną konfigurację runtime z ``config/runtime.yaml``."""
@@ -4892,9 +4904,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             service_kwargs["history_size"] = _coerce_int(service_raw.get("history_size", 0), 0)
         if "publish_interval_seconds" in service_fields:
             publish_raw = service_raw.get("publish_interval_seconds")
-            service_kwargs["publish_interval_seconds"] = (
-                _coerce_float(publish_raw, 5.0)
-            )
+            service_kwargs["publish_interval_seconds"] = _coerce_float(publish_raw, 5.0)
         if "profiles" in service_fields:
             service_kwargs["profiles"] = _as_tuple(service_raw.get("profiles"))
         service_config = RiskServiceConfig(**service_kwargs)  # type: ignore[arg-type]
@@ -4943,7 +4953,9 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         decision_log=decision_log,
         portfolio_log=portfolio_log,
         max_drawdown_alert_pct=(
-            _coerce_float(max_drawdown_alert_pct, 0.0) if max_drawdown_alert_pct not in (None, "") else None
+            _coerce_float(max_drawdown_alert_pct, 0.0)
+            if max_drawdown_alert_pct not in (None, "")
+            else None
         ),
     )
 

@@ -45,7 +45,19 @@ def test_prepare_snapshots_accepts_recent_input_without_timestamp_rewrite(tmp_pa
 def test_prepare_snapshots_fails_when_required_profile_missing(tmp_path) -> None:
     source = tmp_path / "input.json"
     source.write_text(
-        json.dumps({"snapshots": [{"labels": {"adapter": "deribit_futures", "scope": "private", "environment": "paper"}}]}),
+        json.dumps(
+            {
+                "snapshots": [
+                    {
+                        "labels": {
+                            "adapter": "deribit_futures",
+                            "scope": "private",
+                            "environment": "paper",
+                        }
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
