@@ -22,6 +22,15 @@ except ModuleNotFoundError:  # pragma: no cover
     ed25519 = None  # type: ignore[assignment]
 
 
+def _run_openssl_verify(command: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _load_signature(path: Path) -> Mapping[str, Any]:
     document = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, Mapping):
@@ -103,7 +112,7 @@ def _verify_ed25519_with_openssl(
         sig_path.write_bytes(signature_bytes)
         content_path.write_bytes(content)
 
-        command = [
+        base_command = [
             "openssl",
             "pkeyutl",
             "-verify",
@@ -112,17 +121,38 @@ def _verify_ed25519_with_openssl(
             str(pub_path),
             "-sigfile",
             str(sig_path),
-            "-rawin",
             "-in",
             str(content_path),
         ]
+        commands = [
+            [*base_command[:8], "-rawin", *base_command[8:]],
+            base_command,
+        ]
+
+        last_details = ""
         try:
-            result = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+            for command in commands:
+                result = _run_openssl_verify(command)
+                if result.returncode == 0:
+                    return []
+
+                details = (result.stderr or result.stdout or "").strip()
+                last_details = details
+
+                details_lc = details.lower()
+                retry_markers = (
+                    "unknown option",
+                    "invalid option",
+                    "unsupported option",
+                    "unrecognized flag",
+                    "illegal option",
+                )
+                if "-rawin" in command and "-rawin" in details_lc and any(
+                    marker in details_lc for marker in retry_markers
+                ):
+                    continue
+
+                break
         except FileNotFoundError:
             return [
                 "Nie można zweryfikować podpisu Ed25519 katalogu: brak narzędzia 'openssl' w PATH."
@@ -130,14 +160,10 @@ def _verify_ed25519_with_openssl(
         except OSError as exc:
             return [f"Nie można uruchomić 'openssl' do weryfikacji podpisu Ed25519: {exc}"]
 
-    if result.returncode == 0:
-        return []
-
-    details = (result.stderr or result.stdout or "").strip()
-    if details:
+    if last_details:
         return [
             "Podpis Ed25519 katalogu jest niepoprawny lub nie można go zweryfikować przez openssl: "
-            + details
+            + last_details
         ]
     return ["Podpis Ed25519 katalogu jest niepoprawny (signature mismatch)."]
 

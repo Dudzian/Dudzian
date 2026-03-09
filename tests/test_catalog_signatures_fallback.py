@@ -106,3 +106,71 @@ def test_openssl_fallback_end_to_end_with_real_binary(monkeypatch: pytest.Monkey
     )
 
     assert errors == []
+
+
+def test_openssl_fallback_retries_without_rawin(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_catalog_signatures_module()
+
+    monkeypatch.setattr(module, "ed25519", None)
+    monkeypatch.setattr(module, "serialization", None)
+
+    calls: list[list[str]] = []
+
+    def _fake_verify(command: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "-rawin" in command:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr="pkeyutl: unsupported option: -rawin",
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="Signature Verified Successfully", stderr="")
+
+    monkeypatch.setattr(module, "_run_openssl_verify", _fake_verify)
+
+    errors = module.verify_catalog_signature_file(
+        REPO_ROOT / "config/marketplace/catalog.json",
+        hmac_key=(REPO_ROOT / "config/marketplace/keys/dev-hmac.key").read_bytes().strip(),
+        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub").read_bytes().strip(),
+    )
+
+    assert errors == []
+    assert len(calls) == 2
+    assert "-rawin" in calls[0]
+    assert "-rawin" not in calls[1]
+
+
+def test_openssl_fallback_retries_for_unrecognized_flag_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_catalog_signatures_module()
+
+    monkeypatch.setattr(module, "ed25519", None)
+    monkeypatch.setattr(module, "serialization", None)
+
+    calls: list[list[str]] = []
+
+    def _fake_verify(command: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "-rawin" in command:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr="pkeyutl: unrecognized flag -rawin",
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="Signature Verified Successfully", stderr="")
+
+    monkeypatch.setattr(module, "_run_openssl_verify", _fake_verify)
+
+    errors = module.verify_catalog_signature_file(
+        REPO_ROOT / "config/marketplace/catalog.json",
+        hmac_key=(REPO_ROOT / "config/marketplace/keys/dev-hmac.key").read_bytes().strip(),
+        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub").read_bytes().strip(),
+    )
+
+    assert errors == []
+    assert len(calls) == 2
+    assert "-rawin" in calls[0]
+    assert "-rawin" not in calls[1]
