@@ -317,8 +317,17 @@ def test_report_schema_remains_backward_compatible_and_extended() -> None:
             )
         ],
     )
-    payload = asyncio.run(run_exchange_stress(config, seed=42)).as_dict()["exchanges"]["coinbase_spot"]
-    for field in ("total_requests", "successes", "errors", "throttled", "latency_ms", "queue_wait_ms"):
+    payload = asyncio.run(run_exchange_stress(config, seed=42)).as_dict()["exchanges"][
+        "coinbase_spot"
+    ]
+    for field in (
+        "total_requests",
+        "successes",
+        "errors",
+        "throttled",
+        "latency_ms",
+        "queue_wait_ms",
+    ):
         assert field in payload
     for field in ("retry_attempts", "transient_5xx", "throttle_events", "recovered_after_retry"):
         assert field in payload
