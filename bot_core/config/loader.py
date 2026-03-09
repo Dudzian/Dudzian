@@ -12,7 +12,7 @@ from dataclasses import MISSING, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Iterable
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, cast
 
 try:  # pragma: no cover - PyYAML może być opcjonalny w środowiskach light
     import yaml
@@ -983,6 +983,7 @@ def _parse_initial_suspensions(entry: Any) -> tuple[MultiStrategySuspensionConfi
         return tuple()
     if entry in (None, ""):
         return tuple()
+    items: tuple[Mapping[Any, Any], ...]
     if isinstance(entry, Mapping):
         items = (entry,)
     else:
@@ -1187,7 +1188,7 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
         return {}
 
     stage6_required = {"portfolio_id", "drift_tolerance", "rebalance_cooldown_seconds"}
-    target_cls = None
+    target_cls: type[PortfolioGovernorV6Config] | type[PortfolioGovernorConfig] | None = None
     target_fields: set[str] = set()
 
     if PortfolioGovernorV6Config is not None:
@@ -1311,17 +1312,20 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
         except (TypeError, ValueError):  # pragma: no cover - diagnostyka konfiguracji
             lookback_bars = 168
 
-        governor_kwargs = {
+        governor_kwargs: dict[str, object] = {
             "portfolio_id": str(entry.get("portfolio_id", name)),
             "drift_tolerance": drift,
-            "rebalance_cooldown_seconds": int(
-                entry.get("rebalance_cooldown_seconds", entry.get("rebalance_cooldown", 900))
+            "rebalance_cooldown_seconds": _coerce_int(
+                entry.get("rebalance_cooldown_seconds", entry.get("rebalance_cooldown", 900)),
+                900,
             ),
-            "min_rebalance_value": float(
-                entry.get("min_rebalance_value", entry.get("min_rebalance_notional", 0.0) or 0.0)
+            "min_rebalance_value": _coerce_float(
+                entry.get("min_rebalance_value", entry.get("min_rebalance_notional", 0.0) or 0.0),
+                0.0,
             ),
-            "min_rebalance_weight": float(
-                entry.get("min_rebalance_weight", entry.get("min_weight_delta", 0.0) or 0.0)
+            "min_rebalance_weight": _coerce_float(
+                entry.get("min_rebalance_weight", entry.get("min_weight_delta", 0.0) or 0.0),
+                0.0,
             ),
             "assets": tuple(assets),
             "risk_budgets": risk_budgets,
@@ -1333,7 +1337,7 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
         if "name" in target_fields:
             governor_kwargs["name"] = name
 
-        governors[name] = target_cls(**governor_kwargs)
+        governors[name] = cast(Any, target_cls)(**governor_kwargs)
 
     return governors
 
@@ -1801,9 +1805,12 @@ def _load_environment_ai(
                 "environment.ai.ensembles[].aggregation musi należeć do {mean,median,max,min,weighted}"
             )
         weights_raw = ensemble_entry.get("weights")
-        weights = (
-            tuple(_coerce_float(value, 0.0) for value in weights_raw) if weights_raw not in (None, ()) else None
-        )
+        if weights_raw in (None, ()):
+            weights = None
+        elif isinstance(weights_raw, Sequence) and not isinstance(weights_raw, (str, bytes, bytearray)):
+            weights = tuple(_coerce_float(value, 0.0) for value in weights_raw)
+        else:
+            raise ValueError("environment.ai.ensembles[].weights musi być listą liczb")
         if weights is not None and len(weights) != len(components):
             raise ValueError(
                 "environment.ai.ensembles[].weights musi odpowiadać liczbie komponentów"
@@ -1861,11 +1868,11 @@ def _load_environment_ai(
                 "environment.ai.pipeline_schedules[].interval_seconds musi być dodatnie"
             )
         seq_len_raw = schedule_entry.get("seq_len")
-        seq_len = int(seq_len_raw) if seq_len_raw not in (None, "") else seq_len_default
+        seq_len = _coerce_int(seq_len_raw, seq_len_default)
         if seq_len <= 0:
             raise ValueError("environment.ai.pipeline_schedules[].seq_len musi być dodatnie")
         folds_raw = schedule_entry.get("folds")
-        folds = int(folds_raw) if folds_raw not in (None, "") else folds_default
+        folds = _coerce_int(folds_raw, folds_default)
         if folds <= 0:
             raise ValueError("environment.ai.pipeline_schedules[].folds musi być dodatnie")
         baseline_source_value = schedule_entry.get("baseline_source")
@@ -2411,7 +2418,7 @@ def _load_service_tokens(raw_value: Any) -> tuple[ServiceTokenConfig, ...]:
 
 def _normalize_grpc_metadata(
     raw_value: object, *, base_dir: Path | None
-) -> tuple[tuple[str, str | bytes], Mapping[str, str]]:
+) -> tuple[tuple[tuple[str, str | bytes], ...], Mapping[str, str]]:
     """Normalizuje wpisy metadata gRPC do listy par (klucz, wartość).
 
     Zwraca pary `(key, value)` oraz mapę źródeł, aby można było odnotować
@@ -3138,7 +3145,8 @@ def _build_decision_threshold(
             raise ValueError("Brak sekcji 'orchestrator' w decision_engine")
         return fallback
     data = dict(entry)
-    values: dict[str, float | int | None] = {}
+    float_values: dict[str, float] = {}
+    max_open_positions = 0
     for key in required_keys:
         if key in data:
             raw_value = data[key]
@@ -3147,9 +3155,9 @@ def _build_decision_threshold(
         else:
             raise ValueError(f"Brak wymaganego pola '{key}' w konfiguracji decision orchestratora")
         if key == "max_open_positions":
-            values[key] = int(raw_value)
+            max_open_positions = _coerce_int(raw_value, 0)
         else:
-            values[key] = float(raw_value)
+            float_values[key] = _coerce_float(raw_value, 0.0)
     max_latency = data.get("max_latency_ms")
     if max_latency is None and fallback is not None:
         max_latency = fallback.max_latency_ms
@@ -3157,15 +3165,15 @@ def _build_decision_threshold(
     if max_trade_notional is None and fallback is not None:
         max_trade_notional = fallback.max_trade_notional
     return DecisionOrchestratorThresholds(
-        max_cost_bps=float(values["max_cost_bps"]),
-        min_net_edge_bps=float(values["min_net_edge_bps"]),
-        max_daily_loss_pct=float(values["max_daily_loss_pct"]),
-        max_drawdown_pct=float(values["max_drawdown_pct"]),
-        max_position_ratio=float(values["max_position_ratio"]),
-        max_open_positions=int(values["max_open_positions"]),
+        max_cost_bps=float_values["max_cost_bps"],
+        min_net_edge_bps=float_values["min_net_edge_bps"],
+        max_daily_loss_pct=float_values["max_daily_loss_pct"],
+        max_drawdown_pct=float_values["max_drawdown_pct"],
+        max_position_ratio=float_values["max_position_ratio"],
+        max_open_positions=max_open_positions,
         max_latency_ms=(None if max_latency is None else float(max_latency)),
         max_trade_notional=(
-            None if max_trade_notional in (None, "") else float(max_trade_notional)
+            None if max_trade_notional in (None, "") else _coerce_float(max_trade_notional, 0.0)
         ),
     )
 
@@ -3187,9 +3195,9 @@ def _load_decision_engine_config(
     stress_raw = raw.get("stress_tests") or {}
     if DecisionStressTestConfig is not None and stress_raw:
         stress_config = DecisionStressTestConfig(
-            cost_shock_bps=float(stress_raw.get("cost_shock_bps", 0.0)),
-            latency_spike_ms=float(stress_raw.get("latency_spike_ms", 0.0)),
-            slippage_multiplier=float(stress_raw.get("slippage_multiplier", 1.0)),
+            cost_shock_bps=_coerce_float(stress_raw.get("cost_shock_bps"), 0.0),
+            latency_spike_ms=_coerce_float(stress_raw.get("latency_spike_ms"), 0.0),
+            slippage_multiplier=_coerce_float(stress_raw.get("slippage_multiplier"), 1.0),
         )
     min_probability = float(raw.get("min_probability", 0.0))
     require_cost_data = bool(raw.get("require_cost_data", False))
@@ -3198,7 +3206,7 @@ def _load_decision_engine_config(
     evaluation_history_limit = 256
     if history_limit_raw not in (None, ""):
         try:
-            evaluation_history_limit = max(1, int(float(history_limit_raw)))
+            evaluation_history_limit = max(1, _coerce_int(history_limit_raw, 256))
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 "decision_engine.evaluation_history_limit musi być liczbą całkowitą"
@@ -3286,13 +3294,13 @@ def _load_decision_engine_config(
             None,
             "",
         ):
-            tco_kwargs["runtime_cost_limit_bps"] = float(tco_raw.get("runtime_cost_limit_bps"))
+            tco_kwargs["runtime_cost_limit_bps"] = _coerce_float(tco_raw.get("runtime_cost_limit_bps"), 0.0)
         warn_age_raw = tco_raw.get("warn_report_age_hours")
         if "warn_report_age_hours" in tco_fields and warn_age_raw not in (None, ""):
-            tco_kwargs["warn_report_age_hours"] = float(warn_age_raw)
+            tco_kwargs["warn_report_age_hours"] = _coerce_float(warn_age_raw, 0.0)
         max_age_raw = tco_raw.get("max_report_age_hours")
         if "max_report_age_hours" in tco_fields and max_age_raw not in (None, ""):
-            tco_kwargs["max_report_age_hours"] = float(max_age_raw)
+            tco_kwargs["max_report_age_hours"] = _coerce_float(max_age_raw, 0.0)
         tco_config = DecisionEngineTCOConfig(**tco_kwargs)  # type: ignore[arg-type]
     return DecisionEngineConfig(
         orchestrator=base_threshold,
@@ -3343,8 +3351,8 @@ def _load_key_rotation_config(
             KeyRotationEntryConfig(
                 key=key_value,
                 purpose=purpose_value,
-                interval_days=(None if interval_value in (None, "") else float(interval_value)),
-                warn_within_days=(None if warn_value in (None, "") else float(warn_value)),
+                interval_days=(None if interval_value in (None, "") else _coerce_float(interval_value, 0.0)),
+                warn_within_days=(None if warn_value in (None, "") else _coerce_float(warn_value, 0.0)),
             )
         )
 
@@ -3430,7 +3438,10 @@ def _load_observability_config(
         if aggregation not in _ALLOWED_SLO_AGGREGATIONS:
             raise ValueError(f"SLO '{name}' używa nieobsługiwanej agregacji: {aggregation}")
         window_minutes = float(entry.get("window_minutes", 1440.0))
-        objective = float(entry.get("objective"))
+        objective_raw = entry.get("objective")
+        if objective_raw in (None, ""):
+            raise ValueError(f"SLO '{name}' wymaga pola 'objective'")
+        objective = _coerce_float(objective_raw, 0.0)
         label_filters_raw = entry.get("label_filters") or {}
         if not isinstance(label_filters_raw, Mapping):
             raise ValueError("label_filters w SLO musi być mapą")
@@ -3504,7 +3515,7 @@ def _load_portfolio_governor_config(
         baseline_max_signals_raw = entry.get("baseline_max_signals")
         baseline_max_signals = None
         if baseline_max_signals_raw not in (None, ""):
-            baseline_max_signals = int(baseline_max_signals_raw)
+            baseline_max_signals = _coerce_int(baseline_max_signals_raw, 0)
         max_signal_factor = float(entry.get("max_signal_factor", 1.0))
         risk_profile_raw = entry.get("risk_profile")
         risk_profile = (
@@ -3677,7 +3688,7 @@ def _load_stress_lab_config(
                 duration_value = None
             else:
                 try:
-                    duration_value = float(duration_raw)
+                    duration_value = _coerce_float(duration_raw, 0.0)
                 except (TypeError, ValueError) as exc:
                     raise ValueError(
                         f"Scenariusz '{name}' posiada niepoprawną wartość 'duration_minutes' (shock {index})"
@@ -3773,7 +3784,7 @@ def _load_portfolio_stress_config(
         default_horizon = None
     else:
         try:
-            default_horizon = float(default_horizon_raw)
+            default_horizon = _coerce_float(default_horizon_raw, 0.0)
         except (TypeError, ValueError) as exc:
             raise ValueError("portfolio_stress.default_horizon_days musi być liczbą") from exc
 
@@ -3857,7 +3868,7 @@ def _load_portfolio_stress_config(
             horizon = default_horizon
         else:
             try:
-                horizon = float(horizon_raw)
+                horizon = _coerce_float(horizon_raw, 0.0)
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"portfolio_stress.scenarios['{name}'] posiada niepoprawne 'horizon_days'"
@@ -3867,7 +3878,7 @@ def _load_portfolio_stress_config(
             probability = None
         else:
             try:
-                probability = float(probability_raw)
+                probability = _coerce_float(probability_raw, 0.0)
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"portfolio_stress.scenarios['{name}'] posiada niepoprawne 'probability'"
@@ -3898,7 +3909,7 @@ def _load_portfolio_stress_config(
                 liquidity = None
             else:
                 try:
-                    liquidity = float(liquidity_raw)
+                    liquidity = _coerce_float(liquidity_raw, 0.0)
                 except (TypeError, ValueError) as exc:
                     raise ValueError(
                         f"portfolio_stress.scenarios['{name}'].factors[{pos}] posiada niepoprawne 'liquidity_haircut_pct'"
@@ -3943,7 +3954,7 @@ def _load_portfolio_stress_config(
                 asset_liquidity = None
             else:
                 try:
-                    asset_liquidity = float(liquidity_raw)
+                    asset_liquidity = _coerce_float(liquidity_raw, 0.0)
                 except (TypeError, ValueError) as exc:
                     raise ValueError(
                         f"portfolio_stress.scenarios['{name}'].assets[{pos}] posiada niepoprawne 'liquidity_haircut_pct'"
@@ -3977,7 +3988,7 @@ def _load_portfolio_stress_config(
             cash_return_pct = None
         else:
             try:
-                cash_return_pct = float(cash_return_raw)
+                cash_return_pct = _coerce_float(cash_return_raw, 0.0)
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"portfolio_stress.scenarios['{name}'] posiada niepoprawne 'cash_return_pct'"
@@ -4052,7 +4063,7 @@ def _parse_resilience_thresholds(
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"{context}: wartość '{field.name}' musi być liczbą") from exc
 
-    return ResilienceDrillThresholdsConfig(**values)
+    return ResilienceDrillThresholdsConfig(**cast(Any, values))
 
 
 def _load_resilience_config(
@@ -4373,10 +4384,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
         for env in environments.values():
             if env.data_quality is not None:
                 continue
-            profile = risk_profiles.get(env.risk_profile)
-            if profile is None or profile.data_quality is None:
+            risk_profile_cfg = risk_profiles.get(env.risk_profile)
+            if risk_profile_cfg is None or risk_profile_cfg.data_quality is None:
                 continue
-            profile_quality = profile.data_quality
+            profile_quality = risk_profile_cfg.data_quality
             env.data_quality = EnvironmentDataQualityConfig(
                 max_gap_minutes=profile_quality.max_gap_minutes,
                 min_ok_ratio=profile_quality.min_ok_ratio,
@@ -4596,7 +4607,7 @@ def _load_runtime_auto_trader_settings(entry: object | None) -> RuntimeAutoTrade
     mode = str(mode_raw).strip() if mode_raw not in (None, "") else ""
     if not mode:
         return None
-    return RuntimeAutoTraderSettings(mode=mode)
+    return RuntimeAutoTraderSettings(default_mode=mode)
 
 def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     """Wczytaj zunifikowaną konfigurację runtime z ``config/runtime.yaml``."""
@@ -4914,13 +4925,17 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             kwargs["jsonl_fsync"] = bool(section.get("jsonl_fsync", False))
         return cls(**kwargs)  # type: ignore[call-arg]
 
-    decision_log = _build_log_config(
+    decision_log_raw = _build_log_config(
         risk_section.get("decision_log"),
         RiskDecisionLogConfig,
     )
-    portfolio_log = _build_log_config(
+    decision_log = decision_log_raw if isinstance(decision_log_raw, RiskDecisionLogConfig) else None
+    portfolio_log_raw = _build_log_config(
         risk_section.get("portfolio_log"),
         PortfolioDecisionLogConfig,
+    )
+    portfolio_log = (
+        portfolio_log_raw if isinstance(portfolio_log_raw, PortfolioDecisionLogConfig) else None
     )
     max_drawdown_alert_pct = risk_section.get("max_drawdown_alert_pct")
     risk_settings = RuntimeRiskSettings(
@@ -4928,7 +4943,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         decision_log=decision_log,
         portfolio_log=portfolio_log,
         max_drawdown_alert_pct=(
-            float(max_drawdown_alert_pct) if max_drawdown_alert_pct not in (None, "") else None
+            _coerce_float(max_drawdown_alert_pct, 0.0) if max_drawdown_alert_pct not in (None, "") else None
         ),
     )
 
@@ -4936,7 +4951,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     grace_raw = licensing_section.get("grace_period_hours")
     licensing_settings = RuntimeLicensingSettings(
         enforcement=bool(licensing_section.get("enforcement", True)),
-        grace_period_hours=(float(grace_raw) if grace_raw not in (None, "") else None),
+        grace_period_hours=(_coerce_float(grace_raw, 0.0) if grace_raw not in (None, "") else None),
         offline_activation_required=bool(
             licensing_section.get("offline_activation_required", True)
         ),
@@ -4995,7 +5010,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
 
             def _threshold(value: object) -> float | None:
                 try:
-                    number = float(value)
+                    number = _coerce_float(value, 0.0)
                 except (TypeError, ValueError):
                     return None
                 if number <= 0:
@@ -5057,8 +5072,8 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                             continue
                         try:
                             bounds[str(key)] = StrategyOptimizationBoundConfig(
-                                lower=float(lower),
-                                upper=float(upper),
+                                lower=_coerce_float(lower, 0.0),
+                                upper=_coerce_float(upper, 0.0),
                                 step=step,
                             )
                         except Exception:  # pragma: no cover - walidacja danych wejściowych
@@ -5068,8 +5083,8 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                         step = rest[0] if rest else None
                         try:
                             bounds[str(key)] = StrategyOptimizationBoundConfig(
-                                lower=float(lower),
-                                upper=float(upper),
+                                lower=_coerce_float(lower, 0.0),
+                                upper=_coerce_float(upper, 0.0),
                                 step=step,
                             )
                         except Exception:  # pragma: no cover - walidacja danych wejściowych
@@ -5094,7 +5109,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                 if schedule_raw in (None, "", False):
                     return StrategyOptimizationScheduleConfig()
                 try:
-                    cadence_value = float(schedule_raw)
+                    cadence_value = _coerce_float(schedule_raw, 0.0)
                 except Exception:
                     cadence_value = 0.0
                 return StrategyOptimizationScheduleConfig(cadence_seconds=cadence_value)
@@ -5108,10 +5123,10 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             if start_delay in (None, ""):
                 start_delay = schedule_raw.get("start_delay")
             return StrategyOptimizationScheduleConfig(
-                cadence_seconds=float(cadence or 0.0),
-                jitter_seconds=float(jitter or 0.0),
+                cadence_seconds=_coerce_float(cadence, 0.0),
+                jitter_seconds=_coerce_float(jitter, 0.0),
                 run_immediately=bool(schedule_raw.get("run_immediately", True)),
-                start_delay_seconds=float(start_delay or 0.0),
+                start_delay_seconds=_coerce_float(start_delay, 0.0),
             )
 
         def _parse_evaluation(eval_raw: object) -> StrategyOptimizationEvaluationConfig:
@@ -5119,20 +5134,20 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                 if eval_raw in (None, ""):
                     return StrategyOptimizationEvaluationConfig()
                 try:
-                    history = int(eval_raw)
+                    history = _coerce_int(eval_raw, 0)
                 except Exception:
                     history = 0
                 return StrategyOptimizationEvaluationConfig(history_bars=history)
-            history = eval_raw.get("history_bars")
-            if history in (None, ""):
-                history = eval_raw.get("history") or eval_raw.get("bars")
-            warmup = eval_raw.get("warmup_bars")
-            if warmup in (None, ""):
-                warmup = eval_raw.get("warmup")
+            history_value = eval_raw.get("history_bars")
+            if history_value in (None, ""):
+                history_value = eval_raw.get("history") or eval_raw.get("bars")
+            warmup_value = eval_raw.get("warmup_bars")
+            if warmup_value in (None, ""):
+                warmup_value = eval_raw.get("warmup")
             dataset = _as_optional_str(eval_raw.get("dataset"))
             return StrategyOptimizationEvaluationConfig(
-                history_bars=int(history or 0),
-                warmup_bars=int(warmup or 0),
+                history_bars=_coerce_int(history_value, 0),
+                warmup_bars=_coerce_int(warmup_value, 0),
                 dataset=dataset,
             )
 
@@ -5161,7 +5176,7 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
                     strategy=strategy,
                     algorithm=str(algorithm_value or "grid"),
                     max_trials=int(max_trials_value or 0),
-                    random_seed=int(random_seed_value)
+                    random_seed=_coerce_int(random_seed_value, 0)
                     if random_seed_value not in (None, "")
                     else None,
                     tags=_as_tuple(tags_value),
