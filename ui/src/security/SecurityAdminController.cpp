@@ -14,6 +14,7 @@
 #include <QLoggingCategory>
 #include <QProcess>
 #include <QtGlobal>
+#include <optional>
 #include <utility>
 
 #include "utils/PathUtils.hpp"
@@ -70,6 +71,31 @@ QStringList collectIssueMessages(const QVariantMap& map,
         }
     }
     return messages;
+}
+
+std::optional<QVariantList> loadProfilesListFromFile(const QString& path)
+{
+    if (path.trimmed().isEmpty())
+        return std::nullopt;
+
+    QFile file(path);
+    if (!file.exists() || !file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return std::nullopt;
+
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray())
+        return std::nullopt;
+
+    QVariantList profiles;
+    const QJsonArray profilesArray = doc.array();
+    profiles.reserve(profilesArray.size());
+    for (const QJsonValue& value : profilesArray) {
+        if (!value.isObject())
+            continue;
+        profiles.append(value.toObject().toVariantMap());
+    }
+    return profiles;
 }
 
 } // namespace
@@ -202,16 +228,17 @@ bool SecurityAdminController::assignProfile(const QString& userId,
 
     QByteArray stdoutData;
     QByteArray stderrData;
-    const bool ok = runBridge(args, &stdoutData, &stderrData);
+    bool success = runBridge(args, &stdoutData, &stderrData);
     if (!stderrData.isEmpty()) {
         qCWarning(lcSecurityAdmin) << "Bridge stderr:" << QString::fromUtf8(stderrData);
     }
     bool shouldRefresh = false;
-    if (ok) {
+    if (success) {
         QJsonParseError parseError{};
         const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
         if (parseError.error != QJsonParseError::NoError) {
             qCWarning(lcSecurityAdmin) << "Niepoprawna odpowiedź bridge assign-profile" << parseError.errorString();
+            success = false;
         } else if (doc.isObject()) {
             const QJsonObject obj = doc.object();
             const QString status = obj.value(QStringLiteral("status")).toString();
@@ -228,7 +255,10 @@ bool SecurityAdminController::assignProfile(const QString& userId,
                 shouldRefresh = true;
             } else {
                 qCWarning(lcSecurityAdmin) << "Bridge zwrócił status" << status;
+                success = false;
             }
+        } else {
+            success = false;
         }
     }
 
@@ -236,10 +266,23 @@ bool SecurityAdminController::assignProfile(const QString& userId,
     Q_EMIT busyChanged();
 
     if (shouldRefresh) {
-        refresh();
+        const bool hasStateOverride = !qgetenv("BOT_CORE_UI_SECURITY_STATE_PATH").isEmpty();
+        if (hasStateOverride && !m_profilesPath.isEmpty()) {
+            const std::optional<QVariantList> profiles = loadProfilesListFromFile(m_profilesPath);
+            if (!profiles) {
+                qCWarning(lcSecurityAdmin)
+                    << "Pomijam aktualizację profili po assign-profile — nie udało się odczytać pliku"
+                    << m_profilesPath << "; zachowuję poprzedni stan UI.";
+            } else if (*profiles != m_userProfiles) {
+                m_userProfiles = *profiles;
+                Q_EMIT userProfilesChanged();
+            }
+        } else {
+            refresh();
+        }
     }
 
-    return ok;
+    return success;
 }
 
 bool SecurityAdminController::removeProfile(const QString& userId)
@@ -310,7 +353,20 @@ bool SecurityAdminController::removeProfile(const QString& userId)
     Q_EMIT busyChanged();
 
     if (shouldRefresh) {
-        refresh();
+        const bool hasStateOverride = !qgetenv("BOT_CORE_UI_SECURITY_STATE_PATH").isEmpty();
+        if (hasStateOverride && !m_profilesPath.isEmpty()) {
+            const std::optional<QVariantList> profiles = loadProfilesListFromFile(m_profilesPath);
+            if (!profiles) {
+                qCWarning(lcSecurityAdmin)
+                    << "Pomijam aktualizację profili po remove-profile — nie udało się odczytać pliku"
+                    << m_profilesPath << "; zachowuję poprzedni stan UI.";
+            } else if (*profiles != m_userProfiles) {
+                m_userProfiles = *profiles;
+                Q_EMIT userProfilesChanged();
+            }
+        } else {
+            refresh();
+        }
     }
 
     return success;
@@ -647,4 +703,3 @@ bool SecurityAdminController::evaluateIntegrityManifest(QVariantMap* report)
         *report = localReport;
     return valid;
 }
-
