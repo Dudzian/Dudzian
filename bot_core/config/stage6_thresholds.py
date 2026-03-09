@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-EXPECTED_MARKET_INTEL: Final[dict[str, object]] = {
+EXPECTED_MARKET_INTEL: Final[dict[str, float | tuple[str, ...]]] = {
     "default_weight": 1.15,
     "required_symbols": ("BTCUSDT", "ETHUSDT", "SOLUSDT"),
 }
@@ -60,7 +60,7 @@ def collect_stage6_threshold_differences(config: object) -> list[str]:
         differences.append("Brak sekcji market_intel")
     else:
         expected_weight = EXPECTED_MARKET_INTEL["default_weight"]
-        if abs(market_intel.default_weight - float(expected_weight)) > 1e-9:
+        if abs(market_intel.default_weight - expected_weight) > 1e-9:
             differences.append(
                 f"market_intel.default_weight={market_intel.default_weight} (oczekiwano {expected_weight})"
             )

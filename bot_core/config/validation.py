@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping, Sequence
 
 import re
 
@@ -447,8 +447,8 @@ def _validate_environments(
 
 
 def _validate_permissions(
-    required: Mapping | tuple | list | set,
-    forbidden: Mapping | tuple | list | set,
+    required: Mapping[Any, Any] | Sequence[str],
+    forbidden: Mapping[Any, Any] | Sequence[str],
     context: str,
     errors: list[str],
 ) -> None:
@@ -521,7 +521,7 @@ def _validate_environment_ai(
 
 
 def _validate_alert_channels(
-    config: CoreConfig, alert_channels: tuple[str, ...], context: str, errors: list[str]
+    config: CoreConfig, alert_channels: Sequence[str], context: str, errors: list[str]
 ) -> None:
     registry: Mapping[str, Mapping[str, object]] = {
         "telegram": config.telegram_channels,
@@ -750,7 +750,7 @@ def _validate_metrics_service(config: CoreConfig, errors: list[str], warnings: l
             if value in (None, ""):
                 return None
             try:
-                numeric = float(value)
+                numeric = _coerce_float(value, 0.0)
             except (TypeError, ValueError):
                 errors.append(f"{context}: {field_name} musi być wartością liczbową")
                 return None
@@ -1294,3 +1294,11 @@ def _validate_decision_engine(config: CoreConfig, errors: list[str], warnings: l
         errors.append(
             "decision_engine.tco.warn_report_age_hours nie może przekraczać max_report_age_hours"
         )
+
+def _coerce_float(value: object | None, default: float) -> float:
+    if value in (None, ""):
+        return default
+    if isinstance(value, (int, float, str, bytes, bytearray)):
+        return float(value)
+    return float(str(value))
+
