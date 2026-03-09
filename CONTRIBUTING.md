@@ -43,6 +43,25 @@ Jeżeli dodajesz dodatkowe testy jednostkowe/integracyjne, dopisz je do sekcji
 "Test Plan" w opisie PR. Pamiętaj, aby **nie** przełączać środowiska na live
 bez pisemnego zatwierdzenia zespołu compliance po zakończeniu testów demo.
 
+
+## Workflow pre-commit (PowerShell)
+
+W każdej sesji edycji kodu uruchamiaj po zmianach:
+
+```powershell
+python -m pre_commit run --all-files
+```
+
+Jeżeli hooki poprawią pliki, ponawiaj to samo polecenie aż do pełnego przejścia
+bez dalszych modyfikacji. Poprawki Ruff traktuj jako obowiązkowy etap workflow.
+
+Zasady stagingu przed commitem:
+
+- nie używaj `git add .` ani `git add -A`,
+- domyślnie używaj `git add -u`,
+- zawsze wykonaj `git status --short` i zablokuj commit, jeśli pojawią się
+  nieoczekiwane pliki nieśledzone.
+
 ## Lokalny setup środowiska testowego
 
 Minimalny zestaw kroków, który zapewnia dostęp do zależności testowych
