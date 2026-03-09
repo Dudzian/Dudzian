@@ -293,7 +293,14 @@ def test_run_exchange_stress_remains_deterministic_with_seed() -> None:
     )
     first = asyncio.run(run_exchange_stress(config, seed=1234))
     second = asyncio.run(run_exchange_stress(config, seed=1234))
-    assert first.metrics["binance_spot"].as_dict() == second.metrics["binance_spot"].as_dict()
+
+    first_metrics = first.metrics["binance_spot"].as_dict()
+    second_metrics = second.metrics["binance_spot"].as_dict()
+    for nondeterministic_timing_key in ("latency_ms", "queue_wait_ms"):
+        first_metrics.pop(nondeterministic_timing_key, None)
+        second_metrics.pop(nondeterministic_timing_key, None)
+
+    assert first_metrics == second_metrics
 
 
 def test_report_schema_remains_backward_compatible_and_extended() -> None:
