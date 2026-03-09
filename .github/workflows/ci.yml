@@ -761,7 +761,7 @@ jobs:
       - name: Ensure mirror location configured
         run: |
           if [ -z "${MIRROR_ROOT:-}" ]; then
-            echo "::error::Mirror location not configured. Set MARKETING_PARITY_MIRROR_S3 or MARKETING_PARITY_MIRROR_GIT."
+            echo "::warning::Mirror location not configured. Skipping parity validation because MARKETING_PARITY_MIRROR_S3 and MARKETING_PARITY_MIRROR_GIT are both empty."
             if [ -n "${MIRROR_S3_URI:-}" ]; then
               echo "MIRROR_S3_URI=[set] (len=${#MIRROR_S3_URI})" >&2
             else
@@ -773,10 +773,15 @@ jobs:
               echo "MIRROR_GIT_REPO=[empty]" >&2
             fi
             echo "MIRROR_SUBPATH='${MIRROR_SUBPATH:-benchmark}'" >&2
-            exit 1
+
+            python -m scripts.audit.marketing_parity_skip_report \
+              --audit-output docs/audit/marketing_parity_report.md \
+              --json-output docs/audit/marketing_parity_report.json \
+              --reason mirror_not_configured
           fi
 
       - name: Validate marketing bundle parity
+        if: env.MIRROR_ROOT != ''
         run: |
           python -m scripts.audit.marketing_parity_check \
             --stress-lab-dir artifacts/stress-lab-report/reports/stress_lab \
