@@ -38,6 +38,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -79,6 +82,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         id: setup-python
@@ -214,6 +220,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -260,6 +269,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -284,6 +296,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
@@ -346,6 +361,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
@@ -430,6 +448,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
@@ -495,6 +516,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -559,6 +583,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Run loopback tests via Docker Compose
         shell: bash
@@ -602,6 +629,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -659,6 +689,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -745,6 +778,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
@@ -823,6 +859,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -908,6 +947,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -990,6 +1032,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -1063,6 +1108,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Restore performance history cache
         uses: actions/cache@v4
@@ -1168,6 +1216,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -1212,6 +1263,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -1309,6 +1363,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Download wheelhouse
         uses: actions/download-artifact@v4
@@ -1390,6 +1447,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
