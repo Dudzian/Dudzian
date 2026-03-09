@@ -95,3 +95,17 @@ def test_prepare_snapshots_fails_when_collected_at_far_in_future(tmp_path) -> No
         assert "now+grace" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Oczekiwano RuntimeError dla collected_at zbyt daleko w przyszłości")
+
+
+def test_prepare_snapshots_skip_freshness_accepts_stale_and_future_timestamp(tmp_path) -> None:
+    future_ts = _iso_utc(dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=2))
+    source = tmp_path / "input.json"
+    source.write_text(json.dumps(_base_payload(future_ts)), encoding="utf-8")
+
+    prepare_snapshots(
+        source_path=source,
+        output_path=tmp_path / "out.json",
+        max_age_minutes=1.0,
+        future_grace_minutes=0.0,
+        skip_freshness=True,
+    )

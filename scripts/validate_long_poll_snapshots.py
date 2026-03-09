@@ -161,16 +161,22 @@ def _validate_freshness(
 
 
 def prepare_snapshots(
-    *, source_path: Path, output_path: Path, max_age_minutes: float, future_grace_minutes: float
+    *,
+    source_path: Path,
+    output_path: Path,
+    max_age_minutes: float,
+    future_grace_minutes: float,
+    skip_freshness: bool = False,
 ) -> Path:
     snapshots, default_collected_at = _load_snapshots(source_path)
     _validate_required_snapshots(snapshots)
-    _validate_freshness(
-        snapshots,
-        max_age_minutes=max_age_minutes,
-        future_grace_minutes=future_grace_minutes,
-        fallback_collected_at=default_collected_at,
-    )
+    if not skip_freshness:
+        _validate_freshness(
+            snapshots,
+            max_age_minutes=max_age_minutes,
+            future_grace_minutes=future_grace_minutes,
+            fallback_collected_at=default_collected_at,
+        )
 
     output_payload = {
         "collected_at": (
@@ -194,6 +200,14 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_FUTURE_GRACE_MINUTES,
         help="Dozwolony skew zegara: collected_at może być maksymalnie tyle minut w przyszłości.",
     )
+    parser.add_argument(
+        "--skip-freshness",
+        action="store_true",
+        help=(
+            "Pomija walidację świeżości (TTL/clock-skew) i sprawdza tylko strukturę oraz wymagane profile. "
+            "Tryb do workflow opartych o fixture'y."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -202,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
             output_path=args.output,
             max_age_minutes=float(args.max_age_minutes),
             future_grace_minutes=float(args.future_grace_minutes),
+            skip_freshness=bool(args.skip_freshness),
         )
     except SnapshotValidationError as exc:
         raise SystemExit(str(exc)) from exc

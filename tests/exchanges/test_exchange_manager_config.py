@@ -658,3 +658,64 @@ def test_updating_credentials_rebuilds_private_backend(monkeypatch: pytest.Monke
     assert created[-1]["apiKey"] == "key2"
     assert first_backend is not second_backend
     assert second_backend.client.options["options"]["defaultType"] == "margin"
+
+
+def test_validate_monitored_rows_allows_stale_long_poll_in_fixture_mode():
+    from scripts import list_exchange_adapters as lea
+
+    rows = [
+        {
+            "exchange": "deribit",
+            "profile": "paper",
+            "long_poll_metrics_status": "stale",
+            "long_poll_snapshot_age_minutes": 999.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 5.0,
+            "signal_quality_snapshot_path": "/tmp/deribit_paper.json",
+            "signal_quality_records": 3,
+        },
+        {
+            "exchange": "deribit",
+            "profile": "live",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 2.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 6.0,
+            "signal_quality_snapshot_path": "/tmp/deribit_live.json",
+            "signal_quality_records": 3,
+        },
+        {
+            "exchange": "bitmex",
+            "profile": "paper",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 3.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 7.0,
+            "signal_quality_snapshot_path": "/tmp/bitmex_paper.json",
+            "signal_quality_records": 2,
+        },
+        {
+            "exchange": "bitmex",
+            "profile": "live",
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 4.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 8.0,
+            "signal_quality_snapshot_path": "/tmp/bitmex_live.json",
+            "signal_quality_records": 2,
+        },
+    ]
+
+    lea._validate_monitored_rows(rows, allow_stale_long_poll=True)  # type: ignore[attr-defined]
