@@ -63,7 +63,9 @@ def write_skip_reports(markdown_output: Path, json_output: Path, reason: str) ->
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate CI skip report for marketing parity check")
+    parser = argparse.ArgumentParser(
+        description="Generate CI skip report for marketing parity check"
+    )
     parser.add_argument(
         "--audit-output",
         type=Path,

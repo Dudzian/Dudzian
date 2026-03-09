@@ -217,9 +217,7 @@ def load_config(path: Path) -> ExchangeStressConfig:
             max_concurrency=(_normalize_int(item.get("max_concurrency"), 0) or None),
             burst=(_normalize_int(item.get("burst"), 0) or None),
             max_retries=_normalize_int(item.get("max_retries"), default_max_retries),
-            backoff_base_ms=_normalize_float(
-                item.get("backoff_base_ms"), default_backoff_base_ms
-            ),
+            backoff_base_ms=_normalize_float(item.get("backoff_base_ms"), default_backoff_base_ms),
             backoff_jitter_ms=_normalize_float(
                 item.get("backoff_jitter_ms"), default_backoff_jitter_ms
             ),

@@ -47,7 +47,9 @@ def _load_document(path: Path) -> dict[str, Any]:
         except json.JSONDecodeError as exc:
             raise ValueError(f"Spec {path} zawiera niepoprawny JSON: {exc}") from exc
         if not isinstance(parsed, dict):
-            raise ValueError(f"Spec {path} musi zawierać mapę (obiekt JSON/YAML) w głównym dokumencie")
+            raise ValueError(
+                f"Spec {path} musi zawierać mapę (obiekt JSON/YAML) w głównym dokumencie"
+            )
         return parsed
 
     if suffix in {".yaml", ".yml"}:
@@ -57,7 +59,9 @@ def _load_document(path: Path) -> dict[str, Any]:
             ) from None
         parsed = yaml.safe_load(text)
         if not isinstance(parsed, dict):
-            raise ValueError(f"Spec {path} musi zawierać mapę (obiekt JSON/YAML) w głównym dokumencie")
+            raise ValueError(
+                f"Spec {path} musi zawierać mapę (obiekt JSON/YAML) w głównym dokumencie"
+            )
         return parsed
 
     raise ValueError(f"Nieobsługiwany format specyfikacji: {path}")
