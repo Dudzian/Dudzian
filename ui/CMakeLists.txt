@@ -259,6 +259,11 @@ if(BUILD_TESTING)
         target_link_libraries(ui_tests_qt_concurrent INTERFACE ui_tests_qt_base Qt6::Concurrent)
     endif()
 
+
+    function(attach_ui_test_qml_resources target_name)
+        target_sources(${target_name} PRIVATE qml/qml.qrc)
+    endfunction()
+
     # UiTelemetryReporter tests (needs protobuf/gRPC stubs)
     add_executable(ui_telemetry_tests
         tests/UiTelemetryReporterTest.cpp
@@ -503,11 +508,7 @@ if(BUILD_TESTING)
         src/utils/PerformanceGuard.cpp
     )
     target_include_directories(candlestick_chart_view_tests PRIVATE src ${GENERATED_DIR})
-    qt_add_resources(candlestick_chart_view_tests candlestick_chart_view_qml
-        PREFIX "/qml/components"
-        BASE "qml/components"
-        FILES qml/components/CandlestickChartView.qml
-    )
+    attach_ui_test_qml_resources(candlestick_chart_view_tests)
     target_link_libraries(candlestick_chart_view_tests
         PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Charts Qt6::Test
     )
@@ -530,13 +531,7 @@ if(BUILD_TESTING)
         src/utils/PerformanceGuard.cpp
     )
     target_include_directories(market_multi_stream_view_tests PRIVATE src ${GENERATED_DIR})
-    qt_add_resources(market_multi_stream_view_tests market_multi_stream_view_qml
-        PREFIX "/qml/components"
-        BASE "qml/components"
-        FILES
-            qml/components/MarketMultiStreamView.qml
-            qml/components/CandlestickChartView.qml
-    )
+    attach_ui_test_qml_resources(market_multi_stream_view_tests)
     target_link_libraries(market_multi_stream_view_tests
         PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Charts Qt6::Test
     )
@@ -617,11 +612,7 @@ if(BUILD_TESTING)
         src/utils/PerformanceGuard.cpp
     )
     target_include_directories(side_panel_tests PRIVATE src)
-    qt_add_resources(side_panel_tests side_panel_qml
-        PREFIX "/qml/components"
-        BASE "qml/components"
-        FILES qml/components/SidePanel.qml
-    )
+    attach_ui_test_qml_resources(side_panel_tests)
     target_link_libraries(side_panel_tests
         PRIVATE
             Qt6::Core
@@ -651,11 +642,7 @@ if(BUILD_TESTING)
     add_executable(admin_dialog_e2e_tests
         tests/AdminDialogE2ETest.cpp
     )
-    qt_add_resources(admin_dialog_e2e_tests admin_dialog_e2e_qml
-        PREFIX "/qml"
-        BASE "qml"
-        FILES qml/components/AdminDialog.qml
-    )
+    attach_ui_test_qml_resources(admin_dialog_e2e_tests)
     target_link_libraries(admin_dialog_e2e_tests PRIVATE ui_core Qt6::Test)
     add_test(NAME admin_dialog_e2e_tests COMMAND admin_dialog_e2e_tests)
 
@@ -663,11 +650,7 @@ if(BUILD_TESTING)
         tests/FirstRunWizardE2ETest.cpp
     )
     target_include_directories(first_run_wizard_e2e_tests PRIVATE src)
-    qt_add_resources(first_run_wizard_e2e_tests first_run_wizard_e2e_qml
-        PREFIX "/qml/components"
-        BASE "qml/components"
-        FILES qml/components/FirstRunWizard.qml
-    )
+    attach_ui_test_qml_resources(first_run_wizard_e2e_tests)
     target_link_libraries(first_run_wizard_e2e_tests
         PRIVATE
             Qt6::Core
@@ -683,13 +666,7 @@ if(BUILD_TESTING)
         tests/StrategyWorkbenchE2ETest.cpp
     )
     target_include_directories(strategy_workbench_e2e_tests PRIVATE src)
-    qt_add_resources(strategy_workbench_e2e_tests strategy_workbench_e2e_qml
-        PREFIX "/qml/components/workbench"
-        BASE "qml/components/workbench"
-        FILES
-            qml/components/workbench/StrategyWorkbench.qml
-            qml/components/workbench/StrategyWorkbenchViewModel.qml
-    )
+    attach_ui_test_qml_resources(strategy_workbench_e2e_tests)
     target_link_libraries(strategy_workbench_e2e_tests
         PRIVATE
             ui_core

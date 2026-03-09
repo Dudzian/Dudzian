@@ -27,6 +27,10 @@
         <file>components/ResultsDashboard.qml</file>
         <file>components/UpdateManagerPanel.qml</file>
         <file>components/ConfigurationWizardGallery.qml</file>
+        <file>components/security/HwidManagementView.qml</file>
+        <file>components/security/LicenseActivationView.qml</file>
+        <file>components/security/LicenseHistoryView.qml</file>
+        <file>components/security/LocalSecurityStore.js</file>
         <file>components/UserProfileManagementPanel.qml</file>
         <file>design-system/Palette.qml</file>
         <file>design-system/Typography.qml</file>
@@ -41,11 +45,36 @@
         <file>design-system/fonts/FontAwesomeData.js</file>
         <file>components/workbench/StrategyWorkbench.qml</file>
         <file>components/workbench/StrategyWorkbenchViewModel.qml</file>
+        <file>components/workbench/panels/ActivityLogPanel.qml</file>
+        <file>components/workbench/panels/AiConfigurationPanel.qml</file>
+        <file>components/workbench/panels/AutoModePanel.qml</file>
+        <file>components/workbench/panels/AutomationRulesPanel.qml</file>
+        <file>components/workbench/panels/CapitalAllocationPanel.qml</file>
+        <file>components/workbench/panels/ComplianceOverviewPanel.qml</file>
+        <file>components/workbench/panels/ExchangeManagementPanel.qml</file>
+        <file>components/workbench/panels/ExecutionDiagnosticsPanel.qml</file>
+        <file>components/workbench/panels/InstrumentOverviewPanel.qml</file>
+        <file>components/workbench/panels/LicenseStatusPanel.qml</file>
+        <file>components/workbench/panels/MarketSentimentPanel.qml</file>
+        <file>components/workbench/panels/NewsFeedPanel.qml</file>
+        <file>components/workbench/panels/OpenPositionsPanel.qml</file>
+        <file>components/workbench/panels/PendingOrdersPanel.qml</file>
+        <file>components/workbench/panels/PerformanceComparisonPanel.qml</file>
+        <file>components/workbench/panels/ResultsAnalysisPanel.qml</file>
+        <file>components/workbench/panels/RiskTimelinePanel.qml</file>
+        <file>components/workbench/panels/RuntimeStatusPanel.qml</file>
+        <file>components/workbench/panels/ScenarioTestingPanel.qml</file>
+        <file>components/workbench/panels/SignalAlertsPanel.qml</file>
+        <file>components/workbench/panels/StrategyControlPanel.qml</file>
+        <file>components/workbench/panels/StrategyDashboardPanel.qml</file>
+        <file>components/workbench/panels/TradeHistoryPanel.qml</file>
         <file>dashboard/RuntimeOverview.qml</file>
         <file>dashboard/RunbookPanel.qml</file>
         <file>dashboard/CompliancePanel.qml</file>
         <file>dashboard/StrategyOverviewPanel.qml</file>
         <file>support/SupportCenter.qml</file>
+        <file>styles/AppTheme.qml</file>
+        <file>styles/qmldir</file>
         <file>support/TicketDialog.qml</file>
         <file>settings/DashboardSettings.qml</file>
         <file>settings/PrivacySettings.qml</file>

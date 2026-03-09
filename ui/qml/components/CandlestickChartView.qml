@@ -8,7 +8,7 @@ ChartView {
     // --- Inputs ---------------------------------------------------------------
     property var model
     property var indicatorModel: null
-    property PerformanceGuard performanceGuard
+    property var performanceGuard
     property bool reduceMotion: false
 
     // Definicje nakładek (kolejność musi odpowiadać overlaySeriesList)

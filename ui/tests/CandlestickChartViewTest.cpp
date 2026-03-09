@@ -82,11 +82,6 @@ class CandlestickChartViewTest final : public QObject {
     Q_OBJECT
 
 private slots:
-    static void initTestCase() {
-        Q_INIT_RESOURCE(candlestick_chart_view_qml);
-        qmlRegisterUncreatableType<PerformanceGuard>(
-            "BotCore", 1, 0, "PerformanceGuard", QStringLiteral("PerformanceGuard is provided by the controller"));
-    }
 
     void testOverlayVisibilityPrimaryAndSecondary();
     void testReduceMotionDisablesSecondary();
@@ -99,7 +94,10 @@ private:
             qWarning() << component.errorString();
         }
         QObject* chart = component.create();
-        Q_ASSERT(chart);
+        if (!chart) {
+            qWarning() << component.errorString();
+            return nullptr;
+        }
 
         auto* model = new DummyOhlcvModel(chart);
         chart->setProperty("model", QVariant::fromValue(static_cast<QObject*>(model)));
@@ -113,9 +111,7 @@ private:
     }
 
     [[nodiscard]] static QObject* findSeries(QObject* chart, const char* objectName) {
-        auto* series = chart->findChild<QObject*>(objectName, Qt::FindChildrenRecursively);
-        Q_ASSERT(series);
-        return series;
+        return chart->findChild<QObject*>(objectName, Qt::FindChildrenRecursively);
     }
 
     QQmlEngine m_engine;
@@ -123,9 +119,14 @@ private:
 
 void CandlestickChartViewTest::testOverlayVisibilityPrimaryAndSecondary() {
     std::unique_ptr<QObject> chart(buildChart());
+    QVERIFY2(chart != nullptr, "Failed to build CandlestickChartView component");
     auto* fast = findSeries(chart.get(), "emaFastSeries");
     auto* slow = findSeries(chart.get(), "emaSlowSeries");
     auto* vwap = findSeries(chart.get(), "vwapSeries");
+
+    QVERIFY2(fast != nullptr, "Missing emaFastSeries object");
+    QVERIFY2(slow != nullptr, "Missing emaSlowSeries object");
+    QVERIFY2(vwap != nullptr, "Missing vwapSeries object");
 
     QVERIFY(fast->property("visible").toBool());
     QVERIFY(slow->property("visible").toBool());
@@ -134,12 +135,17 @@ void CandlestickChartViewTest::testOverlayVisibilityPrimaryAndSecondary() {
 
 void CandlestickChartViewTest::testReduceMotionDisablesSecondary() {
     std::unique_ptr<QObject> chart(buildChart());
+    QVERIFY2(chart != nullptr, "Failed to build CandlestickChartView component");
     chart->setProperty("reduceMotion", true);
     QMetaObject::invokeMethod(chart.get(), "refreshOverlayVisibility", Qt::DirectConnection);
 
     auto* fast = findSeries(chart.get(), "emaFastSeries");
     auto* slow = findSeries(chart.get(), "emaSlowSeries");
     auto* vwap = findSeries(chart.get(), "vwapSeries");
+
+    QVERIFY2(fast != nullptr, "Missing emaFastSeries object");
+    QVERIFY2(slow != nullptr, "Missing emaSlowSeries object");
+    QVERIFY2(vwap != nullptr, "Missing vwapSeries object");
 
     QVERIFY(fast->property("visible").toBool());
     QVERIFY(!slow->property("visible").toBool());
@@ -148,6 +154,7 @@ void CandlestickChartViewTest::testReduceMotionDisablesSecondary() {
 
 void CandlestickChartViewTest::testSecondaryThresholdDisablesOverlays() {
     std::unique_ptr<QObject> chart(buildChart());
+    QVERIFY2(chart != nullptr, "Failed to build CandlestickChartView component");
     PerformanceGuard guard;
     guard.maxOverlayCount = 3;
     guard.fpsTarget = 60;
@@ -159,6 +166,10 @@ void CandlestickChartViewTest::testSecondaryThresholdDisablesOverlays() {
     auto* fast = findSeries(chart.get(), "emaFastSeries");
     auto* slow = findSeries(chart.get(), "emaSlowSeries");
     auto* vwap = findSeries(chart.get(), "vwapSeries");
+
+    QVERIFY2(fast != nullptr, "Missing emaFastSeries object");
+    QVERIFY2(slow != nullptr, "Missing emaSlowSeries object");
+    QVERIFY2(vwap != nullptr, "Missing vwapSeries object");
 
     QVERIFY(fast->property("visible").toBool());
     QVERIFY(!slow->property("visible").toBool());
