@@ -14,7 +14,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in minimal CI images
+    yaml = None  # type: ignore[assignment]
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
@@ -36,10 +39,28 @@ DEFAULT_MARKDOWN = REPO_ROOT / "config" / "marketplace" / "catalog.md"
 
 def _load_document(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return yaml.safe_load(text)
+    suffix = path.suffix.lower()
+
+    if suffix == ".json":
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Spec {path} zawiera niepoprawny JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"Spec {path} musi zawierać mapę (obiekt JSON/YAML) w głównym dokumencie")
+        return parsed
+
+    if suffix in {".yaml", ".yml"}:
+        if yaml is None:
+            raise RuntimeError(
+                f"Spec {path} wymaga parsera YAML, ale moduł 'yaml' (PyYAML) nie jest zainstalowany."
+            ) from None
+        parsed = yaml.safe_load(text)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"Spec {path} musi zawierać mapę (obiekt JSON/YAML) w głównym dokumencie")
+        return parsed
+
+    raise ValueError(f"Nieobsługiwany format specyfikacji: {path}")
 
 
 def _iter_specs(root: Path) -> Iterable[Path]:
