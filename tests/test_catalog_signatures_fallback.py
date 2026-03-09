@@ -35,7 +35,9 @@ def test_openssl_fallback_reports_missing_binary(monkeypatch: pytest.MonkeyPatch
     errors = module.verify_catalog_signature_file(
         REPO_ROOT / "config/marketplace/catalog.json",
         hmac_key=(REPO_ROOT / "config/marketplace/keys/dev-hmac.key").read_bytes().strip(),
-        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub").read_bytes().strip(),
+        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub")
+        .read_bytes()
+        .strip(),
     )
 
     assert any("brak narzędzia 'openssl'" in error for error in errors)
@@ -57,14 +59,18 @@ def test_openssl_fallback_uses_readable_temp_paths(monkeypatch: pytest.MonkeyPat
         assert inkey_path.read_bytes().startswith(b"-----BEGIN PUBLIC KEY-----")
         assert len(sig_path.read_bytes()) > 0
         assert len(payload_path.read_bytes()) > 0
-        return subprocess.CompletedProcess(command, 0, stdout="Signature Verified Successfully", stderr="")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Signature Verified Successfully", stderr=""
+        )
 
     monkeypatch.setattr(module.subprocess, "run", _fake_run)
 
     errors = module.verify_catalog_signature_file(
         REPO_ROOT / "config/marketplace/catalog.json",
         hmac_key=(REPO_ROOT / "config/marketplace/keys/dev-hmac.key").read_bytes().strip(),
-        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub").read_bytes().strip(),
+        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub")
+        .read_bytes()
+        .strip(),
     )
 
     assert errors == []
@@ -84,7 +90,9 @@ def test_openssl_fallback_reports_process_details(monkeypatch: pytest.MonkeyPatc
     errors = module.verify_catalog_signature_file(
         REPO_ROOT / "config/marketplace/catalog.json",
         hmac_key=(REPO_ROOT / "config/marketplace/keys/dev-hmac.key").read_bytes().strip(),
-        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub").read_bytes().strip(),
+        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub")
+        .read_bytes()
+        .strip(),
     )
 
     assert any("unsupported option" in error for error in errors)
@@ -102,7 +110,9 @@ def test_openssl_fallback_end_to_end_with_real_binary(monkeypatch: pytest.Monkey
     errors = module.verify_catalog_signature_file(
         REPO_ROOT / "config/marketplace/catalog.json",
         hmac_key=(REPO_ROOT / "config/marketplace/keys/dev-hmac.key").read_bytes().strip(),
-        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub").read_bytes().strip(),
+        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub")
+        .read_bytes()
+        .strip(),
     )
 
     assert errors == []

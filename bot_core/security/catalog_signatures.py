@@ -60,7 +60,9 @@ def _ed25519_public_key_to_pem(data: bytes) -> bytes:
         try:
             payload = base64.b64decode(payload, validate=False)
         except Exception as exc:  # noqa: BLE001 - defensywne
-            raise ValueError("Niepoprawny klucz publiczny Ed25519 dla katalogu Marketplace") from exc
+            raise ValueError(
+                "Niepoprawny klucz publiczny Ed25519 dla katalogu Marketplace"
+            ) from exc
     if len(payload) != 32:
         raise ValueError("Niepoprawny klucz publiczny Ed25519 dla katalogu Marketplace")
     der = bytes.fromhex("302a300506032b6570032100") + payload
