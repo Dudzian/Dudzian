@@ -220,6 +220,7 @@ private:
     std::thread m_streamThread;
     std::mutex m_contextMutex;
     std::shared_ptr<grpc::ClientContext> m_activeContext;
+    std::shared_ptr<std::atomic_bool> m_activeStreamCancelled;
     std::atomic<bool> m_restartRequested{false};
 
     // --- Autoryzacja ---

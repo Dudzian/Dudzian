@@ -80,7 +80,8 @@ public:
                                          GetOhlcvHistoryResponse* response) = 0;
     virtual std::unique_ptr<MarketDataStreamReader> StreamOhlcv(
         grpc::ClientContext* context,
-        const StreamOhlcvRequest& request) = 0;
+        const StreamOhlcvRequest& request,
+        std::shared_ptr<std::atomic_bool> cancelled) = 0;
     virtual grpc::Status ListTradableInstruments(
         grpc::ClientContext* context,
         const ListTradableInstrumentsRequest& request,
@@ -136,7 +137,8 @@ public:
 
     std::unique_ptr<MarketDataStreamReader> StreamOhlcv(
         grpc::ClientContext* context,
-        const StreamOhlcvRequest& request) override
+        const StreamOhlcvRequest& request,
+        std::shared_ptr<std::atomic_bool>) override
     {
         auto reader = m_stub->StreamOhlcv(context, request);
         if (!reader)
@@ -288,10 +290,10 @@ QString normalizeFingerprint(QString value) {
 
 class TradingClient::InProcessMarketDataStreamReader final : public TradingClient::MarketDataStreamReader {
 public:
-    InProcessMarketDataStreamReader(grpc::ClientContext* context,
+    InProcessMarketDataStreamReader(std::shared_ptr<std::atomic_bool> cancelled,
                                     std::shared_ptr<std::vector<OhlcvCandle>> candles,
                                     bool loop)
-        : m_context(context)
+        : m_cancelled(std::move(cancelled))
         , m_candles(std::move(candles))
         , m_loop(loop)
     {
@@ -301,7 +303,7 @@ public:
     {
         if (!update)
             return false;
-        if (m_context && m_context->IsCancelled())
+        if (m_cancelled && m_cancelled->load(std::memory_order_relaxed))
             return false;
 
         if (!m_snapshotDelivered) {
@@ -329,7 +331,7 @@ public:
         increment->mutable_candle()->CopyFrom((*m_candles)[m_index]);
         ++m_index;
         for (int i = 0; i < 15; ++i) {
-            if (m_context && m_context->IsCancelled())
+            if (m_cancelled && m_cancelled->load(std::memory_order_relaxed))
                 return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
@@ -339,7 +341,7 @@ public:
     grpc::Status Finish() override { return grpc::Status::OK; }
 
 private:
-    grpc::ClientContext* m_context = nullptr;
+    std::shared_ptr<std::atomic_bool> m_cancelled;
     std::shared_ptr<std::vector<OhlcvCandle>> m_candles;
     bool m_snapshotDelivered = false;
     bool m_loop = false;
@@ -369,10 +371,14 @@ public:
         return grpc::Status::OK;
     }
 
-    std::unique_ptr<MarketDataStreamReader> StreamOhlcv(grpc::ClientContext* context,
-                                                        const StreamOhlcvRequest&) override
+    std::unique_ptr<MarketDataStreamReader> StreamOhlcv(grpc::ClientContext*,
+                                                        const StreamOhlcvRequest&,
+                                                        std::shared_ptr<std::atomic_bool> cancelled) override
     {
-        return std::make_unique<InProcessMarketDataStreamReader>(context, m_candles, true);
+        if (!cancelled) {
+            cancelled = std::make_shared<std::atomic_bool>(false);
+        }
+        return std::make_unique<InProcessMarketDataStreamReader>(std::move(cancelled), m_candles, true);
     }
 
     grpc::Status ListTradableInstruments(grpc::ClientContext*,
@@ -822,6 +828,9 @@ void TradingClient::stop() {
     m_restartRequested.store(false);
     {
         std::lock_guard<std::mutex> lock(m_contextMutex);
+        if (m_activeStreamCancelled) {
+            m_activeStreamCancelled->store(true, std::memory_order_relaxed);
+        }
         if (m_activeContext) {
             m_activeContext->TryCancel();
         }
@@ -833,6 +842,7 @@ void TradingClient::stop() {
     {
         std::lock_guard<std::mutex> lock(m_contextMutex);
         m_activeContext.reset();
+        m_activeStreamCancelled.reset();
     }
     m_marketDataStub.reset();
     m_riskStub.reset();
@@ -1010,8 +1020,23 @@ void TradingClient::streamLoop()
                 Qt::QueuedConnection);
         }
 
-        auto reader = m_marketDataStub->StreamOhlcv(context.get(), request);
+        auto cancelled = std::make_shared<std::atomic_bool>(false);
+        {
+            std::lock_guard<std::mutex> lock(m_contextMutex);
+            m_activeStreamCancelled = cancelled;
+        }
+
+        auto reader = m_marketDataStub->StreamOhlcv(context.get(), request, cancelled);
         if (!reader) {
+            {
+                std::lock_guard<std::mutex> lock(m_contextMutex);
+                if (m_activeStreamCancelled == cancelled) {
+                    m_activeStreamCancelled.reset();
+                }
+                if (m_activeContext == context) {
+                    m_activeContext.reset();
+                }
+            }
             QMetaObject::invokeMethod(
                 this,
                 [this]() { Q_EMIT connectionStateChanged(tr("stream unavailable")); },
@@ -1144,6 +1169,7 @@ void TradingClient::streamLoop()
             std::lock_guard<std::mutex> lock(m_contextMutex);
             if (m_activeContext == context) {
                 m_activeContext.reset();
+                m_activeStreamCancelled.reset();
             }
         }
 
@@ -1620,6 +1646,9 @@ void TradingClient::triggerStreamRestart()
     }
     m_restartRequested.store(true);
     std::lock_guard<std::mutex> lock(m_contextMutex);
+    if (m_activeStreamCancelled) {
+        m_activeStreamCancelled->store(true, std::memory_order_relaxed);
+    }
     if (m_activeContext) {
         m_activeContext->TryCancel();
     }
