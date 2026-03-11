@@ -53,8 +53,8 @@ void FrameRateMonitorTest::recoversAfterHighFps() {
     QVERIFY(!events.isEmpty());
     QCOMPARE(events.last(), true);
 
-    // kilkanaście próbek szybkich klatek -> powrót
-    for (int i = 0; i < 20; ++i) {
+    // Zachowujemy bufor ponad próg 0.2 s, żeby test nie wisiał na granicy double.
+    for (int i = 0; i < 25; ++i) {
         monitor.simulateFrameIntervalForTest(0.01); // ~100 FPS
     }
 
