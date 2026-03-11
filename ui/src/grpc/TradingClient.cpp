@@ -825,6 +825,16 @@ void TradingClient::stop() {
     if (m_streamThread.joinable()) {
         m_streamThread.join();
     }
+
+    {
+        std::lock_guard<std::mutex> lock(m_contextMutex);
+        m_activeContext.reset();
+    }
+    m_marketDataStub.reset();
+    m_riskStub.reset();
+    m_marketplaceStub.reset();
+    m_channel.reset();
+
     if (wasRunning) {
         Q_EMIT streamingChanged();
         Q_EMIT connectionStateChanged(tr("stopped"));

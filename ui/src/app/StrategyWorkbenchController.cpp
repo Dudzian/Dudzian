@@ -111,7 +111,6 @@ void StrategyWorkbenchController::clearLastError()
 
 bool StrategyWorkbenchController::refreshCatalog()
 {
-    m_pendingRefresh = false;
     if (!ensureReady()) {
         setLastError(tr("Mostek katalogu strategii nie jest poprawnie skonfigurowany."));
         return false;

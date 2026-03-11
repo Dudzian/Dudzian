@@ -28,12 +28,12 @@ Item {
     Workbench.StrategyWorkbenchViewModel {
         id: viewModel
         objectName: "strategyWorkbenchViewModel"
-        appController: root.appController ? root.appController : (typeof appController !== "undefined" ? appController : null)
-        strategyController: root.strategyController ? root.strategyController : (typeof strategyController !== "undefined" ? strategyController : null)
-        workbenchController: root.workbenchController ? root.workbenchController : (typeof workbenchController !== "undefined" ? workbenchController : null)
-        riskModel: root.riskModel ? root.riskModel : (typeof riskModel !== "undefined" ? riskModel : null)
-        riskHistoryModel: root.riskHistoryModel ? root.riskHistoryModel : (typeof riskHistoryModel !== "undefined" ? riskHistoryModel : null)
-        licenseController: root.licenseController ? root.licenseController : (typeof licenseController !== "undefined" ? licenseController : null)
+        appController: root.appController
+        strategyController: root.strategyController
+        workbenchController: root.workbenchController
+        riskModel: root.riskModel
+        riskHistoryModel: root.riskHistoryModel
+        licenseController: root.licenseController
     }
 
     onMarketplaceControllerChanged: {
@@ -270,9 +270,9 @@ Item {
                 Layout.fillWidth: true
                 runtimeService: root.appController && root.appController.runtimeService
                                  ? root.appController.runtimeService()
-                                 : (typeof runtimeService !== "undefined" ? runtimeService : null)
+                                 : null
                 marketplaceController: root.marketplaceController
-                strategyController: root.strategyController ? root.strategyController : (typeof strategyController !== "undefined" ? strategyController : null)
+                strategyController: root.strategyController
                 openStrategyManagerTab: root.openStrategyManagerTab
             }
 
