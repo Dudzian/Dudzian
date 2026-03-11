@@ -818,7 +818,8 @@ def run_preset_wizard(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict[str, Any]:
-    schedulers_raw = raw.get("multi_strategy_schedulers") or {}
+    runtime_section = raw.get("runtime") if isinstance(raw.get("runtime"), MappingABC) else {}
+    schedulers_raw = runtime_section.get("multi_strategy_schedulers") or {}
     result: dict[str, Any] = {}
     if not isinstance(schedulers_raw, MappingABC):
         return result
@@ -839,6 +840,16 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
         blocked_capabilities: dict[str, str] = {}
         blocked_schedule_capabilities: dict[str, str] = {}
         strategy_capabilities: dict[str, str] = {}
+
+        if isinstance(schedules_payload, MappingABC):
+            schedule_items = []
+            for schedule_name, schedule_payload in schedules_payload.items():
+                if not isinstance(schedule_payload, MappingABC):
+                    continue
+                schedule_entry = dict(schedule_payload)
+                schedule_entry.setdefault("name", schedule_name)
+                schedule_items.append(schedule_entry)
+            schedules_payload = schedule_items
 
         if isinstance(schedules_payload, list):
             for schedule in schedules_payload:
@@ -1116,9 +1127,10 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
 
 
 def dump_config(raw: Mapping[str, Any], section: str, scheduler: str | None) -> dict[str, Any]:
-    if section == "decision":
+    normalized_section = "scheduler" if section == "schedulers" else section
+    if normalized_section == "decision":
         return {"decision": _dump_decision(raw)}
-    if section == "scheduler":
+    if normalized_section == "scheduler":
         return {"schedulers": _dump_schedulers(raw, only=scheduler)}
     return {
         "decision": _dump_decision(raw),
@@ -1184,7 +1196,10 @@ def _apply_decision(raw: dict[str, Any], payload: Mapping[str, Any]) -> None:
 def _apply_scheduler(raw: dict[str, Any], payload: Mapping[str, Any]) -> None:
     if not payload:
         return
-    schedulers = raw.setdefault("multi_strategy_schedulers", {})
+    runtime = raw.setdefault("runtime", {})
+    if not isinstance(runtime, dict):
+        raise SystemExit("Sekcja runtime musi być słownikiem")
+    schedulers = runtime.setdefault("multi_strategy_schedulers", {})
     if not isinstance(schedulers, dict):
         raise SystemExit("Sekcja multi_strategy_schedulers musi być słownikiem")
     for name, entry in payload.items():
@@ -1204,13 +1219,16 @@ def _apply_scheduler(raw: dict[str, Any], payload: Mapping[str, Any]) -> None:
         schedules_update = entry.get("schedules")
         if isinstance(schedules_update, list):
             schedules = target.get("schedules")
-            if not isinstance(schedules, list):
-                raise SystemExit(f"Scheduler {name} nie definiuje listy schedules")
-            index = {
-                str(item.get("name")): idx
-                for idx, item in enumerate(schedules)
-                if isinstance(item, Mapping)
-            }
+            if isinstance(schedules, list):
+                index = {
+                    str(item.get("name")): idx
+                    for idx, item in enumerate(schedules)
+                    if isinstance(item, Mapping)
+                }
+            elif isinstance(schedules, dict):
+                index = {str(schedule_name): schedule_name for schedule_name in schedules.keys()}
+            else:
+                raise SystemExit(f"Scheduler {name} nie definiuje wspieranego formatu schedules")
             for update in schedules_update:
                 if not isinstance(update, Mapping):
                     continue
@@ -1277,7 +1295,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--section",
-        choices=["all", "decision", "scheduler"],
+        choices=["all", "decision", "scheduler", "schedulers"],
         default="all",
         help="Ogranicza zakres dumpa",
     )

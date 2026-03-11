@@ -301,6 +301,8 @@ public:
     {
         if (!update)
             return false;
+        if (m_context && m_context->IsCancelled())
+            return false;
 
         if (!m_snapshotDelivered) {
             m_snapshotDelivered = true;
@@ -327,6 +329,8 @@ public:
         increment->mutable_candle()->CopyFrom((*m_candles)[m_index]);
         ++m_index;
         for (int i = 0; i < 15; ++i) {
+            if (m_context && m_context->IsCancelled())
+                return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         return true;
