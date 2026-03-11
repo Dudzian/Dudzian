@@ -109,11 +109,16 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
     stateFile.close();
 
     qputenv("BOT_CORE_UI_SECURITY_STATE_PATH", securityStatePath.toUtf8());
+    QVERIFY2(QFile::exists(securityStatePath), "Plik security_state.json nie istnieje przed refresh()");
 
     SecurityAdminController controller;
     controller.setLicensePath(licensePath);
     controller.setProfilesPath(profilesPath);
     controller.setLogPath(logPath);
+    QVERIFY2(controller.refresh(), qPrintable(QStringLiteral("SecurityAdminController::refresh() nie powiódł się dla %1")
+                                                  .arg(securityStatePath)));
+    QTRY_COMPARE(controller.licenseInfo().value(QStringLiteral("status")).toString(),
+                 QStringLiteral("active"));
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("securityController"), &controller);
@@ -125,9 +130,8 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
     QVERIFY(dialog);
 
     QSignalSpy profilesSpy(&controller, &SecurityAdminController::userProfilesChanged);
-    QMetaObject::invokeMethod(dialog, "open");
-    QTRY_COMPARE(controller.licenseInfo().value(QStringLiteral("status")).toString(),
-                 QStringLiteral("active"));
+    const bool opened = QMetaObject::invokeMethod(dialog, "open");
+    QVERIFY2(opened, "Nie udało się wywołać metody open() na dialogu");
     QTRY_VERIFY_WITH_TIMEOUT(!controller.isBusy(), 5000);
     const int initialSpyCount = profilesSpy.count();
 
