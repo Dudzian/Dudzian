@@ -14,7 +14,10 @@ pytest.importorskip("pydantic")
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from bot_core.security.catalog_signatures import verify_catalog_signature, verify_catalog_signature_file
+from bot_core.security.catalog_signatures import (
+    verify_catalog_signature,
+    verify_catalog_signature_file,
+)
 from scripts.build_marketplace_catalog import _write_signature, _write_utf8_lf
 
 
@@ -91,7 +94,10 @@ def test_verify_catalog_signature_file_for_json_and_markdown(tmp_path: Path) -> 
         format=serialization.PublicFormat.Raw,
     )
 
-    for name, body in (("catalog.json", '{"schema_version":"1.1"}\n'), ("catalog.md", "# Catalog\n")):
+    for name, body in (
+        ("catalog.json", '{"schema_version":"1.1"}\n'),
+        ("catalog.md", "# Catalog\n"),
+    ):
         target = tmp_path / name
         content = _write_utf8_lf(target, body)
         _write_signature(
@@ -104,4 +110,6 @@ def test_verify_catalog_signature_file_for_json_and_markdown(tmp_path: Path) -> 
             issuer="tests",
         )
 
-        assert verify_catalog_signature_file(target, hmac_key=hmac_key, ed25519_key=public_key) == []
+        assert (
+            verify_catalog_signature_file(target, hmac_key=hmac_key, ed25519_key=public_key) == []
+        )
