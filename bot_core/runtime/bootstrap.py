@@ -1945,9 +1945,7 @@ def _normalize_required_live_document_names(
         if isinstance(readiness_config, Mapping)
         else getattr(readiness_config, "required_documents", None)
     )
-    return tuple(
-        LiveReadinessChecklistConfig.normalize_required_documents(raw_required_documents)
-    )
+    return tuple(LiveReadinessChecklistConfig.normalize_required_documents(raw_required_documents))
 
 
 def _should_include_live_document(
