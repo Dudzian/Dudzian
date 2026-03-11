@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import sys
 import hashlib
 from contextlib import contextmanager
-from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1937,6 +1937,33 @@ def _normalize_documents_map(
     return dict(sorted((name, payload) for _, name, payload in merged.values()))
 
 
+def _normalize_required_live_document_names(
+    readiness_config: LiveReadinessChecklistConfig | Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    raw_required_documents = (
+        readiness_config.get("required_documents")
+        if isinstance(readiness_config, Mapping)
+        else getattr(readiness_config, "required_documents", None)
+    )
+    return tuple(
+        LiveReadinessChecklistConfig.normalize_required_documents(raw_required_documents)
+    )
+
+
+def _should_include_live_document(
+    *,
+    document_name: str,
+    required_flag: Any,
+    required_names: Collection[str] | None,
+) -> bool:
+    normalized_name = str(document_name).strip()
+    if not normalized_name:
+        return False
+    if required_names:
+        return normalized_name.lower() in required_names
+    return True if required_flag in (None, "") else bool(required_flag)
+
+
 def _validate_live_signatures(
     environment: EnvironmentConfig,
     *,
@@ -1981,14 +2008,7 @@ def _validate_live_signatures(
             "Sekcja live_readiness nie zawiera żadnych dokumentów do weryfikacji."
         )
 
-    raw_required_documents = (
-        readiness.get("required_documents")
-        if isinstance(readiness, Mapping)
-        else getattr(readiness, "required_documents", None)
-    )
-    required_names_ordered = list(
-        LiveReadinessChecklistConfig.normalize_required_documents(raw_required_documents)
-    )
+    required_names_ordered = list(_normalize_required_live_document_names(readiness))
     required_name_lookup = {name.lower(): name for name in required_names_ordered}
 
     documents_by_name: dict[str, LiveChecklistDocumentConfig] = {}
@@ -2031,7 +2051,13 @@ def _validate_live_signatures(
         )
     else:
         documents_for_verification = tuple(
-            document for document in documents_all if getattr(document, "required", True)
+            document
+            for document in documents_all
+            if _should_include_live_document(
+                document_name=getattr(document, "name", ""),
+                required_flag=getattr(document, "required", None),
+                required_names=None,
+            )
         )
 
     categories_status = {"compliance": False, "risk": False, "penetration": False}
@@ -2095,6 +2121,31 @@ def _validate_live_signatures(
         "categories": categories_status,
         "document_root": str(resolved_root) if resolved_root is not None else None,
     }
+
+
+def _filter_live_verification_documents(
+    readiness_config: LiveReadinessChecklistConfig | Mapping[str, Any] | None,
+    readiness_documents: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    required_names = {
+        name.lower() for name in _normalize_required_live_document_names(readiness_config)
+    }
+
+    filtered_documents: list[dict[str, Any]] = []
+    for entry in readiness_documents:
+        if not isinstance(entry, Mapping):
+            continue
+        name = str(entry.get("name", "")).strip()
+        if not _should_include_live_document(
+            document_name=name,
+            required_flag=entry.get("required"),
+            required_names=required_names,
+        ):
+            continue
+
+        filtered_documents.append(dict(entry))
+
+    return tuple(filtered_documents)
 
 
 def extract_live_readiness_metadata(
@@ -3720,25 +3771,29 @@ def bootstrap_environment(
                     if live_readiness_checklist is not None
                     else {}
                 )
+                readiness_config = getattr(environment, "live_readiness", None)
                 readiness_documents = None
                 if isinstance(readiness_metadata, Mapping):
                     readiness_documents = readiness_metadata.get("documents")
                 if not isinstance(readiness_documents, Sequence) or isinstance(
                     readiness_documents, (str, bytes)
                 ):
-                    readiness_config = getattr(environment, "live_readiness", None)
                     if readiness_config is not None:
                         readiness_documents = getattr(readiness_config, "documents", None)
                 if isinstance(readiness_documents, Sequence) and not isinstance(
                     readiness_documents, (str, bytes)
                 ):
-                    for entry in readiness_documents:
-                        if not isinstance(entry, Mapping):
-                            continue
-                        name = entry.get("name")
+                    filtered_documents = _filter_live_verification_documents(
+                        readiness_config=readiness_config,
+                        readiness_documents=tuple(
+                            entry for entry in readiness_documents if isinstance(entry, Mapping)
+                        ),
+                    )
+                    for entry in filtered_documents:
+                        name = str(entry.get("name", "")).strip()
                         if not name:
                             continue
-                        doc_payload: dict[str, Any] = {"name": str(name)}
+                        doc_payload: dict[str, Any] = {"name": name}
                         for key in (
                             "required",
                             "status",
@@ -3757,7 +3812,7 @@ def bootstrap_environment(
                         if entry.get("signed_by"):
                             doc_payload["signed_by"] = tuple(entry.get("signed_by", ()))
                         verification_documents.append(doc_payload)
-                        verification_documents_by_name[str(name)] = doc_payload
+                        verification_documents_by_name[name] = doc_payload
                 normalized_documents_by_name = _normalize_documents_map(
                     verification_documents_by_name
                 )
