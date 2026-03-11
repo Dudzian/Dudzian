@@ -68,7 +68,7 @@ jobs:
             --only-binary :all:
 
       - name: Upload wheelhouse artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -114,7 +114,7 @@ jobs:
             pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-report
           path: coverage.xml
@@ -202,7 +202,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: lint-and-test-pytest-results
           path: test-results
@@ -233,7 +233,7 @@ jobs:
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -263,7 +263,7 @@ jobs:
 
       - name: Upload HWID tolerance artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: licensing-hwid-tolerance
           path: |
@@ -290,7 +290,7 @@ jobs:
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -318,7 +318,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -383,7 +383,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -432,7 +432,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: bot-core-pytest-results
           path: test-results/pytest.xml
@@ -449,7 +449,7 @@ jobs:
 
       - name: Upload champion diff audit report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: champion-quality-diff
           path: audit/champion_diffs_ci
@@ -470,7 +470,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -518,7 +518,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: py-tests-ubuntu-pytest-results
           path: test-results/pytest.xml
@@ -546,7 +546,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -586,7 +586,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: py-tests-macos-pytest-results
           path: test-results/pytest.xml
@@ -627,7 +627,7 @@ jobs:
 
       - name: Upload loopback artifacts
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: loopback-e2e-logs
           path: loopback-logs
@@ -660,7 +660,7 @@ jobs:
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -721,7 +721,7 @@ jobs:
         run: ls -l reports/exchanges/signal_quality
 
       - name: Upload exchange report snapshot
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: exchange-report
           path: |
@@ -757,7 +757,7 @@ jobs:
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -773,7 +773,7 @@ jobs:
             "shiboken6==${PYSIDE6_VERSION}"
 
       - name: Download exchange report artefact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: exchange-report
           path: artifacts/exchange-report
@@ -841,7 +841,7 @@ jobs:
 
       - name: Upload parity audit report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: marketing-parity-report
           path: |
@@ -910,7 +910,7 @@ jobs:
 
       - name: Upload UI native test artifacts
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ui-native-test-artifacts
           path: |
@@ -965,7 +965,7 @@ jobs:
           sleep 3
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1004,7 +1004,7 @@ jobs:
 
       - name: Upload QML diagnostics
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: qml-test-diagnostics
           path: test-results/qml
@@ -1045,7 +1045,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1076,7 +1076,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: grpc-feed-pytest-results
           path: test-results/grpc
@@ -1085,7 +1085,7 @@ jobs:
 
       - name: Upload decision feed metrics
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: decision-feed-metrics
           path: reports/ci/decision_feed_metrics.json
@@ -1094,7 +1094,7 @@ jobs:
 
       - name: Upload feed alert diagnostics
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: decision-feed-alerts
           path: |
@@ -1130,7 +1130,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1161,7 +1161,7 @@ jobs:
 
       - name: Upload soak pytest results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: grpc-feed-soak-pytest-results
           path: test-results/grpc-soak
@@ -1170,7 +1170,7 @@ jobs:
 
       - name: Upload soak decision feed metrics
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: decision-feed-soak-metrics
           path: reports/ci/decision_feed_metrics.json
@@ -1212,7 +1212,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1248,7 +1248,7 @@ jobs:
 
       - name: Upload backtest performance reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: performance-backtests
           path: reports/ci/performance_backtests
@@ -1257,7 +1257,7 @@ jobs:
 
       - name: Upload strategy benchmark reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: performance-backtest-benchmarks
           path: reports/ci/benchmark_backtests
@@ -1273,7 +1273,7 @@ jobs:
 
       - name: Upload UI render performance reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: performance-ui-render
           path: reports/ci/performance_ui_render
@@ -1282,7 +1282,7 @@ jobs:
 
       - name: Upload performance history artifact
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: performance-benchmark-history
           path: |
@@ -1328,7 +1328,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: marketplace-catalog-pytest-results
           path: test-results/marketplace/pytest.xml
@@ -1430,7 +1430,7 @@ jobs:
 
       - name: Publish marketplace packages artifact
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.marketplace-artifact-metadata.outputs.packages_artifact_name }}
           path: ${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}
@@ -1450,7 +1450,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1500,7 +1500,7 @@ jobs:
             --artifact-dir artifacts/ui/linux
 
       - name: Upload UI bundle
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ui-bundle-linux
           path: artifacts/ui/linux
@@ -1545,7 +1545,7 @@ jobs:
           python -m pip install .[tools]
 
       - name: Download marketplace packages artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: ${{ env.MARKETPLACE_PACKAGES_ARTIFACT }}
           path: ${{ env.MARKETPLACE_PACKAGES_DIR }}
@@ -1563,7 +1563,7 @@ jobs:
           echo "Marketplace packages archive located: ${archive}"
 
       - name: Download UI bundle artifact (linux)
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: ${{ env.UI_BUNDLE_ARTIFACT }}
           path: ${{ env.UI_BUNDLE_DIR }}
@@ -1597,7 +1597,7 @@ jobs:
             --installer-root deploy/packaging/samples
 
       - name: Publish catalog release artefacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: marketplace-catalog-release
           path: |
