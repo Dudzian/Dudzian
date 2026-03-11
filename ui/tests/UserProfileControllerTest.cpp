@@ -108,7 +108,7 @@ void UserProfileControllerTest::applyThemeUpdatesPaletteAndPersists()
 
     QSignalSpy themeSpy(&controller, &UserProfileController::themePaletteChanged);
     QVERIFY(controller.applyTheme(QString(), QStringLiteral("aurora")));
-    QVERIFY(themeSpy.wait(100));
+    QVERIFY(themeSpy.count() > 0 || themeSpy.wait(100));
 
     palette = controller.activeThemePalette();
     QCOMPARE(palette.value(QStringLiteral("accent")).toString(), QStringLiteral("#8C7BFF"));

@@ -43,7 +43,7 @@ void TradingClientTransportTest::testGrpcStartWithoutEndpoint()
 
     QSignalSpy stateSpy(&client, &TradingClient::connectionStateChanged);
     client.start();
-    QVERIFY(stateSpy.wait(500));
+    QVERIFY(stateSpy.count() > 0 || stateSpy.wait(500));
     QVERIFY(!stateSpy.isEmpty());
     const auto lastState = stateSpy.takeLast().at(0).toString();
     QCOMPARE(lastState, QStringLiteral("unavailable"));

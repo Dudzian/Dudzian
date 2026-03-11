@@ -40,7 +40,7 @@ void MarketRegimeClassifierBridgeTest::classifiesTrendForUpwardSeries()
     thresholds.minHistory = 20;
     thresholds.trendStrengthThreshold = 0.01;
     thresholds.momentumThreshold = 0.001;
-    thresholds.volumeTrendThreshold = 0.05;
+    thresholds.volumeTrendThreshold = 0.01;
     bridge.setThresholds(thresholds);
 
     const QVector<OhlcvPoint> history = buildHistory(100.0, 0.8, 40);

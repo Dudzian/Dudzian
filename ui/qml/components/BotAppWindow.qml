@@ -273,12 +273,12 @@ ApplicationWindow {
                     StrategyWorkbench {
                         id: strategyWorkbench
                         anchors.fill: parent
-                        appController: appController
-                        strategyController: strategyController
-                        workbenchController: workbenchController
-                        riskModel: riskModel
-                        riskHistoryModel: riskHistoryModel
-                        licenseController: licenseController
+                        appControllerRef: appController
+                        strategyControllerRef: strategyController
+                        workbenchControllerRef: workbenchController
+                        riskModelRef: riskModel
+                        riskHistoryModelRef: riskHistoryModel
+                        licenseControllerRef: licenseController
                         marketplaceController: marketplaceController
                         openStrategyManagerTab: window.openStrategyManagerTab
                     }

@@ -8,19 +8,26 @@ Item {
     id: root
     property alias viewModel: viewModel
 
-    // Allow overriding context objects, otherwise fall back to global context properties
-    property var appController: null
-    property var strategyController: null
-    property var workbenchController: null
-    property var riskModel: null
-    property var riskHistoryModel: null
-    property var licenseController: null
+    // Optional overrides for embedding in parent views.
+    // When not provided, component falls back to root context properties.
+    property var appControllerRef: null
+    property var strategyControllerRef: null
+    property var workbenchControllerRef: null
+    property var riskModelRef: null
+    property var riskHistoryModelRef: null
+    property var licenseControllerRef: null
     property var marketplaceController: null
     property var openStrategyManagerTab: null
     property var marketplacePresets: []
     property string quickMarketplacePortfolioId: ""
 
     implicitWidth: 960
+    readonly property var resolvedAppController: root.appControllerRef !== null ? root.appControllerRef : (typeof appController !== "undefined" ? appController : null)
+    readonly property var resolvedStrategyController: root.strategyControllerRef !== null ? root.strategyControllerRef : (typeof strategyController !== "undefined" ? strategyController : null)
+    readonly property var resolvedWorkbenchController: root.workbenchControllerRef !== null ? root.workbenchControllerRef : (typeof workbenchController !== "undefined" ? workbenchController : null)
+    readonly property var resolvedRiskModel: root.riskModelRef !== null ? root.riskModelRef : (typeof riskModel !== "undefined" ? riskModel : null)
+    readonly property var resolvedRiskHistoryModel: root.riskHistoryModelRef !== null ? root.riskHistoryModelRef : (typeof riskHistoryModel !== "undefined" ? riskHistoryModel : null)
+    readonly property var resolvedLicenseController: root.licenseControllerRef !== null ? root.licenseControllerRef : (typeof licenseController !== "undefined" ? licenseController : null)
     readonly property var safeLicenseStatus: viewModel && viewModel.licenseStatus ? viewModel.licenseStatus : ({})
 
     implicitHeight: 540
@@ -28,12 +35,12 @@ Item {
     Workbench.StrategyWorkbenchViewModel {
         id: viewModel
         objectName: "strategyWorkbenchViewModel"
-        appController: root.appController
-        strategyController: root.strategyController
-        workbenchController: root.workbenchController
-        riskModel: root.riskModel
-        riskHistoryModel: root.riskHistoryModel
-        licenseController: root.licenseController
+        appController: root.resolvedAppController
+        strategyController: root.resolvedStrategyController
+        workbenchController: root.resolvedWorkbenchController
+        riskModel: root.resolvedRiskModel
+        riskHistoryModel: root.resolvedRiskHistoryModel
+        licenseController: root.resolvedLicenseController
     }
 
     onMarketplaceControllerChanged: {
@@ -268,11 +275,11 @@ Item {
 
             Panels.AutoModePanel {
                 Layout.fillWidth: true
-                runtimeService: root.appController && root.appController.runtimeService
-                                 ? root.appController.runtimeService()
+                runtimeService: root.resolvedAppController && root.resolvedAppController.runtimeService
+                                 ? root.resolvedAppController.runtimeService()
                                  : null
                 marketplaceController: root.marketplaceController
-                strategyController: root.strategyController
+                strategyController: root.resolvedStrategyController
                 openStrategyManagerTab: root.openStrategyManagerTab
             }
 
