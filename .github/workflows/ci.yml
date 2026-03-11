@@ -20,7 +20,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
-  PYSIDE6_VERSION: "6.7.0"
+  PYSIDE6_VERSION: "6.10.2"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   QT_DESKTOP_MODULES: "qtcharts"
   QT_WINDOWS_MODULES: "qtcharts qtshadertools qtimageformats"
@@ -38,13 +38,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -68,7 +68,7 @@ jobs:
             --only-binary :all:
 
       - name: Upload wheelhouse artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -82,14 +82,14 @@ jobs:
     needs: prepare-wheelhouse
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
         id: setup-python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -114,7 +114,7 @@ jobs:
             pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: coverage.xml
@@ -202,7 +202,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: lint-and-test-pytest-results
           path: test-results
@@ -221,19 +221,19 @@ jobs:
       LICENSING_HWID_JUNIT: reports/ci/licensing_hwid/pytest.xml
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -263,7 +263,7 @@ jobs:
 
       - name: Upload HWID tolerance artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: licensing-hwid-tolerance
           path: |
@@ -278,19 +278,19 @@ jobs:
     needs: prepare-wheelhouse
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -312,13 +312,13 @@ jobs:
     needs: prepare-wheelhouse
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -338,7 +338,7 @@ jobs:
             libxcb-xinerama0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -377,13 +377,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -392,7 +392,7 @@ jobs:
         run: python scripts/lint_paths.py
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -432,7 +432,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bot-core-pytest-results
           path: test-results/pytest.xml
@@ -449,7 +449,7 @@ jobs:
 
       - name: Upload champion diff audit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: champion-quality-diff
           path: audit/champion_diffs_ci
@@ -464,13 +464,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -479,7 +479,7 @@ jobs:
         run: python scripts/lint_paths.py
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -518,7 +518,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: py-tests-ubuntu-pytest-results
           path: test-results/pytest.xml
@@ -532,7 +532,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -541,12 +541,12 @@ jobs:
         run: python scripts/lint_paths.py
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -586,7 +586,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: py-tests-macos-pytest-results
           path: test-results/pytest.xml
@@ -599,7 +599,7 @@ jobs:
     needs: py-tests-windows
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -627,7 +627,7 @@ jobs:
 
       - name: Upload loopback artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: loopback-e2e-logs
           path: loopback-logs
@@ -645,7 +645,7 @@ jobs:
     needs: [prepare-wheelhouse, lint-and-test]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -654,13 +654,13 @@ jobs:
         run: python scripts/lint_paths.py
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -721,7 +721,7 @@ jobs:
         run: ls -l reports/exchanges/signal_quality
 
       - name: Upload exchange report snapshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: exchange-report
           path: |
@@ -745,19 +745,19 @@ jobs:
       MIRROR_REQUIRED: ${{ vars.MARKETING_PARITY_REQUIRE_MIRROR || 'true' }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -773,7 +773,7 @@ jobs:
             "shiboken6==${PYSIDE6_VERSION}"
 
       - name: Download exchange report artefact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: exchange-report
           path: artifacts/exchange-report
@@ -841,7 +841,7 @@ jobs:
 
       - name: Upload parity audit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: marketing-parity-report
           path: |
@@ -859,7 +859,7 @@ jobs:
       CTEST_OUTPUT_ON_FAILURE: 1
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -876,7 +876,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 6.7.0
+          version: ${{ env.PYSIDE6_VERSION }}
           modules: qtcharts
 
       - name: Install Python runtime dependencies for UI bridges
@@ -910,7 +910,7 @@ jobs:
 
       - name: Upload UI native test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ui-native-test-artifacts
           path: |
@@ -940,13 +940,13 @@ jobs:
       DUDZIAN_QML_FLUSH_DELETES: "0"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -965,7 +965,7 @@ jobs:
           sleep 3
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1004,7 +1004,7 @@ jobs:
 
       - name: Upload QML diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: qml-test-diagnostics
           path: test-results/qml
@@ -1028,13 +1028,13 @@ jobs:
       QT_QUICK_BACKEND: software
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -1045,7 +1045,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1076,7 +1076,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: grpc-feed-pytest-results
           path: test-results/grpc
@@ -1085,7 +1085,7 @@ jobs:
 
       - name: Upload decision feed metrics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: decision-feed-metrics
           path: reports/ci/decision_feed_metrics.json
@@ -1094,7 +1094,7 @@ jobs:
 
       - name: Upload feed alert diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: decision-feed-alerts
           path: |
@@ -1113,13 +1113,13 @@ jobs:
       QT_QUICK_BACKEND: software
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -1130,7 +1130,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1161,7 +1161,7 @@ jobs:
 
       - name: Upload soak pytest results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: grpc-feed-soak-pytest-results
           path: test-results/grpc-soak
@@ -1170,7 +1170,7 @@ jobs:
 
       - name: Upload soak decision feed metrics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: decision-feed-soak-metrics
           path: reports/ci/decision_feed_metrics.json
@@ -1189,7 +1189,7 @@ jobs:
       QT_QPA_PLATFORM: offscreen
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -1201,7 +1201,7 @@ jobs:
           key: performance-history-${{ github.ref_name }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -1212,7 +1212,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1248,7 +1248,7 @@ jobs:
 
       - name: Upload backtest performance reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: performance-backtests
           path: reports/ci/performance_backtests
@@ -1257,7 +1257,7 @@ jobs:
 
       - name: Upload strategy benchmark reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: performance-backtest-benchmarks
           path: reports/ci/benchmark_backtests
@@ -1273,7 +1273,7 @@ jobs:
 
       - name: Upload UI render performance reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: performance-ui-render
           path: reports/ci/performance_ui_render
@@ -1282,7 +1282,7 @@ jobs:
 
       - name: Upload performance history artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: performance-benchmark-history
           path: |
@@ -1297,13 +1297,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -1328,7 +1328,7 @@ jobs:
 
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: marketplace-catalog-pytest-results
           path: test-results/marketplace/pytest.xml
@@ -1344,13 +1344,13 @@ jobs:
       packages_archive: ${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -1430,7 +1430,7 @@ jobs:
 
       - name: Publish marketplace packages artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.marketplace-artifact-metadata.outputs.packages_artifact_name }}
           path: ${{ steps.marketplace-artifact-metadata.outputs.packages_archive }}
@@ -1444,26 +1444,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 6.7.0
+          version: ${{ env.PYSIDE6_VERSION }}
           modules: qtcharts
 
       - name: Install PySide6 runtime
@@ -1500,7 +1500,7 @@ jobs:
             --artifact-dir artifacts/ui/linux
 
       - name: Upload UI bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ui-bundle-linux
           path: artifacts/ui/linux
@@ -1528,13 +1528,13 @@ jobs:
       UI_BUNDLE_DIR: artifacts/ui/linux
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -1545,7 +1545,7 @@ jobs:
           python -m pip install .[tools]
 
       - name: Download marketplace packages artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ${{ env.MARKETPLACE_PACKAGES_ARTIFACT }}
           path: ${{ env.MARKETPLACE_PACKAGES_DIR }}
@@ -1563,7 +1563,7 @@ jobs:
           echo "Marketplace packages archive located: ${archive}"
 
       - name: Download UI bundle artifact (linux)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ${{ env.UI_BUNDLE_ARTIFACT }}
           path: ${{ env.UI_BUNDLE_DIR }}
@@ -1597,7 +1597,7 @@ jobs:
             --installer-root deploy/packaging/samples
 
       - name: Publish catalog release artefacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: marketplace-catalog-release
           path: |

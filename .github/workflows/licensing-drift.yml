@@ -18,10 +18,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -51,7 +51,7 @@ jobs:
 
       - name: Upload licensing drift artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: licensing-drift-reports
           path: reports/ci/licensing_drift/
@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload licensing drift test log
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: licensing-drift-pytest-log
           path: reports/ci/licensing_drift/pytest.log
@@ -101,22 +101,22 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download licensing drift artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: licensing-drift-reports
           path: reports/ci/licensing_drift
 
       - name: Download licensing drift test log
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: licensing-drift-pytest-log
           path: reports/ci/licensing_drift
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -172,7 +172,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload consolidated licensing drift summary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: licensing-drift-summary
           path: |

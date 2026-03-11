@@ -51,7 +51,7 @@ env:
   WHEELHOUSE_SOURCE: "build"
   WHEELHOUSE_DIR: "wheelhouse"
 
-  PYSIDE6_VERSION: "6.7.0"
+  PYSIDE6_VERSION: "6.10.2"
 
   # Secrets presence flags (safe: only checks existence)
   HAS_MARKETPLACE_KEYS: ${{ secrets.MARKETPLACE_HMAC_KEY != '' }}
@@ -70,8 +70,8 @@ jobs:
       github.event_name != 'workflow_dispatch' ||
       inputs.run_fast
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -99,8 +99,8 @@ jobs:
       github.event_name != 'workflow_dispatch' ||
       inputs.run_fast
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -128,8 +128,8 @@ jobs:
       github.event_name != 'workflow_dispatch' ||
       inputs.run_fast
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -160,8 +160,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_lint
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -184,8 +184,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_curated
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install
@@ -209,8 +209,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_curated
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install
@@ -234,8 +234,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_curated
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install
@@ -263,8 +263,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_integration
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install
@@ -283,7 +283,7 @@ jobs:
     needs: smoke-tests-linux
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run loopback tests via Docker Compose
         shell: bash
         run: |
@@ -310,8 +310,8 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install
@@ -335,8 +335,8 @@ jobs:
       github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install
@@ -365,8 +365,8 @@ jobs:
       PYTEST_REQUIRE_QML: "1"
       DUDZIAN_QML_FLUSH_DELETES: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install system deps
@@ -402,8 +402,8 @@ jobs:
       QT_OPENGL: software
       DUDZIAN_QML_FLUSH_DELETES: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install deps
@@ -431,8 +431,8 @@ jobs:
       QT_OPENGL: software
       DUDZIAN_QML_FLUSH_DELETES: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install deps
@@ -461,8 +461,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_packaging
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -505,8 +505,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_packaging
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -528,8 +528,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_packaging
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
