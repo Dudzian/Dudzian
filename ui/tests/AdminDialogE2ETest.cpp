@@ -119,9 +119,9 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
     QVERIFY(dialog);
 
     QSignalSpy profilesSpy(&controller, &SecurityAdminController::userProfilesChanged);
-    QSignalSpy busySpy(&controller, &SecurityAdminController::busyChanged);
-
     QMetaObject::invokeMethod(dialog, "open");
+    QTRY_COMPARE(controller.licenseInfo().value(QStringLiteral("status")).toString(),
+                 QStringLiteral("active"));
     QTRY_VERIFY_WITH_TIMEOUT(!controller.isBusy(), 5000);
     const int initialSpyCount = profilesSpy.count();
 
@@ -211,7 +211,6 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
     QCOMPARE(updatedArray.size(), 1);
     QCOMPARE(updatedArray.first().toObject().value(QStringLiteral("user_id")).toString(), QStringLiteral("carol"));
 
-    Q_UNUSED(busySpy);
 }
 
 QTEST_MAIN(AdminDialogE2ETest)
