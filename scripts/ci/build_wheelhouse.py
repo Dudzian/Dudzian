@@ -108,6 +108,16 @@ def main(argv: list[str]) -> int:
     project_target = ".[test]" if not args.skip_dev else "."
     download(wheelhouse, build_download_cmd(wheelhouse, args, [project_target], args.python))
 
+    # Tooling extras used by CI jobs (including marketing parity checks).
+    download(wheelhouse, build_download_cmd(wheelhouse, args, [".[tools]"], args.python))
+
+    # Dev extras are required by lint/type-check jobs running in wheelhouse-only mode.
+    if not args.skip_dev:
+        download(wheelhouse, build_download_cmd(wheelhouse, args, [".[dev]"], args.python))
+
+    # Installed explicitly by lint-and-test in CI.
+    download(wheelhouse, build_download_cmd(wheelhouse, args, ["pre-commit"], args.python))
+
     if args.requirements:
         download(
             wheelhouse,
