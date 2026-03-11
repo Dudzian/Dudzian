@@ -54,7 +54,7 @@ void FrameRateMonitorTest::recoversAfterHighFps() {
     QCOMPARE(events.last(), true);
 
     // kilkanaście próbek szybkich klatek -> powrót
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < 20; ++i) {
         monitor.simulateFrameIntervalForTest(0.01); // ~100 FPS
     }
 

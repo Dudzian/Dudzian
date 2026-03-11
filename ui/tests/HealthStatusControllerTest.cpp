@@ -70,8 +70,8 @@ void HealthStatusControllerTest::refreshHandlesFailure()
     controller.setAutoRefreshEnabled(false);
     controller.refresh();
 
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.healthy(), 1000);
-    QVERIFY(controller.statusMessage().contains(QStringLiteral("błąd")));
+    QTRY_VERIFY_WITH_TIMEOUT(controller.statusMessage().contains(QStringLiteral("błąd")), 1000);
+    QVERIFY(!controller.healthy());
     QVERIFY(!controller.lastCheckedAt().isEmpty());
 }
 

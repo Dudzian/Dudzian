@@ -164,7 +164,7 @@ void LicenseActivationControllerTest::activatesWithValidLicense()
 
     QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
     QVERIFY(controller.loadLicenseFile(licenseFile));
-    QVERIFY(primingSpy.wait());
+    QVERIFY(primingSpy.count() > 0 || primingSpy.wait());
     QCOMPARE(primingSpy.takeFirst().at(0).toBool(), true);
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), expectedFingerprint);
@@ -235,7 +235,7 @@ void LicenseActivationControllerTest::acceptsBase64Payload()
 
     QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
     QVERIFY(controller.applyLicenseText(QString::fromUtf8(encoded)));
-    QVERIFY(primingSpy.wait());
+    QVERIFY(primingSpy.count() > 0 || primingSpy.wait());
     QCOMPARE(primingSpy.takeFirst().at(0).toBool(), true);
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), fingerprint);
@@ -272,7 +272,7 @@ void LicenseActivationControllerTest::cancelsBindingSecretPriming()
     QVERIFY(job != nullptr);
 
     controller.cancelBindingSecretPriming();
-    QVERIFY(primingSpy.wait());
+    QVERIFY(primingSpy.count() > 0 || primingSpy.wait());
     const QList<QVariant> arguments = primingSpy.takeFirst();
     QCOMPARE(arguments.at(0).toBool(), false);
     QVERIFY(controller.statusIsError());
@@ -312,7 +312,7 @@ void LicenseActivationControllerTest::propagatesBindingSecretFailureStatus()
 
     job->emitSuccess(QByteArrayLiteral("{\"status\":\"error\",\"error\":\"denied\"}"));
 
-    QVERIFY(primingSpy.wait());
+    QVERIFY(primingSpy.count() > 0 || primingSpy.wait());
     const QList<QVariant> arguments = primingSpy.takeFirst();
     QCOMPARE(arguments.at(0).toBool(), false);
     QVERIFY(controller.statusIsError());
@@ -348,7 +348,7 @@ void LicenseActivationControllerTest::autoProvisionImportsMatchingLicense()
     QVariantMap fingerprintDoc{{QStringLiteral("fingerprint"), fingerprint}};
     QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
     QVERIFY(controller.autoProvision(fingerprintDoc));
-    QVERIFY(primingSpy.wait());
+    QVERIFY(primingSpy.count() > 0 || primingSpy.wait());
     QCOMPARE(primingSpy.takeFirst().at(0).toBool(), true);
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), fingerprint);
@@ -383,7 +383,7 @@ void LicenseActivationControllerTest::autoProvisionRunsDuringInitialize()
     QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
     controller.initialize();
 
-    QVERIFY(primingSpy.wait());
+    QVERIFY(primingSpy.count() > 0 || primingSpy.wait());
     QCOMPARE(primingSpy.takeFirst().at(0).toBool(), true);
 
     QVERIFY(controller.licenseActive());
