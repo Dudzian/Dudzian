@@ -1729,46 +1729,52 @@ class AutoTrader:
         LOGGER.log(level, message)
 
     def _run_auto_trade_thread(self) -> None:
-        while not self._auto_trade_stop.is_set() and not self._stop.is_set():
-            self._auto_trade_thread_active = True
-            try:
-                self._auto_trade_loop()
-            except Exception as exc:  # pragma: no cover - keep thread resilient
-                self._restart_attempts += 1
-                delay = min(self._auto_restart_backoff_s, self._auto_restart_backoff_max_s)
-                LOGGER.exception("Auto-trade loop crashed; restarting in %.2fs", delay)
-                self._record_decision_audit_stage(
-                    "auto_trade_crash",
-                    symbol=_SCHEDULE_SYMBOL,
-                    payload={"attempt": self._restart_attempts, "delay": delay, "error": str(exc)},
-                )
-                self._auto_restart_backoff_s = min(
-                    self._auto_restart_backoff_s * 2.0, self._auto_restart_backoff_max_s
-                )
-                self._auto_trade_thread_active = False
-                if self._auto_trade_stop.wait(delay) or self._stop.is_set():
+        try:
+            while not self._auto_trade_stop.is_set() and not self._stop.is_set():
+                try:
+                    self._auto_trade_loop()
+                except Exception as exc:  # pragma: no cover - keep thread resilient
+                    self._restart_attempts += 1
+                    delay = min(self._auto_restart_backoff_s, self._auto_restart_backoff_max_s)
+                    LOGGER.exception("Auto-trade loop crashed; restarting in %.2fs", delay)
+                    self._record_decision_audit_stage(
+                        "auto_trade_crash",
+                        symbol=_SCHEDULE_SYMBOL,
+                        payload={"attempt": self._restart_attempts, "delay": delay, "error": str(exc)},
+                    )
+                    self._auto_restart_backoff_s = min(
+                        self._auto_restart_backoff_s * 2.0, self._auto_restart_backoff_max_s
+                    )
+                    if self._auto_trade_stop.wait(delay) or self._stop.is_set():
+                        break
+                    continue
+                else:
+                    self._restart_attempts = 0
+                    self._auto_restart_backoff_s = 1.0
+                if self._auto_trade_stop.wait(self.auto_trade_interval_s):
                     break
-                continue
-            else:
-                self._restart_attempts = 0
-                self._auto_restart_backoff_s = 1.0
-            finally:
-                self._auto_trade_thread_active = False
-            if self._auto_trade_stop.wait(self.auto_trade_interval_s):
-                break
-        self._auto_trade_thread_active = False
-        self._auto_trade_stop.set()
+        finally:
+            self._auto_trade_thread_active = False
+            self._auto_trade_stop.set()
 
     def _start_auto_trade_thread_locked(self) -> None:
         if self._auto_trade_thread is not None and self._auto_trade_thread.is_alive():
             return
         self._auto_trade_stop.clear()
-        self._auto_trade_thread = threading.Thread(
+        self._auto_trade_thread_active = True
+        thread = threading.Thread(
             target=self._run_auto_trade_thread,
             name="AutoTraderThread",
             daemon=True,
         )
-        self._auto_trade_thread.start()
+        self._auto_trade_thread = thread
+        try:
+            thread.start()
+        except Exception:
+            self._auto_trade_thread_active = False
+            self._auto_trade_thread = None
+            self._auto_trade_stop.set()
+            raise
 
     def _cancel_auto_trade_thread_locked(self) -> None:
         self._auto_trade_stop.set()

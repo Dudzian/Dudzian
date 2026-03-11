@@ -1,4 +1,7 @@
+import threading
 import time
+
+import pytest
 
 from bot_core.auto_trader import AutoTrader
 
@@ -59,11 +62,76 @@ def test_auto_trader_requires_manual_confirmation() -> None:
     assert any("Auto-trade awaiting explicit activation" in message for message in emitter.logs)
 
     trader.confirm_auto_trade(True)
-    time.sleep(0.02)
     assert trader._auto_trade_thread_active is True
 
     trader.confirm_auto_trade(False)
-    time.sleep(0.01)
     assert trader._auto_trade_user_confirmed is False
+
+    trader.stop()
+
+
+def test_auto_trader_thread_active_stays_true_across_iterations() -> None:
+    emitter = _DummyEmitter()
+    gui = _DummyGui()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=True,
+        walkforward_interval_s=None,
+        auto_trade_interval_s=0.01,
+        market_data_provider=None,
+    )
+
+    runs = 0
+
+    def _loop() -> None:
+        nonlocal runs
+        runs += 1
+        trader._auto_trade_stop.wait(0.005)  # type: ignore[attr-defined]
+
+    trader._auto_trade_loop = _loop  # type: ignore[attr-defined]
+
+    trader.start()
+    trader.confirm_auto_trade(True)
+
+    deadline = time.time() + 0.2
+    while runs < 2 and time.time() < deadline:
+        time.sleep(0.005)
+
+    assert runs >= 2
+    assert trader._auto_trade_thread_active is True
+
+    trader.stop()
+
+
+def test_auto_trader_start_thread_failure_restores_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = _DummyEmitter()
+    gui = _DummyGui()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=True,
+        walkforward_interval_s=None,
+        auto_trade_interval_s=0.01,
+        market_data_provider=None,
+    )
+
+    trader.start()
+
+    def _raise_start(_self: object) -> None:
+        raise RuntimeError("thread-start-failed")
+
+    monkeypatch.setattr(threading.Thread, "start", _raise_start)
+
+    with pytest.raises(RuntimeError, match="thread-start-failed"):
+        trader.confirm_auto_trade(True)
+
+    assert trader._auto_trade_thread_active is False
+    assert trader._auto_trade_thread is None
+    assert trader._auto_trade_stop.is_set() is True
 
     trader.stop()
