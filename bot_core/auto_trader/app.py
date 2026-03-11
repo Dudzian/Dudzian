@@ -1740,7 +1740,11 @@ class AutoTrader:
                     self._record_decision_audit_stage(
                         "auto_trade_crash",
                         symbol=_SCHEDULE_SYMBOL,
-                        payload={"attempt": self._restart_attempts, "delay": delay, "error": str(exc)},
+                        payload={
+                            "attempt": self._restart_attempts,
+                            "delay": delay,
+                            "error": str(exc),
+                        },
                     )
                     self._auto_restart_backoff_s = min(
                         self._auto_restart_backoff_s * 2.0, self._auto_restart_backoff_max_s
