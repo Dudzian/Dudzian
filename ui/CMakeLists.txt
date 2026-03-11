@@ -491,6 +491,13 @@ if(BUILD_TESTING)
     add_executable(translation_loader_tests
         tests/TranslationLoaderTest.cpp
     )
+    foreach(qm_file IN LISTS UI_TRANSLATION_QM)
+        get_filename_component(qm_name "${qm_file}" NAME)
+        set_source_files_properties("${qm_file}"
+            PROPERTIES
+                QT_RESOURCE_ALIAS "${qm_name}"
+        )
+    endforeach()
     qt_add_resources(translation_loader_tests translations_test
         PREFIX "/i18n"
         FILES ${UI_TRANSLATION_QM}
