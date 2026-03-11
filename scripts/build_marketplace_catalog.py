@@ -242,10 +242,17 @@ def _build_markdown(catalog: MarketplaceCatalog) -> str:
     return "\n".join(lines)
 
 
+def _write_utf8_lf(path: Path, text: str) -> bytes:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    data = normalized.encode("utf-8")
+    path.write_bytes(data)
+    return data
+
+
 def _write_signature(
     path: Path,
     *,
-    content: str,
+    content_bytes: bytes,
     hmac_key_id: str | None,
     signing_keys: Mapping[str, bytes],
     ed25519_key: ed25519.Ed25519PrivateKey | None,
@@ -254,7 +261,7 @@ def _write_signature(
 ) -> None:
     if not hmac_key_id and not (ed25519_key and ed25519_key_id):
         return
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(content_bytes).hexdigest()
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     try:
         target = path.resolve().relative_to(REPO_ROOT).as_posix()
@@ -266,7 +273,7 @@ def _write_signature(
         key_bytes = signing_keys.get(hmac_key_id)
         if not key_bytes:
             raise ValueError(f"Brak klucza HMAC '{hmac_key_id}' wymaganego do podpisu katalogu")
-        hmac_value = hmac.new(key_bytes, content.encode("utf-8"), hashlib.sha256).digest()
+        hmac_value = hmac.new(key_bytes, content_bytes, hashlib.sha256).digest()
         payload["hmac"] = {
             "algorithm": "HMAC-SHA256",
             "key_id": hmac_key_id,
@@ -275,7 +282,7 @@ def _write_signature(
         }
 
     if ed25519_key and ed25519_key_id:
-        signature = ed25519_key.sign(content.encode("utf-8"))
+        signature = ed25519_key.sign(content_bytes)
         payload["ed25519"] = {
             "algorithm": "ed25519",
             "key_id": ed25519_key_id,
@@ -291,7 +298,7 @@ def _write_signature(
         }
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    path.with_suffix(path.suffix + ".sig").write_text(serialized, encoding="utf-8")
+    path.with_suffix(path.suffix + ".sig").write_bytes(serialized.encode("utf-8"))
 
 
 def build_catalog(
@@ -411,10 +418,10 @@ def build_catalog(
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
     catalog_dump = catalog.model_dump(mode="json", by_alias=False)
     catalog_json = json.dumps(catalog_dump, ensure_ascii=True, indent=2)
-    catalog_path.write_text(catalog_json, encoding="utf-8")
+    catalog_bytes = _write_utf8_lf(catalog_path, catalog_json)
     _write_signature(
         catalog_path,
-        content=catalog_json,
+        content_bytes=catalog_bytes,
         hmac_key_id=catalog_signature_key,
         signing_keys=signing_keys,
         ed25519_key=catalog_ed25519_key,
@@ -424,10 +431,10 @@ def build_catalog(
 
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
     markdown_body = _build_markdown(catalog)
-    markdown_path.write_text(markdown_body, encoding="utf-8")
+    markdown_bytes = _write_utf8_lf(markdown_path, markdown_body)
     _write_signature(
         markdown_path,
-        content=markdown_body,
+        content_bytes=markdown_bytes,
         hmac_key_id=catalog_signature_key,
         signing_keys=signing_keys,
         ed25519_key=catalog_ed25519_key,

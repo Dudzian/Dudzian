@@ -38,6 +38,7 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
    - Zbuduje znormalizowany `config/marketplace/catalog.json` (schemat `1.1`) oraz `config/marketplace/catalog.md` wraz z plikami `.sig` dzięki opcji `--catalog-signature-key`.
    - Zweryfikuje, że katalog zawiera ≥15 strategii z kompletnymi metadanymi person (`user_preferences`).
 3. Po uruchomieniu sprawdź `git status` – brak zmian oznacza, że artefakty są aktualne.
+4. Po zmianach w `.gitattributes` (szczególnie na Windows/CI) wykonaj jednorazowo `git add --renormalize .`, aby working tree został przeliczony według nowych reguł EOL i nie utrzymywał starych CRLF.
 
 ## 4. Bundlowanie release'u
 
