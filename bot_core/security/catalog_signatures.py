@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 try:  # pragma: no cover - fallback dla minimalnych środowisk CI bez cryptography
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.exceptions import InvalidSignature  # type: ignore[import-not-found]
+    from cryptography.hazmat.primitives import serialization  # type: ignore[import-not-found]
+    from cryptography.hazmat.primitives.asymmetric import ed25519  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover
     InvalidSignature = Exception  # type: ignore[assignment]
     serialization = None  # type: ignore[assignment]
@@ -151,8 +151,10 @@ def _verify_ed25519_with_openssl(
                 last_details = details
 
                 details_lc = details.lower()
-                if "-rawin" in command and "-rawin" in details_lc and any(
-                    marker in details_lc for marker in RETRY_MARKERS
+                if (
+                    "-rawin" in command
+                    and "-rawin" in details_lc
+                    and any(marker in details_lc for marker in RETRY_MARKERS)
                 ):
                     continue
 

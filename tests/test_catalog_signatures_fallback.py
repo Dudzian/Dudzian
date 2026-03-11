@@ -135,14 +135,18 @@ def test_openssl_fallback_retries_without_rawin(monkeypatch: pytest.MonkeyPatch)
                 stdout="",
                 stderr="pkeyutl: unsupported option: -rawin",
             )
-        return subprocess.CompletedProcess(command, 0, stdout="Signature Verified Successfully", stderr="")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Signature Verified Successfully", stderr=""
+        )
 
     monkeypatch.setattr(module, "_run_openssl_verify", _fake_verify)
 
     errors = module.verify_catalog_signature_file(
         REPO_ROOT / "config/marketplace/catalog.json",
         hmac_key=(REPO_ROOT / "config/marketplace/keys/dev-hmac.key").read_bytes().strip(),
-        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub").read_bytes().strip(),
+        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub")
+        .read_bytes()
+        .strip(),
     )
 
     assert errors == []
@@ -170,14 +174,18 @@ def test_openssl_fallback_retries_for_unrecognized_flag_message(
                 stdout="",
                 stderr="pkeyutl: unrecognized flag -rawin",
             )
-        return subprocess.CompletedProcess(command, 0, stdout="Signature Verified Successfully", stderr="")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Signature Verified Successfully", stderr=""
+        )
 
     monkeypatch.setattr(module, "_run_openssl_verify", _fake_verify)
 
     errors = module.verify_catalog_signature_file(
         REPO_ROOT / "config/marketplace/catalog.json",
         hmac_key=(REPO_ROOT / "config/marketplace/keys/dev-hmac.key").read_bytes().strip(),
-        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub").read_bytes().strip(),
+        ed25519_key=(REPO_ROOT / "config/marketplace/keys/dev-presets-ed25519.pub")
+        .read_bytes()
+        .strip(),
     )
 
     assert errors == []
