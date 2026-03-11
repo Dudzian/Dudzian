@@ -115,6 +115,10 @@ def test_openssl_fallback_end_to_end_with_real_binary(monkeypatch: pytest.Monkey
         .strip(),
     )
 
+    unsupported_marker = "operation not supported for this keytype"
+    if any(unsupported_marker in err.lower() for err in errors):
+        pytest.skip("openssl in PATH does not support Ed25519 verification via pkeyutl")
+
     assert errors == []
 
 
