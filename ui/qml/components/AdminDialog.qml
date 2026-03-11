@@ -13,17 +13,6 @@ Dialog {
     height: 420
     property string selectedProfileId: ""
 
-    function licenseStatusText() {
-        if (!securityController)
-            return qsTr("brak")
-        const info = securityController.licenseInfo || ({})
-        const explicitStatus = info.status
-        if (explicitStatus && String(explicitStatus).length > 0)
-            return explicitStatus
-        const fingerprint = info.fingerprint
-        return fingerprint && String(fingerprint).length > 0 ? qsTr("active") : qsTr("brak")
-    }
-
     onOpened: {
         if (securityController)
             securityController.refresh()
@@ -65,7 +54,16 @@ Dialog {
                 Label { text: qsTr("Status:") }
                 Label {
                     objectName: "licenseStatusValue"
-                    text: adminDialog.licenseStatusText()
+                    text: {
+                        if (!securityController)
+                            return qsTr("brak")
+                        const info = securityController.licenseInfo || ({})
+                        const explicitStatus = info.status
+                        if (explicitStatus && String(explicitStatus).length > 0)
+                            return explicitStatus
+                        const fingerprint = info.fingerprint
+                        return fingerprint && String(fingerprint).length > 0 ? qsTr("active") : qsTr("brak")
+                    }
                 }
 
                 Label { text: qsTr("Fingerprint:") }
