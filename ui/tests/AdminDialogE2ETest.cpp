@@ -20,6 +20,7 @@ class AdminDialogE2ETest final : public QObject {
 
 private slots:
     void initTestCase();
+    void cleanup();
     void testAssignAndRemoveProfileFlow();
 
 private:
@@ -56,6 +57,11 @@ QString AdminDialogE2ETest::locateRepoRoot() const
     return QString();
 }
 
+void AdminDialogE2ETest::cleanup()
+{
+    qunsetenv("BOT_CORE_UI_SECURITY_STATE_PATH");
+}
+
 void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
 {
     QTemporaryDir tempDir;
@@ -63,6 +69,7 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
 
     const QString licensePath = tempDir.filePath(QStringLiteral("license.json"));
     const QString profilesPath = tempDir.filePath(QStringLiteral("profiles.json"));
+    const QString securityStatePath = tempDir.filePath(QStringLiteral("security_state.json"));
     const QString logPath = tempDir.filePath(QStringLiteral("security_admin.log"));
 
     QJsonObject licenseObject{{QStringLiteral("fingerprint"), QStringLiteral("OEM-XYZ-123")}};
@@ -81,6 +88,21 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
     QVERIFY(profilesFile.open(QIODevice::WriteOnly | QIODevice::Text));
     profilesFile.write(QJsonDocument(profilesArray).toJson(QJsonDocument::Compact));
     profilesFile.close();
+
+    QJsonObject stateObject;
+    stateObject.insert(QStringLiteral("profiles"), profilesArray);
+    stateObject.insert(
+        QStringLiteral("license"),
+        QJsonObject{{QStringLiteral("status"), QStringLiteral("active")},
+                    {QStringLiteral("fingerprint"), QStringLiteral("OEM-XYZ-123")}});
+    stateObject.insert(QStringLiteral("audit"), QJsonObject{{QStringLiteral("entries"), QJsonArray()}});
+
+    QFile stateFile(securityStatePath);
+    QVERIFY(stateFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    stateFile.write(QJsonDocument(stateObject).toJson(QJsonDocument::Compact));
+    stateFile.close();
+
+    qputenv("BOT_CORE_UI_SECURITY_STATE_PATH", securityStatePath.toUtf8());
 
     SecurityAdminController controller;
     controller.setLicensePath(licensePath);
@@ -194,4 +216,3 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
 
 QTEST_MAIN(AdminDialogE2ETest)
 #include "AdminDialogE2ETest.moc"
-
