@@ -20,6 +20,7 @@ class AdminDialogE2ETest final : public QObject {
 
 private slots:
     void initTestCase();
+    void init();
     void cleanup();
     void testAssignAndRemoveProfileFlow();
 
@@ -58,6 +59,11 @@ QString AdminDialogE2ETest::locateRepoRoot() const
 }
 
 void AdminDialogE2ETest::cleanup()
+{
+    qunsetenv("BOT_CORE_UI_SECURITY_STATE_PATH");
+}
+
+void AdminDialogE2ETest::init()
 {
     qunsetenv("BOT_CORE_UI_SECURITY_STATE_PATH");
 }
