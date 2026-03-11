@@ -817,9 +817,49 @@ def run_preset_wizard(payload: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _get_schedulers_section(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    runtime = raw.get("runtime")
+    if isinstance(runtime, MappingABC):
+        nested = runtime.get("multi_strategy_schedulers")
+        if isinstance(nested, MappingABC):
+            return nested
+
+    top_level = raw.get("multi_strategy_schedulers")
+    if isinstance(top_level, MappingABC):
+        return top_level
+
+    return {}
+
+
+def _ensure_schedulers_section(raw: dict[str, Any]) -> dict[str, Any]:
+    if "runtime" in raw:
+        runtime = raw["runtime"]
+        if not isinstance(runtime, dict):
+            raise SystemExit("Sekcja runtime musi być słownikiem")
+        if "multi_strategy_schedulers" in runtime:
+            nested = runtime["multi_strategy_schedulers"]
+            if not isinstance(nested, dict):
+                raise SystemExit("Sekcja multi_strategy_schedulers musi być słownikiem")
+            return nested
+
+    if "multi_strategy_schedulers" in raw:
+        top_level = raw["multi_strategy_schedulers"]
+        if not isinstance(top_level, dict):
+            raise SystemExit("Sekcja multi_strategy_schedulers musi być słownikiem")
+        return top_level
+
+    runtime = raw.setdefault("runtime", {})
+    if not isinstance(runtime, dict):
+        raise SystemExit("Sekcja runtime musi być słownikiem")
+
+    nested = runtime.setdefault("multi_strategy_schedulers", {})
+    if not isinstance(nested, dict):
+        raise SystemExit("Sekcja multi_strategy_schedulers musi być słownikiem")
+    return nested
+
+
 def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict[str, Any]:
-    runtime_section = raw.get("runtime") if isinstance(raw.get("runtime"), MappingABC) else {}
-    schedulers_raw = runtime_section.get("multi_strategy_schedulers") or {}
+    schedulers_raw = _get_schedulers_section(raw)
     result: dict[str, Any] = {}
     if not isinstance(schedulers_raw, MappingABC):
         return result
@@ -1196,12 +1236,7 @@ def _apply_decision(raw: dict[str, Any], payload: Mapping[str, Any]) -> None:
 def _apply_scheduler(raw: dict[str, Any], payload: Mapping[str, Any]) -> None:
     if not payload:
         return
-    runtime = raw.setdefault("runtime", {})
-    if not isinstance(runtime, dict):
-        raise SystemExit("Sekcja runtime musi być słownikiem")
-    schedulers = runtime.setdefault("multi_strategy_schedulers", {})
-    if not isinstance(schedulers, dict):
-        raise SystemExit("Sekcja multi_strategy_schedulers musi być słownikiem")
+    schedulers = _ensure_schedulers_section(raw)
     for name, entry in payload.items():
         if name not in schedulers:
             raise SystemExit(f"Scheduler {name} nie istnieje w core.yaml")
