@@ -563,6 +563,7 @@ bool UserProfileController::applyTheme(const QString& profileId, const QString& 
 
     if (normalizedProfile == m_activeProfileId) {
         applyActiveProfileTheme();
+        Q_EMIT themePaletteChanged();
         Q_EMIT activeProfileChanged();
     }
 

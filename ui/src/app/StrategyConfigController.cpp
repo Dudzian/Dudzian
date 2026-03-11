@@ -552,8 +552,7 @@ bool StrategyConfigController::parseDump(const QByteArray& payload)
     m_riskPolicies.clear();
     m_riskPolicyList.clear();
 
-    if (root.contains(QStringLiteral("schedulers")) && root.value(QStringLiteral("schedulers")).isObject()) {
-        const QJsonObject schedulersObject = root.value(QStringLiteral("schedulers")).toObject();
+    auto parseSchedulersObject = [this](const QJsonObject& schedulersObject) {
         QVariantList list;
         for (auto it = schedulersObject.begin(); it != schedulersObject.end(); ++it) {
             if (!it->isObject())
@@ -561,10 +560,41 @@ bool StrategyConfigController::parseDump(const QByteArray& payload)
             QVariantMap map = jsonObjectToVariantMap(it->toObject());
             if (!map.contains(QStringLiteral("name")))
                 map.insert(QStringLiteral("name"), it.key());
+            const QString schedulerName = map.value(QStringLiteral("name")).toString().trimmed();
+            if (schedulerName.isEmpty())
+                continue;
+            map.insert(QStringLiteral("name"), schedulerName);
             list.append(map);
-            m_schedulerConfigs.insert(map.value(QStringLiteral("name")).toString(), map);
+            m_schedulerConfigs.insert(schedulerName, map);
         }
         m_schedulerList = list;
+    };
+
+    auto parseSchedulersArray = [this](const QJsonArray& schedulersArray) {
+        QVariantList list;
+        for (const QJsonValue& entry : schedulersArray) {
+            if (!entry.isObject())
+                continue;
+            QVariantMap map = jsonObjectToVariantMap(entry.toObject());
+            const QString schedulerName = map.value(QStringLiteral("name")).toString().trimmed();
+            if (schedulerName.isEmpty())
+                continue;
+            map.insert(QStringLiteral("name"), schedulerName);
+            list.append(map);
+            m_schedulerConfigs.insert(schedulerName, map);
+        }
+        m_schedulerList = list;
+    };
+
+    if (root.contains(QStringLiteral("schedulers"))) {
+        const QJsonValue schedulersValue = root.value(QStringLiteral("schedulers"));
+        if (schedulersValue.isObject())
+            parseSchedulersObject(schedulersValue.toObject());
+        else if (schedulersValue.isArray())
+            parseSchedulersArray(schedulersValue.toArray());
+    } else if (root.contains(QStringLiteral("multi_strategy_schedulers"))
+               && root.value(QStringLiteral("multi_strategy_schedulers")).isObject()) {
+        parseSchedulersObject(root.value(QStringLiteral("multi_strategy_schedulers")).toObject());
     }
 
     if (root.contains(QStringLiteral("riskPolicies"))) {
