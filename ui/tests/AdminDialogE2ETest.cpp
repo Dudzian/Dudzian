@@ -158,12 +158,14 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
     QVERIFY(rolesField);
     QVERIFY(saveButton);
     QVERIFY(removeButton);
-
     userIdField->setProperty("text", QStringLiteral("carol"));
     displayNameField->setProperty("text", QStringLiteral("Carol"));
     rolesField->setProperty("text", QStringLiteral("metrics.write, metrics.read"));
 
-    QMetaObject::invokeMethod(saveButton, "click");
+    QTRY_VERIFY_WITH_TIMEOUT(saveButton->property("enabled").toBool(), 5000);
+
+    const bool saveTriggered = QMetaObject::invokeMethod(saveButton, "clicked");
+    QVERIFY2(saveTriggered, "Nie udało się wywołać clicked() na saveProfileButton");
 
     QTRY_VERIFY_WITH_TIMEOUT(profilesSpy.count() > initialSpyCount, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(!controller.isBusy(), 5000);
@@ -200,8 +202,9 @@ void AdminDialogE2ETest::testAssignAndRemoveProfileFlow()
     const int afterAssignCount = profilesSpy.count();
 
     dialog->setProperty("selectedProfileId", QStringLiteral("ops"));
-    QVERIFY(removeButton->property("enabled").toBool());
-    QMetaObject::invokeMethod(removeButton, "click");
+    QTRY_VERIFY_WITH_TIMEOUT(removeButton->property("enabled").toBool(), 5000);
+    const bool removeTriggered = QMetaObject::invokeMethod(removeButton, "clicked");
+    QVERIFY2(removeTriggered, "Nie udało się wywołać clicked() na removeProfileButton");
 
     QTRY_VERIFY_WITH_TIMEOUT(profilesSpy.count() > afterAssignCount, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(!controller.isBusy(), 5000);
