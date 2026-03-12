@@ -768,7 +768,7 @@ jobs:
           path: artifacts/exchange-report
 
       - name: Download latest Stress Lab artefact
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v11
         with:
           github_token: ${{ github.token }}
           repo: ${{ github.repository }}
