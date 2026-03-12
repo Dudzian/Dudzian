@@ -108,12 +108,11 @@ class EventBus:
             self._thread.start()
             self._register_instance()
 
-    def stop(self) -> None:
+    def stop(self, *, timeout: float | None = None) -> None:
         with self._lock:
             self._closed = True
             async_mode = self._async_mode
             thread = self._thread
-            closed = self._closed
             if not async_mode:
                 self._async_mode = False
                 self._thread = None
@@ -124,9 +123,17 @@ class EventBus:
             self._queue.put_nowait(None)
         except Exception:  # pragma: no cover - defensywnie
             self._queue.put(None)
+        timeout_budget = None if timeout is None else max(0.0, float(timeout))
+        deadline = None if timeout_budget is None else time.monotonic() + timeout_budget
+
+        def _remaining(default: float) -> float:
+            if deadline is None:
+                return default
+            return max(0.0, deadline - time.monotonic())
+
         if thread:
             try:
-                thread.join(timeout=1.0)
+                thread.join(timeout=_remaining(1.0))
             except Exception:  # pragma: no cover - defensywny cleanup
                 pass
             if thread.is_alive():
@@ -135,14 +142,14 @@ class EventBus:
                 except Exception:  # pragma: no cover - defensywnie
                     self._queue.put(None)
                 try:
-                    thread.join(timeout=0.5)
+                    thread.join(timeout=_remaining(0.5))
                 except Exception:  # pragma: no cover - defensywny cleanup
                     pass
                 if thread.is_alive():
-                    logging.getLogger("event-bus").debug(
-                        "Wątek EventBusa nadal aktywny po stop (closed=%s): %s",
-                        closed,
-                        thread.name,
+                    budget_text = "unbounded" if timeout_budget is None else f"{timeout_budget:.1f}s"
+                    raise TimeoutError(
+                        "EventBus.close_all_active timeout: "
+                        f"worker thread still alive after shutdown budget {budget_text}"
                     )
         with self._lock:
             self._async_mode = False
@@ -189,21 +196,27 @@ class EventBus:
     def post(self, event_type: Union[str, Any], payload: Optional[dict] = None) -> None:
         self.publish(event_type, payload)
 
-    def close(self) -> None:
+    def close(self, *, timeout: float | None = None) -> None:
+        timeout_error: TimeoutError | None = None
         try:
-            self.stop()
+            self.stop(timeout=timeout)
+        except TimeoutError as exc:
+            timeout_error = exc
         except Exception:  # pragma: no cover - defensywnie w teardownie
             logging.getLogger("event-bus").debug("Nie udało się zatrzymać EventBusa", exc_info=True)
-        with self._lock:
-            for subs in self._subs.values():
-                for s in subs:
-                    with s.lock:
-                        if s.timer is not None:
-                            try:
-                                s.timer.cancel()
-                            except Exception:  # pragma: no cover - best effort
-                                pass
-                            s.timer = None
+        finally:
+            with self._lock:
+                for subs in self._subs.values():
+                    for s in subs:
+                        with s.lock:
+                            if s.timer is not None:
+                                try:
+                                    s.timer.cancel()
+                                except Exception:  # pragma: no cover - best effort
+                                    pass
+                                s.timer = None
+        if timeout_error is not None:
+            raise timeout_error
 
     def _key(self, event_type: Union[str, Any]) -> str:
         if isinstance(event_type, str):
@@ -285,12 +298,14 @@ class EventBus:
                 pass
 
     @classmethod
-    def close_all_active(cls) -> None:
+    def close_all_active(cls, *, timeout: float | None = None) -> None:
         with cls._active_lock:
             active = list(cls._active_instances)
         for bus in active:
             try:
-                bus.close()
+                bus.close(timeout=timeout)
+            except TimeoutError:
+                raise
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 logging.getLogger("event-bus").debug(
                     "Nie udało się zamknąć EventBusa", exc_info=True
@@ -404,9 +419,9 @@ class EventEmitter:
             log_method = getattr(self._logger, lvl.lower(), self._logger.info)
             log_method("[%s] %s", comp, message)
 
-    def close(self) -> None:
+    def close(self, *, timeout: float | None = None) -> None:
         try:
-            self.bus.close()
+            self.bus.close(timeout=timeout)
         finally:
             with self._lock:
                 self._tag_map.clear()
@@ -432,12 +447,14 @@ class EventEmitter:
                 pass
 
     @classmethod
-    def close_all_active(cls) -> None:
+    def close_all_active(cls, *, timeout: float | None = None) -> None:
         with cls._active_lock:
             active = list(cls._active_instances)
         for emitter in active:
             try:
-                emitter.close()
+                emitter.close(timeout=timeout)
+            except TimeoutError:
+                raise
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 logging.getLogger("event-emitter").debug(
                     "Nie udało się zamknąć EventEmitter", exc_info=True

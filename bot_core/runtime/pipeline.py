@@ -1581,10 +1581,15 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._thread.start()
         self._register_instance()
 
-    def stop(self) -> None:
+    def stop(self, *, timeout: float = 5.0) -> None:
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5.0)
+            self._thread.join(timeout=max(0.0, float(timeout)))
+            if self._thread.is_alive():
+                raise TimeoutError(
+                    "StreamingStrategyFeed.close_all_active timeout: "
+                    f"worker thread still alive after {timeout:.1f}s"
+                )
         self._thread = None
         task = self._async_task
         if task and not task.done():
@@ -1777,12 +1782,14 @@ class StreamingStrategyFeed(StrategyDataFeed):
                 pass
 
     @classmethod
-    def close_all_active(cls) -> None:
+    def close_all_active(cls, *, timeout: float = 5.0) -> None:
         with cls._active_lock:
             active = list(cls._active_instances)
         for pipeline in active:
             try:
-                pipeline.stop()
+                pipeline.stop(timeout=timeout)
+            except TimeoutError:
+                raise
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug("Nie udało się zamknąć StreamingStrategyFeed", exc_info=True)
 

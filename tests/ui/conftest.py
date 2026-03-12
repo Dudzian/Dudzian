@@ -283,6 +283,8 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         yield
         return
     yield
+    sys.stderr.write(f"[qml-teardown] start {request.node.nodeid}\n")
+    sys.stderr.flush()
     try:
         try:
             from bot_core.events.emitter import EventBus, EventEmitter
@@ -293,11 +295,29 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         except Exception:
             return
 
-        EventBus.close_all_active()
-        EventEmitter.close_all_active()
-        Pipeline.close_all_active()
-        LocalLongPollStream.close_all_active()
-        LiveExecutionRouter.close_all_active()
+        failures: list[str] = []
+
+        def _run_cleanup_step(name: str, callback) -> None:
+            try:
+                callback()
+            except TimeoutError as exc:
+                failures.append(f"{name}: timeout -> {exc}")
+            except Exception as exc:
+                failures.append(f"{name}: error -> {exc!r}")
+
+        _run_cleanup_step("EventBus.close_all_active", lambda: EventBus.close_all_active(timeout=3.0))
+        _run_cleanup_step(
+            "EventEmitter.close_all_active", lambda: EventEmitter.close_all_active(timeout=3.0)
+        )
+        _run_cleanup_step("Pipeline.close_all_active", lambda: Pipeline.close_all_active(timeout=3.0))
+        _run_cleanup_step(
+            "LocalLongPollStream.close_all_active",
+            lambda: LocalLongPollStream.close_all_active(blocking=True, timeout=3.0),
+        )
+        _run_cleanup_step(
+            "LiveExecutionRouter.close_all_active",
+            lambda: LiveExecutionRouter.close_all_active(timeout=3.0),
+        )
         prefixes = (
             "LocalLongPollStream[",
             "LiveExecutionRouterLoop",
@@ -318,7 +338,10 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
             time.sleep(0.05)
 
         # Po domknięciu komponentów jeszcze raz domknij DB (w razie late teardown).
-        DatabaseManager.close_all_active(blocking=True, timeout=2.5)
+        _run_cleanup_step(
+            "DatabaseManager.close_all_active",
+            lambda: DatabaseManager.close_all_active(blocking=True, timeout=2.5),
+        )
         if DatabaseManager.active_instances():
             logger.debug(
                 "DatabaseManager.close_all_active left instances: %s",
@@ -347,10 +370,16 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
                 for thread in active
             ]
             logger.error("Live threads still active after QML cleanup: %s", details)
-        assert not active, f"Pozostały aktywne wątki live: {[t.name for t in active]}"
-        assert not DatabaseManager.active_instances(), "Pozostały aktywne instancje DatabaseManager"
+            failures.append(f"live threads still active: {[t.name for t in active]}")
+        if DatabaseManager.active_instances():
+            failures.append("Pozostały aktywne instancje DatabaseManager")
+        if failures:
+            joined = " | ".join(failures)
+            raise AssertionError(f"QML teardown cleanup failures for {request.node.nodeid}: {joined}")
     finally:
         _flush_qt_deferred_deletes_best_effort()
+        sys.stderr.write(f"[qml-teardown] done {request.node.nodeid}\n")
+        sys.stderr.flush()
 
 
 @pytest.fixture(autouse=True)
