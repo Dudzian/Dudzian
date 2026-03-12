@@ -95,6 +95,7 @@ jobs:
       VERBOSE_INPUT: ${{ inputs.verbose }}
       VERBOSE_VAR: ${{ vars.DESKTOP_PACKAGING_VERBOSE }}
       STAGE6_HYPERCARE_HMAC_KEY: ${{ secrets.STAGE6_HYPERCARE_HMAC_KEY }}
+      STAGE6_HYPERCARE_DIR: var/stage6-hypercare
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -118,89 +119,48 @@ jobs:
           pip install '.[desktop]'
         shell: pwsh
 
-      - name: Pobierz artefakty Stage6 hypercare
-        id: stage6_artifacts
+      - name: Pobierz artefakty Stage6 hypercare (bieżąca gałąź)
+        id: stage6_artifacts_branch
+        continue-on-error: ${{ github.ref_name != github.event.repository.default_branch }}
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          github_token: ${{ github.token }}
+          repo: ${{ github.repository }}
+          branch: ${{ github.ref_name }}
+          name: ^stage6-hypercare-.*$
+          name_is_regexp: true
+          search_artifacts: true
+          if_no_artifact_found: fail
+          path: ${{ env.STAGE6_HYPERCARE_DIR }}
+
+      - name: Wyczyść katalog Stage6 hypercare przed fallbackiem
+        if: steps.stage6_artifacts_branch.outcome == 'failure' && github.ref_name != github.event.repository.default_branch
         shell: python
-        env:
-          ARTIFACT_TARGET: var/stage6-hypercare
         run: |
-          import io
-          import json
           import os
-          import sys
-          import urllib.request
-          import zipfile
+          import shutil
           from pathlib import Path
 
-          token = os.environ.get("GITHUB_TOKEN")
-          if not token:
-              raise SystemExit("Brak GITHUB_TOKEN – nie można pobrać artefaktów Stage6 hypercare")
+          shutil.rmtree(Path(os.environ["STAGE6_HYPERCARE_DIR"]), ignore_errors=True)
 
-          repo = os.environ.get("GITHUB_REPOSITORY")
-          if not repo:
-              raise SystemExit("Brak identyfikatora repozytorium do pobrania artefaktów Stage6")
-
-          api_url = f"https://api.github.com/repos/{repo}/actions/artifacts?per_page=100"
-          request = urllib.request.Request(
-              api_url,
-              headers={
-                  "Authorization": f"Bearer {token}",
-                  "Accept": "application/vnd.github+json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-
-          with urllib.request.urlopen(request) as response:
-              payload = json.load(response)
-
-          artifacts = payload.get("artifacts", [])
-          candidates = [
-              item
-              for item in artifacts
-              if item.get("name", "").startswith("stage6-hypercare")
-              and not item.get("expired", False)
-          ]
-          if not candidates:
-              raise SystemExit("Nie znaleziono aktywnych artefaktów Stage6 hypercare w Actions API")
-
-          candidates.sort(key=lambda item: item.get("created_at", ""))
-          latest = candidates[-1]
-          download_url = latest.get("archive_download_url")
-          if not download_url:
-              raise SystemExit("Brak URL pobierania dla artefaktu Stage6 hypercare")
-
-          download_request = urllib.request.Request(
-              download_url,
-              headers={
-                  "Authorization": f"Bearer {token}",
-                  "Accept": "application/vnd.github+json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-
-          with urllib.request.urlopen(download_request) as response:
-              archive_bytes = response.read()
-
-          target_dir = Path(os.environ.get("ARTIFACT_TARGET", "var/stage6-hypercare"))
-          target_dir.mkdir(parents=True, exist_ok=True)
-          with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
-              archive.extractall(target_dir)
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
-              handle.write(f"artifact_name={latest.get('name', '')}\n")
-              handle.write(f"artifact_id={latest.get('id', '')}\n")
-              handle.write(f"artifact_created_at={latest.get('created_at', '')}\n")
-
-          print(
-              "Pobrano artefakt Stage6 hypercare:",
-              latest.get("name", "(bez nazwy)"),
-          )
+      - name: "Pobierz artefakty Stage6 hypercare (fallback: default branch)"
+        if: steps.stage6_artifacts_branch.outcome == 'failure' && github.ref_name != github.event.repository.default_branch
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          github_token: ${{ github.token }}
+          repo: ${{ github.repository }}
+          branch: ${{ github.event.repository.default_branch }}
+          name: ^stage6-hypercare-.*$
+          name_is_regexp: true
+          search_artifacts: true
+          if_no_artifact_found: fail
+          path: ${{ env.STAGE6_HYPERCARE_DIR }}
 
       - name: Zweryfikuj raport Stage6 hypercare
         id: stage6_verification
         shell: python
         env:
-          ARTIFACT_TARGET: var/stage6-hypercare
+          ARTIFACT_TARGET: ${{ env.STAGE6_HYPERCARE_DIR }}
           HMAC_ENV: STAGE6_HYPERCARE_HMAC_KEY
         run: |
           import contextlib
@@ -212,7 +172,7 @@ jobs:
 
           from scripts import verify_stage6_hypercare_summary as stage6_verify
 
-          artifact_dir = Path(os.environ.get("ARTIFACT_TARGET", "var/stage6-hypercare"))
+          artifact_dir = Path(os.environ["ARTIFACT_TARGET"])
           if not artifact_dir.exists():
               raise SystemExit(
                   f"Katalog artefaktów Stage6 nie istnieje: {artifact_dir}"

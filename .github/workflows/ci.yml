@@ -768,85 +768,16 @@ jobs:
           path: artifacts/exchange-report
 
       - name: Download latest Stress Lab artefact
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TARGET_BRANCH: ${{ github.event.pull_request.base.ref || github.ref_name }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
-          import urllib.request
-          import zipfile
-
-          token = os.environ["GITHUB_TOKEN"]
-          repo = os.environ["GH_REPO"]
-          branch = os.environ["TARGET_BRANCH"]
-          workflow_file = "stress-lab-report.yml"
-
-          def api_get(url: str) -> dict:
-              req = urllib.request.Request(
-                  url,
-                  headers={
-                      "Accept": "application/vnd.github+json",
-                      "Authorization": f"Bearer {token}",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                  },
-              )
-              with urllib.request.urlopen(req) as resp:
-                  return json.load(resp)
-
-          runs = api_get(
-              f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_file}/runs"
-              f"?branch={branch}&status=success&per_page=1"
-          )
-          if not runs.get("workflow_runs"):
-              print(
-                  f"No successful runs found for workflow '{workflow_file}' on branch '{branch}' in repo '{repo}'.",
-                  file=sys.stderr,
-              )
-              raise SystemExit(1)
-
-          workflow_run = runs["workflow_runs"][0]
-          run_id = workflow_run["id"]
-          run_url = workflow_run.get("html_url", f"https://github.com/{repo}/actions/runs/{run_id}")
-          print(f"Using run_id={run_id} from workflow={workflow_file} branch={branch} ({run_url})")
-          artifacts = api_get(
-              f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
-          )
-          artifact = next(
-              (
-                  item
-                  for item in artifacts.get("artifacts", [])
-                  if item.get("name") == "stress-lab-report" and not item.get("expired")
-              ),
-              None,
-          )
-          if artifact is None:
-              print(
-                  f"Artifact 'stress-lab-report' not found for run_id={run_id} workflow={workflow_file} branch={branch}.",
-                  file=sys.stderr,
-              )
-              raise SystemExit(1)
-
-          archive_req = urllib.request.Request(
-              artifact["archive_download_url"],
-              headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-          )
-          archive_path = pathlib.Path("artifacts/stress-lab-report.zip")
-          archive_path.parent.mkdir(parents=True, exist_ok=True)
-          with urllib.request.urlopen(archive_req) as resp, archive_path.open("wb") as fd:
-              fd.write(resp.read())
-
-          output_dir = pathlib.Path("artifacts/stress-lab-report")
-          output_dir.mkdir(parents=True, exist_ok=True)
-          with zipfile.ZipFile(archive_path) as zf:
-              zf.extractall(output_dir)
-
-          archive_path.unlink()
-          PY
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          github_token: ${{ github.token }}
+          repo: ${{ github.repository }}
+          workflow: stress-lab-report.yml
+          workflow_conclusion: success
+          branch: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          name: stress-lab-report
+          if_no_artifact_found: fail
+          path: artifacts/stress-lab-report
 
       - name: Sync mirror from S3
         if: env.MIRROR_S3_URI != ''
