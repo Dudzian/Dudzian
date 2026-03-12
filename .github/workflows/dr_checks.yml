@@ -74,7 +74,7 @@ jobs:
 
       - name: Set up Python for DR probes
         id: setup_python_probes
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -298,7 +298,7 @@ jobs:
 
       - name: Set up Python for failover validation
         id: setup_python_failover
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -450,7 +450,7 @@ jobs:
 
       - name: Set up Python for weekly snapshots
         id: setup_python_weekly_snapshots
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -607,7 +607,7 @@ jobs:
 
       - name: Set up Python for DR runbook
         id: setup_python_runbook
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
