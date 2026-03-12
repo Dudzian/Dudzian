@@ -1384,7 +1384,7 @@ jobs:
             tests/test_build_marketplace_catalog_backfill.py \
             --maxfail=1 --disable-warnings
 
-      - name: Sync community reviews and client catalog
+      - name: Sync community reviews
         shell: bash
         run: |
           SIGNING_KEY=$(cat config/marketplace/keys/dev-hmac.key)
@@ -1394,7 +1394,6 @@ jobs:
             --signing-key dev-hmac=$SIGNING_KEY \
             sync-reviews \
             --source-dir config/marketplace/reviews
-          python scripts/marketplace_cli.py sync --source config/marketplace/catalog.json --force
 
       - name: Validate release bundle catalog
         shell: bash
