@@ -146,7 +146,9 @@ class EventBus:
                 except Exception:  # pragma: no cover - defensywny cleanup
                     pass
                 if thread.is_alive():
-                    budget_text = "unbounded" if timeout_budget is None else f"{timeout_budget:.1f}s"
+                    budget_text = (
+                        "unbounded" if timeout_budget is None else f"{timeout_budget:.1f}s"
+                    )
                     raise TimeoutError(
                         "EventBus.close_all_active timeout: "
                         f"worker thread still alive after shutdown budget {budget_text}"

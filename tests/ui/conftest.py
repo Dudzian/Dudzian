@@ -305,11 +305,15 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
             except Exception as exc:
                 failures.append(f"{name}: error -> {exc!r}")
 
-        _run_cleanup_step("EventBus.close_all_active", lambda: EventBus.close_all_active(timeout=3.0))
+        _run_cleanup_step(
+            "EventBus.close_all_active", lambda: EventBus.close_all_active(timeout=3.0)
+        )
         _run_cleanup_step(
             "EventEmitter.close_all_active", lambda: EventEmitter.close_all_active(timeout=3.0)
         )
-        _run_cleanup_step("Pipeline.close_all_active", lambda: Pipeline.close_all_active(timeout=3.0))
+        _run_cleanup_step(
+            "Pipeline.close_all_active", lambda: Pipeline.close_all_active(timeout=3.0)
+        )
         _run_cleanup_step(
             "LocalLongPollStream.close_all_active",
             lambda: LocalLongPollStream.close_all_active(blocking=True, timeout=3.0),
@@ -375,7 +379,9 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
             failures.append("Pozostały aktywne instancje DatabaseManager")
         if failures:
             joined = " | ".join(failures)
-            raise AssertionError(f"QML teardown cleanup failures for {request.node.nodeid}: {joined}")
+            raise AssertionError(
+                f"QML teardown cleanup failures for {request.node.nodeid}: {joined}"
+            )
     finally:
         _flush_qt_deferred_deletes_best_effort()
         sys.stderr.write(f"[qml-teardown] done {request.node.nodeid}\n")
