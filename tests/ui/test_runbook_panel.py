@@ -91,29 +91,39 @@ def test_runbook_panel_qml_load(tmp_path: Path) -> None:
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("runbookController", controller)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RunbookPanel.qml"
-    engine.load(QUrl.fromLocalFile(str(qml_path)))
-    assert engine.rootObjects(), "Nie udało się załadować RunbookPanel.qml"
+    try:
+        engine.load(QUrl.fromLocalFile(str(qml_path)))
+        assert engine.rootObjects(), "Nie udało się załadować RunbookPanel.qml"
 
-    root = engine.rootObjects()[0]
-    deadline = time.monotonic() + (10.0 if sys.platform.startswith("win") else 5.0)
-    repeater = None
-    while time.monotonic() < deadline:
+        root = engine.rootObjects()[0]
+        deadline = time.monotonic() + (10.0 if sys.platform.startswith("win") else 5.0)
+        repeater = None
+        while time.monotonic() < deadline:
+            app.processEvents()
+            repeater = find_by_object_name(root, "runbookPanelRepeater")
+            count = repeater.property("count") if repeater is not None else None
+            if isinstance(count, int) and count >= 1:
+                break
+            qt_wait(10)
+        assert repeater is not None, "Brak kontenera alertów"
+        count = repeater.property("count")
+        assert isinstance(count, int) and count >= 1
+
+        label = find_by_object_name(root, "runbookPanelLastUpdated")
+        assert label is not None
+        text = label.property("text")
+        text = "" if text is None else str(text)
+        assert text
+        assert ("Ostatnia aktualizacja" in text) or (text == "runbookPanel.lastUpdated")
+    finally:
+        # Deterministycznie domknij QML obiekty (timer refresh + połączenia sygnałów),
+        # aby uniknąć wycieków event-loop między modułami testów UI.
+        try:
+            engine.rootContext().setContextProperty("runbookController", None)
+        except Exception:
+            pass
+        engine.deleteLater()
         app.processEvents()
-        repeater = find_by_object_name(root, "runbookPanelRepeater")
-        count = repeater.property("count") if repeater is not None else None
-        if isinstance(count, int) and count >= 1:
-            break
-        qt_wait(10)
-    assert repeater is not None, "Brak kontenera alertów"
-    count = repeater.property("count")
-    assert isinstance(count, int) and count >= 1
-
-    label = find_by_object_name(root, "runbookPanelLastUpdated")
-    assert label is not None
-    text = label.property("text")
-    text = "" if text is None else str(text)
-    assert text
-    assert ("Ostatnia aktualizacja" in text) or (text == "runbookPanel.lastUpdated")
 
 
 def test_runbook_controller_mapping(tmp_path: Path) -> None:

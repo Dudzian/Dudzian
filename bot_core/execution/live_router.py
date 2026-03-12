@@ -875,11 +875,11 @@ class LiveExecutionRouter(ExecutionService):
             pass
         await asyncio.to_thread(self._flush_log, sync=True)
 
-    def close(self) -> None:
+    def close(self, *, timeout: float | None = None) -> None:
         if not self._mark_closed():
             self._unregister_instance()
             return
-        self._shutdown_loop_sync()
+        self._shutdown_loop_sync(timeout=timeout)
         self._finalize_shutdown_sync()
         self._unregister_instance()
 
@@ -932,12 +932,14 @@ class LiveExecutionRouter(ExecutionService):
                 self._active_instances.remove(self)
 
     @classmethod
-    def close_all_active(cls) -> None:
+    def close_all_active(cls, *, timeout: float | None = None) -> None:
         with cls._active_lock:
             active = list(cls._active_instances)
         for router in active:
             try:
-                router.close()
+                router.close(timeout=timeout)
+            except TimeoutError:
+                raise
             except Exception:  # pragma: no cover - defensywnie w teardownie
                 _LOGGER.debug("Nie udało się zamknąć LiveExecutionRouter", exc_info=True)
 
@@ -947,11 +949,30 @@ class LiveExecutionRouter(ExecutionService):
         self._closed = True
         return True
 
-    def _shutdown_loop_sync(self) -> None:
+    def _shutdown_loop_sync(self, *, timeout: float | None) -> None:
         if self._loop.is_closed():
             return
+        timeout_budget: float | None = None
+        if timeout is not None:
+            timeout_budget = max(0.0, float(timeout))
+        deadline = None if timeout_budget is None else time.monotonic() + timeout_budget
+
+        def _remaining(default: float) -> float:
+            if deadline is None:
+                return default
+            return max(0.0, deadline - time.monotonic())
+
         try:
-            asyncio.run_coroutine_threadsafe(self._wait_for_idle(), self._loop).result()
+            idle_future = asyncio.run_coroutine_threadsafe(self._wait_for_idle(), self._loop)
+            if deadline is None:
+                idle_future.result()
+            else:
+                idle_future.result(timeout=_remaining(timeout_budget))
+        except concurrent.futures.TimeoutError as exc:
+            raise TimeoutError(
+                "LiveExecutionRouter.close_all_active timeout: _wait_for_idle did not finish "
+                f"within {timeout_budget:.1f}s"
+            ) from exc
         except Exception:
             pass
         try:
@@ -959,7 +980,13 @@ class LiveExecutionRouter(ExecutionService):
         except RuntimeError:
             pass
         if self._loop_thread.is_alive():
-            self._loop_thread.join(timeout=5.0)
+            self._loop_thread.join(timeout=_remaining(5.0))
+            if self._loop_thread.is_alive():
+                budget_text = "unbounded" if timeout_budget is None else f"{timeout_budget:.1f}s"
+                raise TimeoutError(
+                    "LiveExecutionRouter.close_all_active timeout: router loop thread still alive "
+                    f"after shutdown budget {budget_text}"
+                )
 
     async def _shutdown_loop_async(self) -> None:
         if self._loop.is_closed():
