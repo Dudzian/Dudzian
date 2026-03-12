@@ -104,13 +104,13 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Download licensing drift artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: licensing-drift-reports
           path: reports/ci/licensing_drift
 
       - name: Download licensing drift test log
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: licensing-drift-pytest-log
           path: reports/ci/licensing_drift

@@ -114,7 +114,7 @@ jobs:
             pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -233,7 +233,7 @@ jobs:
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -290,7 +290,7 @@ jobs:
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -318,7 +318,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -383,7 +383,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -470,7 +470,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -546,7 +546,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -660,7 +660,7 @@ jobs:
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -757,7 +757,7 @@ jobs:
 
       - name: Download wheelhouse
         if: env.WHEELHOUSE_ENABLED == 'true'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -773,7 +773,7 @@ jobs:
             "shiboken6==${PYSIDE6_VERSION}"
 
       - name: Download exchange report artefact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: exchange-report
           path: artifacts/exchange-report
@@ -965,7 +965,7 @@ jobs:
           sleep 3
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1045,7 +1045,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1130,7 +1130,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download PySide6 wheel artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1212,7 +1212,7 @@ jobs:
             libxcb-cursor0 libxcb-xinerama0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1450,7 +1450,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download wheelhouse
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
@@ -1545,7 +1545,7 @@ jobs:
           python -m pip install .[tools]
 
       - name: Download marketplace packages artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ${{ env.MARKETPLACE_PACKAGES_ARTIFACT }}
           path: ${{ env.MARKETPLACE_PACKAGES_DIR }}
@@ -1563,7 +1563,7 @@ jobs:
           echo "Marketplace packages archive located: ${archive}"
 
       - name: Download UI bundle artifact (linux)
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ${{ env.UI_BUNDLE_ARTIFACT }}
           path: ${{ env.UI_BUNDLE_DIR }}
