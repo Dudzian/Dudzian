@@ -27,6 +27,11 @@ _EXECUTABLE_EXTENSIONS = {
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     failures: list[str] = []
     for rel_path in BANNED_PATHS:
