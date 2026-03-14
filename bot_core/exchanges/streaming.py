@@ -865,9 +865,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     self._pending_condition.wait()
                     continue
 
-                ready_batches = sum(
-                    1 for batch in self._pending if batch.received_at <= deadline
-                )
+                ready_batches = sum(1 for batch in self._pending if batch.received_at <= deadline)
                 if ready_batches >= min_batches:
                     return True
 
