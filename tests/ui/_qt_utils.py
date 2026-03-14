@@ -5,9 +5,11 @@ from typing import Callable, Iterable, TypeVar
 
 try:  # pragma: no cover - zależne od środowiska CI
     from PySide6.QtCore import QCoreApplication, QEvent  # type: ignore[attr-defined]
+    from PySide6.QtGui import QGuiApplication  # type: ignore[attr-defined]
     from PySide6.QtTest import QTest  # type: ignore[attr-defined]
+    from PySide6.QtWidgets import QApplication  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - brak Qt
-    QCoreApplication = QEvent = None  # type: ignore[assignment]
+    QCoreApplication = QEvent = QGuiApplication = QApplication = None  # type: ignore[assignment]
     QTest = None  # type: ignore[assignment]
 
 
@@ -67,6 +69,65 @@ def force_qt_cleanup(
     # Ostatni przebieg pętli eventów pomaga domknąć obiekty zwolnione po stronie Python GC.
     if process_events is not None:
         process_events()
+
+
+def settle_qt_application(
+    *,
+    process_events: Callable[[], None] | None = None,
+    process_rounds: int = 8,
+) -> None:
+    """Best-effort domykanie globalnych zasobów Qt po teście QML."""
+
+    if QCoreApplication is None:
+        return
+
+    app = QCoreApplication.instance()
+    if app is None:
+        return
+
+    # Zamknij top-level windows, bo aktywne okna mogą utrzymywać timery/render-loop.
+    gui_app = QGuiApplication.instance() if QGuiApplication is not None else None
+    if gui_app is not None:
+        try:
+            windows = list(gui_app.topLevelWindows())
+        except Exception:
+            windows = []
+        for window in windows:
+            try:
+                window.close()
+            except Exception:
+                pass
+            try:
+                window.deleteLater()
+            except Exception:
+                pass
+
+    widgets_app = QApplication.instance() if QApplication is not None else None
+    if widgets_app is not None:
+        try:
+            widgets = list(widgets_app.topLevelWidgets())
+        except Exception:
+            widgets = []
+        for widget in widgets:
+            try:
+                widget.close()
+            except Exception:
+                pass
+            try:
+                widget.deleteLater()
+            except Exception:
+                pass
+
+    force_qt_cleanup(process_events=process_events, process_rounds=process_rounds)
+
+    quit_fn = getattr(app, "quit", None)
+    if callable(quit_fn):
+        try:
+            quit_fn()
+        except Exception:
+            pass
+
+    force_qt_cleanup(process_events=process_events, process_rounds=process_rounds)
 
 
 def teardown_qml_engine(
