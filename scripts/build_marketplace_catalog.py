@@ -99,6 +99,41 @@ def _normalize_timestamp(value: str | None) -> datetime:
         raise ValueError(f"Niepoprawny format czasu: {value}") from None
 
 
+
+
+def _load_existing_catalog_payload(catalog_path: Path) -> dict[str, Any] | None:
+    if not catalog_path.exists():
+        return None
+    try:
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _resolve_catalog_generated_at(
+    *,
+    catalog_path: Path,
+    packages_payload: Sequence[Mapping[str, Any]],
+    latest_release: datetime,
+) -> datetime:
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    if latest_release > epoch:
+        return latest_release
+
+    existing_payload = _load_existing_catalog_payload(catalog_path)
+    if isinstance(existing_payload, dict) and existing_payload.get("packages") == list(packages_payload):
+        candidate = existing_payload.get("generated_at")
+        if isinstance(candidate, str):
+            try:
+                return _normalize_timestamp(candidate)
+            except ValueError:
+                pass
+
+    return epoch
+
 def _compute_hmac(payload: dict[str, Any], *, key: bytes, algorithm: str) -> str:
     normalized = algorithm.strip().lower()
     if normalized not in {"hmac-sha256", "sha256"}:
@@ -245,6 +280,8 @@ def _build_markdown(catalog: MarketplaceCatalog) -> str:
 def _write_utf8_lf(path: Path, text: str) -> bytes:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     data = normalized.encode("utf-8")
+    if path.exists() and path.read_bytes() == data:
+        return data
     path.write_bytes(data)
     return data
 
@@ -258,11 +295,13 @@ def _write_signature(
     ed25519_key: ed25519.Ed25519PrivateKey | None,
     ed25519_key_id: str | None,
     issuer: str | None,
+    signed_at: datetime | None = None,
 ) -> None:
     if not hmac_key_id and not (ed25519_key and ed25519_key_id):
         return
     digest = hashlib.sha256(content_bytes).hexdigest()
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_at_value = signed_at or datetime.now(timezone.utc)
+    timestamp = signed_at_value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     try:
         target = path.resolve().relative_to(REPO_ROOT).as_posix()
     except ValueError:
@@ -297,8 +336,13 @@ def _write_signature(
             ).decode("ascii"),
         }
 
-    serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    path.with_suffix(path.suffix + ".sig").write_bytes(serialized.encode("utf-8"))
+    serialized = (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    signature_path = path.with_suffix(path.suffix + ".sig")
+    if signature_path.exists() and signature_path.read_bytes() == serialized:
+        return
+    signature_path.write_bytes(serialized)
 
 
 def build_catalog(
@@ -409,7 +453,12 @@ def build_catalog(
         raise ValueError("Brak kompletnych metadanych person w strategiach: " + formatted)
 
     packages.sort(key=lambda item: item.package_id)
-    generated_at = latest_release if packages else datetime.now(timezone.utc)
+    packages_payload = [package.model_dump(mode="json", by_alias=False) for package in packages]
+    generated_at = _resolve_catalog_generated_at(
+        catalog_path=catalog_path,
+        packages_payload=packages_payload,
+        latest_release=latest_release if packages else datetime(1970, 1, 1, tzinfo=timezone.utc),
+    )
     catalog = MarketplaceCatalog(
         schema_version="1.1",
         generated_at=generated_at,
@@ -427,6 +476,7 @@ def build_catalog(
         ed25519_key=catalog_ed25519_key,
         ed25519_key_id=catalog_ed25519_key_id,
         issuer=issuer,
+        signed_at=catalog.generated_at,
     )
 
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
@@ -440,6 +490,7 @@ def build_catalog(
         ed25519_key=catalog_ed25519_key,
         ed25519_key_id=catalog_ed25519_key_id,
         issuer=issuer,
+        signed_at=catalog.generated_at,
     )
     return catalog
 

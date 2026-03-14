@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -113,3 +114,35 @@ def test_verify_catalog_signature_file_for_json_and_markdown(tmp_path: Path) -> 
         assert (
             verify_catalog_signature_file(target, hmac_key=hmac_key, ed25519_key=public_key) == []
         )
+
+
+def test_write_signature_is_deterministic_with_stable_signed_at(tmp_path: Path) -> None:
+    target = tmp_path / "catalog.json"
+    content = _write_utf8_lf(target, '{"schema_version":"1.1"}\n')
+    signed_at = datetime(2025, 1, 10, 10, 0, tzinfo=timezone.utc)
+
+    _write_signature(
+        target,
+        content_bytes=content,
+        hmac_key_id="catalog-hmac",
+        signing_keys={"catalog-hmac": b"secret"},
+        ed25519_key=None,
+        ed25519_key_id=None,
+        issuer=None,
+        signed_at=signed_at,
+    )
+    first_bytes = target.with_suffix(".json.sig").read_bytes()
+
+    _write_signature(
+        target,
+        content_bytes=content,
+        hmac_key_id="catalog-hmac",
+        signing_keys={"catalog-hmac": b"secret"},
+        ed25519_key=None,
+        ed25519_key_id=None,
+        issuer=None,
+        signed_at=signed_at,
+    )
+    second_bytes = target.with_suffix(".json.sig").read_bytes()
+
+    assert first_bytes == second_bytes

@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 from bot_core.config_marketplace.schema import MarketplaceCatalog, MarketplacePackageMetadata
-from scripts.build_marketplace_catalog import _backfill_exchange_last_verified_at
+from scripts.build_marketplace_catalog import (
+    _backfill_exchange_last_verified_at,
+    _resolve_catalog_generated_at,
+)
 from bot_core.security.marketplace_validator import MarketplaceVerificationError
 from scripts.marketplace_cli import validate_release_metadata
 
@@ -187,3 +190,50 @@ def test_validate_release_metadata_rejects_conflicting_root_aliases(tmp_path: Pa
             project_root=tmp_path / "a",
             repo_root=tmp_path / "b",
         )
+
+
+def test_resolve_catalog_generated_at_reuses_existing_timestamp_for_unchanged_packages(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog.json"
+    packages_payload = [{"package_id": "pkg.alpha", "version": "1.0.0"}]
+    catalog_path.write_text(
+        """{
+  "schema_version": "1.1",
+  "generated_at": "2025-01-10T10:00:00Z",
+  "packages": [{"package_id": "pkg.alpha", "version": "1.0.0"}]
+}
+""",
+        encoding="utf-8",
+    )
+
+    resolved = _resolve_catalog_generated_at(
+        catalog_path=catalog_path,
+        packages_payload=packages_payload,
+        latest_release=datetime(1970, 1, 1, tzinfo=timezone.utc),
+    )
+
+    assert resolved == datetime(2025, 1, 10, 10, 0, tzinfo=timezone.utc)
+
+
+def test_resolve_catalog_generated_at_uses_epoch_for_changed_packages_without_release_date(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog.json"
+    catalog_path.write_text(
+        """{
+  "schema_version": "1.1",
+  "generated_at": "2025-01-10T10:00:00Z",
+  "packages": [{"package_id": "pkg.alpha", "version": "1.0.0"}]
+}
+""",
+        encoding="utf-8",
+    )
+
+    resolved = _resolve_catalog_generated_at(
+        catalog_path=catalog_path,
+        packages_payload=[{"package_id": "pkg.beta", "version": "1.0.0"}],
+        latest_release=datetime(1970, 1, 1, tzinfo=timezone.utc),
+    )
+
+    assert resolved == datetime(1970, 1, 1, tzinfo=timezone.utc)
