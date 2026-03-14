@@ -5,14 +5,15 @@ This document describes how to run and debug the UI test suites (QML and native/
 CI reference (current workflows):
 
 - Python setup uses `actions/setup-python@v6`.
-- Linux `UI Native Tests` (ctest) and Linux `UI Packaging` use Qt shipped in pinned `PySide6` wheels (`PySide6==${PYSIDE6_VERSION}`), then resolve `Qt6_DIR` from `PySide6/Qt/lib/cmake/Qt6` (no `install-qt-action`).
+- Linux `UI Native Tests` (ctest) and Linux `UI Packaging` install a full desktop Qt SDK via pinned `aqtinstall` (non-Node flow), then export `QT_ROOT_DIR` and `Qt6_DIR` from that SDK path.
 - `UI / QML tests` in `main.yml` rely on Python dependencies (`pip install -e ".[test]"`) and do not call `install-qt-action` directly.
 
 ## Common prerequisites
 
 - Python 3.11+
 - System libraries used by Qt: `libegl1`, `libgl1`, `libpulse0`, `libxkbcommon-x11-0`, `libxcb-cursor0`, `libxcb-xinerama0`
-- Pinned `PySide6` runtime installed locally; use the bundled Qt tree from the wheel and point CMake to `PySide6/Qt/lib/cmake/Qt6` (in CI this is provisioned from wheelhouse)
+- Pinned `PySide6` runtime installed locally for Python-side UI runtime
+- Full Qt desktop SDK installed locally (for CMake/native builds), e.g. via `aqtinstall` into `$HOME/.local/qt/<version>/gcc_64`
 - For headless environments, a virtual display (e.g., `xvfb` with a 1920x1080x24 screen)
 
 ```bash
@@ -67,16 +68,17 @@ Artifacts of interest:
 Build and execute the C++ UI tests with the same configuration as CI:
 
 ```bash
-eval "$(python - <<'PY'
-import os
-import PySide6
-qt_root = os.path.join(os.path.dirname(PySide6.__file__), "Qt")
-print("export QT_ROOT_DIR=" + qt_root)
-print("export Qt6_DIR=" + os.path.join(qt_root, "lib", "cmake", "Qt6"))
-PY
-)"
+python -m pip install "aqtinstall==3.2.1"
+python -m aqt list-qt linux desktop --arch "${PYSIDE6_VERSION:-6.10.2}"
+export QT_LINUX_ARCH="${QT_LINUX_ARCH:-linux_gcc_64}"
+python -m aqt list-qt linux desktop --modules "${PYSIDE6_VERSION:-6.10.2}" "$QT_LINUX_ARCH"
+python -m aqt install-qt linux desktop "${PYSIDE6_VERSION:-6.10.2}" "$QT_LINUX_ARCH" \
+  --outputdir "$HOME/.local/qt" -m qtcharts qtdeclarative qtquickcontrols2 qttools
 
-cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$Qt6_DIR
+export QT_ROOT_DIR="$HOME/.local/qt/${PYSIDE6_VERSION:-6.10.2}/$QT_LINUX_ARCH"
+export Qt6_DIR="$QT_ROOT_DIR/lib/cmake/Qt6"
+
+cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
 cmake --build ui/build-tests
 ctest --test-dir ui/build-tests --output-on-failure --output-log ui/build-tests/Testing/Temporary/ctest.log | tee ui/build-tests/Testing/Temporary/ctest-console.log
 ```
