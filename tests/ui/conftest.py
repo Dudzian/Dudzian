@@ -566,4 +566,3 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     settle_qt_application()
     _flush_qt_deferred_deletes_best_effort()
-
