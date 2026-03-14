@@ -5,14 +5,14 @@ This document describes how to run and debug the UI test suites (QML and native/
 CI reference (current workflows):
 
 - Python setup uses `actions/setup-python@v6`.
-- Linux `UI Native Tests` (ctest) and Linux `UI Packaging` install Qt via `jurplel/install-qt-action@v3`.
+- Linux `UI Native Tests` (ctest) and Linux `UI Packaging` install Qt via `aqtinstall` (`python -m aqt install-qt ...`) in shell steps (no `install-qt-action`).
 - `UI / QML tests` in `main.yml` rely on Python dependencies (`pip install -e ".[test]"`) and do not call `install-qt-action` directly.
 
 ## Common prerequisites
 
 - Python 3.11+
 - System libraries used by Qt: `libegl1`, `libgl1`, `libpulse0`, `libxkbcommon-x11-0`, `libxcb-cursor0`, `libxcb-xinerama0`
-- Qt 6.7 desktop modules (`qtcharts`; avoid forcing `qtdeclarative`/`qtquickcontrols2` because they are not separate `aqtinstall` modules for linux desktop 6.7.0) installed locally (for CI examples, see note above about where `install-qt-action` is currently used)
+- Qt 6.7 desktop modules (`qtcharts`; avoid forcing `qtdeclarative`/`qtquickcontrols2` because they are not separate `aqtinstall` modules for linux desktop 6.7.0) installed locally (in CI this is provisioned with `aqtinstall` in workflow shell steps)
 - For headless environments, a virtual display (e.g., `xvfb` with a 1920x1080x24 screen)
 
 ```bash
