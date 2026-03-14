@@ -69,7 +69,6 @@ def force_qt_cleanup(
         process_events()
 
 
-
 def teardown_qml_engine(
     engine: object,
     *,
