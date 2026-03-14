@@ -16,6 +16,8 @@ from typing import Generator, List
 
 import pytest
 
+from tests.ui._qt_utils import settle_qt_application
+
 try:  # pragma: no cover - zależne od środowiska CI
     import PySide6  # type: ignore[import-not-found]  # noqa: F401
 
@@ -384,6 +386,8 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
             )
     finally:
         _flush_qt_deferred_deletes_best_effort()
+        settle_qt_application()
+        _flush_qt_deferred_deletes_best_effort()
         sys.stderr.write(f"[qml-teardown] done {request.node.nodeid}\n")
         sys.stderr.flush()
 
@@ -552,3 +556,14 @@ def pytest_runtest_makereport(
         reports = list(getattr(item, "_qml_reports", []))
         reports.append(report)
         setattr(item, "_qml_reports", reports)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Finalne domknięcie zasobów Qt po całej sesji testowej."""
+
+    if not _PYSIDE6_AVAILABLE:
+        return
+
+    settle_qt_application()
+    _flush_qt_deferred_deletes_best_effort()
+
