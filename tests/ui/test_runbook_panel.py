@@ -26,7 +26,7 @@ from core.reporting.guardrails_reporter import (
 )
 from ui.backend.runbook_controller import RunbookController
 from tests.ui._qml_tree import find_by_object_name
-from tests.ui._qt_utils import wait_for
+from tests.ui._qt_utils import force_qt_cleanup, teardown_qml_engine, wait_for
 
 
 def _build_sample_report() -> GuardrailReport:
@@ -139,12 +139,13 @@ def test_runbook_panel_qml_load(tmp_path: Path) -> None:
     finally:
         # Deterministycznie domknij QML obiekty (timer refresh + połączenia sygnałów),
         # aby uniknąć wycieków event-loop między modułami testów UI.
-        try:
-            engine.rootContext().setContextProperty("runbookController", None)
-        except Exception:
-            pass
-        engine.deleteLater()
-        app.processEvents()
+        teardown_qml_engine(
+            engine,
+            process_events=app.processEvents,
+            context_properties_to_clear=("runbookController",),
+        )
+        del engine
+        force_qt_cleanup(process_events=app.processEvents)
 
 
 def test_runbook_controller_mapping(tmp_path: Path) -> None:
