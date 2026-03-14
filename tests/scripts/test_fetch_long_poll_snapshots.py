@@ -9,7 +9,12 @@ from scripts import fetch_long_poll_snapshots as fetcher
 
 def _fake_snapshot(adapter: str, environment: str) -> dict[str, object]:
     return {
-        "labels": {"adapter": adapter, "scope": "public", "environment": environment, "region": "eu"},
+        "labels": {
+            "adapter": adapter,
+            "scope": "public",
+            "environment": environment,
+            "region": "eu",
+        },
         "requestLatency": {"count": 2, "p95": 0.5},
         "deliveryLag": {"count": 2, "p95": 0.7},
         "httpErrors": {"total": 0, "byStatusCode": {}},
@@ -17,7 +22,9 @@ def _fake_snapshot(adapter: str, environment: str) -> dict[str, object]:
     }
 
 
-def test_fetch_snapshots_writes_all_required_profiles(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_snapshots_writes_all_required_profiles(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def _stub_collect_single_snapshot(**kwargs):
         return _fake_snapshot(kwargs["adapter"], kwargs["environment"])
 
@@ -45,7 +52,9 @@ def test_fetch_snapshots_writes_all_required_profiles(tmp_path, monkeypatch: pyt
     }
 
 
-def test_fetch_snapshots_fails_when_required_profile_missing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_snapshots_fails_when_required_profile_missing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def _stub_collect_single_snapshot(**kwargs):
         adapter = kwargs["adapter"]
         environment = kwargs["environment"]
@@ -64,7 +73,9 @@ def test_fetch_snapshots_fails_when_required_profile_missing(tmp_path, monkeypat
         )
 
 
-def test_collect_single_snapshot_uses_stream_gateway_path_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collect_single_snapshot_uses_stream_gateway_path_and_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     class _DummyStream:
