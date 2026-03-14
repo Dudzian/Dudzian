@@ -99,8 +99,6 @@ def _normalize_timestamp(value: str | None) -> datetime:
         raise ValueError(f"Niepoprawny format czasu: {value}") from None
 
 
-
-
 def _load_existing_catalog_payload(catalog_path: Path) -> dict[str, Any] | None:
     if not catalog_path.exists():
         return None
@@ -124,7 +122,9 @@ def _resolve_catalog_generated_at(
         return latest_release
 
     existing_payload = _load_existing_catalog_payload(catalog_path)
-    if isinstance(existing_payload, dict) and existing_payload.get("packages") == list(packages_payload):
+    if isinstance(existing_payload, dict) and existing_payload.get("packages") == list(
+        packages_payload
+    ):
         candidate = existing_payload.get("generated_at")
         if isinstance(candidate, str):
             try:
@@ -133,6 +133,7 @@ def _resolve_catalog_generated_at(
                 pass
 
     return epoch
+
 
 def _compute_hmac(payload: dict[str, Any], *, key: bytes, algorithm: str) -> str:
     normalized = algorithm.strip().lower()
