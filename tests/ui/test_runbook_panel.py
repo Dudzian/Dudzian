@@ -1,12 +1,11 @@
 import os
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.qml
+pytestmark = [pytest.mark.qml, pytest.mark.timeout(30)]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -27,7 +26,7 @@ from core.reporting.guardrails_reporter import (
 )
 from ui.backend.runbook_controller import RunbookController
 from tests.ui._qml_tree import find_by_object_name
-from tests.ui._qt_utils import qt_wait
+from tests.ui._qt_utils import wait_for
 
 
 def _build_sample_report() -> GuardrailReport:
@@ -96,18 +95,40 @@ def test_runbook_panel_qml_load(tmp_path: Path) -> None:
         assert engine.rootObjects(), "Nie udało się załadować RunbookPanel.qml"
 
         root = engine.rootObjects()[0]
-        deadline = time.monotonic() + (10.0 if sys.platform.startswith("win") else 5.0)
-        repeater = None
-        while time.monotonic() < deadline:
-            app.processEvents()
-            repeater = find_by_object_name(root, "runbookPanelRepeater")
-            count = repeater.property("count") if repeater is not None else None
-            if isinstance(count, int) and count >= 1:
-                break
-            qt_wait(10)
-        assert repeater is not None, "Brak kontenera alertów"
-        count = repeater.property("count")
-        assert isinstance(count, int) and count >= 1
+        timeout = 10.0 if sys.platform.startswith("win") else 5.0
+
+        def _repeater_ready() -> object | None:
+            repeater_obj = find_by_object_name(root, "runbookPanelRepeater")
+            count_value = repeater_obj.property("count") if repeater_obj is not None else None
+            if isinstance(count_value, int) and count_value >= 1:
+                return repeater_obj
+            return None
+
+        try:
+            repeater = wait_for(
+                _repeater_ready,
+                timeout_s=timeout,
+                step_ms=10,
+                process_events=app.processEvents,
+                description="runbookPanelRepeater count >= 1",
+            )
+        except TimeoutError as exc:
+            alerts = getattr(controller, "alerts", None)
+            alerts_len = "n/a"
+            if alerts is not None and hasattr(alerts, "__len__"):
+                try:
+                    alerts_len = len(alerts)
+                except Exception:
+                    alerts_len = "error"
+            pytest.fail(
+                "Brak kontenera alertów lub pusty repeater. "
+                f"reason={exc!r} "
+                f"alerts_type={type(alerts).__name__} "
+                f"alerts_len={alerts_len} "
+                f"lastUpdated={getattr(controller, 'lastUpdated', None)!r} "
+                f"errorMessage={getattr(controller, 'errorMessage', None)!r}"
+            )
+        assert repeater is not None
 
         label = find_by_object_name(root, "runbookPanelLastUpdated")
         assert label is not None

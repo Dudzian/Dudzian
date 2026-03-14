@@ -2,7 +2,8 @@ param(
   [string]$QtQpaPlatform = "offscreen",
   [string]$QtOpenGL = "software",
   [string]$CrashDumpDir = "var/crashdumps",
-  [string]$ResultsDir = "test-results/qml"
+  [string]$ResultsDir = "test-results/qml",
+  [int]$PytestTimeoutSeconds = 300
 )
 
 Set-StrictMode -Version Latest
@@ -15,6 +16,12 @@ New-Item -ItemType Directory -Force $CrashDumpDir | Out-Null
 New-Item -ItemType Directory -Force $ResultsDir | Out-Null
 
 $consoleLog = Join-Path $ResultsDir "pytest-console.log"
+$supportsTimeout = $false
+& python -c "import pytest_timeout" 2>$null
+if ($LASTEXITCODE -eq 0) {
+  $supportsTimeout = $true
+}
+
 $pytestArgs = @(
   "-m", "qml",
   "--maxfail=1",
@@ -43,6 +50,12 @@ if ($supportsBoxed) {
 } else {
   Write-Error "pytest isolation unavailable: install pytest-xdist (--boxed) or pytest-forked (--forked)."
   exit 1
+}
+
+if ($supportsTimeout) {
+  $pytestArgs += "--timeout=$PytestTimeoutSeconds"
+} else {
+  Write-Warning "pytest-timeout not available; no per-test timeout kill-switch enabled (requested=$PytestTimeoutSeconds s)."
 }
 
 $procdump = Get-Command procdump.exe -ErrorAction SilentlyContinue
