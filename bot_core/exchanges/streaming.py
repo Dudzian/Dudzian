@@ -859,15 +859,22 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             while not self._closed:
                 if self._worker_error is not None:
                     raise self._worker_error
-                if len(self._pending) >= min_batches:
-                    return True
                 if deadline is None:
+                    if len(self._pending) >= min_batches:
+                        return True
                     self._pending_condition.wait()
-                else:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        return False
-                    self._pending_condition.wait(remaining)
+                    continue
+
+                ready_batches = sum(
+                    1 for batch in self._pending if batch.received_at <= deadline
+                )
+                if ready_batches >= min_batches:
+                    return True
+
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._pending_condition.wait(remaining)
 
             if self._worker_error is not None:
                 raise self._worker_error

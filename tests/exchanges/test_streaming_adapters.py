@@ -2197,6 +2197,81 @@ def test_local_long_poll_stream_wait_prefill_propagates_errors(
     stream.close()
 
 
+def test_local_long_poll_stream_wait_prefill_counts_batch_received_before_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9104",
+        path="/prefill-before-deadline",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    stream.start = lambda: stream  # type: ignore[method-assign]
+    stream._pending.append(
+        StreamBatch(channel="ticker", events=({"sequence": 1},), cursor="c-1", received_at=100.005)
+    )
+
+    monotonic_clock = _SequenceClock([100.0, 100.02])
+    monkeypatch.setattr("bot_core.exchanges.streaming.time.monotonic", monotonic_clock)
+
+    assert stream.wait_prefill(timeout=0.01) is True
+
+    stream.close()
+
+
+def test_local_long_poll_stream_wait_prefill_ignores_batch_received_after_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9105",
+        path="/prefill-after-deadline",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    stream.start = lambda: stream  # type: ignore[method-assign]
+    stream._pending.extend(
+        (
+            StreamBatch(
+                channel="ticker",
+                events=({"sequence": 1},),
+                cursor="c-1",
+                received_at=100.005,
+            ),
+            StreamBatch(
+                channel="ticker",
+                events=({"sequence": 2},),
+                cursor="c-2",
+                received_at=100.02,
+            ),
+        )
+    )
+
+    monotonic_clock = _SequenceClock([100.0, 100.02])
+    monkeypatch.setattr("bot_core.exchanges.streaming.time.monotonic", monotonic_clock)
+
+    assert stream.wait_prefill(min_batches=2, timeout=0.01) is False
+
+    stream.close()
+
+
 def test_local_long_poll_stream_wait_prefill_async(monkeypatch: pytest.MonkeyPatch) -> None:
     responses = [
         {
