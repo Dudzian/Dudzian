@@ -881,7 +881,8 @@ jobs:
             libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
             libgrpc-dev libgrpc++-dev libarchive-dev \
             libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-xinerama0 xvfb
+            libxcb-cursor0 libxcb-xinerama0 xvfb \
+            libgl-dev libopengl-dev libglx-dev
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -1578,7 +1579,17 @@ jobs:
             protobuf-compiler-grpc \
             libgrpc-dev \
             libgrpc++-dev \
-            libarchive-dev
+            libarchive-dev \
+            libegl1 \
+            libgl1 \
+            libpulse0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-xinerama0 \
+            xvfb \
+            libgl-dev \
+            libopengl-dev \
+            libglx-dev
 
       - name: Build Qt bundle
         shell: bash
