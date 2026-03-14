@@ -99,7 +99,9 @@ def fetch_snapshots(
         )
         labels = snapshot.get("labels")
         if not isinstance(labels, Mapping):
-            raise SnapshotFetchError(f"Snapshot {adapter}:{environment} nie zawiera poprawnych etykiet")
+            raise SnapshotFetchError(
+                f"Snapshot {adapter}:{environment} nie zawiera poprawnych etykiet"
+            )
         snapshot_labels = dict(labels)
         snapshot_labels["adapter"] = str(snapshot_labels.get("adapter") or "").strip()
         snapshot_labels["scope"] = str(snapshot_labels.get("scope") or "").strip() or scope
@@ -127,7 +129,9 @@ def fetch_snapshots(
         "snapshots": snapshots,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return output_path
 
 
