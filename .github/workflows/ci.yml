@@ -1408,7 +1408,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
+          # Validate the exact PR head commit when this workflow runs on pull_request;
+          # fall back to github.sha for push/schedule contexts.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Set up Python

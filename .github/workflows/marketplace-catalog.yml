@@ -12,6 +12,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          # Keep PR catalog validation bound to the contributor head commit,
+          # with a safe fallback for non-PR triggers.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
