@@ -918,13 +918,24 @@ jobs:
             --outputdir "${RUNNER_TEMP}/qt" \
             -m ${QT_DESKTOP_MODULES}
 
-          qt_root_dir="${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}/${QT_LINUX_ARCH}"
-          qt6_dir="${qt_root_dir}/lib/cmake/Qt6"
+          qt_root_dir=""
+          for candidate in \
+            "${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}/gcc_64" \
+            "${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}/${QT_LINUX_ARCH}"
+          do
+            if [ -d "${candidate}/lib/cmake/Qt6" ]; then
+              qt_root_dir="${candidate}"
+              break
+            fi
+          done
 
-          if [ ! -d "${qt6_dir}" ]; then
-            echo "::error::Qt6_DIR not found at ${qt6_dir}."
+          if [ -z "${qt_root_dir}" ]; then
+            echo "::error::Could not locate Qt SDK under ${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}."
+            find "${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}" -maxdepth 3 -type d | sort || true
             exit 1
           fi
+
+          qt6_dir="${qt_root_dir}/lib/cmake/Qt6"
 
           echo "Qt6_DIR=${qt6_dir}" >> "$GITHUB_ENV"
           echo "QT_ROOT_DIR=${qt_root_dir}" >> "$GITHUB_ENV"
@@ -1532,13 +1543,24 @@ jobs:
             --outputdir "${RUNNER_TEMP}/qt" \
             -m ${QT_DESKTOP_MODULES}
 
-          qt_root_dir="${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}/${QT_LINUX_ARCH}"
-          qt6_dir="${qt_root_dir}/lib/cmake/Qt6"
+          qt_root_dir=""
+          for candidate in \
+            "${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}/gcc_64" \
+            "${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}/${QT_LINUX_ARCH}"
+          do
+            if [ -d "${candidate}/lib/cmake/Qt6" ]; then
+              qt_root_dir="${candidate}"
+              break
+            fi
+          done
 
-          if [ ! -d "${qt6_dir}" ]; then
-            echo "::error::Qt6_DIR not found at ${qt6_dir}."
+          if [ -z "${qt_root_dir}" ]; then
+            echo "::error::Could not locate Qt SDK under ${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}."
+            find "${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}" -maxdepth 3 -type d | sort || true
             exit 1
           fi
+
+          qt6_dir="${qt_root_dir}/lib/cmake/Qt6"
 
           echo "Qt6_DIR=${qt6_dir}" >> "$GITHUB_ENV"
           echo "QT_ROOT_DIR=${qt_root_dir}" >> "$GITHUB_ENV"
