@@ -145,6 +145,8 @@ def _read_reviews_state(path: Path) -> dict[str, Any]:
 def _write_reviews_state(path: Path, state: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if path.exists() and path.read_text(encoding="utf-8") == serialized:
+        return
     path.write_text(serialized, encoding="utf-8")
 
 
@@ -258,16 +260,17 @@ def _aggregate_review_documents(
         average_rating: float | None = None
         if review_count:
             average_rating = round(rating_total / review_count, 2)
-        aggregates[preset_id] = {
+        aggregate_entry = {
             "averageRating": average_rating,
             "reviewCount": review_count,
             "userReports": report_count,
             "warnings": deduped_warnings,
             "reviews": normalized_reviews,
-            "lastSyncedAt": document.get("updated_at")
-            or document.get("updatedAt")
-            or _utcnow_iso(),
         }
+        last_synced_at = document.get("updated_at") or document.get("updatedAt")
+        if isinstance(last_synced_at, str) and last_synced_at.strip():
+            aggregate_entry["lastSyncedAt"] = last_synced_at
+        aggregates[preset_id] = aggregate_entry
     return aggregates
 
 
@@ -278,10 +281,27 @@ def _sync_reviews_state(
 ) -> dict[str, Any]:
     documents = _collect_review_documents(source_dir)
     aggregates = _aggregate_review_documents(documents, signing_keys)
+    previous_state = _read_reviews_state(_reviews_meta_path(presets_dir))
+    previous_presets_raw = previous_state.get("presets") if isinstance(previous_state, Mapping) else None
+    previous_presets = previous_presets_raw if isinstance(previous_presets_raw, Mapping) else {}
+    for preset_id, aggregate in aggregates.items():
+        if not isinstance(aggregate, dict) or aggregate.get("lastSyncedAt"):
+            continue
+        previous_entry = previous_presets.get(preset_id)
+        if isinstance(previous_entry, Mapping):
+            inherited = previous_entry.get("lastSyncedAt")
+            if isinstance(inherited, str) and inherited.strip():
+                aggregate["lastSyncedAt"] = inherited
+    previous_aggregates = previous_state.get("presets") if isinstance(previous_state, Mapping) else None
+    if not isinstance(previous_aggregates, Mapping):
+        previous_aggregates = {}
+    updated_at = _utcnow_iso() if dict(previous_aggregates) != aggregates else previous_state.get("updated_at")
+    if not isinstance(updated_at, str) or not updated_at.strip():
+        updated_at = _utcnow_iso()
     state = {
         "presets": aggregates,
         "source": str(source_dir),
-        "updated_at": _utcnow_iso(),
+        "updated_at": updated_at,
     }
     _write_reviews_state(_reviews_meta_path(presets_dir), state)
     return state

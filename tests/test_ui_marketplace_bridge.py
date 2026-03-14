@@ -341,6 +341,21 @@ def test_sync_and_submit_reviews(capsys, preset_dir, signing_key):
     assert meta_path.exists()
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     assert meta["presets"]["automation-ai"]["reviewCount"] == 1
+    first_updated_at = meta.get("updated_at")
+
+    bridge.main(
+        [
+            f"--presets-dir={preset_dir}",
+            f"--licenses-path={licenses_path}",
+            f"--signing-key=catalog={signing_key.hex()}",
+            "sync-reviews",
+            f"--source-dir={reviews_dir}",
+        ]
+    )
+    _ = json.loads(capsys.readouterr().out)
+    meta_after_second_sync = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta_after_second_sync == meta
+    assert meta_after_second_sync.get("updated_at") == first_updated_at
 
     list_args = [
         f"--presets-dir={preset_dir}",
@@ -377,3 +392,55 @@ def test_sync_and_submit_reviews(capsys, preset_dir, signing_key):
     bridge.main(list_args)
     updated = json.loads(capsys.readouterr().out)
     assert updated["presets"][0]["community_review_count"] == 2
+
+
+def test_sync_reviews_without_document_timestamp_is_stable(capsys, preset_dir, signing_key):
+    preset_file = preset_dir / "automation.json"
+    _write_preset(
+        preset_file, preset_id="automation-ai", fingerprint="community", signing_key=signing_key
+    )
+
+    licenses_path = preset_dir.parent / "licenses_index.json"
+    licenses_path.write_text(json.dumps({"licenses": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    reviews_dir = preset_dir.parent / "reviews"
+    reviews_dir.mkdir()
+    review_payload = {
+        "review_id": "rvw-automation-no-ts",
+        "preset_id": "automation-ai",
+        "rating": 5,
+        "comment": "Brak updated_at w dokumencie.",
+        "author": "QA",
+        "submitted_at": "2025-01-01T00:00:00Z",
+    }
+    signature = build_hmac_signature(review_payload, key=signing_key, key_id="catalog")
+    review_doc = {
+        "preset_id": "automation-ai",
+        "reviews": [{**review_payload, "signature": signature}],
+    }
+    (reviews_dir / "automation-ai.json").write_text(
+        json.dumps(review_doc, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    args = [
+        f"--presets-dir={preset_dir}",
+        f"--licenses-path={licenses_path}",
+        f"--signing-key=catalog={signing_key.hex()}",
+        "sync-reviews",
+        f"--source-dir={reviews_dir}",
+    ]
+
+    bridge.main(args)
+    first_output = json.loads(capsys.readouterr().out)
+    assert first_output["preset_count"] == 1
+
+    meta_path = preset_dir / ".meta" / "reviews.json"
+    first_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    bridge.main(args)
+    second_output = json.loads(capsys.readouterr().out)
+    assert second_output["preset_count"] == 1
+
+    second_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert second_meta == first_meta
