@@ -96,6 +96,7 @@ Ten dokument opisuje kompletny przepływ dodawania nowych presetów do katalogu 
 | Brak `last_verified_at` dla statusu `certified` | Walidator zakończy się błędem | Uzupełnij timestamp potwierdzający testy funkcjonalne |
 | `validate` zgłasza brak `versioning.source` | Spec nie wskazuje ścieżki źródłowej | Ustaw relatywną ścieżkę (np. `strategies/mean_reversion_v1.json`) |
 | `marketplace-catalog` zmienia katalog w CI | Ręcznie edytowano `catalog.json` | Uruchom `build_marketplace_catalog.py` lokalnie i dołącz wynik w PR |
+| `build_release_bundle.py --check-only --require-clean` zwraca błąd „Zmodyfikowany katalog Marketplace” | Wygenerowane artefakty `config/marketplace/catalog.md(.sig)` różnią się od tego, co jest zatwierdzone w repo (guard fail-fast w CI) | Uruchom ponownie `build_marketplace_catalog.py`, sprawdź `git diff -- config/marketplace/catalog.md config/marketplace/catalog.md.sig`, a następnie dodaj i zatwierdź zaktualizowane `catalog.json(.sig)`, `catalog.md(.sig)` i `config/marketplace/packages/**`; jeśli różnice dotyczą tylko EOL na Windowsie, wykonaj `git add --renormalize .` |
 
 ---
 W razie pytań kontakt: `marketplace@example.com` (Marketplace Guild).
