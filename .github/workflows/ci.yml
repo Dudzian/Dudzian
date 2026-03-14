@@ -21,8 +21,10 @@ concurrency:
 env:
   PYTHON_VERSION: "3.11"
   PYSIDE6_VERSION: "6.10.2"
+  AQTINSTALL_VERSION: "3.2.1"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  QT_DESKTOP_MODULES: "qtcharts"
+  QT_DESKTOP_MODULES: "qtcharts qtdeclarative qtquickcontrols2 qttools"
+  QT_LINUX_ARCH: "linux_gcc_64"
   QT_WINDOWS_MODULES: "qtcharts qtshadertools qtimageformats"
   WHEELHOUSE_DIR: "wheelhouse"
   WHEELHOUSE_ENABLED: "true"
@@ -892,7 +894,7 @@ jobs:
           name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
           path: ${{ env.WHEELHOUSE_DIR }}
 
-      - name: Install PySide6 runtime (Qt provider)
+      - name: Install PySide6 runtime
         shell: bash
         run: |
           python -m pip install --upgrade pip
@@ -902,15 +904,21 @@ jobs:
             PySide6_Essentials==${PYSIDE6_VERSION} \
             shiboken6==${PYSIDE6_VERSION}
 
-      - name: Resolve Qt paths from PySide6
+      - name: Install aqtinstall
+        shell: bash
+        run: python -m pip install "aqtinstall==${AQTINSTALL_VERSION}"
+
+      - name: Install Qt SDK for Linux UI jobs
         shell: bash
         run: |
-          qt_root_dir="$(python - <<'PY'
-          import os
-          import PySide6
-          print(os.path.join(os.path.dirname(PySide6.__file__), "Qt"))
-          PY
-          )"
+          python -m aqt list-qt linux desktop --arch "${PYSIDE6_VERSION}"
+          python -m aqt list-qt linux desktop --modules "${PYSIDE6_VERSION}" "${QT_LINUX_ARCH}"
+
+          python -m aqt install-qt linux desktop "${PYSIDE6_VERSION}" "${QT_LINUX_ARCH}" \
+            --outputdir "${RUNNER_TEMP}/qt" \
+            -m ${QT_DESKTOP_MODULES}
+
+          qt_root_dir="${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}/${QT_LINUX_ARCH}"
           qt6_dir="${qt_root_dir}/lib/cmake/Qt6"
 
           if [ ! -d "${qt6_dir}" ]; then
@@ -937,7 +945,7 @@ jobs:
           sleep 3
 
       - name: Configure CMake
-        run: cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$Qt6_DIR
+        run: cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$QT_ROOT_DIR
 
       - name: Build UI tests
         run: cmake --build ui/build-tests
@@ -1510,15 +1518,21 @@ jobs:
             PySide6_Essentials==${PYSIDE6_VERSION} \
             shiboken6==${PYSIDE6_VERSION}
 
-      - name: Resolve Qt paths from PySide6
+      - name: Install aqtinstall
+        shell: bash
+        run: python -m pip install "aqtinstall==${AQTINSTALL_VERSION}"
+
+      - name: Install Qt SDK for Linux UI jobs
         shell: bash
         run: |
-          qt_root_dir="$(python - <<'PY'
-          import os
-          import PySide6
-          print(os.path.join(os.path.dirname(PySide6.__file__), "Qt"))
-          PY
-          )"
+          python -m aqt list-qt linux desktop --arch "${PYSIDE6_VERSION}"
+          python -m aqt list-qt linux desktop --modules "${PYSIDE6_VERSION}" "${QT_LINUX_ARCH}"
+
+          python -m aqt install-qt linux desktop "${PYSIDE6_VERSION}" "${QT_LINUX_ARCH}" \
+            --outputdir "${RUNNER_TEMP}/qt" \
+            -m ${QT_DESKTOP_MODULES}
+
+          qt_root_dir="${RUNNER_TEMP}/qt/${PYSIDE6_VERSION}/${QT_LINUX_ARCH}"
           qt6_dir="${qt_root_dir}/lib/cmake/Qt6"
 
           if [ ! -d "${qt6_dir}" ]; then
