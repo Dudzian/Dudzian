@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -56,6 +56,39 @@ jobs:
               ;;
           esac
 
+      # strict schedule reads runtime stream metrics collected in this run
+      # (scope reflects current gateway stream semantics, not legacy fixture-only shape)
+      - name: Fetch real long-poll snapshots for strict schedule run
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python scripts/run_stream_gateway.py \
+            --config config/core.yaml \
+            --environment deribit_futures_paper \
+            --environment deribit_futures_live \
+            --environment bitmex_futures_paper \
+            --environment bitmex_futures_live \
+            --host 127.0.0.1 \
+            --port 8765 \
+            --log-level INFO &
+          gateway_pid=$!
+          trap 'kill "$gateway_pid" >/dev/null 2>&1 || true; wait "$gateway_pid" >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:8765/stream/status" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          python scripts/fetch_long_poll_snapshots.py \
+            --base-url http://127.0.0.1:8765 \
+            --output var/metrics/long_poll_snapshots.json \
+            --channels ticker \
+            --timeout-seconds 20
+
       - name: Validate long-poll snapshots
         shell: bash
         run: |
@@ -88,7 +121,7 @@ jobs:
             "${report_extra_args[@]}"
 
       - name: Upload exchange report artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: exchange-report
           path: |

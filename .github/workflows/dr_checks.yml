@@ -61,7 +61,7 @@ jobs:
           fi
 
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Validate DR probe secrets
         id: validate_probe_secrets
         env:
@@ -231,7 +231,7 @@ jobs:
 
       - name: Publish DR probe report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dr-probes-report
           path: reports/ci/dr_probes/
@@ -281,7 +281,7 @@ jobs:
           fi
 
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Validate DR failover secrets
         id: validate_failover_secrets
         env:
@@ -383,7 +383,7 @@ jobs:
 
       - name: Publish DR failover report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dr-failover-report
           path: reports/ci/dr_failover/
@@ -433,7 +433,7 @@ jobs:
           fi
 
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Validate weekly DR snapshot secrets
         id: validate_weekly_snapshot_secrets
         env:
@@ -538,7 +538,7 @@ jobs:
 
       - name: Publish DR weekly snapshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dr-failover-weekly
           path: reports/ci/dr_failover/weekly/
@@ -588,7 +588,7 @@ jobs:
           fi
 
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Validate weekly DR runbook secrets
         id: validate_weekly_runbook_secrets
         env:
@@ -739,7 +739,7 @@ jobs:
 
       - name: Publish DR failover runbook artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dr-failover-runbook
           path: reports/ci/dr_failover/runbook/
