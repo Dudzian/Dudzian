@@ -401,7 +401,9 @@ def test_sync_reviews_without_document_timestamp_is_stable(capsys, preset_dir, s
     )
 
     licenses_path = preset_dir.parent / "licenses_index.json"
-    licenses_path.write_text(json.dumps({"licenses": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
+    licenses_path.write_text(
+        json.dumps({"licenses": {}}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     reviews_dir = preset_dir.parent / "reviews"
     reviews_dir.mkdir()

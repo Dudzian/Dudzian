@@ -282,7 +282,9 @@ def _sync_reviews_state(
     documents = _collect_review_documents(source_dir)
     aggregates = _aggregate_review_documents(documents, signing_keys)
     previous_state = _read_reviews_state(_reviews_meta_path(presets_dir))
-    previous_presets_raw = previous_state.get("presets") if isinstance(previous_state, Mapping) else None
+    previous_presets_raw = (
+        previous_state.get("presets") if isinstance(previous_state, Mapping) else None
+    )
     previous_presets = previous_presets_raw if isinstance(previous_presets_raw, Mapping) else {}
     for preset_id, aggregate in aggregates.items():
         if not isinstance(aggregate, dict) or aggregate.get("lastSyncedAt"):
@@ -292,10 +294,16 @@ def _sync_reviews_state(
             inherited = previous_entry.get("lastSyncedAt")
             if isinstance(inherited, str) and inherited.strip():
                 aggregate["lastSyncedAt"] = inherited
-    previous_aggregates = previous_state.get("presets") if isinstance(previous_state, Mapping) else None
+    previous_aggregates = (
+        previous_state.get("presets") if isinstance(previous_state, Mapping) else None
+    )
     if not isinstance(previous_aggregates, Mapping):
         previous_aggregates = {}
-    updated_at = _utcnow_iso() if dict(previous_aggregates) != aggregates else previous_state.get("updated_at")
+    updated_at = (
+        _utcnow_iso()
+        if dict(previous_aggregates) != aggregates
+        else previous_state.get("updated_at")
+    )
     if not isinstance(updated_at, str) or not updated_at.strip():
         updated_at = _utcnow_iso()
     state = {
