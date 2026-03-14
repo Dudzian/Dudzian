@@ -467,7 +467,7 @@ def build_catalog(
     )
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
     catalog_dump = catalog.model_dump(mode="json", by_alias=False)
-    catalog_json = json.dumps(catalog_dump, ensure_ascii=True, indent=2)
+    catalog_json = json.dumps(catalog_dump, ensure_ascii=False, indent=2)
     catalog_bytes = _write_utf8_lf(catalog_path, catalog_json)
     _write_signature(
         catalog_path,
