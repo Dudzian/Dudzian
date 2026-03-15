@@ -1473,14 +1473,11 @@ jobs:
             sync-reviews \
             --source-dir config/marketplace/reviews
 
-      - name: Diagnose marketplace catalog changes before release bundle validation
+      - name: Diagnose marketplace markdown/signature diff before release bundle validation
         shell: bash
         run: |
-          git status --porcelain
+          git status --short
           git diff -- config/marketplace/catalog.md config/marketplace/catalog.md.sig
-          git diff -- config/marketplace/catalog.json config/marketplace/catalog.json.sig
-          git diff --ignore-cr-at-eol -- config/marketplace/catalog.md config/marketplace/catalog.md.sig
-          git diff --ignore-cr-at-eol -- config/marketplace/catalog.json config/marketplace/catalog.json.sig
 
       - name: Validate release bundle catalog
         shell: bash
