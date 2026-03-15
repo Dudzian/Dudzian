@@ -277,14 +277,6 @@ Item {
         actionStatus = qsTr("Zbudowano podgląd presetu: %1").arg(label)
     }
 
-    function cloneDialogHost() {
-        if (Overlay.overlay)
-            return Overlay.overlay
-        if (root.Window.window && root.Window.window.contentItem)
-            return root.Window.window.contentItem
-        return null
-    }
-
     function requestClonePreset() {
         if (!presetPreview || !presetPreview.preset_payload) {
             actionStatus = qsTr("Brak danych podglądu do zapisania")
@@ -662,7 +654,6 @@ Item {
     Dialog {
         id: cloneDialog
         objectName: "cloneDialog"
-        parent: cloneDialogHost()
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
