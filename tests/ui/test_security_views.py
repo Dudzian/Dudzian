@@ -40,7 +40,7 @@ try:
         Signal,
         Slot,
     )
-    from PySide6.QtGui import QGuiApplication, QSGRendererInterface
+    from PySide6.QtGui import QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuick import QQuickWindow
 except ImportError as exc:  # pragma: no cover - środowisko bez bibliotek systemowych Qt
@@ -48,6 +48,11 @@ except ImportError as exc:  # pragma: no cover - środowisko bez bibliotek syste
         f"Pomijam testy UI: środowisko nie udostępnia bibliotek Qt ({exc}).",
         allow_module_level=True,
     )
+
+try:
+    from PySide6.QtQuick import QSGRendererInterface
+except ImportError:  # pragma: no cover - kompatybilność z różnymi wydaniami PySide6
+    from PySide6.QtGui import QSGRendererInterface  # type: ignore[attr-defined]
 
 QQuickWindow.setGraphicsApi(QSGRendererInterface.Software)
 

@@ -23,6 +23,12 @@ Item {
     property int stepIndex: 0
     property var answers: ({})
 
+    function dsColor(token, fallback) {
+        if (designSystem && designSystem.color)
+            return designSystem.color(token)
+        return fallback
+    }
+
     function refreshSelection() {
         var initial = internalSelected
         if (!initial && recommendedModeId && recommendedModeId.length > 0)
@@ -165,7 +171,7 @@ Item {
                 }
 
                 RowLayout {
-                    visible: recommendationSummary && recommendationSummary.badge
+                    visible: !!(recommendationSummary && recommendationSummary.badge)
                     spacing: 8
                     Rectangle {
                         radius: 12
@@ -396,11 +402,11 @@ Item {
                             height: 120
                             radius: 18
                             color: modelData.id === selectedModeId
-                                    ? designSystem.color("surface")
-                                    : designSystem.color("surfaceMuted")
+                                    ? dsColor("surface", "#1c2233")
+                                    : dsColor("surfaceMuted", "#2a3145")
                             border.color: modelData.id === selectedModeId
-                                          ? designSystem.color("accent")
-                                          : designSystem.color("border")
+                                          ? dsColor("accent", "#00aaff")
+                                          : dsColor("border", "#2f354a")
                             border.width: 1
                             opacity: 0.92
 
@@ -415,18 +421,18 @@ Item {
                                         width: 18
                                         height: 18
                                         fillMode: Image.PreserveAspectFit
-                                        color: designSystem.color("textPrimary")
+                                        color: dsColor("textPrimary", "#ffffff")
                                     }
                                     Label {
                                         text: modelData.title
-                                        color: designSystem.color("textPrimary")
+                                        color: dsColor("textPrimary", "#ffffff")
                                         font.bold: true
                                         Layout.fillWidth: true
                                     }
                                 }
                                 Label {
                                     text: modelData.description
-                                    color: designSystem.color("textSecondary")
+                                    color: dsColor("textSecondary", "#d0d4e0")
                                     wrapMode: Text.WordWrap
                                     Layout.fillWidth: true
                                 }
@@ -458,12 +464,13 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 16
-                color: designSystem.color("surface")
-                border.color: designSystem.color("border")
+                color: dsColor("surface", "#1c2233")
+                border.color: dsColor("border", "#2f354a")
                 border.width: 1
                 opacity: 0.95
 
                 ColumnLayout {
+                    id: wizardPanel
                     anchors.fill: parent
                     anchors.margins: 16
                     spacing: 8
@@ -473,27 +480,27 @@ Item {
                             : null
 
                     Label {
-                        text: currentStep ? currentStep.title : qsTr("Brak kroków do wyświetlenia")
+                        text: wizardPanel.currentStep ? wizardPanel.currentStep.title : qsTr("Brak kroków do wyświetlenia")
                         font.pixelSize: 18
                         font.bold: true
-                        color: designSystem.color("textPrimary")
+                        color: dsColor("textPrimary", "#ffffff")
                     }
 
                     Label {
-                        text: currentStep ? currentStep.description : qsTr("Wybierz tryb, aby zobaczyć kroki kreatora.")
-                        color: designSystem.color("textSecondary")
+                        text: wizardPanel.currentStep ? wizardPanel.currentStep.description : qsTr("Wybierz tryb, aby zobaczyć kroki kreatora.")
+                        color: dsColor("textSecondary", "#d0d4e0")
                         wrapMode: Text.WordWrap
                     }
 
                     Repeater {
-                        model: currentStep && currentStep.inputs ? currentStep.inputs : []
+                        model: wizardPanel.currentStep && wizardPanel.currentStep.inputs ? wizardPanel.currentStep.inputs : []
                         delegate: ColumnLayout {
                             property var inputSpec: modelData
                             Layout.fillWidth: true
                             spacing: 6
                             Label {
                                 text: inputSpec.label
-                                color: designSystem.color("textPrimary")
+                                color: dsColor("textPrimary", "#ffffff")
                                 font.bold: true
                             }
                             Flow {
@@ -534,15 +541,15 @@ Item {
                             text: qsTr("Dalej")
                             iconName: "refresh"
                             subtle: true
-                            enabled: currentMode && currentMode.steps && stepIndex < currentMode.steps.length - 1
-                            onClicked: stepIndex = Math.min(currentMode.steps.length - 1, stepIndex + 1)
+                            enabled: wizardPanel.currentMode && wizardPanel.currentMode.steps && stepIndex < wizardPanel.currentMode.steps.length - 1
+                            onClicked: stepIndex = Math.min(wizardPanel.currentMode.steps.length - 1, stepIndex + 1)
                         }
                         Components.IconButton {
                             designSystem: designSystem
                             text: qsTr("Zapisz tryb")
                             iconName: "mode_wizard"
-                            backgroundColor: designSystem.color("accent")
-                            foregroundColor: designSystem.color("surface")
+                            backgroundColor: dsColor("accent", "#00aaff")
+                            foregroundColor: dsColor("surface", "#111111")
                             onClicked: {
                                 if (modeWizardController && modeWizardController.saveResult)
                                     modeWizardController.saveResult(root.selectedModeId, ensureAnswers(root.selectedModeId))
@@ -559,15 +566,15 @@ Item {
             spacing: 8
             Label {
                 text: qsTr("Otwórz kreator, aby spersonalizować tryb pracy.")
-                color: designSystem.color("textSecondary")
+                color: dsColor("textSecondary", "#d0d4e0")
                 wrapMode: Text.WordWrap
             }
             Components.IconButton {
                 designSystem: designSystem
                 text: qsTr("Konfiguruj tryby pracy")
                 iconName: "mode_wizard"
-                backgroundColor: designSystem.color("accent")
-                foregroundColor: designSystem.color("surface")
+                backgroundColor: dsColor("accent", "#00aaff")
+                foregroundColor: dsColor("surface", "#111111")
                 onClicked: root.launchWizardRequested()
             }
         }

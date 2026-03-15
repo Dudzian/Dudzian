@@ -132,7 +132,6 @@ Item {
             color: Qt.darker(palette.window, 1.1)
             border.width: 1
             border.color: Qt.darker(palette.window, 1.3)
-            padding: 12
             implicitHeight: statusText.implicitHeight + 24
             Label {
                 id: statusText
