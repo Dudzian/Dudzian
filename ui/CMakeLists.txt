@@ -309,7 +309,8 @@ if(BUILD_TESTING)
 
     set(UI_APP_TELEMETRY_TEST_ENV
         "QT_QPA_PLATFORM=offscreen"
-        "QSG_RHI_BACKEND=software"
+        "QT_QUICK_BACKEND=software"
+        "QSG_RHI_BACKEND="
     )
     if(DEFINED ENV{CI})
         string(TOLOWER "$ENV{CI}" UI_APP_CI_FLAG)

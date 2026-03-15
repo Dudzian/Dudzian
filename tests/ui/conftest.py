@@ -30,12 +30,15 @@ except Exception:  # pragma: no cover - zależne od środowiska CI
 logger = logging.getLogger(__name__)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if os.environ.get("QSG_RHI_BACKEND", "").strip().lower() == "software":
+    # Qt 6 nie obsługuje wartości "software" dla QSG_RHI_BACKEND.
+    # Software renderer powinien być wymuszany przez QT_QUICK_BACKEND=software.
+    os.environ.pop("QSG_RHI_BACKEND", None)
 if "QML_IMPORT_TRACE" not in os.environ:
     if os.getenv("QML_DIAGNOSTICS_DIR") or (os.getenv("CI") and os.getenv("QML_TRACE") == "1"):
         os.environ["QML_IMPORT_TRACE"] = "1"
 if sys.platform == "win32":
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
-    os.environ.setdefault("QSG_RHI_BACKEND", "software")
     os.environ.setdefault("QT_OPENGL", "software")
     os.environ.setdefault("QSG_RENDER_LOOP", "basic")
 
