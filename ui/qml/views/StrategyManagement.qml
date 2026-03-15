@@ -656,6 +656,7 @@ Item {
         objectName: "cloneDialog"
         modal: true
         focus: true
+        closePolicy: Popup.CloseOnEscape
         title: qsTr("Zapisz jako nowy preset")
         standardButtons: Dialog.Ok | Dialog.Cancel
         onAccepted: saveClonePreset(cloneNameField.text)
