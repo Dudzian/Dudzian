@@ -237,7 +237,7 @@ Item {
                     }
                     DesignSystem.FrostedGlass {
                         Layout.fillWidth: true
-                        visible: presetEntry.userPreferences && presetEntry.userPreferences.length > 0
+                        visible: Boolean(presetEntry.userPreferences && presetEntry.userPreferences.length > 0)
                         sourceItem: root
                         radius: 14
                         blurRadius: 36

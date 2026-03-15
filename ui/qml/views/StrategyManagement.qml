@@ -998,7 +998,7 @@ Item {
                                         ]
                                         textRole: "display"
                                         valueRole: "value"
-                                        onCurrentIndexChanged: bundleMode = currentValue
+                                        onCurrentIndexChanged: bundleMode = (typeof currentValue === "string") ? currentValue : "sequential"
                                         Component.onCompleted: currentIndex = 0
                                     }
 
@@ -1275,26 +1275,26 @@ Item {
                     Button {
                         text: qsTr("Odśwież raporty")
                         icon.name: "view-refresh"
-                        enabled: reportControllerRef && reportControllerRef.refresh
+                        enabled: Boolean(reportControllerRef && reportControllerRef.refresh)
                         onClicked: refreshReports()
                     }
                     Button {
                         text: qsTr("Podgląd archiwizacji")
                         icon.name: "document-preview"
-                        enabled: reportControllerRef && reportControllerRef.previewArchiveReports && !(reportControllerRef && reportControllerRef.busy)
+                        enabled: Boolean(reportControllerRef && reportControllerRef.previewArchiveReports) && !Boolean(reportControllerRef && reportControllerRef.busy)
                         onClicked: previewArchiveReportsAction()
                     }
                     Button {
                         text: qsTr("Archiwizuj")
                         icon.name: "document-save"
-                        enabled: reportControllerRef && reportControllerRef.archiveReports && !(reportControllerRef && reportControllerRef.busy)
+                        enabled: Boolean(reportControllerRef && reportControllerRef.archiveReports) && !Boolean(reportControllerRef && reportControllerRef.busy)
                         onClicked: archiveReportsAction()
                     }
                     Item { Layout.fillWidth: true }
                     Label {
                         text: reportControllerRef && reportControllerRef.busy ? qsTr("Przetwarzanie...") : ""
                         color: palette.mid
-                        visible: reportControllerRef && reportControllerRef.busy
+                        visible: Boolean(reportControllerRef && reportControllerRef.busy)
                     }
                 }
 
@@ -1311,7 +1311,7 @@ Item {
 
                 Label {
                     text: reportControllerRef && reportControllerRef.lastNotification ? reportControllerRef.lastNotification : ""
-                    visible: reportControllerRef && reportControllerRef.lastNotification
+                    visible: text.length > 0
                     color: palette.mid
                     wrapMode: Text.Wrap
                 }
