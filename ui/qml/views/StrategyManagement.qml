@@ -52,15 +52,6 @@ Item {
     property string bundleStatusMessage: ""
     property var personaEntries: previewUserPreferencesList()
 
-    function popupHostItem() {
-        if (Overlay.overlay)
-            return Overlay.overlay
-        var currentWindow = root.Window ? root.Window.window : null
-        if (currentWindow && currentWindow.contentItem)
-            return currentWindow.contentItem
-        return null
-    }
-
     function resetPresetPreview() {
         presetPreview = null
         if (typeof presetList !== "undefined")
@@ -618,7 +609,6 @@ Item {
 
     Dialog {
         id: promotionDialog
-        parent: root.popupHostItem()
         modal: true
         focus: true
         title: qsTr("Promocja championa: %1 (%2)").arg(pendingPromotionModel || qsTr("model")).arg(pendingPromotionVersion || qsTr("wersja"))
@@ -664,7 +654,6 @@ Item {
     Dialog {
         id: cloneDialog
         objectName: "cloneDialog"
-        parent: root.popupHostItem()
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
