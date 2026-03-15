@@ -654,6 +654,10 @@ Item {
     Dialog {
         id: cloneDialog
         objectName: "cloneDialog"
+        // CI uses Qt/PySide 6.10.2.
+        // Dialog.popupType is available in Qt 6.10, so prefer native window popup
+        // lifecycle here instead of manual popup host parenting.
+        popupType: Popup.Window
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
