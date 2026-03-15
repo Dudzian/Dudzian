@@ -10,9 +10,10 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Generator, List
+from typing import Any, Generator, List
 
 import pytest
 
@@ -125,6 +126,149 @@ def _flush_qt_deferred_deletes_best_effort() -> None:
     gc.collect()
 
 
+def _write_qml_diagnostic_event(pytestconfig: pytest.Config, event: dict[str, Any]) -> None:
+    root = Path(os.getenv("QML_DIAGNOSTICS_DIR", "test-results/qml"))
+    root.mkdir(parents=True, exist_ok=True)
+    timeline_path = root / "timeline.ndjson"
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        **event,
+    }
+    with timeline_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _dump_all_threads(pytestconfig: pytest.Config, *, reason: str, nodeid: str) -> None:
+    root = Path(os.getenv("QML_DIAGNOSTICS_DIR", "test-results/qml"))
+    dumps_dir = root / "thread-dumps"
+    dumps_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    target = dumps_dir / f"{_sanitize_nodeid(nodeid)}__{_sanitize_nodeid(reason)}__{stamp}.log"
+    current_frames = sys._current_frames()
+    with target.open("w", encoding="utf-8") as handle:
+        handle.write(f"reason={reason}\nnodeid={nodeid}\n")
+        for thread in threading.enumerate():
+            handle.write(
+                "\n"
+                + "=" * 80
+                + "\n"
+                + f"thread={thread.name} ident={thread.ident} daemon={thread.daemon} "
+                + f"alive={thread.is_alive()}\n"
+            )
+            frame = current_frames.get(thread.ident)
+            if frame is None:
+                handle.write("<no frame available>\n")
+                continue
+            handle.writelines(traceback.format_stack(frame))
+    _write_qml_diagnostic_event(
+        pytestconfig,
+        {
+            "kind": "thread-dump",
+            "nodeid": nodeid,
+            "reason": reason,
+            "path": str(target),
+        },
+    )
+
+
+def _active_threads_snapshot() -> list[dict[str, object]]:
+    return [
+        {
+            "name": thread.name,
+            "ident": thread.ident,
+            "daemon": thread.daemon,
+            "alive": thread.is_alive(),
+        }
+        for thread in threading.enumerate()
+        if thread.is_alive()
+    ]
+
+
+def _run_cleanup_step_with_watchdog(
+    pytestconfig: pytest.Config,
+    *,
+    nodeid: str,
+    name: str,
+    timeout_s: float,
+    callback,
+) -> str | None:
+    root = Path(os.getenv("QML_DIAGNOSTICS_DIR", "test-results/qml"))
+    dumps_dir = root / "thread-dumps"
+    dumps_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    watchdog_path = (
+        dumps_dir
+        / f"{_sanitize_nodeid(nodeid)}__cleanup-watchdog-{_sanitize_nodeid(name)}__{stamp}.log"
+    )
+
+    started = time.monotonic()
+    _write_qml_diagnostic_event(
+        pytestconfig,
+        {"kind": "qml-cleanup-step-start", "nodeid": nodeid, "step": name, "timeout_s": timeout_s},
+    )
+
+    # UWAGA: to jest watchdog diagnostyczny, a nie twarde egzekwowanie timeoutu.
+    # Nie przerywa callbacka – tylko zrzuca stacki, jeśli krok przekroczy budżet czasu.
+    watchdog_done = threading.Event()
+
+    def _watchdog() -> None:
+        if watchdog_done.wait(timeout=max(0.1, timeout_s)):
+            return
+        _write_qml_diagnostic_event(
+            pytestconfig,
+            {
+                "kind": "qml-cleanup-step-watchdog-fired",
+                "nodeid": nodeid,
+                "step": name,
+                "timeout_s": timeout_s,
+            },
+        )
+        current_frames = sys._current_frames()
+        with watchdog_path.open("w", encoding="utf-8") as watchdog_handle:
+            watchdog_handle.write(
+                f"cleanup_step={name}\nnodeid={nodeid}\ntimeout_s={timeout_s}\nwatchdog=fired\n"
+            )
+            for thread in threading.enumerate():
+                watchdog_handle.write(
+                    "\n"
+                    + "=" * 80
+                    + "\n"
+                    + f"thread={thread.name} ident={thread.ident} daemon={thread.daemon} "
+                    + f"alive={thread.is_alive()}\n"
+                )
+                frame = current_frames.get(thread.ident)
+                if frame is None:
+                    watchdog_handle.write("<no frame available>\n")
+                    continue
+                watchdog_handle.writelines(traceback.format_stack(frame))
+        _dump_all_threads(pytestconfig, reason=f"cleanup-watchdog-fired-{name}", nodeid=nodeid)
+
+    watchdog_thread = threading.Thread(
+        target=_watchdog,
+        name=f"qml-cleanup-watchdog-{_sanitize_nodeid(name)}",
+        daemon=True,
+    )
+    watchdog_thread.start()
+    try:
+        callback()
+    except TimeoutError as exc:
+        elapsed = round(time.monotonic() - started, 3)
+        _dump_all_threads(pytestconfig, reason=f"cleanup-timeout-{name}", nodeid=nodeid)
+        return f"{name}: timeout after {elapsed:.3f}s (budget={timeout_s:.3f}s): {exc}"
+    except Exception as exc:
+        return f"{name}: error -> {exc!r}"
+    finally:
+        watchdog_done.set()
+        watchdog_thread.join(timeout=0.2)
+
+    elapsed = round(time.monotonic() - started, 3)
+    _write_qml_diagnostic_event(
+        pytestconfig,
+        {"kind": "qml-cleanup-step-done", "nodeid": nodeid, "step": name, "elapsed_s": elapsed},
+    )
+    return None
+
+
 def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     """Pomiń import modułów z tests/ui przy braku PySide6 (unikamy collection errors)."""
 
@@ -147,6 +291,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     skip_qml = pytest.mark.skip(reason="UI/QML tests require PySide6")
     for item in items:
         item.add_marker(skip_qml)
+
+
+def pytest_runtest_logstart(nodeid: str, location: tuple[str, int | None, str]) -> None:
+    sys.stderr.write(f"[qml-test] start {nodeid}\n")
+    sys.stderr.flush()
+
+
+def pytest_runtest_logfinish(nodeid: str, location: tuple[str, int | None, str]) -> None:
+    sys.stderr.write(f"[qml-test] finish {nodeid}\n")
+    sys.stderr.flush()
 
 
 @pytest.fixture(scope="session")
@@ -285,6 +439,10 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         yield
         return
     yield
+    _write_qml_diagnostic_event(
+        request.config,
+        {"kind": "qml-teardown-start", "nodeid": request.node.nodeid},
+    )
     sys.stderr.write(f"[qml-teardown] start {request.node.nodeid}\n")
     sys.stderr.flush()
     try:
@@ -300,12 +458,15 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         failures: list[str] = []
 
         def _run_cleanup_step(name: str, callback) -> None:
-            try:
-                callback()
-            except TimeoutError as exc:
-                failures.append(f"{name}: timeout -> {exc}")
-            except Exception as exc:
-                failures.append(f"{name}: error -> {exc!r}")
+            issue = _run_cleanup_step_with_watchdog(
+                request.config,
+                nodeid=request.node.nodeid,
+                name=name,
+                timeout_s=4.0,
+                callback=callback,
+            )
+            if issue:
+                failures.append(issue)
 
         _run_cleanup_step(
             "EventBus.close_all_active", lambda: EventBus.close_all_active(timeout=3.0)
@@ -377,6 +538,11 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
             ]
             logger.error("Live threads still active after QML cleanup: %s", details)
             failures.append(f"live threads still active: {[t.name for t in active]}")
+            _dump_all_threads(
+                request.config,
+                reason="teardown-live-threads-still-active",
+                nodeid=request.node.nodeid,
+            )
         if DatabaseManager.active_instances():
             failures.append("Pozostały aktywne instancje DatabaseManager")
         if failures:
@@ -388,6 +554,10 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
         _flush_qt_deferred_deletes_best_effort()
         settle_qt_application()
         _flush_qt_deferred_deletes_best_effort()
+        _write_qml_diagnostic_event(
+            request.config,
+            {"kind": "qml-teardown-done", "nodeid": request.node.nodeid},
+        )
         sys.stderr.write(f"[qml-teardown] done {request.node.nodeid}\n")
         sys.stderr.flush()
 
@@ -553,6 +723,26 @@ def pytest_runtest_makereport(
     outcome = yield
     report = outcome.get_result()
     if "qml" in item.keywords:
+        _write_qml_diagnostic_event(
+            item.config,
+            {
+                "kind": "pytest-report",
+                "nodeid": item.nodeid,
+                "when": report.when,
+                "outcome": report.outcome,
+                "duration_s": round(getattr(report, "duration", 0.0), 3),
+            },
+        )
+        if report.when == "teardown":
+            _write_qml_diagnostic_event(
+                item.config,
+                {
+                    "kind": "thread-snapshot",
+                    "nodeid": item.nodeid,
+                    "when": report.when,
+                    "threads": _active_threads_snapshot(),
+                },
+            )
         reports = list(getattr(item, "_qml_reports", []))
         reports.append(report)
         setattr(item, "_qml_reports", reports)
