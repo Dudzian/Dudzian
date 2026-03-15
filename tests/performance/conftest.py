@@ -16,12 +16,15 @@ if TYPE_CHECKING:
 # Cel: stabilność (szczególnie na Windows runnerach) i eliminacja zależności od GPU/ANGLE/D3D.
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if os.environ.get("QSG_RHI_BACKEND", "").strip().lower() == "software":
+    # Qt 6 nie obsługuje wartości "software" dla QSG_RHI_BACKEND.
+    # Software renderer powinien być wymuszany przez QT_QUICK_BACKEND=software.
+    os.environ.pop("QSG_RHI_BACKEND", None)
 
 # W środowisku CI wymuszamy software backend (w tym headless macOS),
 # a lokalnie robimy wyjątek tylko dla Windows, gdzie backend GPU jest najbardziej niestabilny.
 if sys.platform == "win32" or os.environ.get("CI"):
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
-    os.environ.setdefault("QSG_RHI_BACKEND", "software")
     os.environ.setdefault("QT_OPENGL", "software")
     os.environ.setdefault("QSG_RENDER_LOOP", "basic")
 
