@@ -219,11 +219,11 @@ ApplicationWindow {
 
                     Views.SetupWizard {
                         anchors.fill: parent
-                        appController: appController
-                        strategyController: strategyController
-                        workbenchController: workbenchController
-                        licenseController: licenseController
-                        riskModel: riskModel
+                        appControllerRef: appController
+                        strategyControllerRef: strategyController
+                        workbenchControllerRef: workbenchController
+                        licenseControllerRef: licenseController
+                        riskModelRef: riskModel
                         onWizardCompleted: {
                             window.wizardCompleted = true
                             if (licenseController && !licenseController.licenseActive)

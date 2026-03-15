@@ -6,22 +6,26 @@ import "../styles" as Styles
 
 FocusScope {
     id: wizard
-    anchors.fill: parent
-    visible: !licenseController.licenseActive
+    implicitWidth: 720
+    implicitHeight: 520
+
+    property var activationControllerRef: (typeof activationController !== "undefined" ? activationController : null)
+    property var licenseControllerRef: (typeof licenseController !== "undefined" ? licenseController : null)
+    visible: licenseControllerRef ? !licenseControllerRef.licenseActive : true
     enabled: visible
     property int step: 0
     property bool activationStarted: false
-    property string fingerprintValue: activationController && activationController.fingerprint
-                                      && activationController.fingerprint.payload
-                                      ? activationController.fingerprint.payload.fingerprint || ""
+    property string fingerprintValue: activationControllerRef && activationControllerRef.fingerprint
+                                      && activationControllerRef.fingerprint.payload
+                                      ? activationControllerRef.fingerprint.payload.fingerprint || ""
                                       : ""
 
     function beginActivationFlow() {
         step = 0
-        if (activationController)
-            activationController.refresh()
-        if (licenseController)
-            licenseController.autoProvision(activationController ? activationController.fingerprint : ({}))
+        if (activationControllerRef)
+            activationControllerRef.refresh()
+        if (licenseControllerRef)
+            licenseControllerRef.autoProvision(activationControllerRef ? activationControllerRef.fingerprint : ({}))
     }
 
     onVisibleChanged: {
@@ -112,8 +116,8 @@ FocusScope {
                             Layout.preferredHeight: 120
                             readOnly: true
                             wrapMode: TextEdit.Wrap
-                            text: activationController && activationController.fingerprint
-                                  ? JSON.stringify(activationController.fingerprint, null, 2)
+                            text: activationControllerRef && activationControllerRef.fingerprint
+                                  ? JSON.stringify(activationControllerRef.fingerprint, null, 2)
                                   : qsTr("Brak danych fingerprintu")
                             font.family: Styles.AppTheme.monoFontFamily
                             color: Styles.AppTheme.textPrimary
@@ -139,8 +143,8 @@ FocusScope {
 
                             Button {
                                 text: qsTr("Zapisz w konfiguracji")
-                                enabled: fingerprintValue.length > 0
-                                onClicked: licenseController.saveExpectedFingerprint(fingerprintValue)
+                                enabled: licenseControllerRef && fingerprintValue.length > 0
+                                onClicked: licenseControllerRef.saveExpectedFingerprint(fingerprintValue)
                             }
 
                             Item { Layout.fillWidth: true }
@@ -149,9 +153,9 @@ FocusScope {
                         ListView {
                             Layout.fillWidth: true
                             Layout.preferredHeight: Math.min(contentHeight, 160)
-                            model: activationController && activationController.fingerprint
-                                   && activationController.fingerprint.payload
-                                   ? activationController.fingerprint.payload.component_list || []
+                            model: activationControllerRef && activationControllerRef.fingerprint
+                                   && activationControllerRef.fingerprint.payload
+                                   ? activationControllerRef.fingerprint.payload.component_list || []
                                    : []
                             clip: true
 
@@ -218,14 +222,14 @@ FocusScope {
 
                             Button {
                                 text: qsTr("Zastosuj payload")
-                                enabled: licensePayload.text.length > 0
-                                onClicked: licenseController.applyLicenseText(licensePayload.text)
+                                enabled: licenseControllerRef && licensePayload.text.length > 0
+                                onClicked: licenseControllerRef.applyLicenseText(licensePayload.text)
                             }
 
                             Button {
                                 text: qsTr("Automatyczna aktywacja")
-                                enabled: licenseController && !licenseController.provisioningInProgress
-                                onClicked: licenseController.autoProvision(activationController ? activationController.fingerprint : ({}))
+                                enabled: licenseControllerRef && !licenseControllerRef.provisioningInProgress
+                                onClicked: licenseControllerRef.autoProvision(activationControllerRef ? activationControllerRef.fingerprint : ({}))
                             }
 
                             Button {
@@ -237,7 +241,7 @@ FocusScope {
                         }
 
                         BusyIndicator {
-                            running: licenseController && licenseController.provisioningInProgress
+                            running: licenseControllerRef && licenseControllerRef.provisioningInProgress
                             visible: running
                         }
 
@@ -258,14 +262,14 @@ FocusScope {
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            readonly property string statusText: (licenseController && licenseController.statusMessage)
-                                                                 ? licenseController.statusMessage
+                            readonly property string statusText: (licenseControllerRef && licenseControllerRef.statusMessage)
+                                                                 ? licenseControllerRef.statusMessage
                                                                  : ""
                             visible: statusText.length > 0
                             text: statusText
                             font.family: Styles.AppTheme.fontFamily
                             font.pixelSize: Styles.AppTheme.fontSizeBody
-                            color: licenseController && licenseController.statusIsError
+                            color: licenseControllerRef && licenseControllerRef.statusIsError
                                    ? Styles.AppTheme.negative
                                    : Styles.AppTheme.positive
                         }
@@ -273,10 +277,10 @@ FocusScope {
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            visible: licenseController.licenseActive
+                            visible: licenseControllerRef ? licenseControllerRef.licenseActive : false
                             text: qsTr("Aktywowano edycję %1 – utrzymanie do %2")
-                                  .arg(licenseController.licenseEdition)
-                                  .arg(licenseController.licenseMaintenanceUntil || qsTr("bez terminu"))
+                                  .arg(licenseControllerRef ? licenseControllerRef.licenseEdition : "")
+                                  .arg(licenseControllerRef && licenseControllerRef.licenseMaintenanceUntil ? licenseControllerRef.licenseMaintenanceUntil : qsTr("bez terminu"))
                             font.family: Styles.AppTheme.fontFamily
                             font.pixelSize: Styles.AppTheme.fontSizeBody
                             color: Styles.AppTheme.textSecondary
@@ -299,7 +303,7 @@ FocusScope {
                         }
 
                         Label {
-                            text: qsTr("Fingerprint: %1").arg(licenseController.licenseFingerprint)
+                            text: qsTr("Fingerprint: %1").arg(licenseControllerRef ? licenseControllerRef.licenseFingerprint : "")
                             font.family: Styles.AppTheme.fontFamily
                             font.pixelSize: Styles.AppTheme.fontSizeBody
                             color: Styles.AppTheme.textSecondary
@@ -307,8 +311,8 @@ FocusScope {
 
                         Label {
                             text: qsTr("Edycja: %1 (utrzymanie do %2)")
-                                  .arg(licenseController.licenseEdition)
-                                  .arg(licenseController.licenseMaintenanceUntil || qsTr("bez terminu"))
+                                  .arg(licenseControllerRef ? licenseControllerRef.licenseEdition : "")
+                                  .arg(licenseControllerRef && licenseControllerRef.licenseMaintenanceUntil ? licenseControllerRef.licenseMaintenanceUntil : qsTr("bez terminu"))
                             font.family: Styles.AppTheme.fontFamily
                             font.pixelSize: Styles.AppTheme.fontSizeBody
                             color: Styles.AppTheme.textSecondary
@@ -331,12 +335,12 @@ FocusScope {
 
                 Button {
                     text: step === 1 ? qsTr("Zakończ") : qsTr("Dalej")
-                    enabled: step === 0 || licenseController.licenseActive
+                    enabled: step === 0 || (licenseControllerRef && licenseControllerRef.licenseActive)
                     visible: step < 2
                     onClicked: {
                         if (step === 0) {
                             step = 1
-                        } else if (step === 1 && licenseController.licenseActive) {
+                        } else if (step === 1 && licenseControllerRef && licenseControllerRef.licenseActive) {
                             step = 2
                         }
                     }
@@ -345,7 +349,7 @@ FocusScope {
                 Button {
                     text: qsTr("Zamknij")
                     visible: step === 2
-                    onClicked: wizard.visible = false
+                    onClicked: activationStarted = false
                 }
             }
         }
@@ -358,7 +362,8 @@ FocusScope {
         nameFilters: [qsTr("Dokumenty JSON (*.json *.jsonl)"), qsTr("Wszystkie pliki (*)")]
         onAccepted: {
             if (selectedFile)
-                licenseController.loadLicenseUrl(selectedFile)
+                if (licenseControllerRef)
+                    licenseControllerRef.loadLicenseUrl(selectedFile)
         }
     }
 
@@ -369,26 +374,26 @@ FocusScope {
         nameFilters: [qsTr("Dokument JSON (*.json)"), qsTr("Wszystkie pliki (*)")]
         onAccepted: {
             if (selectedFile)
-                activationController.exportFingerprint(selectedFile)
+                if (activationControllerRef)
+                    activationControllerRef.exportFingerprint(selectedFile)
         }
     }
 
     Connections {
-        target: activationController
+        target: activationControllerRef
         function onFingerprintChanged() {
-            fingerprintValue = activationController && activationController.fingerprint
-                               && activationController.fingerprint.payload
-                               ? activationController.fingerprint.payload.fingerprint || ""
+            fingerprintValue = activationControllerRef && activationControllerRef.fingerprint
+                               && activationControllerRef.fingerprint.payload
+                               ? activationControllerRef.fingerprint.payload.fingerprint || ""
                                : ""
         }
     }
 
     Connections {
-        target: licenseController
+        target: licenseControllerRef
         function onLicenseActiveChanged() {
-            if (licenseController.licenseActive) {
+            if (licenseControllerRef && licenseControllerRef.licenseActive) {
                 step = 2
-                wizard.visible = false
             }
         }
     }
