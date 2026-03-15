@@ -373,7 +373,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libegl1 libgl1 libpulse0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-xinerama0
+          sudo apt-get install -y xvfb xauth libegl1 libgl1 libpulse0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-xinerama0
       - name: Install python deps
         shell: bash
         run: |
@@ -386,10 +386,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p test-results/qml
-          export DISPLAY=:99
-          Xvfb "$DISPLAY" -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
-          python -m pytest -m qml --maxfail=1 --disable-warnings \
-            --junitxml=test-results/qml/pytest.xml | tee test-results/qml/pytest-console.log
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            python -m pytest -m qml --maxfail=1 --disable-warnings \
+            --junitxml=test-results/qml/pytest.xml
 
   ui-tests-windows:
     name: UI / QML tests (Windows / self-hosted)

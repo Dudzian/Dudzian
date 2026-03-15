@@ -35,7 +35,9 @@ if os.environ.get("QSG_RHI_BACKEND", "").strip().lower() == "software":
     # Software renderer powinien być wymuszany przez QT_QUICK_BACKEND=software.
     os.environ.pop("QSG_RHI_BACKEND", None)
 if "QML_IMPORT_TRACE" not in os.environ:
-    if os.getenv("QML_DIAGNOSTICS_DIR") or (os.getenv("CI") and os.getenv("QML_TRACE") == "1"):
+    # Import trace jest bardzo gadatliwy i zawiera dużo normalnych fallbacków resolvePlugin.
+    # Włączamy go tylko na jawne żądanie diagnostyczne, żeby nie spamować logów CI.
+    if os.getenv("QML_TRACE") == "1" or os.getenv("DUDZIAN_QML_IMPORT_TRACE") == "1":
         os.environ["QML_IMPORT_TRACE"] = "1"
 if sys.platform == "win32":
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
