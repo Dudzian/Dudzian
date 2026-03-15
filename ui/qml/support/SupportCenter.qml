@@ -150,7 +150,6 @@ Item {
         id: splitView
         Layout.fillWidth: true
         Layout.fillHeight: true
-        handleWidth: 4
 
             ListView {
                 id: articleList

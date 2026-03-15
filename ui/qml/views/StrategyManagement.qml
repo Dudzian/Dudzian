@@ -48,6 +48,7 @@ Item {
     property bool bundleCloudEnabled: strategyController && strategyController.cloudRuntimeEnabled
     property bool suppressCloudToggle: false
     property string bundleStatusMessage: ""
+    property var personaEntries: previewUserPreferencesList()
 
     function resetPresetPreview() {
         presetPreview = null
@@ -168,7 +169,7 @@ Item {
                 ? bundleNameField.text
                 : qsTr("pakiet presetów")
         var options = {
-            bundleMode: bundleModeSelector.currentValue,
+            bundleMode: bundleModeSelector && bundleModeSelector.currentValue ? bundleModeSelector.currentValue : "sequential",
             cloudEnabled: bundleCloudSwitch.checked
         }
         var result = ctrl.createPresetBundle(bundleName, selection, options)
@@ -188,9 +189,7 @@ Item {
         var response = ctrl.setCloudRuntimeEnabled(enabled)
         if (!response || response.success === false) {
             bundleStatusMessage = response && response.message ? response.message : qsTr("Nie udało się zaktualizować trybu cloud")
-            suppressCloudToggle = true
-            bundleCloudSwitch.checked = !enabled
-            suppressCloudToggle = false
+            bundleCloudEnabled = !enabled
             return
         }
         bundleCloudEnabled = enabled
@@ -590,11 +589,6 @@ Item {
             if (!strategyController)
                 return
             bundleCloudEnabled = !!strategyController.cloudRuntimeEnabled
-            if (typeof bundleCloudSwitch !== "undefined") {
-                suppressCloudToggle = true
-                bundleCloudSwitch.checked = bundleCloudEnabled
-                suppressCloudToggle = false
-            }
         }
 
         function onBundlePathChanged() {
@@ -1080,8 +1074,7 @@ Item {
                     GroupBox {
                         title: qsTr("Persony i preferencje")
                         Layout.fillWidth: true
-                        visible: personaEntries.length > 0
-                        property var personaEntries: previewUserPreferencesList()
+                        visible: root.personaEntries.length > 0
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -1097,7 +1090,7 @@ Item {
                                     anchors.margins: 12
                                     spacing: 6
                                     Repeater {
-                                        model: personaEntries
+                                        model: root.personaEntries
                                         delegate: ColumnLayout {
                                             spacing: 3
                                             Label {

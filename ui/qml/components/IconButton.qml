@@ -5,16 +5,9 @@ import "../design-system" as DesignSystem
 
 Button {
     id: control
-    property alias icon: iconProps
     property color backgroundColor: DesignSystem.Palette.surface
     property color foregroundColor: DesignSystem.Palette.textPrimary
     property bool subtle: false
-
-    QtObject {
-        id: iconProps
-        property string name: ""
-        property url source: ""
-    }
 
     implicitHeight: 40
     implicitWidth: Math.max(40, contentItem.implicitWidth + 16)
@@ -32,15 +25,15 @@ Button {
         anchors.centerIn: parent
 
         DesignSystem.Icon {
-            visible: iconProps.name.length > 0
-            name: iconProps.name
+            visible: control.icon.name.length > 0
+            name: control.icon.name
             size: 18
             color: control.foregroundColor
         }
 
         Image {
-            visible: iconProps.name.length === 0 && iconProps.source.toString().length > 0
-            source: iconProps.source
+            visible: control.icon.name.length === 0 && control.icon.source.toString().length > 0
+            source: control.icon.source
             width: 18
             height: 18
             fillMode: Image.PreserveAspectFit

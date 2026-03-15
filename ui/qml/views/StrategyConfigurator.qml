@@ -91,8 +91,8 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
+        anchors.margins: 16
         spacing: 16
-        padding: 16
 
         RowLayout {
             Layout.fillWidth: true
