@@ -654,6 +654,7 @@ Item {
     Dialog {
         id: cloneDialog
         objectName: "cloneDialog"
+        parent: Overlay.overlay ? Overlay.overlay : root
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
