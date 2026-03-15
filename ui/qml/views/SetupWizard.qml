@@ -11,14 +11,22 @@ Item {
     width: parent ? parent.width : 960
     height: parent ? parent.height : 600
 
-    property var appController: (typeof appController !== "undefined" ? appController : null)
-    property var strategyController: (typeof strategyController !== "undefined" ? strategyController : null)
-    property var workbenchController: (typeof workbenchController !== "undefined" ? workbenchController : null)
-    property var licenseController: (typeof licenseController !== "undefined" ? licenseController : null)
-    property var riskModel: (typeof riskModel !== "undefined" ? riskModel : null)
-    property var wizardController: (typeof configurationWizard !== "undefined" ? configurationWizard : null)
-    property var schedulerItems: strategyController ? strategyController.schedulerList() : []
-    property var securityAlertsModel: (typeof alertsModel !== "undefined" ? alertsModel : null)
+    property var appControllerContext: (typeof appController !== "undefined" ? appController : null)
+    property var strategyControllerContext: (typeof strategyController !== "undefined" ? strategyController : null)
+    property var workbenchControllerContext: (typeof workbenchController !== "undefined" ? workbenchController : null)
+    property var licenseControllerContext: (typeof licenseController !== "undefined" ? licenseController : null)
+    property var riskModelContext: (typeof riskModel !== "undefined" ? riskModel : null)
+    property var wizardControllerContext: (typeof configurationWizard !== "undefined" ? configurationWizard : null)
+    property var alertsModelContext: (typeof alertsModel !== "undefined" ? alertsModel : null)
+
+    property var appControllerRef: appControllerContext
+    property var strategyControllerRef: strategyControllerContext
+    property var workbenchControllerRef: workbenchControllerContext
+    property var licenseControllerRef: licenseControllerContext
+    property var riskModelRef: riskModelContext
+    property var wizardController: wizardControllerContext
+    property var schedulerItems: strategyControllerRef ? strategyControllerRef.schedulerList() : []
+    property var securityAlertsModel: alertsModelContext
     property int currentStep: 0
     property var exchangeOptions: []
     property string selectedExchange: ""
@@ -31,9 +39,9 @@ Item {
     readonly property int totalSteps: 4
 
     function refreshExchangeOptions() {
-        if (!appController)
+        if (!appControllerRef)
             return
-        exchangeOptions = appController.supportedExchanges ? appController.supportedExchanges() : []
+        exchangeOptions = appControllerRef.supportedExchanges ? appControllerRef.supportedExchanges() : []
         if (exchangeOptions.length > 0 && (!selectedExchange || exchangeOptions.indexOf(selectedExchange) === -1)) {
             selectedExchange = exchangeOptions[0]
             loadInstruments()
@@ -41,21 +49,21 @@ Item {
     }
 
     function loadInstruments() {
-        if (!appController || !selectedExchange)
+        if (!appControllerRef || !selectedExchange)
             return
-        var result = appController.listTradableInstruments(selectedExchange) || []
+        var result = appControllerRef.listTradableInstruments(selectedExchange) || []
         instruments = result
         selectedInstrumentIndex = instruments.length > 0 ? 0 : -1
     }
 
     function applySelectedInstrument() {
-        if (!appController || selectedInstrumentIndex < 0 || selectedInstrumentIndex >= instruments.length)
+        if (!appControllerRef || selectedInstrumentIndex < 0 || selectedInstrumentIndex >= instruments.length)
             return false
         var item = instruments[selectedInstrumentIndex] || {}
         if (!item.config)
             return false
         var cfg = item.config
-        return appController.updateInstrument(cfg.exchange || selectedExchange,
+        return appControllerRef.updateInstrument(cfg.exchange || selectedExchange,
                                               cfg.symbol || "",
                                               cfg.venueSymbol || "",
                                               cfg.quoteCurrency || "",
@@ -64,9 +72,9 @@ Item {
     }
 
     function refreshPersonalization() {
-        if (!appController)
+        if (!appControllerRef)
             return
-        personalization = appController.personalizationSnapshot ? appController.personalizationSnapshot() : {}
+        personalization = appControllerRef.personalizationSnapshot ? appControllerRef.personalizationSnapshot() : {}
     }
 
     Component.onCompleted: {
@@ -77,7 +85,7 @@ Item {
     }
 
     Connections {
-        target: appController
+        target: appControllerRef
         ignoreUnknownSignals: true
         function onUiThemeChanged() { refreshPersonalization() }
         function onUiLayoutModeChanged() { refreshPersonalization() }
@@ -85,9 +93,9 @@ Item {
     }
 
     Connections {
-        target: strategyController
+        target: strategyControllerRef
         ignoreUnknownSignals: true
-        function onSchedulerListChanged() { schedulerItems = strategyController.schedulerList() }
+        function onSchedulerListChanged() { schedulerItems = strategyControllerRef.schedulerList() }
     }
 
     ColumnLayout {
@@ -156,8 +164,10 @@ Item {
                         }
 
                         Components.FirstRunWizard {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            width: parent.width - 32
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 420
+                            activationControllerRef: root.wizardController && root.wizardController.activationController ? root.wizardController.activationController : null
+                            licenseControllerRef: root.licenseControllerRef
                             visible: true
                             enabled: true
                         }
@@ -168,7 +178,7 @@ Item {
                             color: Styles.AppTheme.textSecondary
                             font.family: Styles.AppTheme.fontFamily
                             font.pixelSize: Styles.AppTheme.fontSizeBody
-                            text: licenseController && licenseController.licenseActive ?
+                            text: licenseControllerRef && licenseControllerRef.licenseActive ?
                                   qsTr("Licencja została poprawnie aktywowana. Możesz przejść dalej.") :
                                   qsTr("Po pomyślnej aktywacji licencji przycisk 'Dalej' odblokuje kolejne kroki kreatora.")
                         }
@@ -341,11 +351,11 @@ Item {
                         Views.StrategyConfigurator {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 420
-                            appController: root.appController
-                            strategyController: root.strategyController
-                            workbenchController: root.workbenchController
-                            riskModel: root.riskModel
-                            licenseController: root.licenseController
+                            appController: root.appControllerRef
+                            strategyController: root.strategyControllerRef
+                            workbenchController: root.workbenchControllerRef
+                            riskModel: root.riskModelRef
+                            licenseController: root.licenseControllerRef
                         }
 
                         GroupBox {
@@ -392,13 +402,13 @@ Item {
                                                 Item { Layout.fillWidth: true }
                                                 Button {
                                                     text: qsTr("Uruchom teraz")
-                                                    enabled: strategyController && !strategyController.busy
-                                                    onClicked: strategyController.runSchedulerNow(modelData.name || "")
+                                                    enabled: strategyControllerRef && !strategyControllerRef.busy
+                                                    onClicked: strategyControllerRef.runSchedulerNow(modelData.name || "")
                                                 }
                                                 Button {
                                                     text: qsTr("Usuń")
-                                                    enabled: strategyController && !strategyController.busy
-                                                    onClicked: strategyController.removeSchedulerConfig(modelData.name || "")
+                                                    enabled: strategyControllerRef && !strategyControllerRef.busy
+                                                    onClicked: strategyControllerRef.removeSchedulerConfig(modelData.name || "")
                                                 }
                                             }
                                         }
@@ -407,8 +417,8 @@ Item {
 
                                 Button {
                                     text: qsTr("Odśwież harmonogramy")
-                                    enabled: strategyController && !strategyController.busy
-                                    onClicked: strategyController.refresh()
+                                    enabled: strategyControllerRef && !strategyControllerRef.busy
+                                    onClicked: strategyControllerRef.refresh()
                                 }
                             }
                         }
@@ -469,13 +479,13 @@ Item {
                                 Layout.preferredWidth: 220
                                 model: [qsTr("Ciemny"), qsTr("Jasny"), qsTr("Midnight")]
                                 property var themeValues: ["dark", "light", "midnight"]
-                                currentIndex: Math.max(0, themeValues.indexOf(personalization.theme || (appController ? appController.uiTheme : "dark")))
+                                currentIndex: Math.max(0, themeValues.indexOf(personalization.theme || (appControllerRef ? appControllerRef.uiTheme : "dark")))
                                 onCurrentIndexChanged: {
-                                    if (!appController)
+                                    if (!appControllerRef)
                                         return
                                     var value = themeValues[currentIndex] || "dark"
-                                    if (appController.setUiTheme)
-                                        appController.setUiTheme(value)
+                                    if (appControllerRef.setUiTheme)
+                                        appControllerRef.setUiTheme(value)
                                 }
                             }
                         }
@@ -495,13 +505,13 @@ Item {
                                 Layout.preferredWidth: 220
                                 model: [qsTr("Klasyczny"), qsTr("Kompaktowy"), qsTr("Zaawansowany")]
                                 property var layoutValues: ["classic", "compact", "advanced"]
-                                currentIndex: Math.max(0, layoutValues.indexOf(personalization.layout || (appController ? appController.uiLayoutMode : "classic")))
+                                currentIndex: Math.max(0, layoutValues.indexOf(personalization.layout || (appControllerRef ? appControllerRef.uiLayoutMode : "classic")))
                                 onCurrentIndexChanged: {
-                                    if (!appController)
+                                    if (!appControllerRef)
                                         return
                                     var value = layoutValues[currentIndex] || "classic"
-                                    if (appController.setUiLayoutMode)
-                                        appController.setUiLayoutMode(value)
+                                    if (appControllerRef.setUiLayoutMode)
+                                        appControllerRef.setUiLayoutMode(value)
                                 }
                             }
                         }
@@ -519,10 +529,10 @@ Item {
                             Switch {
                                 id: toastSwitch
                                 objectName: "setupWizardToastSwitch"
-                                checked: personalization.alert_toasts !== undefined ? personalization.alert_toasts : (appController ? appController.alertToastsEnabled : true)
+                                checked: personalization.alert_toasts !== undefined ? personalization.alert_toasts : (appControllerRef ? appControllerRef.alertToastsEnabled : true)
                                 onCheckedChanged: {
-                                    if (appController && appController.setAlertToastsEnabled)
-                                        appController.setAlertToastsEnabled(checked)
+                                    if (appControllerRef && appControllerRef.setAlertToastsEnabled)
+                                        appControllerRef.setAlertToastsEnabled(checked)
                                 }
                             }
                         }
@@ -605,7 +615,7 @@ Item {
 
     function stepCanAdvance() {
         if (currentStep === 0)
-            return licenseController ? licenseController.licenseActive : false
+            return licenseControllerRef ? licenseControllerRef.licenseActive : false
         if (currentStep === 1)
             return selectedInstrumentIndex >= 0 && instruments.length > 0
         return true

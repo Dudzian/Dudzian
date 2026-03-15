@@ -13,7 +13,7 @@ Item {
     property var workbenchController: null
     property var riskModel: null
     property var licenseController: null
-    property var strategyNames: []
+    property list<string> strategyNames: []
     property var filteredStrategies: []
     property var currentStrategy: ({})
     property string searchText: ""
