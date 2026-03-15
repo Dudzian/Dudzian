@@ -1000,6 +1000,7 @@ jobs:
       PYTEST_REQUIRE_QML: "1"
       QML_DIAGNOSTICS_DIR: test-results/qml
       DUDZIAN_QML_FLUSH_DELETES: "0"
+      PYTHONFAULTHANDLER: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -1060,9 +1061,14 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p test-results/qml
+          cp /tmp/xvfb.log test-results/qml/xvfb.log || true
           python -m pytest -m qml --maxfail=1 --disable-warnings \
-            --junitxml=test-results/qml/pytest.xml --durations=15 \
-            --log-file=test-results/qml/pytest.log --log-file-level=INFO | tee test-results/qml/pytest-console.log
+            -vv -rA --capture=tee-sys --durations=25 \
+            -o log_cli=true -o log_cli_level=INFO -o faulthandler_timeout=60 \
+            --junitxml=test-results/qml/pytest.xml \
+            --log-file=test-results/qml/pytest.log --log-file-level=DEBUG \
+            2>&1 | tee test-results/qml/pytest-console.log
+          cp /tmp/xvfb.log test-results/qml/xvfb.log || true
 
       - name: Upload QML diagnostics
         if: always()
