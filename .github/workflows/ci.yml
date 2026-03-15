@@ -1476,6 +1476,9 @@ jobs:
       - name: Diagnose marketplace markdown/signature diff before release bundle validation
         shell: bash
         run: |
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "GITHUB_REF=${GITHUB_REF}"
+          git rev-parse HEAD
           git status --short
           git diff -- config/marketplace/catalog.md config/marketplace/catalog.md.sig
 
