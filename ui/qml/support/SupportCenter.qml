@@ -8,12 +8,14 @@ Item {
     implicitWidth: 1024
     implicitHeight: 640
 
-    property var supportController: (typeof supportController !== "undefined" ? supportController : null)
+    property var supportControllerContext: (typeof supportController !== "undefined" ? supportController : null)
+    property var supportController: supportControllerContext
     property int articleCount: supportController ? supportController.filteredArticles.length : 0
-    property string selectedArticleTitle: supportController && supportController.selectedArticle.title
+    property string selectedArticleTitle: supportController && supportController.selectedArticle && supportController.selectedArticle.title
                                         ? supportController.selectedArticle.title
                                         : ""
-    property var diagnosticsController: (typeof diagnosticsController !== "undefined" ? diagnosticsController : null)
+    property var diagnosticsControllerContext: (typeof diagnosticsController !== "undefined" ? diagnosticsController : null)
+    property var diagnosticsController: diagnosticsControllerContext
 
     signal runbookRequested(string path)
 
@@ -177,13 +179,13 @@ Item {
                         spacing: 6
 
                         Label {
-                            text: article.title
+                            text: article && article.title ? article.title : ""
                             font.bold: true
                             wrapMode: Text.WordWrap
                         }
 
                         Label {
-                            text: article.summary
+                            text: article && article.summary ? article.summary : ""
                             font.pointSize: 11
                             wrapMode: Text.WordWrap
                             color: "#444444"
@@ -194,7 +196,7 @@ Item {
                             spacing: 6
 
                             Repeater {
-                                model: article.tags
+                                model: article && article.tags ? article.tags : []
                                 delegate: Rectangle {
                                     radius: 8
                                     color: Qt.rgba(0.14, 0.5, 0.8, 0.15)

@@ -7,8 +7,10 @@ import "../design-system" as DesignSystem
 Item {
     id: root
     objectName: "strategyManagerView"
-    property var marketplaceController: (typeof marketplaceController !== "undefined" ? marketplaceController : null)
-    property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
+    property var marketplaceControllerContext: (typeof marketplaceController !== "undefined" ? marketplaceController : null)
+    property var runtimeServiceContext: (typeof runtimeService !== "undefined" ? runtimeService : null)
+    property var marketplaceController: marketplaceControllerContext
+    property var runtimeService: runtimeServiceContext
     property string targetPortfolioId: ""
     property string statusMessage: ""
     property string statusError: ""

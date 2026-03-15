@@ -298,7 +298,7 @@ Item {
 
             Button {
                 text: qsTr("Automatyczna aktywacja")
-                enabled: licenseControllerRef && !licenseControllerRef.provisioningInProgress
+                enabled: Boolean(licenseControllerRef && !licenseControllerRef.provisioningInProgress)
                 onClicked: {
                     if (!licenseControllerRef)
                         return
@@ -309,13 +309,13 @@ Item {
 
             Button {
                 text: qsTr("Zapisz fingerprint")
-                enabled: licenseControllerRef && currentFingerprint().length > 0
+                enabled: Boolean(licenseControllerRef && currentFingerprint().length > 0)
                 onClicked: licenseControllerRef.saveExpectedFingerprint(currentFingerprint())
             }
 
             Button {
                 text: qsTr("Dodaj do audytu")
-                enabled: licenseControllerRef && licenseControllerRef.licenseActive
+                enabled: Boolean(licenseControllerRef && licenseControllerRef.licenseActive)
                 onClicked: storeActiveLicense()
             }
 
@@ -332,7 +332,7 @@ Item {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             property string statusText: licenseControllerRef && licenseControllerRef.statusMessage ? licenseControllerRef.statusMessage : ""
-            visible: licenseControllerRef && statusText.length > 0
+            visible: Boolean(licenseControllerRef && statusText.length > 0)
             text: statusText
             color: licenseControllerRef && licenseControllerRef.statusIsError
                     ? Qt.rgba(0.9, 0.35, 0.35, 1)
@@ -340,7 +340,7 @@ Item {
         }
 
         BusyIndicator {
-            running: licenseControllerRef && licenseControllerRef.provisioningInProgress
+            running: Boolean(licenseControllerRef && licenseControllerRef.provisioningInProgress)
             visible: running
         }
 

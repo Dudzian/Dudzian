@@ -13,7 +13,8 @@ Dialog {
     implicitHeight: 420
     closePolicy: Popup.NoAutoClose
 
-    property var diagnosticsController: (typeof diagnosticsController !== "undefined" ? diagnosticsController : null)
+    property var diagnosticsControllerContext: (typeof diagnosticsController !== "undefined" ? diagnosticsController : null)
+    property var diagnosticsController: diagnosticsControllerContext
 
     signal diagnosticsRequested()
 
@@ -65,7 +66,7 @@ Dialog {
                 id: outputField
                 objectName: "ticketDialogOutputField"
                 Layout.fillWidth: true
-                text: diagnosticsController ? diagnosticsController.outputDirectory : ""
+                text: diagnosticsController && diagnosticsController.outputDirectory ? diagnosticsController.outputDirectory : ""
                 enabled: !diagnosticsController || !diagnosticsController.busy
             }
 
@@ -129,7 +130,7 @@ Dialog {
 
         function onOutputDirectoryChanged() {
             if (diagnosticsController)
-                outputField.text = diagnosticsController.outputDirectory
+                outputField.text = diagnosticsController.outputDirectory || ""
         }
 
         function onExportCompleted(path) {
