@@ -277,6 +277,12 @@ Item {
         actionStatus = qsTr("Zbudowano podgląd presetu: %1").arg(label)
     }
 
+    function cloneDialogHost() {
+        if (Overlay.overlay)
+            return Overlay.overlay
+        return root
+    }
+
     function requestClonePreset() {
         if (!presetPreview || !presetPreview.preset_payload) {
             actionStatus = qsTr("Brak danych podglądu do zapisania")
@@ -289,6 +295,7 @@ Item {
         if (!defaultName || defaultName.length === 0)
             defaultName = qsTr("Nowy preset")
         cloneNameField.text = defaultName + " (kopia)"
+        cloneDialog.parent = cloneDialogHost()
         cloneDialog.open()
     }
 
