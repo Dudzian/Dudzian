@@ -11,7 +11,7 @@ FocusScope {
 
     property var activationControllerRef: (typeof activationController !== "undefined" ? activationController : null)
     property var licenseControllerRef: (typeof licenseController !== "undefined" ? licenseController : null)
-    visible: licenseControllerRef ? !licenseControllerRef.licenseActive : true
+    visible: licenseControllerRef ? !Boolean(licenseControllerRef.licenseActive) : true
     enabled: visible
     property int step: 0
     property bool activationStarted: false
@@ -20,12 +20,21 @@ FocusScope {
                                       ? activationControllerRef.fingerprint.payload.fingerprint || ""
                                       : ""
 
+    function canAutoProvision() {
+        return !!(licenseControllerRef && typeof licenseControllerRef.autoProvision === "function")
+    }
+
+    function triggerAutoProvision() {
+        if (!canAutoProvision())
+            return
+        licenseControllerRef.autoProvision(activationControllerRef ? activationControllerRef.fingerprint : ({}))
+    }
+
     function beginActivationFlow() {
         step = 0
         if (activationControllerRef)
             activationControllerRef.refresh()
-        if (licenseControllerRef)
-            licenseControllerRef.autoProvision(activationControllerRef ? activationControllerRef.fingerprint : ({}))
+        triggerAutoProvision()
     }
 
     onVisibleChanged: {
@@ -228,8 +237,8 @@ FocusScope {
 
                             Button {
                                 text: qsTr("Automatyczna aktywacja")
-                                enabled: licenseControllerRef && !licenseControllerRef.provisioningInProgress
-                                onClicked: licenseControllerRef.autoProvision(activationControllerRef ? activationControllerRef.fingerprint : ({}))
+                                enabled: canAutoProvision() && !Boolean(licenseControllerRef && licenseControllerRef.provisioningInProgress)
+                                onClicked: triggerAutoProvision()
                             }
 
                             Button {
@@ -241,7 +250,7 @@ FocusScope {
                         }
 
                         BusyIndicator {
-                            running: licenseControllerRef && licenseControllerRef.provisioningInProgress
+                            running: Boolean(licenseControllerRef && licenseControllerRef.provisioningInProgress)
                             visible: running
                         }
 
@@ -277,7 +286,7 @@ FocusScope {
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            visible: licenseControllerRef ? licenseControllerRef.licenseActive : false
+                            visible: licenseControllerRef ? Boolean(licenseControllerRef.licenseActive) : false
                             text: qsTr("Aktywowano edycję %1 – utrzymanie do %2")
                                   .arg(licenseControllerRef ? licenseControllerRef.licenseEdition : "")
                                   .arg(licenseControllerRef && licenseControllerRef.licenseMaintenanceUntil ? licenseControllerRef.licenseMaintenanceUntil : qsTr("bez terminu"))
@@ -335,12 +344,12 @@ FocusScope {
 
                 Button {
                     text: step === 1 ? qsTr("Zakończ") : qsTr("Dalej")
-                    enabled: step === 0 || (licenseControllerRef && licenseControllerRef.licenseActive)
+                    enabled: step === 0 || Boolean(licenseControllerRef && licenseControllerRef.licenseActive)
                     visible: step < 2
                     onClicked: {
                         if (step === 0) {
                             step = 1
-                        } else if (step === 1 && licenseControllerRef && licenseControllerRef.licenseActive) {
+                        } else if (step === 1 && Boolean(licenseControllerRef && licenseControllerRef.licenseActive)) {
                             step = 2
                         }
                     }
@@ -381,6 +390,7 @@ FocusScope {
 
     Connections {
         target: activationControllerRef
+        ignoreUnknownSignals: true
         function onFingerprintChanged() {
             fingerprintValue = activationControllerRef && activationControllerRef.fingerprint
                                && activationControllerRef.fingerprint.payload
@@ -391,8 +401,9 @@ FocusScope {
 
     Connections {
         target: licenseControllerRef
+        ignoreUnknownSignals: true
         function onLicenseActiveChanged() {
-            if (licenseControllerRef && licenseControllerRef.licenseActive) {
+            if (Boolean(licenseControllerRef && licenseControllerRef.licenseActive)) {
                 step = 2
             }
         }

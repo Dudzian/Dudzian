@@ -178,7 +178,7 @@ Item {
                             color: Styles.AppTheme.textSecondary
                             font.family: Styles.AppTheme.fontFamily
                             font.pixelSize: Styles.AppTheme.fontSizeBody
-                            text: licenseControllerRef && licenseControllerRef.licenseActive ?
+                            text: Boolean(licenseControllerRef && licenseControllerRef.licenseActive) ?
                                   qsTr("Licencja została poprawnie aktywowana. Możesz przejść dalej.") :
                                   qsTr("Po pomyślnej aktywacji licencji przycisk 'Dalej' odblokuje kolejne kroki kreatora.")
                         }
@@ -529,7 +529,7 @@ Item {
                             Switch {
                                 id: toastSwitch
                                 objectName: "setupWizardToastSwitch"
-                                checked: personalization.alert_toasts !== undefined ? personalization.alert_toasts : (appControllerRef ? appControllerRef.alertToastsEnabled : true)
+                                checked: personalization.alert_toasts !== undefined ? Boolean(personalization.alert_toasts) : (appControllerRef ? Boolean(appControllerRef.alertToastsEnabled) : true)
                                 onCheckedChanged: {
                                     if (appControllerRef && appControllerRef.setAlertToastsEnabled)
                                         appControllerRef.setAlertToastsEnabled(checked)
@@ -615,7 +615,7 @@ Item {
 
     function stepCanAdvance() {
         if (currentStep === 0)
-            return licenseControllerRef ? licenseControllerRef.licenseActive : false
+            return licenseControllerRef ? Boolean(licenseControllerRef.licenseActive) : false
         if (currentStep === 1)
             return selectedInstrumentIndex >= 0 && instruments.length > 0
         return true
