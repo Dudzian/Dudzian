@@ -280,7 +280,9 @@ Item {
     function cloneDialogHost() {
         if (Overlay.overlay)
             return Overlay.overlay
-        return root
+        if (root.Window.window && root.Window.window.contentItem)
+            return root.Window.window.contentItem
+        return null
     }
 
     function requestClonePreset() {
@@ -295,7 +297,6 @@ Item {
         if (!defaultName || defaultName.length === 0)
             defaultName = qsTr("Nowy preset")
         cloneNameField.text = defaultName + " (kopia)"
-        cloneDialog.parent = cloneDialogHost()
         cloneDialog.open()
     }
 
@@ -661,7 +662,7 @@ Item {
     Dialog {
         id: cloneDialog
         objectName: "cloneDialog"
-        parent: Overlay.overlay ? Overlay.overlay : root
+        parent: cloneDialogHost()
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
