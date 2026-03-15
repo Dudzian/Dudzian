@@ -199,8 +199,16 @@ def test_setup_wizard_configures_instrument_and_preferences(tmp_path: Path) -> N
     assert stub_app.uiLayoutMode == "advanced"
     assert stub_app.alertToastsEnabled is False
 
-    # Final step should emit wizardCompleted
-    spy = QSignalSpy(root, b"wizardCompleted()")
+    # Final step should emit wizardCompleted.
+    # NOTE: In newer PySide6 builds, the (QObject, bytes) QSignalSpy overload
+    # may reject dynamic QML signals with "wrong argument values" even when
+    # the signal exists. Resolve the QMetaMethod explicitly to keep strict
+    # contract verification against the root object metaobject.
+    signal_index = root.metaObject().indexOfSignal("wizardCompleted()")
+    assert signal_index >= 0, "Root SetupWizard must expose wizardCompleted() signal"
+    wizard_completed_signal = root.metaObject().method(signal_index)
+    spy = QSignalSpy(root, wizard_completed_signal)
+    assert spy.isValid(), "QSignalSpy should be valid for root.wizardCompleted()"
     root.setProperty("currentStep", 3)
     QMetaObject.invokeMethod(root, "stepCanAdvance", Qt.DirectConnection)
     QMetaObject.invokeMethod(root, "wizardCompleted", Qt.DirectConnection)
