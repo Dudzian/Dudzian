@@ -8,49 +8,48 @@ Item {
     implicitWidth: 1024
     implicitHeight: 640
 
-    property var supportControllerContext: (typeof supportController !== "undefined" ? supportController : null)
-    property var supportController: supportControllerContext
-    property int articleCount: supportController ? supportController.filteredArticles.length : 0
-    property string selectedArticleTitle: supportController && supportController.selectedArticle && supportController.selectedArticle.title
-                                        ? supportController.selectedArticle.title
+    property var supportControllerRef: (typeof supportController !== "undefined" ? supportController : null)
+    property int articleCount: supportControllerRef ? (supportControllerRef.filteredArticles ? supportControllerRef.filteredArticles.length : 0) : 0
+    property var selectedArticleRef: (supportControllerRef && supportControllerRef.selectedArticle) ? supportControllerRef.selectedArticle : null
+    property string selectedArticleTitle: selectedArticleRef && selectedArticleRef.title
+                                        ? selectedArticleRef.title
                                         : ""
-    property var diagnosticsControllerContext: (typeof diagnosticsController !== "undefined" ? diagnosticsController : null)
-    property var diagnosticsController: diagnosticsControllerContext
+    property var diagnosticsControllerRef: (typeof diagnosticsController !== "undefined" ? diagnosticsController : null)
 
     signal runbookRequested(string path)
 
     function triggerSearch() {
-        if (supportController) {
-            supportController.searchArticles(searchInput.text)
+        if (supportControllerRef) {
+            supportControllerRef.searchArticles(searchInput.text)
         }
     }
 
     function clearSearch() {
         searchInput.text = ""
-        if (supportController) {
-            supportController.searchArticles("")
+        if (supportControllerRef) {
+            supportControllerRef.searchArticles("")
         }
     }
 
     Component.onCompleted: {
-        if (supportController) {
-            supportController.refreshArticles()
+        if (supportControllerRef) {
+            supportControllerRef.refreshArticles()
         }
     }
 
     Connections {
-        target: supportController
+        target: supportControllerRef
         ignoreUnknownSignals: true
 
         function onSearchQueryChanged() {
-            if (!supportController)
+            if (!supportControllerRef)
                 return
-            if (searchInput.text !== supportController.searchQuery)
-                searchInput.text = supportController.searchQuery
+            if (searchInput.text !== supportControllerRef.searchQuery)
+                searchInput.text = supportControllerRef.searchQuery
         }
 
         function onSelectedArticleChanged() {
-            if (!supportController)
+            if (!supportControllerRef)
                 return
             articleBody.cursorPosition = 0
         }
@@ -77,7 +76,7 @@ Item {
                 id: searchButton
                 objectName: "supportCenterSearchButton"
                 text: qsTrId("supportCenter.search.action")
-                enabled: !!supportController
+                enabled: !!supportControllerRef
                 onClicked: root.triggerSearch()
             }
 
@@ -85,7 +84,7 @@ Item {
                 id: clearButton
                 objectName: "supportCenterClearButton"
                 text: qsTrId("supportCenter.search.clear")
-                enabled: !!supportController
+                enabled: !!supportControllerRef
                 onClicked: root.clearSearch()
             }
 
@@ -93,15 +92,15 @@ Item {
                 id: refreshButton
                 objectName: "supportCenterRefreshButton"
                 text: qsTrId("supportCenter.refresh")
-                enabled: !!supportController
-                onClicked: supportController && supportController.refreshArticles()
+                enabled: !!supportControllerRef
+                onClicked: supportControllerRef && supportControllerRef.refreshArticles()
             }
 
             Button {
                 id: ticketButton
                 objectName: "supportCenterTicketButton"
                 text: qsTrId("supportCenter.ticket.action")
-                enabled: !!diagnosticsController
+                enabled: !!diagnosticsControllerRef
                 onClicked: ticketDialog.open()
             }
         }
@@ -110,14 +109,14 @@ Item {
             id: errorBanner
             objectName: "supportCenterErrorBanner"
             Layout.fillWidth: true
-            visible: supportController && supportController.errorMessage.length > 0
+            visible: supportControllerRef && supportControllerRef.errorMessage.length > 0
             color: Qt.rgba(0.8, 0.25, 0.25, 0.9)
             radius: 6
             implicitHeight: visible ? 40 : 0
 
             Text {
                 anchors.centerIn: parent
-                text: supportController ? supportController.errorMessage : ""
+                text: supportControllerRef ? supportControllerRef.errorMessage : ""
                 color: "white"
                 font.pointSize: 11
                 horizontalAlignment: Text.AlignHCenter
@@ -130,8 +129,8 @@ Item {
             Label {
                 id: statusLabel
                 objectName: "supportCenterStatusLabel"
-                text: supportController && supportController.lastUpdated && supportController.lastUpdated.length > 0
-                      ? qsTrId("supportCenter.lastUpdated").arg(supportController.lastUpdated)
+                text: supportControllerRef && supportControllerRef.lastUpdated && supportControllerRef.lastUpdated.length > 0
+                      ? qsTrId("supportCenter.lastUpdated").arg(supportControllerRef.lastUpdated)
                       : qsTrId("supportCenter.lastUpdatedUnknown")
                 font.pointSize: 11
                 color: "#555555"
@@ -158,7 +157,7 @@ Item {
                 objectName: "supportCenterArticleList"
                 implicitWidth: 340
                 clip: true
-                model: supportController ? supportController.filteredArticles : []
+                model: supportControllerRef ? supportControllerRef.filteredArticles : []
                 delegate: Frame {
                     id: articleFrame
                     property var article: modelData
@@ -167,7 +166,7 @@ Item {
                     padding: 12
                     background: Rectangle {
                         radius: 6
-                        color: supportController && supportController.selectedArticle.id === article.id
+                        color: selectedArticleRef && selectedArticleRef.id === article.id
                                ? Qt.rgba(0.14, 0.5, 0.8, 0.18)
                                : Qt.rgba(0, 0, 0, 0)
                         border.color: Qt.rgba(0.14, 0.5, 0.8, 0.35)
@@ -219,7 +218,7 @@ Item {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: supportController && supportController.selectArticle(article.id)
+                        onClicked: supportControllerRef && supportControllerRef.selectArticle(article.id)
                     }
                 }
             }
@@ -238,8 +237,8 @@ Item {
                     Label {
                         id: articleTitle
                         objectName: "supportCenterArticleTitle"
-                        text: supportController && supportController.selectedArticle.title
-                              ? supportController.selectedArticle.title
+                        text: selectedArticleRef && selectedArticleRef.title
+                              ? selectedArticleRef.title
                               : qsTrId("supportCenter.noSelection")
                         font.pixelSize: 20
                         font.bold: true
@@ -248,9 +247,9 @@ Item {
 
                     Label {
                         id: articleCategory
-                        visible: supportController && supportController.selectedArticle.category && supportController.selectedArticle.category.length > 0
-                        text: supportController && supportController.selectedArticle.category
-                              ? supportController.selectedArticle.category
+                        visible: selectedArticleRef && selectedArticleRef.category && selectedArticleRef.category.length > 0
+                        text: selectedArticleRef && selectedArticleRef.category
+                              ? selectedArticleRef.category
                               : ""
                         font.pointSize: 11
                         color: "#666666"
@@ -259,11 +258,11 @@ Item {
                     Flow {
                         width: parent.width
                         spacing: 6
-                        visible: supportController && supportController.selectedArticle.tags && supportController.selectedArticle.tags.length > 0
+                        visible: selectedArticleRef && selectedArticleRef.tags && selectedArticleRef.tags.length > 0
 
                         Repeater {
-                            model: supportController && supportController.selectedArticle.tags
-                                   ? supportController.selectedArticle.tags
+                            model: selectedArticleRef && selectedArticleRef.tags
+                                   ? selectedArticleRef.tags
                                    : []
                             delegate: Rectangle {
                                 radius: 8
@@ -291,19 +290,19 @@ Item {
                         readOnly: true
                         wrapMode: TextEdit.WordWrap
                         textFormat: TextEdit.MarkdownText
-                        text: supportController && supportController.selectedArticle.body
-                              ? supportController.selectedArticle.body
+                        text: selectedArticleRef && selectedArticleRef.body
+                              ? selectedArticleRef.body
                               : qsTrId("supportCenter.noContent")
                     }
 
                     Flow {
                         width: parent.width
                         spacing: 8
-                        visible: supportController && supportController.selectedArticle.runbooks && supportController.selectedArticle.runbooks.length > 0
+                        visible: selectedArticleRef && selectedArticleRef.runbooks && selectedArticleRef.runbooks.length > 0
 
                         Repeater {
-                            model: supportController && supportController.selectedArticle.runbooks
-                                   ? supportController.selectedArticle.runbooks
+                            model: selectedArticleRef && selectedArticleRef.runbooks
+                                   ? selectedArticleRef.runbooks
                                    : []
                             delegate: Button {
                                 text: modelData.title
@@ -311,7 +310,7 @@ Item {
                                 ToolTip.delay: 250
                                 ToolTip.text: modelData.relativePath
                                 onClicked: {
-                                    if (supportController && supportController.openRunbook(modelData.path)) {
+                                    if (supportControllerRef && supportControllerRef.openRunbook(modelData.path)) {
                                         Qt.openUrlExternally("file://" + modelData.path)
                                         root.runbookRequested(modelData.path)
                                     }
@@ -326,6 +325,6 @@ Item {
 
     TicketDialog {
         id: ticketDialog
-        diagnosticsController: root.diagnosticsController
+        diagnosticsController: root.diagnosticsControllerRef
     }
 }

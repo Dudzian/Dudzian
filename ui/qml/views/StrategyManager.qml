@@ -7,10 +7,8 @@ import "../design-system" as DesignSystem
 Item {
     id: root
     objectName: "strategyManagerView"
-    property var marketplaceControllerContext: (typeof marketplaceController !== "undefined" ? marketplaceController : null)
-    property var runtimeServiceContext: (typeof runtimeService !== "undefined" ? runtimeService : null)
-    property var marketplaceController: marketplaceControllerContext
-    property var runtimeService: runtimeServiceContext
+    property var marketplaceControllerRef: (typeof marketplaceController !== "undefined" ? marketplaceController : null)
+    property var runtimeServiceRef: (typeof runtimeService !== "undefined" ? runtimeService : null)
     property string targetPortfolioId: ""
     property string statusMessage: ""
     property string statusError: ""
@@ -19,7 +17,7 @@ Item {
     property var guardrailTransitions: []
 
     function controller() {
-        return marketplaceController ? marketplaceController : (typeof appController !== "undefined" ? appController : null)
+        return marketplaceControllerRef ? marketplaceControllerRef : (typeof appController !== "undefined" ? appController : null)
     }
 
     function refreshMarketplace() {
@@ -39,9 +37,9 @@ Item {
     }
 
     function refreshActivationSummary() {
-        if (!runtimeService || runtimeService.regimeActivationSummary === undefined)
+        if (!runtimeServiceRef || runtimeServiceRef.regimeActivationSummary === undefined)
             return
-        const raw = runtimeService.regimeActivationSummary
+        const raw = runtimeServiceRef.regimeActivationSummary
         if (!raw || raw.length === 0) {
             activationSummary = {}
             guardrailTransitions = []
@@ -342,10 +340,11 @@ Item {
         refreshActivationSummary()
     }
 
-    onRuntimeServiceChanged: refreshActivationSummary()
+    onRuntimeServiceRefChanged: refreshActivationSummary()
 
     Connections {
-        target: runtimeService ? runtimeService : null
+        target: runtimeServiceRef ? runtimeServiceRef : null
+        ignoreUnknownSignals: true
         function onRegimeActivationSummaryChanged() {
             refreshActivationSummary()
         }

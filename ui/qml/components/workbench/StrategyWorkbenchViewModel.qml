@@ -631,6 +631,7 @@ QtObject {
     property Connections runtimeConnections: Connections {
         id: runtimeConnections
         target: root.appController
+        ignoreUnknownSignals: true
         function onConnectionStatusChanged() { root.refreshFromLive() }
         function onPerformanceGuardChanged() { root.refreshFromLive() }
         function onRiskRefreshScheduleChanged() { root.refreshFromLive() }
@@ -671,6 +672,7 @@ QtObject {
     property Connections licenseConnections: Connections {
         id: licenseConnections
         target: root.licenseController
+        ignoreUnknownSignals: true
         function onLicenseActiveChanged() { root.refreshFromLive() }
         function onLicenseDataChanged() { root.refreshFromLive() }
     }

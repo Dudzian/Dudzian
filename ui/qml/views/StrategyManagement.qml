@@ -11,8 +11,8 @@ Item {
 
     property var runtimeServiceContext: (typeof runtimeService !== "undefined" ? runtimeService : null)
     property var reportControllerContext: (typeof reportController !== "undefined" ? reportController : null)
-    property var runtimeService: runtimeServiceContext
-    property var reportController: reportControllerContext
+    property var runtimeServiceRef: runtimeServiceContext
+    property var reportControllerRef: reportControllerContext
 
     property var savedPresets: []
     property var presetPreview: null
@@ -199,13 +199,13 @@ Item {
     }
 
     function refreshPresets() {
-        if (!runtimeService || !runtimeService.listStrategyPresets) {
+        if (!runtimeServiceRef || !runtimeServiceRef.listStrategyPresets) {
             savedPresets = []
             resetPresetPreview()
             actionStatus = qsTr("Mostek runtime nie jest dostępny")
             return
         }
-        var entries = runtimeService.listStrategyPresets()
+        var entries = runtimeServiceRef.listStrategyPresets()
         savedPresets = entries || []
         if (!entries || entries.length === 0) {
             resetPresetPreview()
@@ -249,7 +249,7 @@ Item {
     }
 
     function previewPresetEntry(entry) {
-        if (!runtimeService || !runtimeService.previewStrategyPreset) {
+        if (!runtimeServiceRef || !runtimeServiceRef.previewStrategyPreset) {
             actionStatus = qsTr("Mostek runtime nie obsługuje podglądu presetów")
             presetPreview = null
             return
@@ -266,7 +266,7 @@ Item {
             selector.path = entry.path
         if (entry.name && !selector.slug)
             selector.name = entry.name
-        var response = runtimeService.previewStrategyPreset(selector)
+        var response = runtimeServiceRef.previewStrategyPreset(selector)
         if (!response || response.ok === false) {
             actionStatus = response && response.error ? response.error : qsTr("Podgląd presetu nie jest dostępny")
             presetPreview = response || null
@@ -297,7 +297,7 @@ Item {
             actionStatus = qsTr("Brak danych presetu do zapisania")
             return
         }
-        if (!runtimeService || !runtimeService.saveStrategyPreset) {
+        if (!runtimeServiceRef || !runtimeServiceRef.saveStrategyPreset) {
             actionStatus = qsTr("Mostek runtime nie obsługuje zapisu presetów")
             return
         }
@@ -309,7 +309,7 @@ Item {
         payload.metadata.cloned_from = presetPreview && presetPreview.preset ? (presetPreview.preset.slug || presetPreview.preset.name || "") : ""
         payload.slug = ""
         payload.id = ""
-        var response = runtimeService.saveStrategyPreset(payload)
+        var response = runtimeServiceRef.saveStrategyPreset(payload)
         if (!response || response.ok === false) {
             actionStatus = response && response.error ? response.error : qsTr("Nie udało się zapisać nowego presetu")
             return
@@ -321,7 +321,7 @@ Item {
     }
 
     function loadPreset(entry) {
-        if (!runtimeService || !runtimeService.loadStrategyPreset) {
+        if (!runtimeServiceRef || !runtimeServiceRef.loadStrategyPreset) {
             actionStatus = qsTr("Mostek runtime nie obsługuje wczytywania presetów")
             return
         }
@@ -334,7 +334,7 @@ Item {
             request.slug = entry.slug
         if (entry.path)
             request.path = entry.path
-        var response = runtimeService.loadStrategyPreset(request)
+        var response = runtimeServiceRef.loadStrategyPreset(request)
         if (!response || response.error) {
             actionStatus = response && response.error ? response.error : qsTr("Nie udało się wczytać presetu")
             return
@@ -344,7 +344,7 @@ Item {
     }
 
     function deletePreset(entry) {
-        if (!runtimeService || !runtimeService.deleteStrategyPreset) {
+        if (!runtimeServiceRef || !runtimeServiceRef.deleteStrategyPreset) {
             actionStatus = qsTr("Mostek runtime nie obsługuje usuwania presetów")
             return
         }
@@ -357,7 +357,7 @@ Item {
             request.slug = entry.slug
         if (entry.path)
             request.path = entry.path
-        var response = runtimeService.deleteStrategyPreset(request)
+        var response = runtimeServiceRef.deleteStrategyPreset(request)
         if (!response || response.error) {
             actionStatus = response && response.error ? response.error : qsTr("Nie udało się usunąć presetu")
             return
@@ -368,13 +368,13 @@ Item {
     }
 
     function refreshChampion() {
-        if (reportController && reportController.refreshChampionOverview)
-            reportController.refreshChampionOverview()
+        if (reportControllerRef && reportControllerRef.refreshChampionOverview)
+            reportControllerRef.refreshChampionOverview()
     }
 
     function refreshReports() {
-        if (reportController && reportController.refresh)
-            reportController.refresh()
+        if (reportControllerRef && reportControllerRef.refresh)
+            reportControllerRef.refresh()
     }
 
     function extractReportMetrics(summary) {
@@ -437,26 +437,26 @@ Item {
     }
 
     function previewArchiveReportsAction() {
-        if (!reportController || !reportController.previewArchiveReports) {
+        if (!reportControllerRef || !reportControllerRef.previewArchiveReports) {
             actionStatus = qsTr("Mostek raportów nie obsługuje podglądu archiwizacji")
             return
         }
         actionStatus = qsTr("Przygotowywanie podglądu archiwizacji raportów…")
         resetArchivePreview()
-        reportController.previewArchiveReports()
+        reportControllerRef.previewArchiveReports()
     }
 
     function archiveReportsAction() {
-        if (!reportController || !reportController.archiveReports) {
+        if (!reportControllerRef || !reportControllerRef.archiveReports) {
             actionStatus = qsTr("Mostek raportów nie obsługuje archiwizacji")
             return
         }
         actionStatus = qsTr("Rozpoczęto archiwizację raportów dla bieżących filtrów")
-        reportController.archiveReports()
+        reportControllerRef.archiveReports()
     }
 
     function openReportLocation(entry) {
-        if (!reportController || !reportController.openReportLocation) {
+        if (!reportControllerRef || !reportControllerRef.openReportLocation) {
             actionStatus = qsTr("Mostek raportów nie obsługuje otwierania lokalizacji")
             return
         }
@@ -464,13 +464,13 @@ Item {
             actionStatus = qsTr("Brak ścieżki raportu do otwarcia")
             return
         }
-        var ok = reportController.openReportLocation(entry.relative_path)
+        var ok = reportControllerRef.openReportLocation(entry.relative_path)
         if (!ok)
-            actionStatus = reportController.lastError ? reportController.lastError : qsTr("Nie udało się otworzyć raportu")
+            actionStatus = reportControllerRef.lastError ? reportControllerRef.lastError : qsTr("Nie udało się otworzyć raportu")
     }
 
     function startPromotion(modelName, version, defaultReason) {
-        if (!reportController || !reportController.promoteChampion) {
+        if (!reportControllerRef || !reportControllerRef.promoteChampion) {
             actionStatus = qsTr("Mostek raportów nie obsługuje promocji championów")
             return
         }
@@ -485,24 +485,24 @@ Item {
     }
 
     Connections {
-        target: reportController
+        target: reportControllerRef
         ignoreUnknownSignals: true
 
         function onChampionOverviewChanged() {
-            championSummary = reportController && reportController.championOverview ? reportController.championOverview : ({})
+            championSummary = reportControllerRef && reportControllerRef.championOverview ? reportControllerRef.championOverview : ({})
         }
 
         function onOverviewStatsChanged() {
-            reportsSummary = reportController && reportController.overviewStats ? reportController.overviewStats : ({})
+            reportsSummary = reportControllerRef && reportControllerRef.overviewStats ? reportControllerRef.overviewStats : ({})
         }
 
         function onReportsChanged() {
-            if (!reportController || !reportController.reports) {
+            if (!reportControllerRef || !reportControllerRef.reports) {
                 championReports = []
                 selectedReportPath = ""
                 return
             }
-            championReports = reportController.reports
+            championReports = reportControllerRef.reports
             if (!selectedReportPath || selectedReportPath.length === 0) {
                 if (championReports.length > 0)
                     selectedReportPath = championReports[0].relative_path || ""
@@ -522,13 +522,13 @@ Item {
         }
 
         function onLastErrorChanged() {
-            if (reportController && reportController.lastError)
-                actionStatus = reportController.lastError
+            if (reportControllerRef && reportControllerRef.lastError)
+                actionStatus = reportControllerRef.lastError
         }
 
         function onLastNotificationChanged() {
-            if (reportController && reportController.lastNotification)
-                actionStatus = reportController.lastNotification
+            if (reportControllerRef && reportControllerRef.lastNotification)
+                actionStatus = reportControllerRef.lastNotification
         }
 
         function onArchivePreviewReady(destination, overwrite, format, result) {
@@ -550,8 +550,8 @@ Item {
                 var destinationLabel = ""
                 if (destination && destination.length > 0)
                     destinationLabel = destination
-                else if (reportController && reportController.defaultArchiveDestination)
-                    destinationLabel = reportController.defaultArchiveDestination()
+                else if (reportControllerRef && reportControllerRef.defaultArchiveDestination)
+                    destinationLabel = reportControllerRef.defaultArchiveDestination()
                 else
                     destinationLabel = qsTr("domyślny katalog")
                 var planned = 0
@@ -570,13 +570,13 @@ Item {
 
         function onArchiveFinished(success) {
             if (success) {
-                if (reportController && reportController.lastNotification)
-                    actionStatus = reportController.lastNotification
+                if (reportControllerRef && reportControllerRef.lastNotification)
+                    actionStatus = reportControllerRef.lastNotification
                 else
                     actionStatus = qsTr("Archiwizacja raportów zakończona pomyślnie")
             } else {
-                if (reportController && reportController.lastError)
-                    actionStatus = reportController.lastError
+                if (reportControllerRef && reportControllerRef.lastError)
+                    actionStatus = reportControllerRef.lastError
                 else
                     actionStatus = qsTr("Archiwizacja raportów zakończyła się błędem")
             }
@@ -603,8 +603,8 @@ Item {
         refreshPresets()
         refreshChampion()
         refreshReports()
-        if (reportController && reportController.reports)
-            championReports = reportController.reports
+        if (reportControllerRef && reportControllerRef.reports)
+            championReports = reportControllerRef.reports
     }
 
     Dialog {
@@ -615,8 +615,8 @@ Item {
         standardButtons: Dialog.Ok | Dialog.Cancel
         onOpened: reasonField.text = pendingPromotionReason
         onAccepted: {
-            if (reportController && reportController.promoteChampion) {
-                reportController.promoteChampion(pendingPromotionModel, pendingPromotionVersion, reasonField.text)
+            if (reportControllerRef && reportControllerRef.promoteChampion) {
+                reportControllerRef.promoteChampion(pendingPromotionModel, pendingPromotionVersion, reasonField.text)
             }
         }
         onClosed: {
@@ -645,7 +645,7 @@ Item {
 
         footer: DialogButtonBox {
             standardButtons: Dialog.Ok | Dialog.Cancel
-            enabled: !(reportController && reportController.busy)
+            enabled: !(reportControllerRef && reportControllerRef.busy)
             onAccepted: promotionDialog.accept()
             onRejected: promotionDialog.reject()
         }
@@ -714,7 +714,7 @@ Item {
                         Button {
                             text: qsTr("Odśwież status")
                             icon.name: "view-refresh"
-                            enabled: reportController && reportController.refreshChampionOverview
+                            enabled: reportControllerRef && reportControllerRef.refreshChampionOverview
                             onClicked: refreshChampion()
                         }
                         Item { Layout.fillWidth: true }
@@ -778,7 +778,7 @@ Item {
                                         Button {
                                             text: qsTr("Przywróć poprzedniego championa")
                                             icon.name: "go-previous"
-                                            enabled: reportController && reportController.promoteChampion
+                                            enabled: reportControllerRef && reportControllerRef.promoteChampion
                                             onClicked: {
                                                 var challenger = championData.challengers && championData.challengers.length > 0 ? championData.challengers[0] : null
                                                 var report = challenger && challenger.report ? challenger.report : {}
@@ -831,7 +831,7 @@ Item {
                                                 Button {
                                                     text: qsTr("Promuj")
                                                     icon.name: "go-up"
-                                                    enabled: reportController && reportController.promoteChampion
+                                                    enabled: reportControllerRef && reportControllerRef.promoteChampion
                                                     onClicked: {
                                                         var report = modelData.report || {}
                                                         var version = report.version || ""
@@ -1248,7 +1248,7 @@ Item {
                                 Button {
                                     text: qsTr("Zapisz jako nowy preset")
                                     icon.name: "document-save"
-                                    enabled: presetPreview && presetPreview.preset_payload && runtimeService && runtimeService.saveStrategyPreset
+                                    enabled: presetPreview && presetPreview.preset_payload && runtimeServiceRef && runtimeServiceRef.saveStrategyPreset
                                     onClicked: requestClonePreset()
                                 }
                                 Item { Layout.fillWidth: true }
@@ -1275,26 +1275,26 @@ Item {
                     Button {
                         text: qsTr("Odśwież raporty")
                         icon.name: "view-refresh"
-                        enabled: reportController && reportController.refresh
+                        enabled: reportControllerRef && reportControllerRef.refresh
                         onClicked: refreshReports()
                     }
                     Button {
                         text: qsTr("Podgląd archiwizacji")
                         icon.name: "document-preview"
-                        enabled: reportController && reportController.previewArchiveReports && !(reportController && reportController.busy)
+                        enabled: reportControllerRef && reportControllerRef.previewArchiveReports && !(reportControllerRef && reportControllerRef.busy)
                         onClicked: previewArchiveReportsAction()
                     }
                     Button {
                         text: qsTr("Archiwizuj")
                         icon.name: "document-save"
-                        enabled: reportController && reportController.archiveReports && !(reportController && reportController.busy)
+                        enabled: reportControllerRef && reportControllerRef.archiveReports && !(reportControllerRef && reportControllerRef.busy)
                         onClicked: archiveReportsAction()
                     }
                     Item { Layout.fillWidth: true }
                     Label {
-                        text: reportController && reportController.busy ? qsTr("Przetwarzanie...") : ""
+                        text: reportControllerRef && reportControllerRef.busy ? qsTr("Przetwarzanie...") : ""
                         color: palette.mid
-                        visible: reportController && reportController.busy
+                        visible: reportControllerRef && reportControllerRef.busy
                     }
                 }
 
@@ -1310,8 +1310,8 @@ Item {
                 }
 
                 Label {
-                    text: reportController && reportController.lastNotification ? reportController.lastNotification : ""
-                    visible: reportController && reportController.lastNotification
+                    text: reportControllerRef && reportControllerRef.lastNotification ? reportControllerRef.lastNotification : ""
+                    visible: reportControllerRef && reportControllerRef.lastNotification
                     color: palette.mid
                     wrapMode: Text.Wrap
                 }
@@ -1319,7 +1319,7 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     text: qsTr("Brak raportów championów w katalogu jakości")
-                    visible: championReports.length === 0 && !(reportController && reportController.busy)
+                    visible: championReports.length === 0 && !(reportControllerRef && reportControllerRef.busy)
                     color: palette.mid
                     wrapMode: Text.Wrap
                 }
