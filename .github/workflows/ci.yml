@@ -881,7 +881,7 @@ jobs:
             libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
             libgrpc-dev libgrpc++-dev libarchive-dev \
             libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-xinerama0 xvfb \
+            libxcb-cursor0 libxcb-xinerama0 xvfb xauth \
             libgl-dev libopengl-dev libglx-dev
 
       - name: Set up Python
@@ -948,14 +948,6 @@ jobs:
           python -m pip install -e .
           python -m pip install pyyaml
 
-      - name: Start virtual display
-        run: |
-          export DISPLAY=:99
-          Xvfb "$DISPLAY" -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
-          echo "DISPLAY=${DISPLAY}" >> "$GITHUB_ENV"
-          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
-          sleep 3
-
       - name: Configure CMake
         run: cmake -S ui -B ui/build-tests -G Ninja -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=$QT_ROOT_DIR
 
@@ -968,7 +960,15 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p ui/build-tests/Testing/Temporary
-          ctest --test-dir ui/build-tests --output-on-failure --output-log ui/build-tests/Testing/Temporary/ctest.log | tee ui/build-tests/Testing/Temporary/ctest-console.log
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            ctest --test-dir ui/build-tests --output-on-failure \
+            --output-log ui/build-tests/Testing/Temporary/ctest.log
+
+      - name: Copy CTest console output
+        if: always()
+        run: |
+          cp ui/build-tests/Testing/Temporary/ctest.log \
+            ui/build-tests/Testing/Temporary/ctest-console.log || true
 
       - name: Upload UI native test artifacts
         if: always()
@@ -981,13 +981,6 @@ jobs:
             ui/build-tests/Testing/Temporary/LastTest.log
           if-no-files-found: warn
           retention-days: 5
-
-      - name: Stop virtual display
-        if: always()
-        run: |
-          if [[ -n "${XVFB_PID:-}" ]]; then
-            kill "$XVFB_PID" || true
-          fi
 
   ui-tests:
     if: github.event_name != 'schedule'
@@ -1017,15 +1010,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libpulse0 libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-xinerama0 xvfb
-
-      - name: Start virtual display
-        run: |
-          export DISPLAY=:99
-          Xvfb "$DISPLAY" -screen 0 1920x1080x24 > /tmp/xvfb.log 2>&1 &
-          echo "DISPLAY=${DISPLAY}" >> "$GITHUB_ENV"
-          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
-          sleep 3
+            libxcb-cursor0 libxcb-xinerama0 xvfb xauth
 
       - name: Download PySide6 wheel artifact
         uses: actions/download-artifact@v7
@@ -1050,25 +1035,43 @@ jobs:
 
       - name: Collect/import QML risk panel test module (smoke)
         run: |
-          set -o pipefail
-          output=$(python -m pytest --collect-only -q tests/ui/qml/test_risk_panels.py | tee /dev/stderr)
+          output=$(xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            python -m pytest --collect-only -q tests/ui/qml/test_risk_panels.py)
+          echo "$output"
           if echo "$output" | grep -Fq "found no collectors"; then
             echo "Detected pytest collection error: found no collectors"
             exit 1
           fi
 
+      - name: Verify xvfb-run prerequisites
+        run: |
+          command -v xvfb-run >/dev/null
+          command -v xauth >/dev/null
+
       - name: Run QML pytest suite
         run: |
-          set -o pipefail
           mkdir -p test-results/qml
-          cp /tmp/xvfb.log test-results/qml/xvfb.log || true
-          python -m pytest -m qml --maxfail=1 --disable-warnings \
-            -vv -rA --capture=tee-sys --durations=25 \
-            -o log_cli=true -o log_cli_level=INFO -o faulthandler_timeout=60 \
-            --junitxml=test-results/qml/pytest.xml \
-            --log-file=test-results/qml/pytest.log --log-file-level=DEBUG \
-            2>&1 | tee test-results/qml/pytest-console.log
-          cp /tmp/xvfb.log test-results/qml/xvfb.log || true
+          set +e
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            python -m pytest -m qml --maxfail=1 --disable-warnings \
+              -vv -rA --capture=tee-sys --durations=25 \
+              -o log_cli=true -o log_cli_level=INFO -o faulthandler_timeout=60 \
+              --junitxml=test-results/qml/pytest.xml \
+              --log-file=test-results/qml/pytest.log --log-file-level=DEBUG \
+              > test-results/qml/pytest-console.raw.log 2>&1
+          exit_code=$?
+          exit ${exit_code}
+
+      - name: Finalize pytest console artifact
+        if: always()
+        run: |
+          mkdir -p test-results/qml
+          if [[ -f test-results/qml/pytest-console.raw.log ]]; then
+            cp test-results/qml/pytest-console.raw.log test-results/qml/pytest-console.log
+            cat test-results/qml/pytest-console.log
+          else
+            echo "pytest console log was not generated" | tee test-results/qml/pytest-console.log
+          fi
 
       - name: Upload QML diagnostics
         if: always()
@@ -1078,13 +1081,6 @@ jobs:
           path: test-results/qml
           if-no-files-found: warn
           retention-days: 3
-
-      - name: Stop virtual display
-        if: always()
-        run: |
-          if [[ -n "${XVFB_PID:-}" ]]; then
-            kill "$XVFB_PID" || true
-          fi
 
   grpc-feed-integration:
     if: github.event_name != 'schedule'
