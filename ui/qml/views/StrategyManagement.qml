@@ -9,8 +9,10 @@ Item {
     implicitWidth: 960
     implicitHeight: 600
 
-    property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
-    property var reportController: (typeof reportController !== "undefined" ? reportController : null)
+    property var runtimeServiceContext: (typeof runtimeService !== "undefined" ? runtimeService : null)
+    property var reportControllerContext: (typeof reportController !== "undefined" ? reportController : null)
+    property var runtimeService: runtimeServiceContext
+    property var reportController: reportControllerContext
 
     property var savedPresets: []
     property var presetPreview: null
@@ -721,7 +723,7 @@ Item {
                                   ? qsTr("Katalog: %1").arg(championSummary.base_directory)
                                   : qsTr("Domyślna ścieżka jakości modeli")
                             color: palette.mid
-                            font.pointSize: font.pointSize - 1
+                            font.pointSize: 11
                             Layout.alignment: Qt.AlignVCenter
                         }
                     }
@@ -1194,7 +1196,7 @@ Item {
 
                                     Label {
                                         Layout.fillWidth: true
-                                        text: modelData.label || modelData.parameter
+                                        text: modelData.label || modelData.parameter || ""
                                     }
 
                                     Label {
@@ -1385,7 +1387,7 @@ Item {
                                                 id: metricLabel
                                                 anchors.centerIn: parent
                                                 text: (modelData.label || "") + ": " + formatDiffValue(modelData.value, modelData.isPercent)
-                                                font.pointSize: font.pointSize - 1
+                                                font.pointSize: 11
                                             }
                                         }
                                     }

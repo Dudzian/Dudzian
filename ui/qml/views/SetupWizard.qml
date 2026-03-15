@@ -94,7 +94,7 @@ Item {
         anchors.fill: parent
         objectName: "setupWizardRootColumn"
         spacing: Styles.AppTheme.spacingLg
-        padding: Styles.AppTheme.spacingLg
+        anchors.margins: Styles.AppTheme.spacingLg
 
         RowLayout {
             Layout.fillWidth: true
@@ -134,9 +134,9 @@ Item {
 
                     ColumnLayout {
                         id: licenseColumn
-                        width: parent.width
+                        x: Styles.AppTheme.spacingLg
+                        width: Math.max(0, parent.width - (2 * Styles.AppTheme.spacingLg))
                         spacing: Styles.AppTheme.spacingSm
-                        padding: Styles.AppTheme.spacingLg
 
                         Label {
                             text: qsTr("Krok 1 z 4 – aktywacja licencji")
@@ -184,9 +184,9 @@ Item {
 
                     ColumnLayout {
                         id: exchangeColumn
-                        width: parent.width
+                        x: Styles.AppTheme.spacingLg
+                        width: Math.max(0, parent.width - (2 * Styles.AppTheme.spacingLg))
                         spacing: Styles.AppTheme.spacingSm
-                        padding: Styles.AppTheme.spacingLg
 
                         Label {
                             text: qsTr("Krok 2 z 4 – konfiguracja giełdy")
@@ -317,9 +317,9 @@ Item {
 
                     ColumnLayout {
                         id: strategyColumn
-                        width: parent.width
+                        x: Styles.AppTheme.spacingLg
+                        width: Math.max(0, parent.width - (2 * Styles.AppTheme.spacingLg))
                         spacing: Styles.AppTheme.spacingSm
-                        padding: Styles.AppTheme.spacingLg
 
                         Label {
                             text: qsTr("Krok 3 z 4 – strategie handlowe")
@@ -433,9 +433,9 @@ Item {
 
                     ColumnLayout {
                         id: personalizationColumn
-                        width: parent.width
+                        x: Styles.AppTheme.spacingLg
+                        width: Math.max(0, parent.width - (2 * Styles.AppTheme.spacingLg))
                         spacing: Styles.AppTheme.spacingSm
-                        padding: Styles.AppTheme.spacingLg
 
                         Label {
                             text: qsTr("Krok 4 z 4 – personalizacja interfejsu")

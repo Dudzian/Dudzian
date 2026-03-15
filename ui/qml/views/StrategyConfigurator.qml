@@ -132,7 +132,8 @@ Item {
 
             Frame {
                 Layout.fillHeight: true
-                Layout.preferredWidth: parent.width * 0.55
+                Layout.fillWidth: true
+                Layout.preferredWidth: 520
                 background: Rectangle { color: Qt.darker(palette.base, 1.05); radius: 8 }
 
                 ListView {
@@ -244,6 +245,7 @@ Item {
             Frame {
                 Layout.fillHeight: true
                 Layout.fillWidth: true
+                Layout.preferredWidth: 420
                 background: Rectangle { color: Qt.darker(palette.window, 1.04); radius: 8 }
 
                 ColumnLayout {
