@@ -62,7 +62,7 @@ Frame {
                         border.color: palette.windowText
                         border.width: modelData.critical ? 2 : 1
                         ToolTip.visible: hovered
-                        ToolTip.text: modelData.enabled ? qsTr("Aktywna") : qsTr("Nieaktywna")
+                        ToolTip.text: modelData && modelData.enabled ? qsTr("Aktywna") : qsTr("Nieaktywna")
                         HoverHandler { id: hoverHandler }
                     }
                 }

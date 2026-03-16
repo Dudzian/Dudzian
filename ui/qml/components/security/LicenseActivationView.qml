@@ -16,6 +16,21 @@ Item {
 
     implicitWidth: parent ? parent.width : 640
 
+    function dialogPath(value) {
+        if (!value)
+            return ""
+        if (value.toLocalFile) {
+            var local = value.toLocalFile()
+            if (local && local.length > 0)
+                return local
+        }
+        if (value.toString)
+            return value.toString()
+        return "" + value
+    }
+
+
+
     ListModel {
         id: auditEntries
     }
@@ -492,8 +507,12 @@ Item {
         id: auditExportDialog
         title: qsTr("Wybierz katalog eksportu logów bezpieczeństwa")
         onAccepted: {
-            if (securityControllerRef)
-                securityControllerRef.exportSignedAuditLog(auditExportDialog.selectedFolder)
+            if (!securityControllerRef)
+                return
+            const selectedPath = root.dialogPath(auditExportDialog.selectedFolder)
+            if (selectedPath.length === 0)
+                return
+            securityControllerRef.exportSignedAuditLog(auditExportDialog.selectedFolder)
         }
     }
 
@@ -505,8 +524,10 @@ Item {
         onAccepted: {
             if (!licenseControllerRef)
                 return
-            if (selectedFile)
-                licenseControllerRef.loadLicenseUrl(selectedFile)
+            const selectedPath = root.dialogPath(selectedFile)
+            if (selectedPath.length === 0)
+                return
+            licenseControllerRef.loadLicenseUrl(selectedFile)
         }
     }
 

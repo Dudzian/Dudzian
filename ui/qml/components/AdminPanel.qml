@@ -272,6 +272,19 @@ Drawer {
         Qt.openUrlExternally(url)
     }
 
+    function urlToString(value) {
+        if (!value)
+            return ""
+        if (value.toLocalFile) {
+            var local = value.toLocalFile()
+            if (local && local.length > 0)
+                return local
+        }
+        if (value.toString)
+            return value.toString()
+        return "" + value
+    }
+
     function defaultExportFolder() {
         var path = StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
         if (!path || path.length === 0)
@@ -1493,7 +1506,7 @@ Drawer {
                                             var folder = decisionLogFolderUrl()
                                             if (currentFile && currentFile.toString && currentFile.toString().length > 0)
                                                 decisionLogFileDialog.currentFile = currentFile
-                                            if (folder && folder.toString && folder.toString().length > 0)
+                                            if (urlToString(folder).length > 0)
                                                 decisionLogFileDialog.currentFolder = folder
                                             else
                                                 decisionLogFileDialog.currentFolder = Qt.resolvedUrl(".")
@@ -1505,7 +1518,7 @@ Drawer {
                                         text: qsTr("Katalog…")
                                         onClicked: {
                                             var folder = decisionLogFolderUrl()
-                                            decisionLogFolderDialog.folder = folder && folder.toString && folder.toString().length > 0
+                                            decisionLogFolderDialog.folder = urlToString(folder).length > 0
                                                     ? folder
                                                     : Qt.resolvedUrl(".")
                                             decisionLogFolderDialog.open()
@@ -2252,10 +2265,14 @@ Drawer {
                                 const requestedLimit = exportLimitCheckbox.checked
                                         ? Math.max(1, Math.round(exportLimitSpin.value))
                                         : -1
+                                const filePath = urlToString(selectedFile)
+                                if (filePath.length === 0)
+                                    return
                                 const ok = appController.exportRiskHistoryToCsv(selectedFile, requestedLimit)
                                 if (ok) {
                                     var folderUrl = historyExportDialog.currentFolder || historyExportDialog.folder
-                                    if (folderUrl && folderUrl.length > 0) {
+                                    var folderPath = urlToString(folderUrl)
+                                    if (folderPath.length > 0) {
                                         riskHistoryExportLastDirectory = folderUrl
                                         appController.setRiskHistoryExportLastDirectory(folderUrl)
                                     }
@@ -2263,10 +2280,10 @@ Drawer {
                                         const exported = Math.min(requestedLimit, riskHistoryModel.entryCount)
                                         riskHistoryStatusMessage = qsTr("Wyeksportowano %1 najnowszych próbek ryzyka do %2")
                                                                      .arg(exported)
-                                                                     .arg(selectedFile.toString())
+                                                                     .arg(filePath)
                                     } else {
                                         riskHistoryStatusMessage = qsTr("Wyeksportowano historię ryzyka do %1")
-                                                                       .arg(selectedFile.toString())
+                                                                       .arg(filePath)
                                     }
                                     riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
                                 } else {
@@ -2583,10 +2600,14 @@ Drawer {
                                 const requestedLimit = exportLimitCheckbox.checked
                                         ? Math.max(1, Math.round(exportLimitSpin.value))
                                         : -1
+                                const filePath = urlToString(selectedFile)
+                                if (filePath.length === 0)
+                                    return
                                 const ok = appController.exportRiskHistoryToCsv(selectedFile, requestedLimit)
                                 if (ok) {
                                     var folderUrl = historyExportDialog.currentFolder || historyExportDialog.folder
-                                    if (folderUrl && folderUrl.length > 0) {
+                                    var folderPath = urlToString(folderUrl)
+                                    if (folderPath.length > 0) {
                                         riskHistoryExportLastDirectory = folderUrl
                                         appController.setRiskHistoryExportLastDirectory(folderUrl)
                                     }
@@ -2594,10 +2615,10 @@ Drawer {
                                         const exported = Math.min(requestedLimit, riskHistoryModel.entryCount)
                                         riskHistoryStatusMessage = qsTr("Wyeksportowano %1 najnowszych próbek ryzyka do %2")
                                                                      .arg(exported)
-                                                                     .arg(selectedFile.toString())
+                                                                     .arg(filePath)
                                     } else {
                                         riskHistoryStatusMessage = qsTr("Wyeksportowano historię ryzyka do %1")
-                                                                       .arg(selectedFile.toString())
+                                                                       .arg(filePath)
                                     }
                                     riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
                                 } else {

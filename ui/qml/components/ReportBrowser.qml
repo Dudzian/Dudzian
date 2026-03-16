@@ -121,6 +121,19 @@ Item {
         Qt.application.clipboard.setText(text)
     }
 
+    function dialogPath(value) {
+        if (!value)
+            return ""
+        if (value.toLocalFile) {
+            const local = value.toLocalFile()
+            if (local && local.length > 0)
+                return local
+        }
+        if (value.toString)
+            return value.toString()
+        return "" + value
+    }
+
     function updateDashboards() {
         equityCurveData = reportController && reportController.equityCurve ? reportController.equityCurve : []
         assetHeatmapData = reportController && reportController.assetHeatmap ? reportController.assetHeatmap : []
@@ -1479,6 +1492,7 @@ Item {
 
     Dialog {
         id: sinceDialog
+        parent: browser
         modal: true
         title: qsTr("Wybierz datę początkową")
         standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
@@ -1504,6 +1518,7 @@ Item {
 
     Dialog {
         id: untilDialog
+        parent: browser
         modal: true
         title: qsTr("Wybierz datę końcową")
         standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
@@ -1529,6 +1544,7 @@ Item {
 
     Dialog {
         id: deleteDialog
+        parent: browser
         modal: true
         title: qsTr("Usuń raport")
         property string reportPath: ""
@@ -1557,8 +1573,10 @@ Item {
             pendingLabel = reportLabel
             activeRequestPath = reportPath
             const started = reportController.deleteReport(reportPath)
-            if (!started)
+            if (!started) {
                 Qt.callLater(function() { deleteDialog.open() })
+                return
+            }
             reportPath = ""
             reportLabel = ""
             preview = null
@@ -1669,6 +1687,7 @@ Item {
 
     Dialog {
         id: archiveDialog
+        parent: browser
         modal: true
         title: qsTr("Archiwizuj filtrowane raporty")
         property var preview: null
@@ -1679,6 +1698,10 @@ Item {
         property string pendingDestination: ""
         property bool pendingOverwrite: false
         property string pendingFormat: "directory"
+        property bool reopenWithRetryState: false
+        property string retryDestinationPath: ""
+        property bool retryOverwriteExisting: false
+        property string retryArchiveFormat: "directory"
         enabled: !browser.isBusy
 
         function updatePreview() {
@@ -1695,18 +1718,32 @@ Item {
             reportController.previewArchiveReports(destinationPath, overwriteExisting, archiveDialog.archiveFormat)
         }
 
+        function snapshotRetryState() {
+            archiveDialog.retryDestinationPath = destinationPath
+            archiveDialog.retryOverwriteExisting = overwriteExisting
+            archiveDialog.retryArchiveFormat = archiveDialog.archiveFormat
+            archiveDialog.reopenWithRetryState = true
+        }
+
         onOpened: {
-            overwriteExisting = false
             preview = null
             previewError = ""
-            if (reportController && reportController.archiveFormat !== undefined)
-                archiveDialog.archiveFormat = reportController.archiveFormat
-            else
-                archiveDialog.archiveFormat = "directory"
-            if (reportController && reportController.defaultArchiveDestination !== undefined)
-                destinationPath = reportController.defaultArchiveDestination()
-            else
-                destinationPath = ""
+            if (archiveDialog.reopenWithRetryState) {
+                archiveDialog.reopenWithRetryState = false
+                destinationPath = archiveDialog.retryDestinationPath
+                overwriteExisting = archiveDialog.retryOverwriteExisting
+                archiveDialog.archiveFormat = archiveDialog.retryArchiveFormat
+            } else {
+                overwriteExisting = false
+                if (reportController && reportController.archiveFormat !== undefined)
+                    archiveDialog.archiveFormat = reportController.archiveFormat
+                else
+                    archiveDialog.archiveFormat = "directory"
+                if (reportController && reportController.defaultArchiveDestination !== undefined)
+                    destinationPath = reportController.defaultArchiveDestination()
+                else
+                    destinationPath = ""
+            }
             destinationField.text = destinationPath
             archiveFormatCombo.currentIndex = browser.archiveFormatIndex(archiveDialog.archiveFormat)
             updatePreview()
@@ -1716,8 +1753,11 @@ Item {
             if (!reportController)
                 return
             const started = reportController.archiveReports(destinationPath, overwriteExisting, archiveDialog.archiveFormat)
-            if (!started)
+            if (!started) {
+                archiveDialog.snapshotRetryState()
                 Qt.callLater(function() { archiveDialog.open() })
+                return
+            }
             preview = null
             previewError = ""
         }
@@ -1728,6 +1768,10 @@ Item {
             pendingDestination = ""
             pendingOverwrite = false
             pendingFormat = "directory"
+            reopenWithRetryState = false
+            retryDestinationPath = ""
+            retryOverwriteExisting = false
+            retryArchiveFormat = "directory"
         }
 
         contentItem: ColumnLayout {
@@ -1883,11 +1927,16 @@ Item {
                     archiveDialog.previewError = ""
             }
             function onArchiveFinished(success) {
-                if (!success)
+                if (!success) {
+                    archiveDialog.snapshotRetryState()
                     Qt.callLater(function() { archiveDialog.open() })
-                else {
+                } else {
                     archiveDialog.preview = null
                     archiveDialog.previewError = ""
+                    archiveDialog.reopenWithRetryState = false
+                    archiveDialog.retryDestinationPath = ""
+                    archiveDialog.retryOverwriteExisting = false
+                    archiveDialog.retryArchiveFormat = "directory"
                 }
             }
         }
@@ -1895,6 +1944,7 @@ Item {
 
     Dialog {
         id: purgeDialog
+        parent: browser
         modal: true
         title: qsTr("Usuń filtrowane raporty")
         property var preview: null
@@ -2004,17 +2054,12 @@ Item {
         id: archiveFolderDialog
         title: qsTr("Wybierz katalog archiwum")
         onAccepted: {
-            if (!selectedFolder)
-                return
-            var folder = ""
-            if (selectedFolder && selectedFolder.toLocalFile)
-                folder = selectedFolder.toLocalFile()
-            else if (selectedFolder)
-                folder = selectedFolder.toString()
-            if (folder && folder.length > 0) {
+            const folder = browser.dialogPath(selectedFolder)
+            if (folder.length > 0) {
                 archiveDialog.destinationPath = folder
                 destinationField.text = folder
                 archiveDialog.updatePreview()
+            }
         }
     }
 
@@ -2038,7 +2083,6 @@ Item {
             cursorShape: Qt.WaitCursor
         }
     }
-}
 
     FileDialog {
         id: exportDialog
@@ -2047,7 +2091,8 @@ Item {
         nameFilters: [qsTr("Archiwa (*.zip *.json *.jsonl *.csv *.md)"), qsTr("Wszystkie pliki (*)")]
         property string reportPath: ""
         onAccepted: {
-            if (!reportPath || !selectedFile)
+            const exportPath = browser.dialogPath(selectedFile)
+            if (!reportPath || exportPath.length === 0)
                 return
             reportController.saveReportAs(reportPath, selectedFile)
         }

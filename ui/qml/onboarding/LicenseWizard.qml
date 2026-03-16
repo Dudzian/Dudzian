@@ -79,6 +79,14 @@ Item {
         updateSummaryState()
     }
 
+    function selectedFilePath(fileValue) {
+        if (!fileValue)
+            return ""
+        if (fileValue.toString)
+            return fileValue.toString()
+        return "" + fileValue
+    }
+
     function updateSummaryState() {
         const licenseAccepted = root.controller && root.controller.licenseAccepted
         if (!licenseAccepted) {
@@ -197,7 +205,8 @@ Item {
         onAccepted: {
             if (!root.controller)
                 return
-            if (selectedFile && selectedFile !== "") {
+            const filePath = root.selectedFilePath(selectedFile)
+            if (filePath.length > 0) {
                 const ok = root.controller.applyLicenseFile(selectedFile)
                 applySummaryFromController()
                 if (ok) {

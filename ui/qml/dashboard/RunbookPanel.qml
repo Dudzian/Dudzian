@@ -365,6 +365,7 @@ Item {
 
     Dialog {
         id: confirmActionDialog
+        parent: root
         modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
         title: qsTrId("runbookPanel.confirmActionTitle")

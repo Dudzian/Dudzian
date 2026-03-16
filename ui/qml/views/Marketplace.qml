@@ -339,6 +339,19 @@ Item {
         busy = false
     }
 
+    function dialogPath(value) {
+        if (!value)
+            return ""
+        if (value.toLocalFile) {
+            var local = value.toLocalFile()
+            if (local && local.length > 0)
+                return local
+        }
+        if (value.toString)
+            return value.toString()
+        return "" + value
+    }
+
     function exportPreset(preset, destinationUrl) {
         if (!preset)
             return
@@ -1048,8 +1061,10 @@ Item {
         fileMode: FileDialog.OpenFile
         nameFilters: [qsTr("Pliki strategii (*.json *.yaml *.yml *.zip)"), qsTr("Wszystkie pliki (*)")]
         onAccepted: {
-            if (selectedFile)
-                importPresetFromUrl(selectedFile)
+            const importPath = dialogPath(selectedFile)
+            if (importPath.length === 0)
+                return
+            importPresetFromUrl(selectedFile)
         }
     }
 
@@ -1058,8 +1073,10 @@ Item {
         title: qsTr("Zapisz preset strategii")
         fileMode: FileDialog.SaveFile
         onAccepted: {
-            if (selectedFile)
-                exportPreset(selectedPreset, selectedFile)
+            const exportPath = dialogPath(selectedFile)
+            if (exportPath.length === 0)
+                return
+            exportPreset(selectedPreset, selectedFile)
         }
     }
 }

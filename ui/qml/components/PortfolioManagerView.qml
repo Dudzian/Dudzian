@@ -166,6 +166,7 @@ Item {
 
     Dialog {
         id: editDialog
+        parent: root
         modal: true
         title: qsTr("Konfiguracja portfela")
         standardButtons: Dialog.Ok | Dialog.Cancel
