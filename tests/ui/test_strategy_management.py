@@ -89,6 +89,26 @@ else:
         pass
 
 
+def _popup_snapshot(popup: QObject) -> dict[str, object]:
+    parent_obj = popup.parent()
+    window_obj = popup.property("window")
+    parent_window_obj = popup.property("parentWindow")
+    return {
+        "visible": popup.property("visible"),
+        "opened": popup.property("opened"),
+        "modal": popup.property("modal"),
+        "popupType": popup.property("popupType"),
+        "parentObjectName": parent_obj.objectName() if isinstance(parent_obj, QObject) else None,
+        "parentClass": parent_obj.metaObject().className() if isinstance(parent_obj, QObject) else None,
+        "windowClass": window_obj.metaObject().className() if isinstance(window_obj, QObject) else None,
+        "parentWindowClass": parent_window_obj.metaObject().className() if isinstance(parent_window_obj, QObject) else None,
+    }
+
+
+def _snapshot_str(label: str, popup: QObject) -> str:
+    return f"{label}: {_popup_snapshot(popup)}"
+
+
 class RuntimeServiceStub(QObject):
     def __init__(self) -> None:
         super().__init__()
@@ -282,9 +302,24 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     clone_dialog = root.findChild(QObject, "cloneDialog")
     assert clone_dialog is not None
 
+    clone_parent = clone_dialog.parent()
+    assert isinstance(clone_parent, QObject)
+    assert clone_parent is root
+
+    before_request = _snapshot_str("before_request", clone_dialog)
     assert QMetaObject.invokeMethod(root, "requestClonePreset", Qt.DirectConnection) is True
+    after_request_before_events = _snapshot_str("after_request_before_events", clone_dialog)
+
+    # `requestClonePreset()` sets pending payload + clone name and calls `cloneDialog.open()`.
+    pending_payload = root.property("pendingClonePayload")
+    assert pending_payload is not None
+
     app.processEvents()
-    assert clone_dialog.property("visible") is True
+    after_events = _snapshot_str("after_events", clone_dialog)
+    assert clone_dialog.property("visible") is True, (
+        "Clone dialog not visible after requestClonePreset/processEvents; "
+        + " | ".join([before_request, after_request_before_events, after_events])
+    )
 
     clone_name_field = root.findChild(QObject, "cloneNameField")
     assert clone_name_field is not None
@@ -321,6 +356,66 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     assert bundle_path.exists()
     payload = yaml.safe_load(bundle_path.read_text(encoding="utf-8"))
     assert len(payload["presets"]) == 2
+
+    for obj in engine.rootObjects():
+        obj.deleteLater()
+    engine.deleteLater()
+    app.processEvents()
+
+
+@pytest.mark.timeout(20)
+def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+
+    engine = QQmlApplicationEngine()
+    runtime_service = RuntimeServiceStub()
+    report_controller = ReportControllerStub()
+    runtime_config = tmp_path / "config" / "runtime.yaml"
+    runtime_config.parent.mkdir(parents=True, exist_ok=True)
+    runtime_config.write_text("cloud:\n  enabled_signed: false\n", encoding="utf-8")
+    strategy_controller = StrategyManagementController(
+        marketplace_service=MarketplaceStub(), runtime_config_path=runtime_config
+    )
+
+    context = engine.rootContext()
+    context.setContextProperty("runtimeService", runtime_service)
+    context.setContextProperty("reportController", report_controller)
+    context.setContextProperty("strategyManagementController", strategy_controller)
+
+    view_path = (
+        Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyManagement.qml"
+    )
+    engine.load(QUrl.fromLocalFile(str(view_path)))
+    if not engine.rootObjects():
+        pytest.skip("Nie udało się załadować StrategyManagement", allow_module_level=False)
+
+    root = engine.rootObjects()[0]
+    assert isinstance(root, QObject)
+
+    promotion_dialog = root.findChild(QObject, "promotionDialog")
+    if promotion_dialog is None:
+        for child in root.children():
+            if isinstance(child, QObject) and child.metaObject().className().endswith("Dialog"):
+                if child.property("title") and "Promocja championa" in str(child.property("title")):
+                    promotion_dialog = child
+                    break
+    assert promotion_dialog is not None
+
+    parent_obj = promotion_dialog.parent()
+    assert isinstance(parent_obj, QObject)
+    assert parent_obj is root
+
+    assert QMetaObject.invokeMethod(
+        root,
+        "startPromotion",
+        Qt.DirectConnection,
+        Q_ARG(str, "alpha-model"),
+        Q_ARG(str, "v2"),
+        Q_ARG(str, "manual"),
+    ) is True
+    app.processEvents()
+
+    assert promotion_dialog.property("visible") is True, _snapshot_str("promotion_after_events", promotion_dialog)
 
     for obj in engine.rootObjects():
         obj.deleteLater()
