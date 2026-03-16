@@ -28,7 +28,15 @@ if yaml is not None:
 
     from PySide6.QtCore import QObject, Property, Qt, QUrl, Signal, Slot, QMetaObject, Q_ARG
     from PySide6.QtQml import QQmlApplicationEngine
-    from PySide6.QtQuick import QQuickItem, QQuickWindow
+
+    try:  # pragma: no cover - zależne od środowiska CI
+        from PySide6.QtQuick import QQuickItem, QQuickWindow
+    except ImportError as exc:  # pragma: no cover
+        pytest.skip(
+            "Brak zależności systemowych Qt Quick (np. libEGL.so.1): "
+            f"{exc}",
+            allow_module_level=True,
+        )
 
     try:  # pragma: no cover - zależne od środowiska CI
         from PySide6.QtWidgets import QApplication
