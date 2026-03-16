@@ -89,19 +89,35 @@ else:
         pass
 
 
+def _safe_qml_property(obj: QObject, name: str) -> object:
+    try:
+        return obj.property(name)
+    except RuntimeError as exc:
+        return f"<unavailable:{name}:{exc}>"
+
+
+def _safe_qobject_class_name(value: object) -> str | None:
+    if not isinstance(value, QObject):
+        return None
+    try:
+        return value.metaObject().className()
+    except RuntimeError:
+        return "<metaObject-unavailable>"
+
+
 def _popup_snapshot(popup: QObject) -> dict[str, object]:
     parent_obj = popup.parent()
-    window_obj = popup.property("window")
-    parent_window_obj = popup.property("parentWindow")
+    window_obj = _safe_qml_property(popup, "window")
+    parent_window_obj = _safe_qml_property(popup, "parentWindow")
     return {
-        "visible": popup.property("visible"),
-        "opened": popup.property("opened"),
-        "modal": popup.property("modal"),
-        "popupType": popup.property("popupType"),
+        "visible": _safe_qml_property(popup, "visible"),
+        "opened": _safe_qml_property(popup, "opened"),
+        "modal": _safe_qml_property(popup, "modal"),
+        "popupType": _safe_qml_property(popup, "popupType"),
         "parentObjectName": parent_obj.objectName() if isinstance(parent_obj, QObject) else None,
-        "parentClass": parent_obj.metaObject().className() if isinstance(parent_obj, QObject) else None,
-        "windowClass": window_obj.metaObject().className() if isinstance(window_obj, QObject) else None,
-        "parentWindowClass": parent_window_obj.metaObject().className() if isinstance(parent_window_obj, QObject) else None,
+        "parentClass": _safe_qobject_class_name(parent_obj),
+        "windowClass": _safe_qobject_class_name(window_obj),
+        "parentWindowClass": _safe_qobject_class_name(parent_window_obj),
     }
 
 
