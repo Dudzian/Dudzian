@@ -655,10 +655,10 @@ Item {
     Dialog {
         id: cloneDialog
         objectName: "cloneDialog"
-        // Bind this popup to the local root Item so lifecycle stays stable
-        // when StrategyManagement is loaded as a standalone Item in
-        // offscreen QQmlApplicationEngine harnesses (no host window).
-        parent: root
+        // Prefer separate popup window in our desktop CI/runtime.
+        // `popupType` is available since Qt 6.8 and may fallback to Popup.Item
+        // on platforms without Popup.Window support.
+        popupType: Popup.Window
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
