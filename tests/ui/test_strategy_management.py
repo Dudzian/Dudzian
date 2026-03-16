@@ -180,6 +180,22 @@ def _ensure_item_has_host_window(root: QObject) -> QQuickWindow | None:
     return host_window
 
 
+def _is_item_hosted_in_window(root: QObject, host_window: QQuickWindow | None) -> bool:
+    if host_window is None or not isinstance(root, QQuickItem):
+        return False
+
+    host_content = host_window.contentItem()
+    if not isinstance(host_content, QQuickItem):
+        return False
+
+    item: QQuickItem | None = root
+    while isinstance(item, QQuickItem):
+        if item is host_content:
+            return True
+        item = item.parentItem()
+    return False
+
+
 class RuntimeServiceStub(QObject):
     def __init__(self) -> None:
         super().__init__()
@@ -380,7 +396,9 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         assert clone_parent is root
 
         if host_window is not None:
-            assert _safe_qobject_class_name(_safe_qml_property(root, "window")) is not None
+            assert _is_item_hosted_in_window(root, host_window), (
+                "Root item should be attached to host window content tree before dialog checks"
+            )
 
         before_request = _snapshot_str("before_request", clone_dialog)
         assert QMetaObject.invokeMethod(root, "requestClonePreset", Qt.DirectConnection) is True
@@ -491,7 +509,9 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
         assert parent_obj is root
 
         if host_window is not None:
-            assert _safe_qobject_class_name(_safe_qml_property(root, "window")) is not None
+            assert _is_item_hosted_in_window(root, host_window), (
+                "Root item should be attached to host window content tree before dialog checks"
+            )
 
         assert (
             QMetaObject.invokeMethod(
