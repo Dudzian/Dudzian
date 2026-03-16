@@ -47,10 +47,15 @@ Item {
     property var strategyController: (typeof strategyManagementController !== "undefined" ? strategyManagementController : null)
     property var bundleSelection: []
     property string bundleMode: "sequential"
-    property bool bundleCloudEnabled: strategyController && strategyController.cloudRuntimeEnabled
+    property bool bundleCloudEnabled: false
     property bool suppressCloudToggle: false
+    property bool cloudToggleReady: false
     property string bundleStatusMessage: ""
     property var personaEntries: previewUserPreferencesList()
+
+    onStrategyControllerChanged: {
+        syncBundleCloudEnabledFromController()
+    }
 
     function resetPresetPreview() {
         presetPreview = null
@@ -61,6 +66,12 @@ Item {
 
     function resetArchivePreview() {
         archivePreviewInfo = null
+    }
+
+    function syncBundleCloudEnabledFromController() {
+        suppressCloudToggle = true
+        bundleCloudEnabled = !!(strategyController && strategyController.cloudRuntimeEnabled)
+        suppressCloudToggle = false
     }
 
     function bundleController() {
@@ -191,10 +202,14 @@ Item {
         var response = ctrl.setCloudRuntimeEnabled(enabled)
         if (!response || response.success === false) {
             bundleStatusMessage = response && response.message ? response.message : qsTr("Nie udało się zaktualizować trybu cloud")
+            suppressCloudToggle = true
             bundleCloudEnabled = !enabled
+            suppressCloudToggle = false
             return
         }
+        suppressCloudToggle = true
         bundleCloudEnabled = enabled
+        suppressCloudToggle = false
         bundleStatusMessage = enabled ? qsTr("Aktywowano runtime cloud") : qsTr("Przełączono na tryb offline")
     }
 
@@ -588,9 +603,7 @@ Item {
         ignoreUnknownSignals: true
 
         function onCloudRuntimeEnabledChanged() {
-            if (!strategyController)
-                return
-            bundleCloudEnabled = !!strategyController.cloudRuntimeEnabled
+            syncBundleCloudEnabledFromController()
         }
 
         function onBundlePathChanged() {
@@ -600,6 +613,7 @@ Item {
     }
 
     Component.onCompleted: {
+        syncBundleCloudEnabledFromController()
         refreshPresets()
         refreshChampion()
         refreshReports()
@@ -1014,7 +1028,10 @@ Item {
                                         objectName: "cloudToggle"
                                         text: checked ? qsTr("Tryb cloud włączony") : qsTr("Tryb offline")
                                         checked: bundleCloudEnabled
-                                        onToggled: {
+                                        Component.onCompleted: cloudToggleReady = true
+                                        onCheckedChanged: {
+                                            if (!cloudToggleReady)
+                                                return
                                             if (suppressCloudToggle)
                                                 return
                                             toggleCloudRuntime(checked)
