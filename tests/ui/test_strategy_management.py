@@ -28,6 +28,7 @@ if yaml is not None:
 
     from PySide6.QtCore import QObject, Property, Qt, QUrl, Signal, Slot, QMetaObject, Q_ARG
     from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQuick import QQuickItem, QQuickWindow
 
     try:  # pragma: no cover - zależne od środowiska CI
         from PySide6.QtWidgets import QApplication
@@ -49,6 +50,31 @@ else:
 
     class QQmlApplicationEngine:  # pragma: no cover
         pass
+
+    class QQuickItem:  # pragma: no cover
+        pass
+
+    class QQuickWindow:  # pragma: no cover
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def contentItem(self):
+            return None
+
+        def setWidth(self, *args, **kwargs) -> None:
+            pass
+
+        def setHeight(self, *args, **kwargs) -> None:
+            pass
+
+        def show(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def deleteLater(self) -> None:
+            pass
 
     class QApplication:  # pragma: no cover
         @staticmethod
@@ -123,6 +149,27 @@ def _popup_snapshot(popup: QObject) -> dict[str, object]:
 
 def _snapshot_str(label: str, popup: QObject) -> str:
     return f"{label}: {_popup_snapshot(popup)}"
+
+
+def _ensure_item_has_host_window(root: QObject) -> QQuickWindow | None:
+    if not isinstance(root, QQuickItem):
+        return None
+
+    existing_window = _safe_qml_property(root, "window")
+    if isinstance(existing_window, QObject):
+        return None
+
+    host_window = QQuickWindow()
+    host_content = host_window.contentItem()
+    if isinstance(host_content, QQuickItem):
+        root.setParentItem(host_content)
+
+    width = _safe_qml_property(root, "implicitWidth")
+    height = _safe_qml_property(root, "implicitHeight")
+    host_window.setWidth(int(width) if isinstance(width, (int, float)) and width > 0 else 960)
+    host_window.setHeight(int(height) if isinstance(height, (int, float)) and height > 0 else 600)
+    host_window.show()
+    return host_window
 
 
 class RuntimeServiceStub(QObject):
@@ -304,79 +351,87 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)
 
+    host_window = _ensure_item_has_host_window(root)
     app.processEvents()
 
-    saved_presets = root.property("savedPresets")
-    assert isinstance(saved_presets, list)
-    assert len(saved_presets) == 2
-    assert runtime_service.list_calls == 1
+    try:
+        saved_presets = root.property("savedPresets")
+        assert isinstance(saved_presets, list)
+        assert len(saved_presets) == 2
+        assert runtime_service.list_calls == 1
 
-    preset_preview = root.property("presetPreview")
-    assert preset_preview is not None
-    assert preset_preview["ok"] is True
+        preset_preview = root.property("presetPreview")
+        assert preset_preview is not None
+        assert preset_preview["ok"] is True
 
-    clone_dialog = root.findChild(QObject, "cloneDialog")
-    assert clone_dialog is not None
+        clone_dialog = root.findChild(QObject, "cloneDialog")
+        assert clone_dialog is not None
 
-    clone_parent = clone_dialog.parent()
-    assert isinstance(clone_parent, QObject)
-    assert clone_parent is root
+        clone_parent = clone_dialog.parent()
+        assert isinstance(clone_parent, QObject)
+        assert clone_parent is root
 
-    before_request = _snapshot_str("before_request", clone_dialog)
-    assert QMetaObject.invokeMethod(root, "requestClonePreset", Qt.DirectConnection) is True
-    after_request_before_events = _snapshot_str("after_request_before_events", clone_dialog)
+        if host_window is not None:
+            assert _safe_qobject_class_name(_safe_qml_property(root, "window")) is not None
 
-    # `requestClonePreset()` sets pending payload + clone name and calls `cloneDialog.open()`.
-    pending_payload = root.property("pendingClonePayload")
-    assert pending_payload is not None
+        before_request = _snapshot_str("before_request", clone_dialog)
+        assert QMetaObject.invokeMethod(root, "requestClonePreset", Qt.DirectConnection) is True
+        after_request_before_events = _snapshot_str("after_request_before_events", clone_dialog)
 
-    app.processEvents()
-    after_events = _snapshot_str("after_events", clone_dialog)
-    assert clone_dialog.property("visible") is True, (
-        "Clone dialog not visible after requestClonePreset/processEvents; "
-        + " | ".join([before_request, after_request_before_events, after_events])
-    )
+        # `requestClonePreset()` sets pending payload + clone name and calls `cloneDialog.open()`.
+        pending_payload = root.property("pendingClonePayload")
+        assert pending_payload is not None
 
-    clone_name_field = root.findChild(QObject, "cloneNameField")
-    assert clone_name_field is not None
-    clone_name_field.setProperty("text", "Gamma Hedge")
+        app.processEvents()
+        after_events = _snapshot_str("after_events", clone_dialog)
+        assert clone_dialog.property("visible") is True, (
+            "Clone dialog not visible after requestClonePreset/processEvents; "
+            + " | ".join([before_request, after_request_before_events, after_events])
+        )
 
-    assert QMetaObject.invokeMethod(clone_dialog, "accept", Qt.DirectConnection) is True
-    app.processEvents()
+        clone_name_field = root.findChild(QObject, "cloneNameField")
+        assert clone_name_field is not None
+        clone_name_field.setProperty("text", "Gamma Hedge")
 
-    saved_presets = root.property("savedPresets")
-    assert isinstance(saved_presets, list)
-    assert len(saved_presets) == 3
-    assert runtime_service.list_calls >= 2
-    assert runtime_service.clone_count == 1
+        assert QMetaObject.invokeMethod(clone_dialog, "accept", Qt.DirectConnection) is True
+        app.processEvents()
 
-    cloud_switch = root.findChild(QObject, "cloudToggle")
-    assert cloud_switch is not None
-    cloud_switch.setProperty("checked", True)
-    app.processEvents()
-    config_data = yaml.safe_load(runtime_config.read_text(encoding="utf-8"))
-    assert config_data["cloud"]["enabled_signed"] is True
+        saved_presets = root.property("savedPresets")
+        assert isinstance(saved_presets, list)
+        assert len(saved_presets) == 3
+        assert runtime_service.list_calls >= 2
+        assert runtime_service.clone_count == 1
 
-    alpha_selector = root.findChild(QObject, "bundleSelector_alpha-momentum")
-    beta_selector = root.findChild(QObject, "bundleSelector_beta-mean")
-    assert alpha_selector is not None and beta_selector is not None
-    alpha_selector.setProperty("checked", True)
-    beta_selector.setProperty("checked", True)
-    bundle_name = root.findChild(QObject, "bundleNameField")
-    assert bundle_name is not None
-    bundle_name.setProperty("text", "AlphaBetaCombo")
-    assert QMetaObject.invokeMethod(root, "triggerBundleExport", Qt.DirectConnection)
-    app.processEvents()
-    assert strategy_controller.lastBundlePath
-    bundle_path = Path(strategy_controller.lastBundlePath)
-    assert bundle_path.exists()
-    payload = yaml.safe_load(bundle_path.read_text(encoding="utf-8"))
-    assert len(payload["presets"]) == 2
+        cloud_switch = root.findChild(QObject, "cloudToggle")
+        assert cloud_switch is not None
+        cloud_switch.setProperty("checked", True)
+        app.processEvents()
+        config_data = yaml.safe_load(runtime_config.read_text(encoding="utf-8"))
+        assert config_data["cloud"]["enabled_signed"] is True
 
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
-    app.processEvents()
+        alpha_selector = root.findChild(QObject, "bundleSelector_alpha-momentum")
+        beta_selector = root.findChild(QObject, "bundleSelector_beta-mean")
+        assert alpha_selector is not None and beta_selector is not None
+        alpha_selector.setProperty("checked", True)
+        beta_selector.setProperty("checked", True)
+        bundle_name = root.findChild(QObject, "bundleNameField")
+        assert bundle_name is not None
+        bundle_name.setProperty("text", "AlphaBetaCombo")
+        assert QMetaObject.invokeMethod(root, "triggerBundleExport", Qt.DirectConnection)
+        app.processEvents()
+        assert strategy_controller.lastBundlePath
+        bundle_path = Path(strategy_controller.lastBundlePath)
+        assert bundle_path.exists()
+        payload = yaml.safe_load(bundle_path.read_text(encoding="utf-8"))
+        assert len(payload["presets"]) == 2
+    finally:
+        if host_window is not None:
+            host_window.close()
+            host_window.deleteLater()
+        for obj in engine.rootObjects():
+            obj.deleteLater()
+        engine.deleteLater()
+        app.processEvents()
 
 
 @pytest.mark.timeout(20)
@@ -408,32 +463,42 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)
 
-    promotion_dialog = root.findChild(QObject, "promotionDialog")
-    if promotion_dialog is None:
-        for child in root.children():
-            if isinstance(child, QObject) and child.metaObject().className().endswith("Dialog"):
-                if child.property("title") and "Promocja championa" in str(child.property("title")):
-                    promotion_dialog = child
-                    break
-    assert promotion_dialog is not None
-
-    parent_obj = promotion_dialog.parent()
-    assert isinstance(parent_obj, QObject)
-    assert parent_obj is root
-
-    assert QMetaObject.invokeMethod(
-        root,
-        "startPromotion",
-        Qt.DirectConnection,
-        Q_ARG(str, "alpha-model"),
-        Q_ARG(str, "v2"),
-        Q_ARG(str, "manual"),
-    ) is True
+    host_window = _ensure_item_has_host_window(root)
     app.processEvents()
 
-    assert promotion_dialog.property("visible") is True, _snapshot_str("promotion_after_events", promotion_dialog)
+    try:
+        promotion_dialog = root.findChild(QObject, "promotionDialog")
+        if promotion_dialog is None:
+            for child in root.children():
+                if isinstance(child, QObject) and child.metaObject().className().endswith("Dialog"):
+                    if child.property("title") and "Promocja championa" in str(child.property("title")):
+                        promotion_dialog = child
+                        break
+        assert promotion_dialog is not None
 
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
-    app.processEvents()
+        parent_obj = promotion_dialog.parent()
+        assert isinstance(parent_obj, QObject)
+        assert parent_obj is root
+
+        if host_window is not None:
+            assert _safe_qobject_class_name(_safe_qml_property(root, "window")) is not None
+
+        assert QMetaObject.invokeMethod(
+            root,
+            "startPromotion",
+            Qt.DirectConnection,
+            Q_ARG(str, "alpha-model"),
+            Q_ARG(str, "v2"),
+            Q_ARG(str, "manual"),
+        ) is True
+        app.processEvents()
+
+        assert promotion_dialog.property("visible") is True, _snapshot_str("promotion_after_events", promotion_dialog)
+    finally:
+        if host_window is not None:
+            host_window.close()
+            host_window.deleteLater()
+        for obj in engine.rootObjects():
+            obj.deleteLater()
+        engine.deleteLater()
+        app.processEvents()
