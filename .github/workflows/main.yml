@@ -79,6 +79,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libegl1
           bash scripts/ci/install_deps_python.sh
 
       - name: Preflight
