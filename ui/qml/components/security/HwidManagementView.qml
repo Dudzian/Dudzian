@@ -12,6 +12,21 @@ Item {
 
     implicitWidth: parent ? parent.width : 640
 
+    function dialogPath(value) {
+        if (!value)
+            return ""
+        if (value.toLocalFile) {
+            var local = value.toLocalFile()
+            if (local && local.length > 0)
+                return local
+        }
+        if (value.toString)
+            return value.toString()
+        return "" + value
+    }
+
+
+
     function fingerprintJson() {
         if (!activationControllerRef || !activationControllerRef.fingerprint)
             return "{}"
@@ -297,8 +312,10 @@ Item {
         onAccepted: {
             if (!activationControllerRef)
                 return
-            if (selectedFile)
-                activationControllerRef.exportFingerprint(selectedFile)
+            const selectedPath = root.dialogPath(selectedFile)
+            if (selectedPath.length === 0)
+                return
+            activationControllerRef.exportFingerprint(selectedFile)
         }
     }
 }

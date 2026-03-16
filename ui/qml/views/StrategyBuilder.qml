@@ -547,6 +547,7 @@ Item {
 
     Dialog {
         id: blockEditorDialog
+        parent: root
         modal: true
         focus: true
         title: qsTr("Parametry bloku")

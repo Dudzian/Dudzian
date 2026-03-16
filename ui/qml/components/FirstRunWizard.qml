@@ -20,6 +20,19 @@ FocusScope {
                                       ? activationControllerRef.fingerprint.payload.fingerprint || ""
                                       : ""
 
+    function fileDialogPath(value) {
+        if (!value)
+            return ""
+        if (value.toLocalFile) {
+            var local = value.toLocalFile()
+            if (local && local.length > 0)
+                return local
+        }
+        if (value.toString)
+            return value.toString()
+        return "" + value
+    }
+
     function canAutoProvision() {
         return !!(licenseControllerRef && typeof licenseControllerRef.autoProvision === "function")
     }
@@ -370,9 +383,10 @@ FocusScope {
         fileMode: FileDialog.OpenFile
         nameFilters: [qsTr("Dokumenty JSON (*.json *.jsonl)"), qsTr("Wszystkie pliki (*)")]
         onAccepted: {
-            if (selectedFile)
-                if (licenseControllerRef)
-                    licenseControllerRef.loadLicenseUrl(selectedFile)
+            const selectedPath = wizard.fileDialogPath(selectedFile)
+            if (selectedPath.length === 0 || !licenseControllerRef)
+                return
+            licenseControllerRef.loadLicenseUrl(selectedFile)
         }
     }
 
@@ -382,9 +396,10 @@ FocusScope {
         fileMode: FileDialog.SaveFile
         nameFilters: [qsTr("Dokument JSON (*.json)"), qsTr("Wszystkie pliki (*)")]
         onAccepted: {
-            if (selectedFile)
-                if (activationControllerRef)
-                    activationControllerRef.exportFingerprint(selectedFile)
+            const selectedPath = wizard.fileDialogPath(selectedFile)
+            if (selectedPath.length === 0 || !activationControllerRef)
+                return
+            activationControllerRef.exportFingerprint(selectedFile)
         }
     }
 

@@ -5,6 +5,21 @@ import QtQuick.Dialogs
 
 FocusScope {
     id: overlay
+
+    function dialogPath(value) {
+        if (!value)
+            return ""
+        if (value.toLocalFile) {
+            var local = value.toLocalFile()
+            if (local && local.length > 0)
+                return local
+        }
+        if (value.toString)
+            return value.toString()
+        return "" + value
+    }
+
+
     anchors.fill: parent
 
     Rectangle {
@@ -140,8 +155,10 @@ FocusScope {
         nameFilters: [qsTr("Dokumenty JSON (*.json *.jsonl)"), qsTr("Wszystkie pliki (*)")]
         fileMode: FileDialog.OpenFile
         onAccepted: {
-            if (selectedFile)
-                licenseController.loadLicenseUrl(selectedFile)
+            const selectedPath = overlay.dialogPath(selectedFile)
+            if (selectedPath.length === 0)
+                return
+            licenseController.loadLicenseUrl(selectedFile)
         }
     }
 

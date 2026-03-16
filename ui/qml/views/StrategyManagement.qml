@@ -609,6 +609,7 @@ Item {
 
     Dialog {
         id: promotionDialog
+        parent: root
         modal: true
         focus: true
         title: qsTr("Promocja championa: %1 (%2)").arg(pendingPromotionModel || qsTr("model")).arg(pendingPromotionVersion || qsTr("wersja"))
@@ -654,10 +655,10 @@ Item {
     Dialog {
         id: cloneDialog
         objectName: "cloneDialog"
-        // CI uses Qt/PySide 6.10.2.
-        // Dialog.popupType is available in Qt 6.10, so prefer native window popup
-        // lifecycle here instead of manual popup host parenting.
-        popupType: Popup.Window
+        // Bind this popup to the local root Item so lifecycle stays stable
+        // when StrategyManagement is loaded as a standalone Item in
+        // offscreen QQmlApplicationEngine harnesses (no host window).
+        parent: root
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape

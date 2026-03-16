@@ -14,6 +14,15 @@ Dialog {
     standardButtons: Dialog.Close
     width: 640
 
+
+    function selectedFileAsString(fileValue) {
+        if (!fileValue)
+            return ""
+        if (fileValue.toString)
+            return fileValue.toString()
+        return "" + fileValue
+    }
+
     function resetState() {
         selectedFile = ""
         signingKey = ""
@@ -28,8 +37,9 @@ Dialog {
         title: qsTr("Wybierz pakiet .dudzianpkg")
         nameFilters: [qsTr("Pakiety Dudzian (*.dudzianpkg)"), qsTr("Wszystkie pliki (*)")]
         onAccepted: {
-            if (packageDialog.selectedFile && packageDialog.selectedFile.length > 0)
-                selectedFile = packageDialog.selectedFile
+            const filePath = root.selectedFileAsString(packageDialog.selectedFile)
+            if (filePath.length > 0)
+                selectedFile = filePath
         }
     }
 

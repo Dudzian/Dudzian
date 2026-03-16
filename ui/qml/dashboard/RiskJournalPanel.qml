@@ -902,7 +902,8 @@ Item {
 
                         HoverHandler { id: hoverHandler }
                         ToolTip.visible: hoverHandler.hovered
-                        ToolTip.text: (modelData.timestamp || "") + "\n" + (modelData.event || "")
+                        ToolTip.text: (modelData && modelData.timestamp ? modelData.timestamp : "") + "\n"
+                                      + (modelData && modelData.event ? modelData.event : "")
                     }
                 }
             }
@@ -996,10 +997,11 @@ Item {
 
     Dialog {
         id: drilldownDialog
+        parent: root
         objectName: "riskJournalDrilldownDialog"
         modal: true
-        width: Math.min(parent ? parent.width - 48 : 520, 620)
-        height: Math.min(parent ? parent.height - 48 : 520, 560)
+        width: Math.max(360, Math.min(parent ? Math.max(parent.width - 48, 360) : 520, 620))
+        height: Math.max(320, Math.min(parent ? Math.max(parent.height - 48, 320) : 520, 560))
         standardButtons: Dialog.Cancel
         title: selectedEntry && selectedEntry.event ? qsTr("Szczegóły: %1").arg(selectedEntry.event) : qsTr("Szczegóły wpisu")
 

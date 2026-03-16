@@ -305,12 +305,12 @@ Item {
                                    ? selectedArticleRef.runbooks
                                    : []
                             delegate: Button {
-                                text: modelData.title
+                                text: modelData && modelData.title ? modelData.title : ""
                                 ToolTip.visible: hovered
                                 ToolTip.delay: 250
-                                ToolTip.text: modelData.relativePath
+                                ToolTip.text: modelData && modelData.relativePath ? modelData.relativePath : ""
                                 onClicked: {
-                                    if (supportControllerRef && supportControllerRef.openRunbook(modelData.path)) {
+                                    if (modelData && modelData.path && supportControllerRef && supportControllerRef.openRunbook(modelData.path)) {
                                         Qt.openUrlExternally("file://" + modelData.path)
                                         root.runbookRequested(modelData.path)
                                     }
@@ -325,6 +325,7 @@ Item {
 
     TicketDialog {
         id: ticketDialog
+        parent: root
         diagnosticsController: root.diagnosticsControllerRef
     }
 }
