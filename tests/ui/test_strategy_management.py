@@ -33,8 +33,7 @@ if yaml is not None:
         from PySide6.QtQuick import QQuickItem, QQuickWindow
     except ImportError as exc:  # pragma: no cover
         pytest.skip(
-            "Brak zależności systemowych Qt Quick (np. libEGL.so.1): "
-            f"{exc}",
+            f"Brak zależności systemowych Qt Quick (np. libEGL.so.1): {exc}",
             allow_module_level=True,
         )
 
