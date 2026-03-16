@@ -471,7 +471,9 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
         if promotion_dialog is None:
             for child in root.children():
                 if isinstance(child, QObject) and child.metaObject().className().endswith("Dialog"):
-                    if child.property("title") and "Promocja championa" in str(child.property("title")):
+                    if child.property("title") and "Promocja championa" in str(
+                        child.property("title")
+                    ):
                         promotion_dialog = child
                         break
         assert promotion_dialog is not None
@@ -483,17 +485,22 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
         if host_window is not None:
             assert _safe_qobject_class_name(_safe_qml_property(root, "window")) is not None
 
-        assert QMetaObject.invokeMethod(
-            root,
-            "startPromotion",
-            Qt.DirectConnection,
-            Q_ARG(str, "alpha-model"),
-            Q_ARG(str, "v2"),
-            Q_ARG(str, "manual"),
-        ) is True
+        assert (
+            QMetaObject.invokeMethod(
+                root,
+                "startPromotion",
+                Qt.DirectConnection,
+                Q_ARG(str, "alpha-model"),
+                Q_ARG(str, "v2"),
+                Q_ARG(str, "manual"),
+            )
+            is True
+        )
         app.processEvents()
 
-        assert promotion_dialog.property("visible") is True, _snapshot_str("promotion_after_events", promotion_dialog)
+        assert promotion_dialog.property("visible") is True, _snapshot_str(
+            "promotion_after_events", promotion_dialog
+        )
     finally:
         if host_window is not None:
             host_window.close()
