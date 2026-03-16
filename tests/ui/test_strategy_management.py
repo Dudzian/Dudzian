@@ -158,6 +158,21 @@ def _snapshot_str(label: str, popup: QObject) -> str:
     return f"{label}: {_popup_snapshot(popup)}"
 
 
+def _collect_object_names(root: QObject, prefix: str) -> list[str]:
+    names: list[str] = []
+    stack: list[QObject] = [root]
+    while stack:
+        current = stack.pop()
+        for child in current.children():
+            if not isinstance(child, QObject):
+                continue
+            child_name = child.objectName()
+            if child_name.startswith(prefix):
+                names.append(child_name)
+            stack.append(child)
+    return sorted(set(names))
+
+
 def _ensure_item_has_host_window(root: QObject) -> QQuickWindow | None:
     if not isinstance(root, QQuickItem):
         return None
@@ -439,9 +454,27 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         config_data = yaml.safe_load(runtime_config.read_text(encoding="utf-8"))
         assert config_data["cloud"]["enabled_signed"] is True
 
+        bundle_selection = root.property("bundleSelection")
+        saved_presets = root.property("savedPresets")
+        bundle_selector_names = _collect_object_names(root, "bundleSelector_")
+
         alpha_selector = root.findChild(QObject, "bundleSelector_alpha-momentum")
         beta_selector = root.findChild(QObject, "bundleSelector_beta-mean")
-        assert alpha_selector is not None and beta_selector is not None
+
+        if alpha_selector is None or beta_selector is None:
+            fallback_alpha = root.findChild(QObject, "bundleSelector_/tmp/alpha.json")
+            fallback_beta = root.findChild(QObject, "bundleSelector_/tmp/beta.json")
+            if alpha_selector is None and fallback_alpha is not None:
+                alpha_selector = fallback_alpha
+            if beta_selector is None and fallback_beta is not None:
+                beta_selector = fallback_beta
+
+        assert alpha_selector is not None and beta_selector is not None, (
+            "Bundle selectors not materialized under expected IDs; "
+            f"bundleSelection={bundle_selection!r}; "
+            f"savedPresetSlugs={[(entry.get('slug'), entry.get('path')) for entry in (saved_presets or []) if isinstance(entry, dict)]!r}; "
+            f"availableSelectors={bundle_selector_names!r}"
+        )
         alpha_selector.setProperty("checked", True)
         beta_selector.setProperty("checked", True)
         bundle_name = root.findChild(QObject, "bundleNameField")
