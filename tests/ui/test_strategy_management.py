@@ -429,8 +429,13 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
 
         cloud_switch = root.findChild(QObject, "cloudToggle")
         assert cloud_switch is not None
-        cloud_switch.setProperty("checked", True)
+        assert cloud_switch.property("checked") is False
+        # `setProperty("checked", ...)` updates the visual state only.
+        # Use the control API that mirrors a real user toggle so `onToggled`
+        # runs and persists runtime cloud settings via the controller.
+        assert QMetaObject.invokeMethod(cloud_switch, "toggle", Qt.DirectConnection) is True
         app.processEvents()
+        assert cloud_switch.property("checked") is True
         config_data = yaml.safe_load(runtime_config.read_text(encoding="utf-8"))
         assert config_data["cloud"]["enabled_signed"] is True
 
