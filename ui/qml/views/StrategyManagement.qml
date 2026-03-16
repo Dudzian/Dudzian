@@ -609,6 +609,7 @@ Item {
 
     Dialog {
         id: promotionDialog
+        objectName: "promotionDialog"
         parent: root
         modal: true
         focus: true
@@ -655,10 +656,10 @@ Item {
     Dialog {
         id: cloneDialog
         objectName: "cloneDialog"
-        // Prefer separate popup window in our desktop CI/runtime.
-        // `popupType` is available since Qt 6.8 and may fallback to Popup.Item
-        // on platforms without Popup.Window support.
-        popupType: Popup.Window
+        // Keep the clone dialog hosted by this view root, same as promotionDialog.
+        // In headless/offscreen QQmlApplicationEngine runs there is no stable host
+        // window for Popup.Window, which keeps the popup logically closed.
+        parent: root
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
