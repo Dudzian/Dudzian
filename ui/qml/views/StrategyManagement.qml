@@ -968,12 +968,6 @@ Item {
                                                 visible: !!presetData.updated_at
                                             }
                                         }
-                                        CheckBox {
-                                            objectName: "bundleSelector_" + bundleSlug(presetData)
-                                            text: qsTr("Dodaj do eksportu")
-                                            checked: bundleSelectionIndexForSlug(bundleSlug(presetData)) >= 0
-                                            onToggled: updateBundleSelection(presetData, checked)
-                                        }
                                     }
                                 }
                             }
@@ -1007,6 +1001,35 @@ Item {
                                         objectName: "bundleNameField"
                                         Layout.fillWidth: true
                                         placeholderText: qsTr("Nazwa kombinacji")
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 4
+
+                                        Label {
+                                            text: qsTr("1. Wybierz presety do bundla")
+                                            font.weight: Font.Medium
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: qsTr("Selektory znajdują się tutaj, a nie na kartach presetów powyżej.")
+                                            color: palette.mid
+                                            wrapMode: Text.WordWrap
+                                        }
+
+                                        Repeater {
+                                            model: savedPresets
+                                            delegate: CheckBox {
+                                                required property var modelData
+                                                property var presetData: modelData || ({})
+                                                objectName: "bundleSelector_" + bundleSlug(presetData)
+                                                text: presetData.label || presetData.name || presetData.slug || qsTr("Preset bez nazwy")
+                                                checked: bundleSelectionIndexForSlug(bundleSlug(presetData)) >= 0
+                                                onToggled: updateBundleSelection(presetData, checked)
+                                            }
+                                        }
                                     }
 
                                     ComboBox {
