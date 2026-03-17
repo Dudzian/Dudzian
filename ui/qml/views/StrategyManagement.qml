@@ -1022,8 +1022,13 @@ Item {
                                         Repeater {
                                             model: savedPresets
                                             delegate: CheckBox {
-                                                required property var modelData
-                                                property var presetData: modelData || ({})
+                                                property var presetData: {
+                                                    if (typeof modelData !== "undefined" && modelData !== null)
+                                                        return modelData
+                                                    if (savedPresets && index >= 0 && index < savedPresets.length)
+                                                        return savedPresets[index]
+                                                    return ({})
+                                                }
                                                 objectName: "bundleSelector_" + bundleSlug(presetData)
                                                 text: presetData.label || presetData.name || presetData.slug || qsTr("Preset bez nazwy")
                                                 checked: bundleSelectionIndexForSlug(bundleSlug(presetData)) >= 0
