@@ -96,6 +96,14 @@ Item {
         return ""
     }
 
+    function resolveBundlePresetData(modelDataValue, delegateIndex) {
+        if (typeof modelDataValue !== "undefined" && modelDataValue !== null)
+            return modelDataValue
+        if (savedPresets && delegateIndex >= 0 && delegateIndex < savedPresets.length)
+            return savedPresets[delegateIndex]
+        return ({})
+    }
+
     function bundleSelectionIndexForSlug(slug) {
         if (!slug)
             return -1
@@ -1022,13 +1030,7 @@ Item {
                                         Repeater {
                                             model: savedPresets
                                             delegate: CheckBox {
-                                                property var presetData: {
-                                                    if (typeof modelData !== "undefined" && modelData !== null)
-                                                        return modelData
-                                                    if (savedPresets && index >= 0 && index < savedPresets.length)
-                                                        return savedPresets[index]
-                                                    return ({})
-                                                }
+                                                property var presetData: resolveBundlePresetData(modelData, index)
                                                 objectName: "bundleSelector_" + bundleSlug(presetData)
                                                 text: presetData.label || presetData.name || presetData.slug || qsTr("Preset bez nazwy")
                                                 checked: bundleSelectionIndexForSlug(bundleSlug(presetData)) >= 0
