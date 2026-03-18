@@ -56,6 +56,14 @@ jobs:
               ;;
           esac
 
+      - name: Verify required adapter factories before strict gateway boot
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          python scripts/check_required_adapter_factories.py \
+            --require deribit_futures \
+            --require bitmex_futures
+
       # strict schedule reads runtime stream metrics collected in this run
       # (scope reflects current gateway stream semantics, not legacy fixture-only shape)
       - name: Fetch real long-poll snapshots for strict schedule run

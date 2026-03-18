@@ -2982,6 +2982,8 @@ def test_get_registered_adapter_factories_includes_new_ccxt_entries() -> None:
         "okx_spot",
         "kucoin_spot",
         "bybit_spot",
+        "deribit_futures",
+        "bitmex_futures",
     }.issubset(factories)
 
 
