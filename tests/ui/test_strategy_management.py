@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.ui._qml_tree import find_by_object_name, walk_qml_items
+
 try:
     import yaml  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover
@@ -160,17 +162,51 @@ def _snapshot_str(label: str, popup: QObject) -> str:
 
 def _collect_object_names(root: QObject, prefix: str) -> list[str]:
     names: list[str] = []
-    stack: list[QObject] = [root]
-    while stack:
-        current = stack.pop()
-        for child in current.children():
-            if not isinstance(child, QObject):
-                continue
-            child_name = child.objectName()
-            if child_name.startswith(prefix):
-                names.append(child_name)
-            stack.append(child)
+    items, _ = walk_qml_items(root)
+    for child in items:
+        if not isinstance(child, QObject):
+            continue
+        child_name = child.objectName()
+        if child_name.startswith(prefix):
+            names.append(child_name)
     return sorted(set(names))
+
+
+def _repeater_item_diagnostics(repeater: QObject | None) -> list[dict[str, object]]:
+    if repeater is None:
+        return []
+
+    count = repeater.property("count")
+    if not isinstance(count, int) or count < 0:
+        return []
+
+    diagnostics: list[dict[str, object]] = []
+    for index in range(count):
+        try:
+            item = repeater.itemAt(index)  # type: ignore[attr-defined]
+        except Exception as exc:
+            diagnostics.append({"index": index, "item": f"<itemAt-error:{exc}>"})
+            continue
+
+        item_name = None
+        item_class = None
+        is_qobject = isinstance(item, QObject)
+        if is_qobject:
+            try:
+                item_name = item.objectName()
+            except RuntimeError as exc:
+                item_name = f"<objectName-error:{exc}>"
+            item_class = _safe_qobject_class_name(item)
+        diagnostics.append(
+            {
+                "index": index,
+                "item": item,
+                "isQObject": is_qobject,
+                "objectName": item_name,
+                "className": item_class,
+            }
+        )
+    return diagnostics
 
 
 def _ensure_item_has_host_window(root: QObject) -> QQuickWindow | None:
@@ -457,17 +493,18 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         bundle_selection = root.property("bundleSelection")
         saved_presets = root.property("savedPresets")
         bundle_selector_names = _collect_object_names(root, "bundleSelector_")
-        bundle_selector_repeater = root.findChild(QObject, "bundleSelectorRepeater")
+        bundle_selector_repeater = find_by_object_name(root, "bundleSelectorRepeater")
         bundle_selector_count = (
             bundle_selector_repeater.property("count") if bundle_selector_repeater is not None else None
         )
+        bundle_selector_items = _repeater_item_diagnostics(bundle_selector_repeater)
 
-        alpha_selector = root.findChild(QObject, "bundleSelector_alpha-momentum")
-        beta_selector = root.findChild(QObject, "bundleSelector_beta-mean")
+        alpha_selector = find_by_object_name(root, "bundleSelector_alpha-momentum")
+        beta_selector = find_by_object_name(root, "bundleSelector_beta-mean")
 
         if alpha_selector is None or beta_selector is None:
-            fallback_alpha = root.findChild(QObject, "bundleSelector_/tmp/alpha.json")
-            fallback_beta = root.findChild(QObject, "bundleSelector_/tmp/beta.json")
+            fallback_alpha = find_by_object_name(root, "bundleSelector_/tmp/alpha.json")
+            fallback_beta = find_by_object_name(root, "bundleSelector_/tmp/beta.json")
             if alpha_selector is None and fallback_alpha is not None:
                 alpha_selector = fallback_alpha
             if beta_selector is None and fallback_beta is not None:
@@ -477,14 +514,16 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
             "Bundle selector repeater did not materialize every preset; "
             f"repeaterCount={bundle_selector_count!r}; "
             f"savedPresetSlugs={[(entry.get('slug'), entry.get('path')) for entry in (saved_presets or []) if isinstance(entry, dict)]!r}; "
-            f"availableSelectors={bundle_selector_names!r}"
+            f"availableSelectors={bundle_selector_names!r}; "
+            f"repeaterItems={bundle_selector_items!r}"
         )
         assert alpha_selector is not None and beta_selector is not None, (
             "Bundle selectors not materialized under expected IDs; "
             f"repeaterCount={bundle_selector_count!r}; "
             f"bundleSelection={bundle_selection!r}; "
             f"savedPresetSlugs={[(entry.get('slug'), entry.get('path')) for entry in (saved_presets or []) if isinstance(entry, dict)]!r}; "
-            f"availableSelectors={bundle_selector_names!r}"
+            f"availableSelectors={bundle_selector_names!r}; "
+            f"repeaterItems={bundle_selector_items!r}"
         )
         alpha_selector.setProperty("checked", True)
         beta_selector.setProperty("checked", True)
