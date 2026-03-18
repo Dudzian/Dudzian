@@ -1028,9 +1028,16 @@ Item {
                                         }
 
                                         Repeater {
-                                            model: savedPresets
+                                            id: bundleSelectorRepeater
+                                            objectName: "bundleSelectorRepeater"
+                                            // Keep the Repeater model numeric so delegates are always
+                                            // instantiated for every preset in headless Qt runs.
+                                            // This delegate intentionally reads from savedPresets[index];
+                                            // if savedPresets ever stops being a plain JS array/list of
+                                            // preset maps, revisit this contract together with tests.
+                                            model: savedPresets ? savedPresets.length : 0
                                             delegate: CheckBox {
-                                                property var presetData: resolveBundlePresetData(modelData, index)
+                                                property var presetData: resolveBundlePresetData(undefined, index)
                                                 objectName: "bundleSelector_" + bundleSlug(presetData)
                                                 text: presetData.label || presetData.name || presetData.slug || qsTr("Preset bez nazwy")
                                                 checked: bundleSelectionIndexForSlug(bundleSlug(presetData)) >= 0
