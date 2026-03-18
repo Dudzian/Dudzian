@@ -52,9 +52,14 @@ Item {
     property bool cloudToggleReady: false
     property string bundleStatusMessage: ""
     property var personaEntries: previewUserPreferencesList()
+    property var normalizedSavedPresets: []
 
     onStrategyControllerChanged: {
         syncBundleCloudEnabledFromController()
+    }
+
+    onSavedPresetsChanged: {
+        normalizedSavedPresets = toPlainArray(savedPresets)
     }
 
     function resetPresetPreview() {
@@ -96,11 +101,67 @@ Item {
         return ""
     }
 
+    function toPlainArray(source) {
+        var normalized = []
+        if (!source)
+            return normalized
+
+        var size = 0
+        try {
+            if (typeof source.length === "number")
+                size = source.length
+            else if (typeof source.count === "number")
+                size = source.count
+            else if (typeof source.size === "number")
+                size = source.size
+        } catch (e) {
+            size = 0
+        }
+
+        if (size > 0) {
+            for (var i = 0; i < size; ++i) {
+                var entry = undefined
+                try {
+                    entry = source[i]
+                } catch (e) {
+                    break
+                }
+                if (entry === undefined || entry === null)
+                    break
+                normalized.push(entry)
+            }
+            if (normalized.length > 0)
+                return normalized
+        }
+
+        for (var probe = 0; probe < 256; ++probe) {
+            var probeEntry = undefined
+            try {
+                probeEntry = source[probe]
+            } catch (e) {
+                break
+            }
+            if (probeEntry === undefined || probeEntry === null) {
+                if (probe === 0)
+                    continue
+                break
+            }
+            normalized.push(probeEntry)
+        }
+
+        return normalized
+    }
+
+    function setSavedPresets(entries) {
+        savedPresets = entries || []
+    }
+
     function resolveBundlePresetData(modelDataValue, delegateIndex) {
         if (typeof modelDataValue !== "undefined" && modelDataValue !== null)
             return modelDataValue
-        if (savedPresets && delegateIndex >= 0 && delegateIndex < savedPresets.length)
-            return savedPresets[delegateIndex]
+        var presets = normalizedSavedPresets
+        if (delegateIndex >= 0 && delegateIndex < presets.length)
+            return presets[delegateIndex]
         return ({})
     }
 
@@ -223,13 +284,13 @@ Item {
 
     function refreshPresets() {
         if (!runtimeServiceRef || !runtimeServiceRef.listStrategyPresets) {
-            savedPresets = []
+            setSavedPresets([])
             resetPresetPreview()
             actionStatus = qsTr("Mostek runtime nie jest dostępny")
             return
         }
         var entries = runtimeServiceRef.listStrategyPresets()
-        savedPresets = entries || []
+        setSavedPresets(entries)
         if (!entries || entries.length === 0) {
             resetPresetPreview()
             actionStatus = qsTr("Brak zapisanych presetów")
@@ -1030,14 +1091,12 @@ Item {
                                         Repeater {
                                             id: bundleSelectorRepeater
                                             objectName: "bundleSelectorRepeater"
-                                            // Keep the Repeater model numeric so delegates are always
-                                            // instantiated for every preset in headless Qt runs.
-                                            // This delegate intentionally reads from savedPresets[index];
-                                            // if savedPresets ever stops being a plain JS array/list of
-                                            // preset maps, revisit this contract together with tests.
-                                            model: savedPresets ? savedPresets.length : 0
+                                            // Headless PySide runs can expose savedPresets through
+                                            // wrapper objects whose length/count introspection is
+                                            // transiently empty. Cache a normalized JS array first.
+                                            model: normalizedSavedPresets
                                             delegate: CheckBox {
-                                                property var presetData: resolveBundlePresetData(undefined, index)
+                                                property var presetData: resolveBundlePresetData(modelData, index)
                                                 objectName: "bundleSelector_" + bundleSlug(presetData)
                                                 text: presetData.label || presetData.name || presetData.slug || qsTr("Preset bez nazwy")
                                                 checked: bundleSelectionIndexForSlug(bundleSlug(presetData)) >= 0
