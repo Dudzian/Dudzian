@@ -9,6 +9,7 @@ def test_exchange_report_schedule_is_strict_and_fetches_real_snapshots() -> None
     assert "schedule)" in workflow
     assert 'echo "LONG_POLL_MODE=strict"' in workflow
     assert "if: github.event_name == 'schedule'" in workflow
+    assert "python scripts/check_required_adapter_factories.py" in workflow
     assert "python scripts/fetch_long_poll_snapshots.py" in workflow
     assert "--skip-freshness" in workflow
 

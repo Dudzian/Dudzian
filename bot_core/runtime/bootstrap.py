@@ -47,6 +47,7 @@ from bot_core.exchanges.base import (
 from bot_core.exchanges.factory import ExchangeAdapterConfig, build_exchange_adapter
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.bitfinex import BitfinexSpotAdapter
+from bot_core.exchanges.bitmex import BitmexFuturesAdapter
 from bot_core.exchanges.bybit import BybitFuturesAdapter, BybitMarginAdapter, BybitSpotAdapter
 from bot_core.exchanges.coinbase import (
     CoinbaseFuturesAdapter,
@@ -55,6 +56,7 @@ from bot_core.exchanges.coinbase import (
 )
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
+from bot_core.exchanges.deribit import DeribitFuturesAdapter
 from bot_core.exchanges.kucoin import KuCoinSpotAdapter
 from bot_core.exchanges.okx import OKXFuturesAdapter, OKXMarginAdapter, OKXSpotAdapter
 from bot_core.exchanges.testing.loopback import LoopbackExchangeAdapter
@@ -345,6 +347,8 @@ _DEFAULT_ADAPTERS: dict[str, ExchangeAdapterFactory] = {
     "coinbase_margin": CoinbaseMarginAdapter,
     "coinbase_futures": CoinbaseFuturesAdapter,
     "bitfinex_spot": BitfinexSpotAdapter,
+    "deribit_futures": DeribitFuturesAdapter,
+    "bitmex_futures": BitmexFuturesAdapter,
     "okx_spot": OKXSpotAdapter,
     "okx_margin": OKXMarginAdapter,
     "okx_futures": OKXFuturesAdapter,
