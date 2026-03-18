@@ -459,7 +459,9 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         bundle_selector_names = _collect_object_names(root, "bundleSelector_")
         bundle_selector_repeater = root.findChild(QObject, "bundleSelectorRepeater")
         bundle_selector_count = (
-            bundle_selector_repeater.property("count") if bundle_selector_repeater is not None else None
+            bundle_selector_repeater.property("count")
+            if bundle_selector_repeater is not None
+            else None
         )
 
         alpha_selector = root.findChild(QObject, "bundleSelector_alpha-momentum")
