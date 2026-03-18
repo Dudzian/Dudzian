@@ -457,6 +457,10 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         bundle_selection = root.property("bundleSelection")
         saved_presets = root.property("savedPresets")
         bundle_selector_names = _collect_object_names(root, "bundleSelector_")
+        bundle_selector_repeater = root.findChild(QObject, "bundleSelectorRepeater")
+        bundle_selector_count = (
+            bundle_selector_repeater.property("count") if bundle_selector_repeater is not None else None
+        )
 
         alpha_selector = root.findChild(QObject, "bundleSelector_alpha-momentum")
         beta_selector = root.findChild(QObject, "bundleSelector_beta-mean")
@@ -469,8 +473,15 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
             if beta_selector is None and fallback_beta is not None:
                 beta_selector = fallback_beta
 
+        assert bundle_selector_count == len(saved_presets), (
+            "Bundle selector repeater did not materialize every preset; "
+            f"repeaterCount={bundle_selector_count!r}; "
+            f"savedPresetSlugs={[(entry.get('slug'), entry.get('path')) for entry in (saved_presets or []) if isinstance(entry, dict)]!r}; "
+            f"availableSelectors={bundle_selector_names!r}"
+        )
         assert alpha_selector is not None and beta_selector is not None, (
             "Bundle selectors not materialized under expected IDs; "
+            f"repeaterCount={bundle_selector_count!r}; "
             f"bundleSelection={bundle_selection!r}; "
             f"savedPresetSlugs={[(entry.get('slug'), entry.get('path')) for entry in (saved_presets or []) if isinstance(entry, dict)]!r}; "
             f"availableSelectors={bundle_selector_names!r}"
