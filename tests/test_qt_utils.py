@@ -57,7 +57,8 @@ def test_teardown_qml_engine_can_skip_root_deletion(monkeypatch) -> None:
         "force_qt_cleanup",
         lambda *, process_events=None, process_rounds=10: cleanup_calls.append(
             f"cleanup:{process_rounds}"
-        ) or (process_events() if process_events is not None else None),
+        )
+        or (process_events() if process_events is not None else None),
     )
 
     _qt_utils.teardown_qml_engine(

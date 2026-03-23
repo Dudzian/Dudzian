@@ -60,7 +60,9 @@ def ensure_item_has_host_window(
 
     width = safe_qml_property(root, "implicitWidth")
     height = safe_qml_property(root, "implicitHeight")
-    host_window.setWidth(int(width) if isinstance(width, (int, float)) and width > 0 else default_width)
+    host_window.setWidth(
+        int(width) if isinstance(width, (int, float)) and width > 0 else default_width
+    )
     host_window.setHeight(
         int(height) if isinstance(height, (int, float)) and height > 0 else default_height
     )
