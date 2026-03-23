@@ -627,16 +627,11 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
                 "Root item should be attached to host window content tree before dialog checks"
             )
 
+        root.setProperty("pendingPromotionModel", "alpha-model")
+        root.setProperty("pendingPromotionVersion", "v2")
+        root.setProperty("pendingPromotionReason", "manual")
         assert (
-            QMetaObject.invokeMethod(
-                root,
-                "startPromotion",
-                Qt.DirectConnection,
-                Q_ARG(str, "alpha-model"),
-                Q_ARG(str, "v2"),
-                Q_ARG(str, "manual"),
-            )
-            is True
+            QMetaObject.invokeMethod(promotion_dialog, "open", Qt.DirectConnection) is True
         )
         app.processEvents()
 
