@@ -14,7 +14,7 @@ qt_root = Path(PySide6.__file__).resolve().parent
 os.environ.setdefault("QML2_IMPORT_PATH", str(qt_root / "Qt" / "qml"))
 os.environ.setdefault("QT_PLUGIN_PATH", str(qt_root / "Qt" / "plugins"))
 
-from PySide6.QtCore import QObject, Property, QMetaObject, Qt, Signal, Slot, Q_ARG, QUrl
+from PySide6.QtCore import QObject, Property, QMetaObject, Qt, Signal, Slot, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
 
 try:  # pragma: no cover - zależy od środowiska
@@ -104,23 +104,17 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
     app.processEvents()
     root.setProperty("targetPortfolioId", "desk-1")
 
-    QMetaObject.invokeMethod(
-        root,
-        "quickInstall",
-        Qt.DirectConnection,
-        Q_ARG("QString", "scalping_ai"),
-    )
+    quick_install_button = root.findChild(QObject, "quickInstallButton_scalping_ai")
+    assert quick_install_button is not None
+    assert QMetaObject.invokeMethod(quick_install_button, "click", Qt.DirectConnection)
     app.processEvents()
 
     assert controller.install_calls[-1] == ("scalping_ai", "desk-1")
 
-    QMetaObject.invokeMethod(
-        root,
-        "assignPreset",
-        Qt.DirectConnection,
-        Q_ARG("QString", "swing_guard"),
-        Q_ARG("QString", "desk-1"),
-    )
+    assign_button = root.findChild(QObject, "assignPresetButton_swing_guard")
+    assert assign_button is not None
+    assert assign_button.property("enabled") is True
+    assert QMetaObject.invokeMethod(assign_button, "click", Qt.DirectConnection)
     app.processEvents()
 
     assert controller.assign_calls[-1] == ("swing_guard", "desk-1")
