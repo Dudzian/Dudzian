@@ -348,6 +348,7 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     host_window = ensure_item_has_host_window(root)
     app.processEvents()
 
+    clone_dialog: QObject | None = None
     try:
         saved_presets = root.property("savedPresets")
         assert isinstance(saved_presets, list)
@@ -484,7 +485,18 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         payload = yaml.safe_load(bundle_path.read_text(encoding="utf-8"))
         assert len(payload["presets"]) == 2
     finally:
+        try:
+            if clone_dialog is not None and (
+                bool(clone_dialog.property("visible")) or bool(clone_dialog.property("opened"))
+            ):
+                QMetaObject.invokeMethod(clone_dialog, "close", Qt.DirectConnection)
+                app.processEvents()
+                app.processEvents()
+        except RuntimeError:
+            pass
+
         teardown_hosted_item_window(root, host_window)
+        app.processEvents()
         teardown_qml_engine(engine, process_events=app.processEvents)
         app.processEvents()
 
