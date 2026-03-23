@@ -120,7 +120,7 @@ from core.monitoring.metrics_api import (
     RetrainingTelemetry,
     RuntimeTelemetrySnapshot,
 )
-from tests.ui._qt_utils import qt_wait
+from tests.ui._qt_utils import qt_wait, teardown_qml_engine
 
 if _QT_READY:
     from bot_core.observability.metrics import MetricsRegistry
@@ -3257,9 +3257,7 @@ def test_runtime_overview_feed_sla_exposes_anti_flap_counters(tmp_path: Path) ->
             f"feedSlaReport={root.property('feedSlaReport')!r}"
         )
     finally:
-        for obj in engine.rootObjects():
-            obj.deleteLater()
-        engine.deleteLater()
+        teardown_qml_engine(engine, process_events=app.processEvents)
         if created_window:
             quick_window.deleteLater()
         app.processEvents()

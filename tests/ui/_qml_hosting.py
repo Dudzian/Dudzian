@@ -84,3 +84,30 @@ def is_item_hosted_in_window(root: QObject, host_window: QQuickWindow | None) ->
             return True
         item = item.parentItem()
     return False
+
+
+def teardown_hosted_item_window(root: QObject, host_window: QQuickWindow | None) -> None:
+    if host_window is None:
+        return
+
+    try:
+        host_content = host_window.contentItem()
+    except RuntimeError:
+        host_content = None
+
+    if isinstance(root, QQuickItem) and isinstance(host_content, QQuickItem):
+        try:
+            if root.parentItem() is host_content:
+                root.setParentItem(None)
+        except RuntimeError:
+            pass
+
+    try:
+        host_window.close()
+    except RuntimeError:
+        pass
+
+    try:
+        host_window.deleteLater()
+    except RuntimeError:
+        pass

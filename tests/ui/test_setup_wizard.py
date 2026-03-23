@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from tests.ui._qt import require_pyside6
+from tests.ui._qt_utils import teardown_qml_engine
 
 pytestmark = pytest.mark.qml
 
@@ -215,7 +216,5 @@ def test_setup_wizard_configures_instrument_and_preferences(tmp_path: Path) -> N
     app.processEvents()
     assert spy.count() >= 1
 
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
+    teardown_qml_engine(engine, process_events=app.processEvents)
     app.processEvents()

@@ -7,6 +7,7 @@ from typing import Callable, Iterator, Tuple
 import pytest
 
 from tests.ui._qt import require_pyside6
+from tests.ui._qt_utils import teardown_qml_engine
 
 pytestmark = pytest.mark.qml
 
@@ -297,9 +298,7 @@ def load_security_view(qt_app: QGuiApplication, tmp_path: Path) -> Iterator[Root
 
 
 def _cleanup_engine(engine: QQmlApplicationEngine) -> None:
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
+    teardown_qml_engine(engine, process_events=QCoreApplication.processEvents)
     QCoreApplication.processEvents()
 
 
