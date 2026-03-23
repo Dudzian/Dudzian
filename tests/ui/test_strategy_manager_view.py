@@ -3,8 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qml_hosting import collect_object_names, ensure_item_has_host_window
+from tests.ui._qml_hosting import (
+    collect_object_names,
+    ensure_item_has_host_window,
+    teardown_hosted_item_window,
+)
 from tests.ui._qt import require_pyside6
+from tests.ui._qt_utils import teardown_qml_engine, wait_for
 
 pytestmark = pytest.mark.qml
 
@@ -111,16 +116,28 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
         root.setProperty("targetPortfolioId", "desk-1")
         app.processEvents()
 
-        quick_install_button = None
-        assign_button = None
-        for _ in range(10):
-            quick_install_button = root.findChild(QObject, "quickInstallButton_scalping_ai")
-            assign_button = root.findChild(QObject, "assignPresetButton_swing_guard")
-            if quick_install_button is not None and assign_button is not None:
-                break
-            app.processEvents()
+        presets_cache = wait_for(
+            lambda: root.property("presetsCache")
+            if isinstance(root.property("presetsCache"), list) and len(root.property("presetsCache")) >= 2
+            else None,
+            timeout_s=2.0,
+            process_events=app.processEvents,
+            description="StrategyManager presetsCache should contain refreshed delegates",
+        )
 
-        presets_cache = root.property("presetsCache")
+        quick_install_button = wait_for(
+            lambda: root.findChild(QObject, "quickInstallButton_scalping_ai"),
+            timeout_s=2.0,
+            process_events=app.processEvents,
+            description="quick install button for scalping_ai",
+        )
+        assign_button = wait_for(
+            lambda: root.findChild(QObject, "assignPresetButton_swing_guard"),
+            timeout_s=2.0,
+            process_events=app.processEvents,
+            description="assign button for swing_guard",
+        )
+
         quick_install_names = collect_object_names(root, "quickInstallButton_")
         assign_button_names = collect_object_names(root, "assignPresetButton_")
 
@@ -147,10 +164,6 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
 
         assert controller.assign_calls[-1] == ("swing_guard", "desk-1")
     finally:
-        if host_window is not None:
-            host_window.close()
-            host_window.deleteLater()
-        for obj in engine.rootObjects():
-            obj.deleteLater()
-        engine.deleteLater()
+        teardown_hosted_item_window(root, host_window)
+        teardown_qml_engine(engine, process_events=app.processEvents)
         app.processEvents()

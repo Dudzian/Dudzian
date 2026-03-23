@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from tests.ui._qt import require_pyside6
+from tests.ui._qt_utils import teardown_qml_engine
 
 pytestmark = pytest.mark.qml
 
@@ -109,7 +110,5 @@ def test_strategy_configurator_lists_new_strategies() -> None:
     text = parameter_view.property("text")
     assert "entry_z" in text
 
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
+    teardown_qml_engine(engine, process_events=app.processEvents)
     app.processEvents()

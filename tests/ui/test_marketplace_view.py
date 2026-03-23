@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.ui._qt import require_pyside6
+from tests.ui._qt_utils import teardown_qml_engine
 from tests.ui._qt_invoke_safe import invoke_safe_qml_variant
 
 pytestmark = pytest.mark.qml
@@ -323,7 +324,5 @@ def test_marketplace_view_refresh_and_actions(tmp_path: Path) -> None:
     app.processEvents()
     assert controller.remove_calls[-1] == first_preset_py.get("presetId")
 
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
+    teardown_qml_engine(engine, process_events=app.processEvents)
     app.processEvents()

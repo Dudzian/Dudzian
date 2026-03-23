@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from tests.ui._qt import require_pyside6
+from tests.ui._qt_utils import teardown_qml_engine
 
 pytestmark = pytest.mark.qml
 
@@ -114,7 +115,5 @@ def test_workbench_demo_mode_roundtrip() -> None:
         assert page.text_content("#mode") == "Momentum Pro"
         browser.close()
 
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
+    teardown_qml_engine(engine, process_events=app.processEvents)
     app.processEvents()
