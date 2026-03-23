@@ -521,6 +521,7 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
     host_window = ensure_item_has_host_window(root)
     app.processEvents()
 
+    promotion_dialog: QObject | None = None
     try:
         promotion_dialog = root.findChild(QObject, "promotionDialog")
         if promotion_dialog is None:
@@ -552,6 +553,18 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
             "promotion_after_events", promotion_dialog
         )
     finally:
+        try:
+            if promotion_dialog is not None and (
+                bool(promotion_dialog.property("visible"))
+                or bool(promotion_dialog.property("opened"))
+            ):
+                QMetaObject.invokeMethod(promotion_dialog, "close", Qt.DirectConnection)
+                app.processEvents()
+                app.processEvents()
+        except RuntimeError:
+            pass
+
         teardown_hosted_item_window(root, host_window)
+        app.processEvents()
         teardown_qml_engine(engine, process_events=app.processEvents)
         app.processEvents()
