@@ -318,11 +318,13 @@ Item {
                     RowLayout {
                         spacing: 8
                         Components.IconButton {
+                            objectName: "quickInstallButton_" + (presetEntry.presetId || "")
                             text: qsTr("Zainstaluj i przypisz")
                             icon.name: "download"
                             onClicked: root.quickInstall(presetEntry.presetId)
                         }
                         Components.IconButton {
+                            objectName: "assignPresetButton_" + (presetEntry.presetId || "")
                             text: qsTr("Tylko przypisz")
                             icon.name: "task"
                             subtle: true
