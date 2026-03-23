@@ -527,8 +527,20 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
             f"availableSelectors={bundle_selector_names!r}; "
             f"repeaterItems={bundle_selector_items!r}"
         )
-        alpha_selector.setProperty("checked", True)
-        beta_selector.setProperty("checked", True)
+        # `setProperty("checked", ...)` only flips the visual state.
+        # Use the control API so `onToggled` updates bundleSelection before export.
+        assert QMetaObject.invokeMethod(alpha_selector, "toggle", Qt.DirectConnection) is True
+        assert QMetaObject.invokeMethod(beta_selector, "toggle", Qt.DirectConnection) is True
+        app.processEvents()
+
+        bundle_selection = root.property("bundleSelection")
+        assert isinstance(bundle_selection, list)
+        assert len(bundle_selection) == 2
+        assert {entry.get("presetId") for entry in bundle_selection if isinstance(entry, dict)} == {
+            "alpha-momentum",
+            "beta-mean",
+        }
+
         bundle_name = root.findChild(QObject, "bundleNameField")
         assert bundle_name is not None
         bundle_name.setProperty("text", "AlphaBetaCombo")
