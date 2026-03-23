@@ -170,6 +170,15 @@ def assert_has_overload(qobj: Any, signature: str) -> None:
         )
 
 
+def has_overload(qobj: Any, signature: str) -> bool:
+    """Return whether QObject exposes the exact method overload."""
+    meta = qobj.metaObject()
+    try:
+        return meta.indexOfMethod(str(signature)) != -1
+    except TypeError:
+        return False
+
+
 def assert_has_any_overload(qobj: Any, *signatures: str) -> None:
     """Assert that QObject exposes at least one of the provided overload signatures."""
     if not signatures:

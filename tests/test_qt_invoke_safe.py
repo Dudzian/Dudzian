@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.ui._qt_invoke_safe import assert_has_overload
+from tests.ui._qt_invoke_safe import assert_has_any_overload, assert_has_overload, has_overload
 
 
 class _FakeMethod:
@@ -56,4 +56,25 @@ def test_assert_has_overload_reports_diagnostics() -> None:
     assert "target='foo(QVariant)'" in message
     assert "candidates=['foo(QString)', 'foo(int)']" in message
     assert "platform=" in message
+    assert "binding=PySide6/" in message
+
+
+def test_has_overload_reports_presence_without_raising() -> None:
+    qobj = _FakeQObject([b"foo(QString)", "bar()"])
+    assert has_overload(qobj, "foo(QString)") is True
+    assert has_overload(qobj, "foo(QVariant)") is False
+
+
+def test_assert_has_any_overload_accepts_matching_variant() -> None:
+    qobj = _FakeQObject([b"foo(QString)", "bar()"])
+    assert_has_any_overload(qobj, "foo(QVariant)", "foo(QString)")
+
+
+def test_assert_has_any_overload_reports_candidates_when_missing() -> None:
+    qobj = _FakeQObject([b"foo(QString)", "foo(int)"])
+    with pytest.raises(AssertionError) as excinfo:
+        assert_has_any_overload(qobj, "foo(QVariant)", "foo(bool)")
+    message = str(excinfo.value)
+    assert "signatures=('foo(QVariant)', 'foo(bool)')" in message
+    assert "candidates=['foo(QString)', 'foo(int)']" in message
     assert "binding=PySide6/" in message
