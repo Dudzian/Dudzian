@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui._qml_tree import find_by_object_name, walk_qml_items
+from tests.ui._qml_tree import find_by_object_name
 from tests.ui._qt_invoke_safe import has_overload
 
 try:
@@ -19,6 +19,12 @@ pytestmark = [
 ]
 
 if yaml is not None:
+    from tests.ui._qml_hosting import (
+        collect_object_names,
+        ensure_item_has_host_window,
+        is_item_hosted_in_window,
+        safe_qml_property,
+    )
     from tests.ui._qt import qml_value_to_python, require_pyside6
     from ui.pyside_app.controllers.strategy import StrategyManagementController
 
@@ -31,14 +37,6 @@ if yaml is not None:
 
     from PySide6.QtCore import QObject, Property, Qt, QUrl, Signal, Slot, QMetaObject, Q_ARG
     from PySide6.QtQml import QQmlApplicationEngine
-
-    try:  # pragma: no cover - zależne od środowiska CI
-        from PySide6.QtQuick import QQuickItem, QQuickWindow
-    except ImportError as exc:  # pragma: no cover
-        pytest.skip(
-            f"Brak zależności systemowych Qt Quick (np. libEGL.so.1): {exc}",
-            allow_module_level=True,
-        )
 
     try:  # pragma: no cover - zależne od środowiska CI
         from PySide6.QtWidgets import QApplication
@@ -60,31 +58,6 @@ else:
 
     class QQmlApplicationEngine:  # pragma: no cover
         pass
-
-    class QQuickItem:  # pragma: no cover
-        pass
-
-    class QQuickWindow:  # pragma: no cover
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def contentItem(self):
-            return None
-
-        def setWidth(self, *args, **kwargs) -> None:
-            pass
-
-        def setHeight(self, *args, **kwargs) -> None:
-            pass
-
-        def show(self) -> None:
-            pass
-
-        def close(self) -> None:
-            pass
-
-        def deleteLater(self) -> None:
-            pass
 
     class QApplication:  # pragma: no cover
         @staticmethod
@@ -125,13 +98,6 @@ else:
         pass
 
 
-def _safe_qml_property(obj: QObject, name: str) -> object:
-    try:
-        return obj.property(name)
-    except RuntimeError as exc:
-        return f"<unavailable:{name}:{exc}>"
-
-
 def _safe_qobject_class_name(value: object) -> str | None:
     if not isinstance(value, QObject):
         return None
@@ -143,13 +109,13 @@ def _safe_qobject_class_name(value: object) -> str | None:
 
 def _popup_snapshot(popup: QObject) -> dict[str, object]:
     parent_obj = popup.parent()
-    window_obj = _safe_qml_property(popup, "window")
-    parent_window_obj = _safe_qml_property(popup, "parentWindow")
+    window_obj = safe_qml_property(popup, "window")
+    parent_window_obj = safe_qml_property(popup, "parentWindow")
     return {
-        "visible": _safe_qml_property(popup, "visible"),
-        "opened": _safe_qml_property(popup, "opened"),
-        "modal": _safe_qml_property(popup, "modal"),
-        "popupType": _safe_qml_property(popup, "popupType"),
+        "visible": safe_qml_property(popup, "visible"),
+        "opened": safe_qml_property(popup, "opened"),
+        "modal": safe_qml_property(popup, "modal"),
+        "popupType": safe_qml_property(popup, "popupType"),
         "parentObjectName": parent_obj.objectName() if isinstance(parent_obj, QObject) else None,
         "parentClass": _safe_qobject_class_name(parent_obj),
         "windowClass": _safe_qobject_class_name(window_obj),
@@ -159,18 +125,6 @@ def _popup_snapshot(popup: QObject) -> dict[str, object]:
 
 def _snapshot_str(label: str, popup: QObject) -> str:
     return f"{label}: {_popup_snapshot(popup)}"
-
-
-def _collect_object_names(root: QObject, prefix: str) -> list[str]:
-    names: list[str] = []
-    items, _ = walk_qml_items(root)
-    for child in items:
-        if not isinstance(child, QObject):
-            continue
-        child_name = child.objectName()
-        if child_name.startswith(prefix):
-            names.append(child_name)
-    return sorted(set(names))
 
 
 def _repeater_item_diagnostics(repeater: QObject | None) -> list[dict[str, object]]:
@@ -208,43 +162,6 @@ def _repeater_item_diagnostics(repeater: QObject | None) -> list[dict[str, objec
             }
         )
     return diagnostics
-
-
-def _ensure_item_has_host_window(root: QObject) -> QQuickWindow | None:
-    if not isinstance(root, QQuickItem):
-        return None
-
-    existing_window = _safe_qml_property(root, "window")
-    if isinstance(existing_window, QObject):
-        return None
-
-    host_window = QQuickWindow()
-    host_content = host_window.contentItem()
-    if isinstance(host_content, QQuickItem):
-        root.setParentItem(host_content)
-
-    width = _safe_qml_property(root, "implicitWidth")
-    height = _safe_qml_property(root, "implicitHeight")
-    host_window.setWidth(int(width) if isinstance(width, (int, float)) and width > 0 else 960)
-    host_window.setHeight(int(height) if isinstance(height, (int, float)) and height > 0 else 600)
-    host_window.show()
-    return host_window
-
-
-def _is_item_hosted_in_window(root: QObject, host_window: QQuickWindow | None) -> bool:
-    if host_window is None or not isinstance(root, QQuickItem):
-        return False
-
-    host_content = host_window.contentItem()
-    if not isinstance(host_content, QQuickItem):
-        return False
-
-    item: QQuickItem | None = root
-    while isinstance(item, QQuickItem):
-        if item is host_content:
-            return True
-        item = item.parentItem()
-    return False
 
 
 class RuntimeServiceStub(QObject):
@@ -426,7 +343,7 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)
 
-    host_window = _ensure_item_has_host_window(root)
+    host_window = ensure_item_has_host_window(root)
     app.processEvents()
 
     try:
@@ -447,7 +364,7 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         assert clone_parent is root
 
         if host_window is not None:
-            assert _is_item_hosted_in_window(root, host_window), (
+            assert is_item_hosted_in_window(root, host_window), (
                 "Root item should be attached to host window content tree before dialog checks"
             )
 
@@ -493,7 +410,7 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
 
         bundle_selection = root.property("bundleSelection")
         saved_presets = root.property("savedPresets")
-        bundle_selector_names = _collect_object_names(root, "bundleSelector_")
+        bundle_selector_names = collect_object_names(root, "bundleSelector_")
         bundle_selector_repeater = find_by_object_name(root, "bundleSelectorRepeater")
         bundle_selector_count = (
             bundle_selector_repeater.property("count")
@@ -603,7 +520,7 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)
 
-    host_window = _ensure_item_has_host_window(root)
+    host_window = ensure_item_has_host_window(root)
     app.processEvents()
 
     try:
@@ -623,7 +540,7 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
         assert parent_obj is root
 
         if host_window is not None:
-            assert _is_item_hosted_in_window(root, host_window), (
+            assert is_item_hosted_in_window(root, host_window), (
                 "Root item should be attached to host window content tree before dialog checks"
             )
 

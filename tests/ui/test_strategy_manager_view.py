@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.ui._qml_hosting import collect_object_names, ensure_item_has_host_window
 from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
@@ -100,26 +101,56 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)
 
-    QMetaObject.invokeMethod(root, "refreshMarketplace", Qt.DirectConnection)
-    app.processEvents()
-    root.setProperty("targetPortfolioId", "desk-1")
-
-    quick_install_button = root.findChild(QObject, "quickInstallButton_scalping_ai")
-    assert quick_install_button is not None
-    assert QMetaObject.invokeMethod(quick_install_button, "click", Qt.DirectConnection)
+    host_window = ensure_item_has_host_window(root, default_height=700)
     app.processEvents()
 
-    assert controller.install_calls[-1] == ("scalping_ai", "desk-1")
+    try:
+        QMetaObject.invokeMethod(root, "refreshMarketplace", Qt.DirectConnection)
+        app.processEvents()
+        app.processEvents()
+        root.setProperty("targetPortfolioId", "desk-1")
+        app.processEvents()
 
-    assign_button = root.findChild(QObject, "assignPresetButton_swing_guard")
-    assert assign_button is not None
-    assert assign_button.property("enabled") is True
-    assert QMetaObject.invokeMethod(assign_button, "click", Qt.DirectConnection)
-    app.processEvents()
+        quick_install_button = None
+        assign_button = None
+        for _ in range(10):
+            quick_install_button = root.findChild(QObject, "quickInstallButton_scalping_ai")
+            assign_button = root.findChild(QObject, "assignPresetButton_swing_guard")
+            if quick_install_button is not None and assign_button is not None:
+                break
+            app.processEvents()
 
-    assert controller.assign_calls[-1] == ("swing_guard", "desk-1")
+        presets_cache = root.property("presetsCache")
+        quick_install_names = collect_object_names(root, "quickInstallButton_")
+        assign_button_names = collect_object_names(root, "assignPresetButton_")
 
-    for obj in engine.rootObjects():
-        obj.deleteLater()
-    engine.deleteLater()
-    app.processEvents()
+        assert quick_install_button is not None, (
+            "quickInstallButton_scalping_ai was not materialized; "
+            f"presetsCache={presets_cache!r}; "
+            f"quickInstallButtons={quick_install_names!r}; "
+            f"assignButtons={assign_button_names!r}"
+        )
+        assert QMetaObject.invokeMethod(quick_install_button, "click", Qt.DirectConnection)
+        app.processEvents()
+
+        assert controller.install_calls[-1] == ("scalping_ai", "desk-1")
+
+        assert assign_button is not None, (
+            "assignPresetButton_swing_guard was not materialized; "
+            f"presetsCache={presets_cache!r}; "
+            f"quickInstallButtons={quick_install_names!r}; "
+            f"assignButtons={assign_button_names!r}"
+        )
+        assert assign_button.property("enabled") is True
+        assert QMetaObject.invokeMethod(assign_button, "click", Qt.DirectConnection)
+        app.processEvents()
+
+        assert controller.assign_calls[-1] == ("swing_guard", "desk-1")
+    finally:
+        if host_window is not None:
+            host_window.close()
+            host_window.deleteLater()
+        for obj in engine.rootObjects():
+            obj.deleteLater()
+        engine.deleteLater()
+        app.processEvents()
