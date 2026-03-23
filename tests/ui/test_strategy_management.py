@@ -630,9 +630,7 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
         root.setProperty("pendingPromotionModel", "alpha-model")
         root.setProperty("pendingPromotionVersion", "v2")
         root.setProperty("pendingPromotionReason", "manual")
-        assert (
-            QMetaObject.invokeMethod(promotion_dialog, "open", Qt.DirectConnection) is True
-        )
+        assert QMetaObject.invokeMethod(promotion_dialog, "open", Qt.DirectConnection) is True
         app.processEvents()
 
         assert promotion_dialog.property("visible") is True, _snapshot_str(
