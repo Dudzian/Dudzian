@@ -18,7 +18,7 @@ pytestmark = [
 ]
 
 if yaml is not None:
-    from tests.ui._qt import require_pyside6
+    from tests.ui._qt import qml_value_to_python, require_pyside6
     from ui.pyside_app.controllers.strategy import StrategyManagementController
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -533,7 +533,7 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         assert QMetaObject.invokeMethod(beta_selector, "toggle", Qt.DirectConnection) is True
         app.processEvents()
 
-        bundle_selection = root.property("bundleSelection")
+        bundle_selection = qml_value_to_python(root.property("bundleSelection"))
         assert isinstance(bundle_selection, list)
         assert len(bundle_selection) == 2
         assert {entry.get("presetId") for entry in bundle_selection if isinstance(entry, dict)} == {
