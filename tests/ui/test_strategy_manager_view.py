@@ -118,7 +118,8 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
 
         presets_cache = wait_for(
             lambda: root.property("presetsCache")
-            if isinstance(root.property("presetsCache"), list) and len(root.property("presetsCache")) >= 2
+            if isinstance(root.property("presetsCache"), list)
+            and len(root.property("presetsCache")) >= 2
             else None,
             timeout_s=2.0,
             process_events=app.processEvents,
