@@ -86,6 +86,8 @@ _DEMO_TEMPLATE: tuple[DecisionRecord, ...] = (
         "strategy": "momentum_v2",
         "schedule": "auto",
         "status": "ok",
+        "risk_action": "update",
+        "risk_flags": "volatility_watch",
         "decision_state": "rebalance",
         "decision_should_trade": "false",
         "decision_risk_delta": "-0.12",

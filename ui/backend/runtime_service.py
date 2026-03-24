@@ -106,6 +106,28 @@ except Exception:  # pragma: no cover - fallback gdy brak gRPC
     grpc = None  # type: ignore[assignment]
 
 DecisionLoader = Callable[[int], Iterable[DecisionRecord]]
+
+# Uwaga utrzymaniowa:
+# klasyfikacja wpisu do Risk Journal oraz interpretacja block/freeze w _build_risk_context
+# MUSZĄ ewoluować razem. Przy zmianie jednego zbioru zaktualizuj pozostałe i test matrix.
+_RISK_CLASSIFICATION_TOKENS: frozenset[str] = frozenset(
+    {
+        "risk",
+        "block",
+        "blocked",
+        "reject",
+        "rejected",
+        "freeze",
+        "frozen",
+        "unfreeze",
+        "override",
+        "stress",
+        "lock",
+    }
+)
+
+_RISK_BLOCK_KEYWORDS: frozenset[str] = frozenset({"block", "blocked", "risk_block", "reject", "rejected"})
+_RISK_FREEZE_KEYWORDS: frozenset[str] = frozenset({"freeze", "frozen", "lock"})
 _AI_FEED_CHANNEL = "ai_governor"
 _AI_HISTORY_LIMIT = 32
 
@@ -281,11 +303,69 @@ def _contains_keyword_token(value: str, keywords: set[str]) -> bool:
     return bool(tokens & keywords)
 
 
+def _is_risk_journal_entry(
+    entry: Mapping[str, object], metadata: Mapping[str, object], decision: Mapping[str, object]
+) -> bool:
+    """Klasyfikuje wpis decision streamu jako kandydat do Risk Journal.
+
+    Kontrakt:
+    - wpis jest risk-related, gdy event/status semantycznie wskazuje na ryzyko
+      (risk/freeze/block/override/stress),
+    - albo gdy payload zawiera jawne pola kontraktu Risk Journal
+      (risk_action/risk_flags/stress_*).
+    """
+
+    event = str(entry.get("event") or "").strip().lower()
+    status = str(entry.get("status") or "").strip().lower()
+    if event.startswith("risk_") or status.startswith("risk_"):
+        return True
+    if _contains_keyword_token(event, _RISK_CLASSIFICATION_TOKENS) or _contains_keyword_token(
+        status, _RISK_CLASSIFICATION_TOKENS
+    ):
+        return True
+
+    tracked_keys = {
+        "riskaction",
+        "risk_action",
+        "riskflags",
+        "risk_flags",
+        "stressfailures",
+        "stress_failures",
+        "stressoverrides",
+        "stress_overrides",
+        "stressoverride",
+        "stress_override",
+    }
+
+    def _mapping_contains_tracked_keys(payload: Mapping[str, object]) -> bool:
+        stack: list[object] = [payload]
+        visited = 0
+        while stack and visited < 64:  # ograniczenie dla bezpieczeństwa i wydajności
+            current = stack.pop()
+            visited += 1
+            if isinstance(current, Mapping):
+                for key, value in current.items():
+                    if str(key).lower() in tracked_keys:
+                        return True
+                    stack.append(value)
+            elif isinstance(current, Iterable) and not isinstance(current, (str, bytes)):
+                stack.extend(current)
+        return False
+
+    if _mapping_contains_tracked_keys(entry):
+        return True
+    if _mapping_contains_tracked_keys(metadata):
+        return True
+    if _mapping_contains_tracked_keys(decision):
+        return True
+    return False
+
+
 def _build_risk_context(
     entries: Iterable[Mapping[str, object]],
 ) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object]]:
-    block_keywords = {"block", "blocked", "risk_block", "reject", "rejected"}
-    freeze_keywords = {"freeze", "frozen", "lock"}
+    block_keywords = set(_RISK_BLOCK_KEYWORDS)
+    freeze_keywords = set(_RISK_FREEZE_KEYWORDS)
     override_keys = {"stressOverride", "stress_override", "stressOverrides", "stress_overrides"}
 
     blocks = 0
@@ -311,9 +391,11 @@ def _build_risk_context(
     timeline: list[dict[str, object]] = []
 
     for entry in entries:
-        total_entries += 1
         metadata = _to_mapping(entry.get("metadata"))
         decision = _to_mapping(entry.get("decision"))
+        if not _is_risk_journal_entry(entry, metadata, decision):
+            continue
+        total_entries += 1
         timestamp = str(entry.get("timestamp") or "")
         event = str(entry.get("event") or "")
         strategy = str(entry.get("strategy") or "").strip()
