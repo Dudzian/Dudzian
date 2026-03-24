@@ -1,24 +1,24 @@
 platform = "windows"
 
 [pyinstaller]
-entrypoint = "..\\..\\scripts\\run_local_bot.py"
+entrypoint = "..\\..\\..\\scripts\\run_local_bot.py"
 runtime_name = "bot_core_runtime"
 hidden_imports = [
   "bot_core.runtime.bootstrap",
   "bot_core.runtime.pipeline",
   "bot_core.runtime.config",
 ]
-dist_dir = "..\\..\\var\\dist\\pyinstaller\\windows"
-work_dir = "..\\..\\var\\build\\pyinstaller\\windows"
+dist_dir = "..\\..\\..\\var\\dist\\pyinstaller\\windows"
+work_dir = "..\\..\\..\\var\\build\\pyinstaller\\windows"
 
 [briefcase]
-project = "..\\..\\ui\\briefcase"
+project = "..\\..\\..\\ui\\briefcase"
 app = "BotTradingShell"
-output_dir = "..\\..\\var\\dist\\briefcase\\windows"
+output_dir = "..\\..\\..\\var\\dist\\briefcase\\windows"
 
 [bundle]
-output_dir = "..\\..\\var\\dist\\installers\\windows"
-work_dir = "..\\..\\var\\build\\installers\\windows"
+output_dir = "..\\..\\..\\var\\dist\\installers\\windows"
+work_dir = "..\\..\\..\\var\\build\\installers\\windows"
 qt_dist = "..\\samples\\ui"
 include = [
   "config=..\\samples\\config",
@@ -32,4 +32,4 @@ wheels_extra = [
   "..\\samples\\wheels\\aiohttp-3.9.5-cp311-cp311-manylinux.whl",
   "..\\samples\\wheels\\lightgbm-4.6.0-cp311-cp311-manylinux.whl",
 ]
-metadata_path = "..\\..\\var\\dist\\installers\\windows\\installer_metadata.json"
+metadata_path = "..\\..\\..\\var\\dist\\installers\\windows\\installer_metadata.json"
