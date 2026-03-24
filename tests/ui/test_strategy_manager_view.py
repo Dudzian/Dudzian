@@ -9,6 +9,7 @@ from tests.ui._qml_hosting import (
     ensure_item_has_host_window,
     teardown_hosted_qml_engine,
 )
+from tests.ui._qml_tree import find_by_object_name
 from tests.ui._qt import require_pyside6
 
 pytestmark = pytest.mark.qml
@@ -136,12 +137,17 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
             f"presetsCache={root.property('presetsCache')!r}"
         )
 
-        quick_install_button = pump_until(
-            lambda: root.findChild(QObject, "quickInstallButton_scalping_ai"),
-        )
-        assign_button = pump_until(
-            lambda: root.findChild(QObject, "assignPresetButton_swing_guard"),
-        )
+        def _lookup_object(name: str) -> QObject | None:
+            found = root.findChild(QObject, name)
+            if isinstance(found, QObject):
+                return found
+            fallback = find_by_object_name(root, name)
+            if isinstance(fallback, QObject):
+                return fallback
+            return None
+
+        quick_install_button = pump_until(lambda: _lookup_object("quickInstallButton_scalping_ai"))
+        assign_button = pump_until(lambda: _lookup_object("assignPresetButton_swing_guard"))
 
         quick_install_names = collect_object_names(root, "quickInstallButton_")
         assign_button_names = collect_object_names(root, "assignPresetButton_")
