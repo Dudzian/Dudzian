@@ -41,7 +41,9 @@ def test_read_profile_windows_paths_resolve_to_repo_root(monkeypatch):
     profile = installer._read_profile(profile_path)
 
     assert profile.pyinstaller is not None
-    assert _normalized(profile.pyinstaller.entrypoint).as_posix().endswith("scripts/run_local_bot.py")
+    assert (
+        _normalized(profile.pyinstaller.entrypoint).as_posix().endswith("scripts/run_local_bot.py")
+    )
     assert _normalized(profile.pyinstaller.entrypoint) == repo_root / "scripts" / "run_local_bot.py"
     assert _normalized(profile.pyinstaller.dist_dir) == (
         repo_root / "var" / "dist" / "pyinstaller" / "windows"
@@ -56,8 +58,14 @@ def test_read_profile_windows_paths_resolve_to_repo_root(monkeypatch):
         repo_root / "var" / "dist" / "briefcase" / "windows"
     )
 
-    assert _normalized(profile.bundle.output_dir) == repo_root / "var" / "dist" / "installers" / "windows"
-    assert _normalized(profile.bundle.work_dir) == repo_root / "var" / "build" / "installers" / "windows"
+    assert (
+        _normalized(profile.bundle.output_dir)
+        == repo_root / "var" / "dist" / "installers" / "windows"
+    )
+    assert (
+        _normalized(profile.bundle.work_dir)
+        == repo_root / "var" / "build" / "installers" / "windows"
+    )
     assert _normalized(profile.bundle.metadata_path) == (
         repo_root / "var" / "dist" / "installers" / "windows" / "installer_metadata.json"
     )
