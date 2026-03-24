@@ -180,3 +180,49 @@ def teardown_qml_engine(
         delete_later()
 
     force_qt_cleanup(process_events=process_events)
+
+
+def teardown_hosted_qml_engine_core(
+    engine: object,
+    *,
+    process_events: Callable[[], None] | None = None,
+    context_properties_to_clear: Iterable[str] = (),
+) -> None:
+    """Teardown engine dla scenariusza hostowanego QQuickItem.
+
+    Ta ścieżka celowo unika agresywnego flushu DeferredDelete i czyszczenia
+    cache/GC QML, bo po detachu hostowanego roota potrafi to destabilizować Qt Quick.
+    """
+
+    try:
+        root_context = getattr(engine, "rootContext", None)
+        if callable(root_context):
+            context = root_context()
+            if context is not None:
+                for property_name in context_properties_to_clear:
+                    context.setContextProperty(property_name, None)
+    except Exception:
+        pass
+
+    delete_later = getattr(engine, "deleteLater", None)
+    if callable(delete_later):
+        delete_later()
+
+    if process_events is not None:
+        process_events()
+        process_events()
+
+
+def teardown_hosted_qml_engine(
+    engine: object,
+    *,
+    process_events: Callable[[], None] | None = None,
+    context_properties_to_clear: Iterable[str] = (),
+) -> None:
+    """Backward-compatible alias dla ścieżki hostowanego teardownu."""
+
+    teardown_hosted_qml_engine_core(
+        engine,
+        process_events=process_events,
+        context_properties_to_clear=context_properties_to_clear,
+    )
