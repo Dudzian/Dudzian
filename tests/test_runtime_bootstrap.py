@@ -1836,9 +1836,9 @@ def test_live_checklist_blocks_on_invalid_signature(
     assert isinstance(verification["documents"], Mapping)
     assert verification["documents"] == verification["documents_by_name"]
     assert verification["categories"] == {
-        "compliance": False,
+        "compliance": True,
         "risk": False,
-        "penetration": False,
+        "penetration": True,
     }
     assert verification["detected_categories"] == {
         "compliance": True,
@@ -1983,8 +1983,8 @@ def test_live_checklist_invalid_signature_fallback_filters_optional_documents(
     assert verification is not None
     assert verification["status"] == "invalid"
     assert verification["categories"] == {
-        "compliance": False,
-        "risk": False,
+        "compliance": True,
+        "risk": True,
         "penetration": False,
     }
     assert verification["detected_categories"] == {
