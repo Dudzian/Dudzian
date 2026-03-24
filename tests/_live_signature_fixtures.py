@@ -13,4 +13,3 @@ def derive_fixture_hmac_key(doc_relative: str, key_id: str) -> bytes:
 
     key_material = hashlib.sha256(f"{doc_relative}:{key_id}".encode("utf-8")).hexdigest()
     return key_material.encode("ascii")
-
