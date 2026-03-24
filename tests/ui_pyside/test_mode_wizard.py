@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 try:
     from PySide6.QtCore import QObject, QUrl, Signal
     from PySide6.QtGui import QGuiApplication
