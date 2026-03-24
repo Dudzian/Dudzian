@@ -1663,12 +1663,15 @@ jobs:
       - marketplace-catalog
       - ui-packaging
     if: |
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' ||
       (
-        github.ref == 'refs/heads/main' ||
-        github.ref == 'refs/heads/stable' ||
-        startsWith(github.ref, 'refs/heads/release/') ||
-        startsWith(github.ref, 'refs/tags/v')
+        github.event_name == 'push' &&
+        (
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/stable' ||
+          startsWith(github.ref, 'refs/heads/release/') ||
+          startsWith(github.ref, 'refs/tags/v')
+        )
       )
     env:
       MARKETPLACE_PACKAGES_ARTIFACT: ${{ needs.marketplace-catalog.outputs.packages_artifact_name || 'marketplace-packages' }}
