@@ -221,7 +221,7 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.top: toolbar.bottom
+        anchors.top: parent.top
         anchors.margins: 16
         layoutController: layoutController
         panelRegistry: panelRegistry
