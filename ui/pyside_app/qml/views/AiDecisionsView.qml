@@ -184,11 +184,11 @@ Rectangle {
         Rectangle {
             id: detailCard
             Layout.fillWidth: true
+            Layout.alignment: Qt.AlignHCenter
             radius: 14
             color: Qt.rgba(0, 0, 0, 0.35)
             border.color: designSystem ? designSystem.color("border") : "#2d2f37"
             border.width: 1
-            anchors.horizontalCenter: parent.horizontalCenter
 
             ColumnLayout {
                 anchors.fill: parent

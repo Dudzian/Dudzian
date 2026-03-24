@@ -6,10 +6,10 @@ import "../components" as Components
 
 Item {
     id: root
-    property var designSystem
-    property var modeWizardController
-    property var strategyManagementController
-    property var layoutController
+    property var designSystem: null
+    property var modeWizardController: null
+    property var strategyManagementController: null
+    property var layoutController: null
     property bool compact: false
     signal launchWizardRequested()
 
@@ -22,6 +22,7 @@ Item {
     property string selectedModeId: internalSelected.length > 0 ? internalSelected : recommendedModeId
     property int stepIndex: 0
     property var answers: ({})
+    property var presetCandidate: bestPresetForMode()
 
     function dsColor(token, fallback) {
         if (designSystem && designSystem.color)
@@ -30,6 +31,7 @@ Item {
     }
 
     function refreshSelection() {
+        root.presetCandidate = root.bestPresetForMode()
         var initial = internalSelected
         if (!initial && recommendedModeId && recommendedModeId.length > 0)
             initial = recommendedModeId
@@ -74,6 +76,7 @@ Item {
         if (!modeId)
             return
         internalSelected = modeId
+        root.presetCandidate = root.bestPresetForMode()
         if (modeWizardController && modeWizardController.setActiveMode)
             modeWizardController.setActiveMode(modeId)
         stepIndex = 0
@@ -99,7 +102,8 @@ Item {
     Component.onCompleted: refreshSelection()
 
     Connections {
-        target: modeWizardController
+        target: modeWizardController || null
+        enabled: modeWizardController !== null
         function onRecommendationChanged() {
             if (!root.internalSelected)
                 root.refreshSelection()
@@ -116,6 +120,16 @@ Item {
                 root.answers[root.selectedModeId] = modeWizardController.savedAnswers(root.selectedModeId) || {}
         }
     }
+
+    Connections {
+        target: strategyManagementController || null
+        enabled: strategyManagementController !== null
+        function onPresetsChanged() {
+            root.presetCandidate = root.bestPresetForMode()
+        }
+    }
+
+    onSelectedModeIdChanged: root.presetCandidate = root.bestPresetForMode()
 
     ColumnLayout {
         anchors.fill: parent
@@ -171,7 +185,7 @@ Item {
                 }
 
                 RowLayout {
-                    visible: !!(recommendationSummary && recommendationSummary.badge)
+                    visible: recommendationSummary && recommendationSummary.badge ? true : false
                     spacing: 8
                     Rectangle {
                         radius: 12
@@ -184,7 +198,7 @@ Item {
                         Label {
                             id: badgeLabel
                             anchors.centerIn: parent
-                            text: recommendationSummary.badge
+                            text: recommendationSummary && recommendationSummary.badge ? recommendationSummary.badge : ""
                             color: designSystem ? designSystem.color("textPrimary") : "#111"
                             font.bold: true
                         }
@@ -235,7 +249,7 @@ Item {
                 }
 
                 Rectangle {
-                    visible: strategyManagementController && root.bestPresetForMode()
+                    visible: strategyManagementController !== null && root.presetCandidate !== null
                     Layout.fillWidth: true
                     radius: 18
                     color: designSystem ? designSystem.color("surface") : "#1c2233"
@@ -246,22 +260,21 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 16
                         spacing: 6
-                        property var presetCandidate: root.bestPresetForMode()
                         Label {
-                            text: presetCandidate ? qsTr("Marketplace: %1").arg(presetCandidate.name) : ""
+                            text: root.presetCandidate ? qsTr("Marketplace: %1").arg(root.presetCandidate.name || "") : ""
                             font.bold: true
                             color: designSystem ? designSystem.color("textPrimary") : "#fff"
-                            visible: presetCandidate !== null
+                            visible: root.presetCandidate !== null
                         }
                         Label {
-                            text: presetCandidate && presetCandidate.summary ? presetCandidate.summary : qsTr("Brak opisu presetu")
+                            text: root.presetCandidate && root.presetCandidate.summary ? root.presetCandidate.summary : qsTr("Brak opisu presetu")
                             color: designSystem ? designSystem.color("textSecondary") : "#c1c8df"
                             wrapMode: Text.WordWrap
-                            visible: presetCandidate !== null
+                            visible: root.presetCandidate !== null
                         }
                         Item {
                             Layout.fillWidth: true
-                            visible: presetCandidate && presetCandidate.userPreferences && presetCandidate.userPreferences.length > 0
+                            visible: root.presetCandidate && root.presetCandidate.userPreferences && root.presetCandidate.userPreferences.length > 0
                             implicitHeight: personaLayout.implicitHeight + 12
                             Rectangle {
                                 id: personaBackdrop
@@ -287,7 +300,7 @@ Item {
                                 anchors.margins: 12
                                 spacing: 6
                                 Repeater {
-                                    model: presetCandidate ? presetCandidate.userPreferences : []
+                                    model: root.presetCandidate ? root.presetCandidate.userPreferences : []
                                     delegate: ColumnLayout {
                                         spacing: 2
                                         Label {
@@ -357,10 +370,10 @@ Item {
                                 designSystem: designSystem
                                 text: qsTr("Zastosuj preset")
                                 iconName: "strategy_manager"
-                                enabled: strategyManagementController && presetCandidate && wizardPortfolioInput.text.length > 0
+                                enabled: strategyManagementController !== null && root.presetCandidate !== null && wizardPortfolioInput.text.length > 0
                                 onClicked: {
-                                    if (strategyManagementController && presetCandidate)
-                                        strategyManagementController.activateAndAssign(presetCandidate.presetId, wizardPortfolioInput.text)
+                                    if (strategyManagementController && root.presetCandidate)
+                                        strategyManagementController.activateAndAssign(root.presetCandidate.presetId, wizardPortfolioInput.text)
                                 }
                             }
                             Components.IconButton {
@@ -451,9 +464,9 @@ Item {
 
             SpinBox {
                 id: wizardStepper
-                visible: currentMode && currentMode.steps && currentMode.steps.length > 0
+                visible: wizardPanel.currentMode && wizardPanel.currentMode.steps && wizardPanel.currentMode.steps.length > 0
                 from: 0
-                to: currentMode && currentMode.steps ? Math.max(0, currentMode.steps.length - 1) : 0
+                to: wizardPanel.currentMode && wizardPanel.currentMode.steps ? Math.max(0, wizardPanel.currentMode.steps.length - 1) : 0
                 value: stepIndex
                 stepSize: 1
                 editable: false

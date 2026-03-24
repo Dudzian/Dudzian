@@ -40,9 +40,22 @@ def test_pyside_app_bootstrap_loads_qml(tmp_path: Path) -> None:
     _ensure_qt_application()
     options = AppOptions(config_path=Path("ui/config/example.yaml"))
     app = BotPysideApplication(options)
-    engine = app.load()
-    warnings = collect_engine_warnings(engine)
+    load_warnings: list[str] = []
+    engine = app.load(warning_sink=load_warnings.append)
+    warnings = load_warnings + collect_engine_warnings(engine)
+    warnings = list(dict.fromkeys(warnings))
     assert_engine_loaded(engine, warnings, "QML nie został załadowany")
+    warning_blob = " | ".join(warnings)
+    forbidden_warnings = [
+        'Detected function "onRecommendationChanged" in Connections element',
+        "ReferenceError: presetCandidate is not defined",
+        "Unable to assign [undefined] to QObject*",
+        "Cannot anchor to an item that isn't a parent or sibling",
+        "Detected anchors on an item that is managed by a layout",
+    ]
+    for warning in forbidden_warnings:
+        assert warning not in warning_blob
+
     ctx = engine.rootContext()
     grpc_bridge = ctx.contextProperty("grpcBridge")
     runtime_service = grpc_bridge.runtimeService if grpc_bridge else None

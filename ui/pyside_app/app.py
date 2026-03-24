@@ -7,6 +7,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtCore import QObject
@@ -121,7 +122,7 @@ class BotPysideApplication:
         self._qt_app = QGuiApplication(sys.argv)
         return self._qt_app
 
-    def load(self) -> QQmlApplicationEngine:
+    def load(self, warning_sink: Callable[[str], None] | None = None) -> QQmlApplicationEngine:
         """Buduje silnik QML wraz z kontekstem."""
 
         app = self._ensure_qt_app()
@@ -169,11 +170,17 @@ class BotPysideApplication:
                     location = (
                         warning.url().toString() if warning.url().isValid() else qml_file.as_uri()
                     )
-                    collected_warnings.append(
+                    message = (
                         f"{location}:{warning.line()}:{warning.column()}: {warning.description()}"
                     )
+                    collected_warnings.append(message)
+                    if warning_sink is not None:
+                        warning_sink(message)
                 except Exception:  # pragma: no cover - zabezpieczenie na wypadek zmian API
-                    collected_warnings.append(str(warning))
+                    message = str(warning)
+                    collected_warnings.append(message)
+                    if warning_sink is not None:
+                        warning_sink(message)
 
         try:
             engine.warnings.connect(_on_warnings)
