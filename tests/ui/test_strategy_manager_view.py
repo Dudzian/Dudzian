@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -9,7 +10,6 @@ from tests.ui._qml_hosting import (
     teardown_hosted_qml_engine,
 )
 from tests.ui._qt import require_pyside6
-from tests.ui._qt_utils import wait_for
 
 pytestmark = pytest.mark.qml
 
@@ -109,6 +109,14 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
     host_window = ensure_item_has_host_window(root, default_height=700)
     app.processEvents()
 
+    def pump_until(predicate: Callable[[], object | None], *, rounds: int = 80) -> object | None:
+        for _ in range(max(rounds, 1)):
+            app.processEvents()
+            value = predicate()
+            if value is not None:
+                return value
+        return None
+
     try:
         QMetaObject.invokeMethod(root, "refreshMarketplace", Qt.DirectConnection)
         app.processEvents()
@@ -116,27 +124,23 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
         root.setProperty("targetPortfolioId", "desk-1")
         app.processEvents()
 
-        presets_cache = wait_for(
-            lambda: root.property("presetsCache")
-            if isinstance(root.property("presetsCache"), list)
-            and len(root.property("presetsCache")) >= 2
-            else None,
-            timeout_s=2.0,
-            process_events=app.processEvents,
-            description="StrategyManager presetsCache should contain refreshed delegates",
+        def _presets_cache_if_ready() -> object | None:
+            value = root.property("presetsCache")
+            if isinstance(value, list) and len(value) >= 2:
+                return value
+            return None
+
+        presets_cache = pump_until(_presets_cache_if_ready)
+        assert presets_cache is not None, (
+            "StrategyManager presetsCache was not refreshed to at least 2 entries; "
+            f"presetsCache={root.property('presetsCache')!r}"
         )
 
-        quick_install_button = wait_for(
+        quick_install_button = pump_until(
             lambda: root.findChild(QObject, "quickInstallButton_scalping_ai"),
-            timeout_s=2.0,
-            process_events=app.processEvents,
-            description="quick install button for scalping_ai",
         )
-        assign_button = wait_for(
+        assign_button = pump_until(
             lambda: root.findChild(QObject, "assignPresetButton_swing_guard"),
-            timeout_s=2.0,
-            process_events=app.processEvents,
-            description="assign button for swing_guard",
         )
 
         quick_install_names = collect_object_names(root, "quickInstallButton_")
