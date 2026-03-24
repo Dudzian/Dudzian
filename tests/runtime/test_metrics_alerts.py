@@ -1,5 +1,5 @@
 import json
-import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -249,3 +249,67 @@ def test_build_cloud_alert_channel_registers_remote_profile(
 
     channel = metrics_alerts._build_cloud_alert_channel(runtime_path, runtime_config, "prod")
     assert channel is sentinel
+
+
+def test_build_secret_manager_degrades_without_warning_by_default(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delenv("BOT_CORE_UI_SECRET_PASSPHRASE", raising=False)
+    monkeypatch.delenv("BOT_CORE_UI_SECRET_PATH", raising=False)
+    monkeypatch.delenv("BOT_CORE_UI_REQUIRE_SECRET_STORE", raising=False)
+    monkeypatch.setattr(
+        metrics_alerts,
+        "create_default_secret_storage",
+        lambda **_kwargs: (_ for _ in ()).throw(metrics_alerts.SecretStorageError("missing")),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=metrics_alerts.__name__):
+        manager = metrics_alerts._build_secret_manager()
+
+    assert manager is None
+    assert not any("magazynu sekretów" in message for message in caplog.messages)
+
+
+def test_build_secret_manager_warns_when_secret_store_required(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("BOT_CORE_UI_REQUIRE_SECRET_STORE", "1")
+    monkeypatch.setattr(
+        metrics_alerts,
+        "create_default_secret_storage",
+        lambda **_kwargs: (_ for _ in ()).throw(metrics_alerts.SecretStorageError("missing")),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=metrics_alerts.__name__):
+        manager = metrics_alerts._build_secret_manager()
+
+    assert manager is None
+    assert any("magazynu sekretów" in message for message in caplog.messages)
+
+
+@pytest.mark.parametrize(
+    ("env_name", "env_value"),
+    [
+        pytest.param("BOT_CORE_UI_SECRET_PASSPHRASE", "explicit-passphrase", id="explicit-passphrase"),
+        pytest.param("BOT_CORE_UI_SECRET_PATH", "/tmp/non-existent-secrets.json", id="explicit-path"),
+    ],
+)
+def test_build_secret_manager_warns_for_explicit_secret_config(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    env_name: str,
+    env_value: str,
+) -> None:
+    monkeypatch.setenv(env_name, env_value)
+    monkeypatch.delenv("BOT_CORE_UI_REQUIRE_SECRET_STORE", raising=False)
+    monkeypatch.setattr(
+        metrics_alerts,
+        "create_default_secret_storage",
+        lambda **_kwargs: (_ for _ in ()).throw(metrics_alerts.SecretStorageError("missing")),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=metrics_alerts.__name__):
+        manager = metrics_alerts._build_secret_manager()
+
+    assert manager is None
+    assert any("magazynu sekretów" in message for message in caplog.messages)
