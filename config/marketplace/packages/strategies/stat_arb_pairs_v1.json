@@ -11,14 +11,14 @@
         "BINANCE",
         "KUCOIN"
       ],
-      "summary": "Arbitraż statystyczny par",
+      "summary": "Arbitra\u017c statystyczny par",
       "tags": [
         "stat-arb",
         "pairs"
       ],
       "user_preferences": [
         {
-          "automation": "pełna",
+          "automation": "pe\u0142na",
           "holding_period": "swing",
           "max_positions": 5,
           "notes": "Preset Stat Arb Pairs v1 preferuje stat-arb scenariusze.",
@@ -43,7 +43,7 @@
       {
         "engine": "stat_arb",
         "metadata": {
-          "description": "Arbitraż statystyczny par",
+          "description": "Arbitra\u017c statystyczny par",
           "owners": [
             "stage6-core"
           ],
@@ -66,7 +66,7 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-12-26T12:57:19Z",
+    "signed_at": "2025-01-14T09:30:00Z",
     "value": "fYNhd4Rs+BZ90nhi4uXs7wODBQvWFncgmhAwKH/E0OkKF0/yLWgg7kdA47oBzWWUv1IZEiYBBQ7B4SSau+pbBA=="
   }
 }

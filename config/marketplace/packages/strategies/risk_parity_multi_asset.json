@@ -18,7 +18,7 @@
       ],
       "user_preferences": [
         {
-          "automation": "pełna",
+          "automation": "pe\u0142na",
           "holding_period": "swing",
           "max_positions": 5,
           "notes": "Preset Risk Parity Multi-Asset preferuje risk-parity scenariusze.",
@@ -66,7 +66,7 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-12-26T12:57:17Z",
+    "signed_at": "2025-01-14T09:30:00Z",
     "value": "bHIBXg2dkfDe7herwgi0aphm27VpfXP8A53Bf41kK8bUNJp5R+AFmvM1sD3fS1eiUWlfUzxQW2pK9CrS9TPaBQ=="
   }
 }

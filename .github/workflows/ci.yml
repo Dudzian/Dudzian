@@ -1443,7 +1443,8 @@ jobs:
         run: |
           python scripts/build_marketplace_catalog.py \
             --private-key config/marketplace/keys/dev-presets-ed25519.key \
-            --key-id dev-presets \
+            --key-id dev-presets-ed25519 \
+            --issuer marketplace-ci \
             --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key \
             --catalog-signature-key dev-hmac
 
@@ -1697,7 +1698,8 @@ jobs:
         run: |
           python scripts/build_marketplace_catalog.py \
             --private-key config/marketplace/keys/dev-presets-ed25519.key \
-            --key-id dev-presets \
+            --key-id dev-presets-ed25519 \
+            --issuer marketplace-ci \
             --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key \
             --catalog-signature-key dev-hmac
 

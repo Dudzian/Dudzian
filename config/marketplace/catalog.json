@@ -54,15 +54,15 @@
           "uri": "packages/strategies/ai_macro_multi_horizon.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1787,
+          "size_bytes": 1791,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "f5228e18b42e251ae618246f59abbcc28d84aa3cb50516982137ba2610323d41"
+            "digest": "8c57673ac0340493be1d06a7fd2a449a0d036f1637d1780aea178f983797b8c2"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "iySOz5BVt6kRWOSnR+1qXEzjFLZJWPMxnuTpu4oADH0=",
+            "value": "c3n6jMp/GtrDmwHyj9IclafnZGFzWYwEm8XcVaB63qw=",
             "signed_fields": [
               "package_id",
               "version",
@@ -246,15 +246,15 @@
           "uri": "packages/exchanges/exchange_binance_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Binance.",
-          "size_bytes": 7434,
+          "size_bytes": 7478,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "7bddbf8b02f0af355db1476e7151b66d96965ddc474c8c0ae080d5c5a66e4ed2"
+            "digest": "1ef4e39a7992644ec810dc92b3bf0f16169d966e8527a9726e30bd3698e50da2"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "BJhTg5hZOLXwEhPxA/bVPTzWmqTEQFsXYxuVrnrbEvU=",
+            "value": "O33KIR0e/3drDj9o1VP+J+3qID4Y8l7rEtaYxda/iJg=",
             "signed_fields": [
               "package_id",
               "version",
@@ -379,15 +379,15 @@
           "uri": "packages/exchanges/exchange_bitfinex_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Bitfinex.",
-          "size_bytes": 3462,
+          "size_bytes": 3474,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "90e1e77f2f5630e40aad4be9918e1a6b5f960641712fa51aedc33cfc04d14698"
+            "digest": "111edcdf4958457da29467a55d02cb75d840d552c5e539b450f5b0f50f40624e"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "+DIzVtgGvoMvvDod/+NK8UViTfiAEGnOU0eUEzOmOX0=",
+            "value": "3Hx54DkkuH5iTg/Qr9pcbkPoJiBjTrVf/MSvcu7m+LA=",
             "signed_fields": [
               "package_id",
               "version",
@@ -511,15 +511,15 @@
           "uri": "packages/exchanges/exchange_bitget_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Bitget.",
-          "size_bytes": 3881,
+          "size_bytes": 3901,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "03ff66af5198f065b1f9dc74721024e75f3b8562a20e0ea18bc397838cc19d88"
+            "digest": "f2ac3721b9436500eeaa82327fde1be8a5f15d43401a8c94ceedad5f72c6ccb5"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "T45RcKcoZ/+WLQo70pfY+KceP++5UfuP8pQUv7NbH0w=",
+            "value": "OWyCAfznKTcLxNjwcR9tPbGNUp2gJKeoCs9hcsu27yE=",
             "signed_fields": [
               "package_id",
               "version",
@@ -644,15 +644,15 @@
           "uri": "packages/exchanges/exchange_bitmex_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk BitMEX.",
-          "size_bytes": 6112,
+          "size_bytes": 6132,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "5b452e0e330079643a53b23b5852ffab61b0e941f4e23621ab452f4c5a5980f4"
+            "digest": "c0c74f9c921c6048e8dd11bb0a1e81c59dda0f37e42698839250419e5bf45d76"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "b/EvwBr57R7Y2RBUpZRZ1K5tpyvW2QpaNEVh7mQocR4=",
+            "value": "vvfGnU4p1EtFhd4H5ilrd1X1GgQ7+myQvEpwhBMxx4s=",
             "signed_fields": [
               "package_id",
               "version",
@@ -776,15 +776,15 @@
           "uri": "packages/exchanges/exchange_bitstamp_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Bitstamp.",
-          "size_bytes": 3385,
+          "size_bytes": 3397,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "c3075639c57f3e442ea4a3fb166f08245175185c3a1bd679ee168d37bf4c8537"
+            "digest": "b8631af03f60a04c302bba0e570f735c81ef4a3c95800be85afe0923bab6e3b9"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "7mkDSd8g8O+pVBLiNO/TzRjdJ6vClBWR6/oQCUmYKz8=",
+            "value": "7Hp13tAxY4jSZLC/SkDiR/BkKjOSMjHrqfuY6X/z5J4=",
             "signed_fields": [
               "package_id",
               "version",
@@ -908,15 +908,15 @@
           "uri": "packages/exchanges/exchange_bybit_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Bybit.",
-          "size_bytes": 5068,
+          "size_bytes": 5080,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "4e6abf36208d43cd5db9a81f99f7f882244559d4b3e76adbdc46542e169477f2"
+            "digest": "0f325f387a39125fca9df4b05d7787cb16ab39dbf39d2f9d4096926a31651962"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "up5qjzfSTqKj3azBPRiyoJnIaeERkQGO7XXxmtPXmlw=",
+            "value": "+OFXAc5V3Eg7bJMwk0n5UT951XpfZoh0dh+Zxj8AnKA=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1041,15 +1041,15 @@
           "uri": "packages/exchanges/exchange_coinbase_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Coinbase.",
-          "size_bytes": 4080,
+          "size_bytes": 4092,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "5c98e8b7ae5f500d7a6af9bd1d57232c2d94c570a5b91b1594651fe6b697f757"
+            "digest": "d48e7cbe9c8cbcde2c22b58d66953cd68a1d58352f2e72edfbad01a7fee35fb9"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "axiTaB2aDHj/nU2yGno27hrpBPy2zBalJg2oIRw2zQs=",
+            "value": "UxiGn1WkX+7+xWOhOWE08b3wYWVtodXrCtsJpaT7b9c=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1173,15 +1173,15 @@
           "uri": "packages/exchanges/exchange_deribit_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Deribit.",
-          "size_bytes": 6167,
+          "size_bytes": 6195,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "e35ed8577c0221f371aa1e6ec66a370afe19d42fe602f82f4a69a7648152ed0f"
+            "digest": "7eefe16df97cef1d99ee61af000281e62811bb900f6868f4090ab6c8846d4daa"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "j+1ErHDVyGL1n85AHjEX282iZiuEwI8ltpOxXNG6BsE=",
+            "value": "C/X4Xaf56d4gmIdMnno+krO7z2d9CoQvW9WGGPN3tD0=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1307,15 +1307,15 @@
           "uri": "packages/exchanges/exchange_gateio_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Gate.io.",
-          "size_bytes": 3768,
+          "size_bytes": 3780,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "03448f022bfe256db4a723ba06c57cf0f38ac7689149fd4029c2b15c71672961"
+            "digest": "c16547b92e64f91dcfea14694afe3b68fe9b51f898f8f00169a99651a7d00997"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "ITfhJq8+P6mzDPO1DiI01cNp7fmc2Wo5PpNzbDJdNqI=",
+            "value": "AlR+LgD2/JkNv3KPmg4B9FaDaVfjwTeUG3oQWRA9KeU=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1440,15 +1440,15 @@
           "uri": "packages/exchanges/exchange_gemini_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Gemini.",
-          "size_bytes": 4327,
+          "size_bytes": 4339,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "7fda9ae8bd4887a17745dd143bcc820d6c5fbc78543f4d760a700c2daf018a15"
+            "digest": "0a96bc98dc5287cb0c640ce9cc35177ed35f8178ea6c9507160273f49e99ef71"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "dbYTu29+8vjXaofAZaZ2w9Mru3Z65g23kv0b2nKCRro=",
+            "value": "28IQFhNBixnftCuYLNYSbP8glyvpLYHr2vb3YcnlW3M=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1572,15 +1572,15 @@
           "uri": "packages/exchanges/exchange_huobi_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Huobi.",
-          "size_bytes": 4238,
+          "size_bytes": 4250,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "f540fe51107b99d02ae2fc25d04d1d177b638b9180fd82bb44def90a42a2935f"
+            "digest": "b16931ac00795c38d1f94f90a017454325e8d64de537e5ce2f7fffec5423a787"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "sGyUsBdMmMzM00AM2JpoR2LtYe2QIrFFLCbOlUXircw=",
+            "value": "E28zRDDODb1qhNcv6Ur3Add/4szPyYhY6HGZ0u9axT8=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1704,15 +1704,15 @@
           "uri": "packages/exchanges/exchange_kraken_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Kraken.",
-          "size_bytes": 5043,
+          "size_bytes": 5055,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "bd131270c3cd4624ce43945250d3924739a0ba68ab666e53b07d70e91f319ca4"
+            "digest": "4cbbee62398dcf0fe2da59796c7e86439d3baebd0323bd7f7a183bb6d3aefb0a"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "KLyOZbX9z1VYjPuX9NVhKPdgA1B5dab1yhFNKGALchg=",
+            "value": "dIKQX2uc46g8enHn+62AyIvazVGd7JmQbXOyg/jz1Qc=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1837,15 +1837,15 @@
           "uri": "packages/exchanges/exchange_kucoin_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk KuCoin.",
-          "size_bytes": 5070,
+          "size_bytes": 5082,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "197fcc2a8f1f5988142aff9c9cfbe0742ff1cc4d5503a1a6423ad300bf4a8eb7"
+            "digest": "8011e1c1e1fd8cb142019c19b691b71e71277d3aab322505f06292fbfefcfade"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "fY85ubrSHkltGUqIwu0i3ynoWJ6uM2hvUqYS8nm3SDc=",
+            "value": "DzhFM2le1VjoYJFDcY25ByoFdj+QDS9EuSr790dM5ck=",
             "signed_fields": [
               "package_id",
               "version",
@@ -1970,15 +1970,15 @@
           "uri": "packages/exchanges/exchange_mexc_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk MEXC.",
-          "size_bytes": 3722,
+          "size_bytes": 3734,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "247f4173a657d03b71d1c8f1453e44d7367e507183fb7a9676f735c204ab52b2"
+            "digest": "1b47d401df7dfbace2826d7135cd34a2af00c3945ca7daab912145e6ebe78f97"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "ypgcmdCtswE7rBg8p1eT+Mxg5nZkMCg8ot5tLjmS6Ew=",
+            "value": "fAcuvxDasB63LMQuQ0CvPno/Ysrd2+lI99/vQicIYYg=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2102,15 +2102,15 @@
           "uri": "packages/exchanges/exchange_okx_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk OKX.",
-          "size_bytes": 5395,
+          "size_bytes": 5407,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "4b2d47a930f6432bcd2c1885f6af2ec6aecfc612d8685efc84498a8e49ec7554"
+            "digest": "4aa0448f6ea6de58b8ff773bd4ce56f898d9d572fa2ac4db4ff78483ccdd0a3e"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "ZYwR3jwRRxgYbcHVF5VhEGI2BNeS5cVO7TjBrg+iqBw=",
+            "value": "M1vH2l/hpA9N76YCOJCk3o85sftfyNZm1hEfjV4q6vE=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2235,15 +2235,15 @@
           "uri": "packages/exchanges/exchange_zonda_v1.json",
           "kind": "preset",
           "description": "Podpisany preset środowisk Zonda.",
-          "size_bytes": 3329,
+          "size_bytes": 3341,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "4e57e17a33dae51a19e958820cbe3c0bf79910e1cb7e767e47cbd7a6b6429134"
+            "digest": "d0354a522a8838a2f24344fe8b1a74e49c2c6da2eaa36caf86ec94959868f407"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "HrecND3coCkfgfAPbPEInrByiriWxPxM6eTGXYA0fps=",
+            "value": "pOpQGTxvqRiBNZ416EAmwTuqp/iVkI7XExGEAmqe0TI=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2367,15 +2367,15 @@
           "uri": "packages/strategies/futures_basis_shield.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1784,
+          "size_bytes": 1788,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "9551577d43887b833d5d8bfc3ea1ad89b2e8a778e087c87a92f30f64ad966632"
+            "digest": "56dd0fac062ecfd0241fa65a250373aa7958071638cce3edc38bd1ebd26876a5"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "qtNIfPtnQDl82tUv2S5OIjQEO1Am0tgQBPOmBLguOxA=",
+            "value": "JWtb78/y+R8FIRH4OYojkTgq585pmB+8L69UOqx4Xww=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2536,15 +2536,15 @@
           "uri": "packages/strategies/grid_balance_pro.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1758,
+          "size_bytes": 1778,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "7c4d936a4f2ef3fb27dbb111f55ab3411f4d8ebb712685049b82ca84f1db6ad9"
+            "digest": "bf808c700e6410a3327b1f530bf1e8567fbccbc1209136aeb2167c15d9196386"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "ZpeiBjFaIydI+hdm5yj7qD0f8ubgPqtN3U2sADmiwLM=",
+            "value": "r97gjjJlZL3LPAbUvPUNfZDZ6n4idGkE5ymw8laLTZQ=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2685,15 +2685,15 @@
           "uri": "packages/strategies/liquidity_rebalance_core.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1842,
+          "size_bytes": 1862,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "0b0b6b59b6ee16fed5e6312e525eb76087e15dc0677fe6db3c1f60cbdc9a84f0"
+            "digest": "33e699364e3b75533589f380ceb1307b8206b231a32e9310fc279dd45cc3637d"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "7ZRFgXkLnJgrXOS+V4lTa8JBIP78DIvFufjXHLFtYQk=",
+            "value": "H5MCmwzEXhg/NovH0J90xObH8V1RXxvyymelE7gr+rc=",
             "signed_fields": [
               "package_id",
               "version",
@@ -2876,15 +2876,15 @@
           "uri": "packages/strategies/market_making_microalpha.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1824,
+          "size_bytes": 1828,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "05147f09ff97c62390ad1c9855763a69b90864974da45fd93e890a86c6f15ae4"
+            "digest": "371f5eb6b0d3a75db816e0692d85f67d7b28e3227e3067eb1acceae2ab9f3874"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "Jex80+Ldo2QMDd53pQwuYjUID/IPlzOJ7ol9EWi52uQ=",
+            "value": "e+af06+j9drV7qD8eMcBQgSWvcDEtxFbIkYhpMLc+N4=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3047,15 +3047,15 @@
           "uri": "packages/strategies/mean_reversion_v1.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1944,
+          "size_bytes": 1956,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "4253b9f08e50ddf58c99ad0d01bb520b9f57956f41cfb0f29b3b72c21bb061e3"
+            "digest": "cdacdec02c82c26960aa0069a93124388f547987d4a66d308367b6ef04c9082d"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "kUyX7kUMjCTZHd56A5rmdNDHek68IIWHxmSdMnxqwGk=",
+            "value": "IJ9+7Mhy98greUf5ji8g0W5UPfdgHeSssHp3jd7WxY8=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3216,15 +3216,15 @@
           "uri": "packages/strategies/momentum_scalper_x.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1792,
+          "size_bytes": 1796,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "9cab97eccd4d6d6f47b65160bb3257188daa769da97c019801a78d022be42591"
+            "digest": "127e870a4b381abbeedbaec5923af238b3667f9468b566d5584aa431fde527ed"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "DaT6xPYH1oyyd0Pot+aA6RBKFErmDVHJGMZFLO1WHnM=",
+            "value": "SxRkMhRHYL09N4EKX8xx6RsmxNOU6HBGLecFRSpaYsA=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3385,15 +3385,15 @@
           "uri": "packages/strategies/multi_strategy_scheduler_v2.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1871,
+          "size_bytes": 1875,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "4938dbbb4dd8a029be9dfe9aabe423d86bcf90e9b789aa005ab3854472ba05a1"
+            "digest": "014f1bccde08d9b63435f646e21cb52afa96112b2b07d38364dd355002ea0860"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "CAe5ORzf7PYuL5ZNmtsBBjzKuCJRVuqqrwFJeRWMGN4=",
+            "value": "A/qqafLsYeu6Xob7xAeeRYwUXj/aHXwEvSNBmN4kZQA=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3576,15 +3576,15 @@
           "uri": "packages/strategies/news_sentiment_pulse.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1767,
+          "size_bytes": 1771,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "c9c4b3c9911c47369a6f95042913c31c17eff1b65179b908eb8d6897acd398ef"
+            "digest": "b658435b1c18a6bd39fabbdfc1ce4fd1a64a8e3da92fd7566a3f043b087111b5"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "vkKeOoRCaVf6p4m8CENegUz68VlfeGNGUIShq0suCZI=",
+            "value": "WyiUsMCYRSO68IgxAEhJYT7ZTBgb4B4UXwREyVVPSB0=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3725,15 +3725,15 @@
           "uri": "packages/strategies/options_income_guard.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1766,
+          "size_bytes": 1770,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "4d639ddf39e0bff671bb27c5e8e807bc69864773a4d392f6448d3db846531ff8"
+            "digest": "2977dd93d6f3f5a7c92a2d75c55f444ce9eee3696903497a57dc1f0f76718c29"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "zxjYR0a8C2zXzAIVYLjI7wNWQlO+KmxChBfVUv1Ab6Q=",
+            "value": "AI/elJ7+JykVn9d/oxWS6AfBtk9BABNd6aWHEQ6EQ40=",
             "signed_fields": [
               "package_id",
               "version",
@@ -3873,15 +3873,15 @@
           "uri": "packages/strategies/risk_parity_multi_asset.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1821,
+          "size_bytes": 1825,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "69dcea037fe843e68a43a5a6b78e6cdbc5654ca24a9c7476032aa8e5817299c8"
+            "digest": "33696b8818a4af6f51e7fdf75e505ac85196507b753265d7bbe077fce28d69bc"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "vJTqAQhoSQwerY8rlmcAu0vFIymfdd7W71mXLman1T8=",
+            "value": "jgyAfElT2n3L900Tu8q1/S0rgACSPbCG270WHAwxNNY=",
             "signed_fields": [
               "package_id",
               "version",
@@ -4043,15 +4043,15 @@
           "uri": "packages/strategies/stat_arb_pairs_v1.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1756,
+          "size_bytes": 1768,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "e78a6ef3e878cb7398f39fc88c8ef62552f4c02057e1665dba365d10356f3dcb"
+            "digest": "faa0f1d80d5fed9124ef3c02d6514f19683e93b9bebfcec8449983974b525b27"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "xX34IATW1V8iKkDNWzZgINW+F2fwumOs1brACzzMDjI=",
+            "value": "1zoaIf6ILaUql+FOKbA3E8zs2HWMQn/r9Ku5i38Vclg=",
             "signed_fields": [
               "package_id",
               "version",
@@ -4213,15 +4213,15 @@
           "uri": "packages/strategies/swing_hedge_blend.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1770,
+          "size_bytes": 1774,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "02319df922f994f87f27cff05cb539ca5916a0ad9e40109d27d7fa7f663dbea4"
+            "digest": "d632cde6b10d576fbf9861309e843082fa113ee55ab15d334e054a214e2458f2"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "WaebUDAVPgQ2VUBVrEnwD+LyzPWgrtnS+1A1itBejrU=",
+            "value": "uEtQWN8/ZpFLueqYpvmAXpew2NO1iCeqhjlouI8Kr8Q=",
             "signed_fields": [
               "package_id",
               "version",
@@ -4384,15 +4384,15 @@
           "uri": "packages/strategies/trend_following_alpha.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1955,
+          "size_bytes": 1963,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "cf4cd78547505b796ed812708fbfe98b121e0c93995727cc7684f49f1a346a2c"
+            "digest": "cdac0841865454240e7878c8af63c92ce5c5e3204f4d3ed59077276cb3b77b91"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "stKRbweueUZHXcX6TeEAFeAgJ49HZiYmbdxqkh5TGcE=",
+            "value": "5dTioC6hZcS6lsb68pmsgCbjwDhCB+PSFwq8XSd8sNU=",
             "signed_fields": [
               "package_id",
               "version",
@@ -4553,15 +4553,15 @@
           "uri": "packages/strategies/volatility_breakout_guard.json",
           "kind": "preset",
           "description": "Podpisany preset mean-reversion z guardrailami Stage6.",
-          "size_bytes": 1820,
+          "size_bytes": 1832,
           "integrity": {
             "algorithm": "sha256",
-            "digest": "a1af6a3f6eeec4da05ac10fd9d9477c5ab087adc627196892c53df42e02c3f50"
+            "digest": "29d80b652e3e9a729978b84c7a318fc63ecee35c293fe26c6430d4d17a829860"
           },
           "signature": {
             "algorithm": "HMAC-SHA256",
             "key_id": "dev-hmac",
-            "value": "+p2BSO4dXVgW1lykTaEIUCY2bPTUyDMLWOkQ/orHljE=",
+            "value": "RTgVhmOXeyGw+8EbSW2HhOzxSHmG0/6xlBHqgsyMpbI=",
             "signed_fields": [
               "package_id",
               "version",
