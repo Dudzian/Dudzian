@@ -24,6 +24,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
+from tests._live_signature_fixtures import derive_fixture_hmac_key
 
 if yaml is not None:
     from bot_core.config.loader import load_core_config
@@ -540,7 +541,7 @@ def _create_signed_document(
     normalized_key = bootstrap_module._normalize_signature_identifier(key_id)
     key_path = root / "secrets" / "hmac" / f"{normalized_key}.key"
     key_path.parent.mkdir(parents=True, exist_ok=True)
-    key_bytes = os.urandom(48)
+    key_bytes = derive_fixture_hmac_key(doc_relative, key_id)
     key_path.write_bytes(key_bytes)
 
     document_path = root / doc_relative

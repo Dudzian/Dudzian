@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
+from tests._live_signature_fixtures import derive_fixture_hmac_key
 
 try:
     import yaml  # type: ignore
@@ -47,7 +47,7 @@ def _sign_environment_for_test(
     normalized_key = bootstrap_module._normalize_signature_identifier(key_id)
     key_path = root / "secrets" / "hmac" / f"{normalized_key}.key"
     key_path.parent.mkdir(parents=True, exist_ok=True)
-    key_bytes = os.urandom(48)
+    key_bytes = derive_fixture_hmac_key(doc_relative, key_id)
     key_path.write_bytes(key_bytes)
 
     document_path = root / doc_relative
