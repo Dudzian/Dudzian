@@ -179,6 +179,79 @@ def test_normalize_documents_map_breaks_full_tie_deterministically() -> None:
     assert normalized["doc"]["note"] == "aaa"
 
 
+def test_live_signature_error_duplicate_documents_carries_partial_verification() -> None:
+    environment = SimpleNamespace(
+        name="binance_live",
+        live_readiness={
+            "required_documents": ["kyc_packet"],
+            "documents": [
+                {
+                    "name": "kyc_packet",
+                    "path": "compliance/live/binance/kyc_packet_v1.pdf",
+                    "signature_path": "compliance/live/binance/kyc_packet_v1.sig",
+                },
+                {
+                    "name": "kyc_packet",
+                    "path": "compliance/live/binance/kyc_packet_v2.pdf",
+                    "signature_path": "compliance/live/binance/kyc_packet_v2.sig",
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(bootstrap_module.LiveSignatureVerificationError) as exc_info:
+        bootstrap_module._validate_live_signatures(environment, document_root=None)
+
+    partial = exc_info.value.partial_verification
+    assert isinstance(partial, Mapping)
+    assert partial["documents"] == {}
+    assert partial["documents_by_name"] == {}
+    assert partial["categories"] == {
+        "compliance": False,
+        "risk": False,
+        "penetration": False,
+    }
+    assert partial["detected_categories"] == {
+        "compliance": False,
+        "risk": False,
+        "penetration": False,
+    }
+
+
+def test_live_signature_error_missing_required_document_carries_partial_verification() -> None:
+    environment = SimpleNamespace(
+        name="binance_live",
+        live_readiness={
+            "required_documents": ["kyc_packet", "risk_profile_alignment"],
+            "documents": [
+                {
+                    "name": "kyc_packet",
+                    "path": "compliance/live/binance/kyc_packet.pdf",
+                    "signature_path": "compliance/live/binance/kyc_packet.sig",
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(bootstrap_module.LiveSignatureVerificationError) as exc_info:
+        bootstrap_module._validate_live_signatures(environment, document_root=None)
+
+    partial = exc_info.value.partial_verification
+    assert isinstance(partial, Mapping)
+    assert partial["documents"] == {}
+    assert partial["documents_by_name"] == {}
+    assert partial["categories"] == {
+        "compliance": False,
+        "risk": False,
+        "penetration": False,
+    }
+    assert partial["detected_categories"] == {
+        "compliance": False,
+        "risk": False,
+        "penetration": False,
+    }
+
+
 class _MemorySecretStorage(SecretStorage):
     def __init__(self) -> None:
         self._store: dict[str, str] = {}
