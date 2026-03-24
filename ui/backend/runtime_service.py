@@ -126,7 +126,9 @@ _RISK_CLASSIFICATION_TOKENS: frozenset[str] = frozenset(
     }
 )
 
-_RISK_BLOCK_KEYWORDS: frozenset[str] = frozenset({"block", "blocked", "risk_block", "reject", "rejected"})
+_RISK_BLOCK_KEYWORDS: frozenset[str] = frozenset(
+    {"block", "blocked", "risk_block", "reject", "rejected"}
+)
 _RISK_FREEZE_KEYWORDS: frozenset[str] = frozenset({"freeze", "frozen", "lock"})
 _AI_FEED_CHANNEL = "ai_governor"
 _AI_HISTORY_LIMIT = 32

@@ -137,13 +137,17 @@ def _build_secret_manager() -> SecretManager | None:
     namespace = os.environ.get("BOT_CORE_UI_SECRET_NAMESPACE", "dudzian.trading")
     passphrase = os.environ.get("BOT_CORE_UI_SECRET_PASSPHRASE")
     storage_path = os.environ.get("BOT_CORE_UI_SECRET_PATH")
-    require_secret_store = os.environ.get("BOT_CORE_UI_REQUIRE_SECRET_STORE", "").strip().lower() in {
+    require_secret_store = os.environ.get(
+        "BOT_CORE_UI_REQUIRE_SECRET_STORE", ""
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
-    explicit_secret_config = bool((passphrase and passphrase.strip()) or (storage_path and storage_path.strip()))
+    explicit_secret_config = bool(
+        (passphrase and passphrase.strip()) or (storage_path and storage_path.strip())
+    )
     try:
         storage = create_default_secret_storage(
             namespace=namespace,
@@ -151,7 +155,9 @@ def _build_secret_manager() -> SecretManager | None:
             headless_path=storage_path,
         )
     except SecretStorageError:
-        log_fn = _LOGGER.warning if (explicit_secret_config or require_secret_store) else _LOGGER.debug
+        log_fn = (
+            _LOGGER.warning if (explicit_secret_config or require_secret_store) else _LOGGER.debug
+        )
         log_fn("Nie udało się zainicjalizować magazynu sekretów dla kanałów alertów HyperCare.")
         return None
     except Exception:  # pragma: no cover - diagnostyka środowisk niestandardowych
