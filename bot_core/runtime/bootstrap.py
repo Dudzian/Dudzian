@@ -2026,6 +2026,7 @@ def _validate_live_signatures(
 
     verification_results: dict[str, Mapping[str, Any]] = {}
     failures: list[str] = []
+    categories_with_signature_failures: set[str] = set()
     categories_status = {"compliance": False, "risk": False, "penetration": False}
     categories_seen = {"compliance": False, "risk": False, "penetration": False}
 
@@ -2097,6 +2098,31 @@ def _validate_live_signatures(
             )
         except LiveSignatureVerificationError as exc:
             failures.append(f"{document.name}: {exc}")
+            for category in categories:
+                categories_with_signature_failures.add(category)
+            normalized_document_name = str(getattr(document, "name", "")).strip()
+            if normalized_document_name:
+                invalid_payload: dict[str, Any] = {
+                    "name": normalized_document_name,
+                    "status": "invalid",
+                    "signature_valid": False,
+                    "error": str(exc),
+                }
+                for key in (
+                    "path",
+                    "signature_path",
+                    "sha256",
+                    "required",
+                    "signed",
+                    "signed_at",
+                ):
+                    value = getattr(document, key, None)
+                    if value is not None:
+                        invalid_payload[key] = value
+                signed_by = getattr(document, "signed_by", None)
+                if signed_by:
+                    invalid_payload["signed_by"] = list(signed_by)
+                verification_results[normalized_document_name] = invalid_payload
             continue
 
         normalized_document_name = str(getattr(document, "name", "")).strip()
@@ -2116,6 +2142,8 @@ def _validate_live_signatures(
                 }[category]
             )
         elif not categories_status[category]:
+            if category in categories_with_signature_failures:
+                continue
             failures.append(
                 {
                     "compliance": "Dokumenty compliance posiadają niepoprawny podpis HMAC.",
