@@ -19,10 +19,10 @@
       ],
       "user_preferences": [
         {
-          "automation": "pełna",
+          "automation": "pe\u0142na",
           "holding_period": "intra-day",
           "max_positions": 4,
-          "notes": "Preferuje rynek spot z ograniczoną ekspozycją overnight.",
+          "notes": "Preferuje rynek spot z ograniczon\u0105 ekspozycj\u0105 overnight.",
           "persona": "Mean Reversion Desk",
           "recommended_budget": 15000,
           "risk_target": "conservative"
@@ -70,7 +70,7 @@
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",
-    "signed_at": "2025-12-26T12:57:04Z",
+    "signed_at": "2025-01-14T09:30:00Z",
     "value": "Qwnbav7hLZuDCqwIFWiwN+GXW+tGdSkR7oSRy8TljNsDqfBeZBNmnaSkNcrbyolk/Cbrwwj4Wx6jV7tF2BJDCA=="
   }
 }
