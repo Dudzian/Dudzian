@@ -3860,7 +3860,9 @@ def bootstrap_environment(
                             "penetration": bool(candidate_detected.get("penetration")),
                         }
 
-                documents_by_name_payload = partial_documents_by_name or normalized_documents_by_name
+                documents_by_name_payload = (
+                    partial_documents_by_name or normalized_documents_by_name
+                )
                 documents_payload = partial_documents or documents_by_name_payload
 
                 # W testach/CI nie przerywamy bootstrapa na invalid signatures,
@@ -3876,7 +3878,8 @@ def bootstrap_environment(
                     "documents": documents_payload,
                     "documents_by_name": documents_by_name_payload,
                     "categories": partial_categories or invalid_categories,
-                    "detected_categories": partial_detected_categories or invalid_detected_categories,
+                    "detected_categories": partial_detected_categories
+                    or invalid_detected_categories,
                 }
             else:
                 raise RuntimeError(
