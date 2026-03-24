@@ -1494,17 +1494,6 @@ jobs:
             tests/test_build_marketplace_catalog_backfill.py \
             --maxfail=1 --disable-warnings
 
-      - name: Sync community reviews
-        shell: bash
-        run: |
-          SIGNING_KEY=$(cat config/marketplace/keys/dev-hmac.key)
-          python scripts/ui_marketplace_bridge.py \
-            --presets-dir config/marketplace/presets \
-            --licenses-path var/marketplace_licenses.json \
-            --signing-key dev-hmac=$SIGNING_KEY \
-            sync-reviews \
-            --source-dir config/marketplace/reviews
-
       - name: Diagnose marketplace markdown/signature diff before release bundle validation
         shell: bash
         run: |
@@ -1531,6 +1520,17 @@ jobs:
           git status --porcelain
           git diff --stat
           git diff --quiet
+
+      - name: Sync community reviews
+        shell: bash
+        run: |
+          SIGNING_KEY=$(cat config/marketplace/keys/dev-hmac.key)
+          python scripts/ui_marketplace_bridge.py \
+            --presets-dir config/marketplace/presets \
+            --licenses-path var/marketplace_licenses.json \
+            --signing-key dev-hmac=$SIGNING_KEY \
+            sync-reviews \
+            --source-dir config/marketplace/reviews
 
       - name: Build marketplace packages archive
         if: always()
