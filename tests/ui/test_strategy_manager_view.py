@@ -147,7 +147,6 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
             return None
 
         quick_install_button = pump_until(lambda: _lookup_object("quickInstallButton_scalping_ai"))
-        assign_button = pump_until(lambda: _lookup_object("assignPresetButton_swing_guard"))
 
         quick_install_names = collect_object_names(root, "quickInstallButton_")
         assign_button_names = collect_object_names(root, "assignPresetButton_")
@@ -162,6 +161,9 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
         app.processEvents()
 
         assert controller.install_calls[-1] == ("scalping_ai", "desk-1")
+
+        assign_button = pump_until(lambda: _lookup_object("assignPresetButton_swing_guard"))
+        assign_button_names = collect_object_names(root, "assignPresetButton_")
 
         assert assign_button is not None, (
             "assignPresetButton_swing_guard was not materialized; "
