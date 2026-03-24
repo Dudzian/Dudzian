@@ -163,6 +163,9 @@ def teardown_qml_engine(
                         delete_later()
         except Exception:
             pass
+        # Najpierw domknij DeferredDelete rootów, żeby nie czyścić cache/GC,
+        # kiedy obiekty QML nadal są "żywe, ale zaplanowane do usunięcia".
+        force_qt_cleanup(process_events=process_events)
 
     clear_component_cache = getattr(engine, "clearComponentCache", None)
     if callable(clear_component_cache):
@@ -176,5 +179,4 @@ def teardown_qml_engine(
     if callable(delete_later):
         delete_later()
 
-    force_qt_cleanup(process_events=process_events)
     force_qt_cleanup(process_events=process_events)

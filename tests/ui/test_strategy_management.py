@@ -23,11 +23,10 @@ if yaml is not None:
         collect_object_names,
         ensure_item_has_host_window,
         is_item_hosted_in_window,
-        teardown_hosted_item_window,
+        teardown_hosted_qml_engine,
         safe_qml_property,
     )
     from tests.ui._qt import qml_value_to_python, require_pyside6
-    from tests.ui._qt_utils import teardown_qml_engine
     from ui.pyside_app.controllers.strategy import StrategyManagementController
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -495,9 +494,12 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         except RuntimeError:
             pass
 
-        teardown_hosted_item_window(root, host_window)
-        app.processEvents()
-        teardown_qml_engine(engine, process_events=app.processEvents)
+        teardown_hosted_qml_engine(
+            root,
+            host_window,
+            engine,
+            process_events=app.processEvents,
+        )
         app.processEvents()
 
 
@@ -576,7 +578,10 @@ def test_strategy_management_promotion_dialog_hosting_is_consistent(tmp_path: Pa
         except RuntimeError:
             pass
 
-        teardown_hosted_item_window(root, host_window)
-        app.processEvents()
-        teardown_qml_engine(engine, process_events=app.processEvents)
+        teardown_hosted_qml_engine(
+            root,
+            host_window,
+            engine,
+            process_events=app.processEvents,
+        )
         app.processEvents()

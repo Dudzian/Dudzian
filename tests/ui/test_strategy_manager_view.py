@@ -6,10 +6,10 @@ import pytest
 from tests.ui._qml_hosting import (
     collect_object_names,
     ensure_item_has_host_window,
-    teardown_hosted_item_window,
+    teardown_hosted_qml_engine,
 )
 from tests.ui._qt import require_pyside6
-from tests.ui._qt_utils import teardown_qml_engine, wait_for
+from tests.ui._qt_utils import wait_for
 
 pytestmark = pytest.mark.qml
 
@@ -165,6 +165,10 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
 
         assert controller.assign_calls[-1] == ("swing_guard", "desk-1")
     finally:
-        teardown_hosted_item_window(root, host_window)
-        teardown_qml_engine(engine, process_events=app.processEvents)
+        teardown_hosted_qml_engine(
+            root,
+            host_window,
+            engine,
+            process_events=app.processEvents,
+        )
         app.processEvents()
