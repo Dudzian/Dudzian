@@ -54,6 +54,16 @@ class Profile:
     bundle: BundleProfile
 
 
+def _normalize_profile_path(path: str, *, base_dir: Path) -> Path:
+    """Resolve profile paths while tolerating Windows separators on POSIX hosts."""
+
+    normalized = path.replace("\\", os.sep)
+    candidate = Path(normalized)
+    if not candidate.is_absolute():
+        candidate = (base_dir / candidate).resolve()
+    return candidate
+
+
 def _read_profile(path: Path) -> Profile:
     document = tomllib.loads(path.read_text(encoding="utf-8"))
 
@@ -78,11 +88,19 @@ def _read_profile(path: Path) -> Profile:
         dist_dir = pyinstaller_section.get("dist_dir")
         work_dir = pyinstaller_section.get("work_dir")
         pyinstaller = PyInstallerProfile(
-            entrypoint=(path.parent / entry_raw).resolve(),
+            entrypoint=_normalize_profile_path(entry_raw, base_dir=path.parent),
             runtime_name=runtime_name,
             hidden_imports=hidden_imports,
-            dist_dir=(path.parent / dist_dir).resolve() if isinstance(dist_dir, str) else None,
-            work_dir=(path.parent / work_dir).resolve() if isinstance(work_dir, str) else None,
+            dist_dir=(
+                _normalize_profile_path(dist_dir, base_dir=path.parent)
+                if isinstance(dist_dir, str)
+                else None
+            ),
+            work_dir=(
+                _normalize_profile_path(work_dir, base_dir=path.parent)
+                if isinstance(work_dir, str)
+                else None
+            ),
         )
 
     briefcase_section = document.get("briefcase") or {}
@@ -94,9 +112,9 @@ def _read_profile(path: Path) -> Profile:
             raise SystemExit("Sekcja 'briefcase' wymaga pól 'project' i 'app'.")
         output_dir = briefcase_section.get("output_dir")
         briefcase = BriefcaseProfile(
-            project_path=(path.parent / project_raw).resolve(),
+            project_path=_normalize_profile_path(project_raw, base_dir=path.parent),
             app_name=app_name,
-            output_dir=(path.parent / output_dir).resolve()
+            output_dir=_normalize_profile_path(output_dir, base_dir=path.parent)
             if isinstance(output_dir, str)
             else None,
         )
@@ -120,11 +138,15 @@ def _read_profile(path: Path) -> Profile:
         raise SystemExit("Pole 'signing_key_id' musi być tekstem.")
 
     bundle = BundleProfile(
-        output_dir=(path.parent / output_dir_raw).resolve(),
-        work_dir=(path.parent / work_dir_raw).resolve(),
-        qt_dist=(path.parent / qt_dist_raw).resolve() if isinstance(qt_dist_raw, str) else None,
+        output_dir=_normalize_profile_path(output_dir_raw, base_dir=path.parent),
+        work_dir=_normalize_profile_path(work_dir_raw, base_dir=path.parent),
+        qt_dist=(
+            _normalize_profile_path(qt_dist_raw, base_dir=path.parent)
+            if isinstance(qt_dist_raw, str)
+            else None
+        ),
         include=include,
-        metadata_path=(path.parent / metadata_raw).resolve(),
+        metadata_path=_normalize_profile_path(metadata_raw, base_dir=path.parent),
         signing_key=signing_key,
         signing_key_id=signing_key_id,
     )
@@ -296,6 +318,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     runtime_executable: Path | None = None
     if profile.pyinstaller and not args.skip_pyinstaller:
+        if platform_id == "windows" and os.name != "nt":
+            raise SystemExit(
+                "Budowanie docelowego runtime .exe wymaga uruchomienia PyInstaller na Windows "
+                "(cross-build z Linux/macOS nie jest wspierany)."
+            )
         runtime_executable = _build_pyinstaller(profile.pyinstaller, platform_id)
     elif profile.pyinstaller:
         runtime_executable = (
