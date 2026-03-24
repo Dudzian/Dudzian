@@ -158,6 +158,8 @@ def test_main_blocks_windows_pyinstaller_on_non_windows_host(monkeypatch, tmp_pa
     monkeypatch.setattr(installer, "_build_pyinstaller", _unexpected_build)
 
     with pytest.raises(SystemExit, match="wymaga uruchomienia PyInstaller na Windows"):
-        installer.main(["--profile", str(profile_file), "--version", "1.2.3", "--platform", "windows"])
+        installer.main(
+            ["--profile", str(profile_file), "--version", "1.2.3", "--platform", "windows"]
+        )
 
     assert build_called is False
