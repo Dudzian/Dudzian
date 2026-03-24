@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+import types
+from pathlib import Path
+
+
+def _load_installer_module(repo_root: Path, monkeypatch):
+    deploy_module = types.ModuleType("deploy")
+    packaging_module = types.ModuleType("deploy.packaging")
+    packaging_module.build_pyinstaller_bundle = object()
+    deploy_module.packaging = packaging_module
+
+    scripts_module = types.ModuleType("scripts")
+    scripts_module.oem_provision_license = object()
+
+    monkeypatch.setitem(sys.modules, "deploy", deploy_module)
+    monkeypatch.setitem(sys.modules, "deploy.packaging", packaging_module)
+    monkeypatch.setitem(sys.modules, "scripts", scripts_module)
+
+    module_path = repo_root / "scripts" / "build_installer_from_profile.py"
+    module_name = "installer_profile_module_for_tests"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _normalized(path: Path) -> Path:
+    return Path(str(path).replace("\\", "/")).resolve()
+
+
+def test_read_profile_windows_paths_resolve_to_repo_root(monkeypatch):
+    repo_root = Path(__file__).resolve().parents[2]
+    installer = _load_installer_module(repo_root, monkeypatch)
+    profile_path = repo_root / "deploy" / "packaging" / "profiles" / "windows.toml"
+
+    profile = installer._read_profile(profile_path)
+
+    assert profile.pyinstaller is not None
+    assert _normalized(profile.pyinstaller.entrypoint).as_posix().endswith("scripts/run_local_bot.py")
+    assert _normalized(profile.pyinstaller.entrypoint) == repo_root / "scripts" / "run_local_bot.py"
+    assert _normalized(profile.pyinstaller.dist_dir) == (
+        repo_root / "var" / "dist" / "pyinstaller" / "windows"
+    )
+    assert _normalized(profile.pyinstaller.work_dir) == (
+        repo_root / "var" / "build" / "pyinstaller" / "windows"
+    )
+
+    assert profile.briefcase is not None
+    assert _normalized(profile.briefcase.project_path) == repo_root / "ui" / "briefcase"
+    assert _normalized(profile.briefcase.output_dir) == (
+        repo_root / "var" / "dist" / "briefcase" / "windows"
+    )
+
+    assert _normalized(profile.bundle.output_dir) == repo_root / "var" / "dist" / "installers" / "windows"
+    assert _normalized(profile.bundle.work_dir) == repo_root / "var" / "build" / "installers" / "windows"
+    assert _normalized(profile.bundle.metadata_path) == (
+        repo_root / "var" / "dist" / "installers" / "windows" / "installer_metadata.json"
+    )
