@@ -6,9 +6,17 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if sys.path[1:2] and Path(sys.path[1]).resolve() == SCRIPT_DIR:
+    sys.path.pop(1)
 
 try:  # Python 3.11+
     import tomllib
