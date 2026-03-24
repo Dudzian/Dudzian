@@ -1258,11 +1258,16 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
+      - name: Ensure performance history directory exists
+        run: mkdir -p reports/ci/performance_history
+
       - name: Restore performance history cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v5
         with:
           path: reports/ci/performance_history
-          key: performance-history-${{ github.ref_name }}
+          key: performance-history-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            performance-history-${{ github.ref_name }}-
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -1344,8 +1349,31 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Upload performance history artifact
+      - name: Persist performance history
         if: always()
+        run: |
+          python scripts/persist_performance_benchmarks.py \
+            --report-root reports/ci/performance_backtests \
+            --report-root reports/ci/benchmark_backtests \
+            --report-root reports/ci/performance_ui_render \
+            --parquet reports/ci/performance_history/performance_history.parquet \
+            --sqlite reports/ci/performance_history/performance_history.sqlite
+
+      - name: Check performance history files
+        if: always()
+        id: performance-history-check
+        shell: bash
+        run: |
+          parquet="reports/ci/performance_history/performance_history.parquet"
+          sqlite="reports/ci/performance_history/performance_history.sqlite"
+          if [[ -f "$parquet" && -f "$sqlite" ]]; then
+            echo "has_performance_history=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_performance_history=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload performance history artifact
+        if: always() && steps.performance-history-check.outputs.has_performance_history == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: performance-benchmark-history
@@ -1354,6 +1382,13 @@ jobs:
             reports/ci/performance_history/performance_history.sqlite
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Save performance history cache
+        if: always() && steps.performance-history-check.outputs.has_performance_history == 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: reports/ci/performance_history
+          key: performance-history-${{ github.ref_name }}-${{ github.run_id }}
 
   marketplace-catalog-validation:
     if: github.event_name != 'schedule'
