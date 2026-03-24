@@ -1645,6 +1645,15 @@ _build_live_readiness_checklist = build_live_readiness_checklist
 class LiveSignatureVerificationError(RuntimeError):
     """Błąd zgłaszany, gdy dokumenty LIVE nie przechodzą weryfikacji podpisów."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        partial_verification: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.partial_verification = partial_verification
+
 
 def _normalize_signature_identifier(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_")
@@ -2017,12 +2026,27 @@ def _validate_live_signatures(
 
     verification_results: dict[str, Mapping[str, Any]] = {}
     failures: list[str] = []
+    categories_status = {"compliance": False, "risk": False, "penetration": False}
+    categories_seen = {"compliance": False, "risk": False, "penetration": False}
+
+    def _build_partial_verification() -> dict[str, Any]:
+        normalized_documents = _normalize_documents_map(verification_results)
+        return {
+            "documents": normalized_documents,
+            "documents_by_name": normalized_documents,
+            "categories": dict(categories_status),
+            "detected_categories": dict(categories_seen),
+        }
+
     if duplicate_document_names:
         for duplicate_name in duplicate_document_names:
             failures.append(
                 f"{duplicate_name}: zduplikowana definicja dokumentu w live_readiness.documents"
             )
-        raise LiveSignatureVerificationError("; ".join(failures))
+        raise LiveSignatureVerificationError(
+            "; ".join(failures),
+            partial_verification=_build_partial_verification(),
+        )
     if required_names_ordered:
         missing_required_documents = [
             required_name_lookup[name.lower()]
@@ -2034,7 +2058,10 @@ def _validate_live_signatures(
                 failures.append(
                     f"{missing_name}: brak definicji dokumentu w live_readiness.documents"
                 )
-            raise LiveSignatureVerificationError("; ".join(failures))
+            raise LiveSignatureVerificationError(
+                "; ".join(failures),
+                partial_verification=_build_partial_verification(),
+            )
         documents_for_verification = tuple(
             documents_by_name[name.lower()] for name in required_names_ordered
         )
@@ -2048,9 +2075,6 @@ def _validate_live_signatures(
                 required_names=None,
             )
         )
-
-    categories_status = {"compliance": False, "risk": False, "penetration": False}
-    categories_seen = {"compliance": False, "risk": False, "penetration": False}
 
     resolved_root = None
     if document_root is not None:
@@ -2101,7 +2125,10 @@ def _validate_live_signatures(
             )
 
     if failures:
-        raise LiveSignatureVerificationError("; ".join(failures))
+        raise LiveSignatureVerificationError(
+            "; ".join(failures),
+            partial_verification=_build_partial_verification(),
+        )
 
     verification_results = _normalize_documents_map(verification_results)
 
@@ -3806,20 +3833,50 @@ def bootstrap_environment(
                 normalized_documents_by_name = _normalize_documents_map(
                     verification_documents_by_name
                 )
+                partial_verification = getattr(exc, "partial_verification", None)
+                partial_documents_by_name: Mapping[str, Any] | None = None
+                partial_documents: Mapping[str, Any] | None = None
+                partial_categories: Mapping[str, Any] | None = None
+                partial_detected_categories: Mapping[str, Any] | None = None
+                if isinstance(partial_verification, Mapping):
+                    candidate_docs_by_name = partial_verification.get("documents_by_name")
+                    if isinstance(candidate_docs_by_name, Mapping):
+                        partial_documents_by_name = _normalize_documents_map(candidate_docs_by_name)
+                    candidate_docs = partial_verification.get("documents")
+                    if isinstance(candidate_docs, Mapping):
+                        partial_documents = _normalize_documents_map(candidate_docs)
+                    candidate_categories = partial_verification.get("categories")
+                    if isinstance(candidate_categories, Mapping):
+                        partial_categories = {
+                            "compliance": bool(candidate_categories.get("compliance")),
+                            "risk": bool(candidate_categories.get("risk")),
+                            "penetration": bool(candidate_categories.get("penetration")),
+                        }
+                    candidate_detected = partial_verification.get("detected_categories")
+                    if isinstance(candidate_detected, Mapping):
+                        partial_detected_categories = {
+                            "compliance": bool(candidate_detected.get("compliance")),
+                            "risk": bool(candidate_detected.get("risk")),
+                            "penetration": bool(candidate_detected.get("penetration")),
+                        }
+
+                documents_by_name_payload = partial_documents_by_name or normalized_documents_by_name
+                documents_payload = partial_documents or documents_by_name_payload
+
                 # W testach/CI nie przerywamy bootstrapa na invalid signatures,
                 # aby checklistę live dało się zweryfikować w testach.
                 invalid_categories, invalid_detected_categories = (
-                    summarize_live_categories_from_documents(normalized_documents_by_name)
+                    summarize_live_categories_from_documents(documents_by_name_payload)
                 )
 
                 live_signature_verification = {
                     "status": "invalid",
                     "error": str(exc),
                     "environment": environment.name,
-                    "documents": normalized_documents_by_name,
-                    "documents_by_name": normalized_documents_by_name,
-                    "categories": invalid_categories,
-                    "detected_categories": invalid_detected_categories,
+                    "documents": documents_payload,
+                    "documents_by_name": documents_by_name_payload,
+                    "categories": partial_categories or invalid_categories,
+                    "detected_categories": partial_detected_categories or invalid_detected_categories,
                 }
             else:
                 raise RuntimeError(
