@@ -131,6 +131,20 @@ def _flush_qt_deferred_deletes_best_effort() -> None:
     gc.collect()
 
 
+def _settle_qt_application_best_effort() -> None:
+    if not _PYSIDE6_AVAILABLE:
+        logger.debug("Skipping Qt settle: PySide6 unavailable.")
+        return
+
+    default_settle = "0" if os.getenv("CI") else "1"
+    settle_enabled = os.getenv("DUDZIAN_QML_SETTLE_APP", default_settle).strip().lower()
+    if settle_enabled not in {"1", "true", "yes", "on"}:
+        logger.debug("Skipping Qt settle: DUDZIAN_QML_SETTLE_APP=%s", settle_enabled)
+        return
+
+    settle_qt_application()
+
+
 def _write_qml_diagnostic_event(pytestconfig: pytest.Config, event: dict[str, Any]) -> None:
     root = Path(os.getenv("QML_DIAGNOSTICS_DIR", "test-results/qml"))
     root.mkdir(parents=True, exist_ok=True)
@@ -557,7 +571,7 @@ def shutdown_live_threads_after_qml(request: pytest.FixtureRequest) -> Generator
             )
     finally:
         _flush_qt_deferred_deletes_best_effort()
-        settle_qt_application()
+        _settle_qt_application_best_effort()
         _flush_qt_deferred_deletes_best_effort()
         _write_qml_diagnostic_event(
             request.config,
@@ -759,5 +773,5 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if not _PYSIDE6_AVAILABLE:
         return
 
-    settle_qt_application()
+    _settle_qt_application_best_effort()
     _flush_qt_deferred_deletes_best_effort()
