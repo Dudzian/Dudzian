@@ -69,3 +69,41 @@ def test_read_profile_windows_paths_resolve_to_repo_root(monkeypatch):
     assert _normalized(profile.bundle.metadata_path) == (
         repo_root / "var" / "dist" / "installers" / "windows" / "installer_metadata.json"
     )
+
+
+def test_build_pyinstaller_uses_runtime_name_for_expected_artifact(monkeypatch, tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    installer = _load_installer_module(repo_root, monkeypatch)
+
+    dist_dir = tmp_path / "var" / "dist" / "pyinstaller" / "windows"
+    expected = dist_dir / "bot_core_runtime" / "bot_core_runtime.exe"
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    expected.write_text("exe", encoding="utf-8")
+
+    subprocess_calls: list[list[str]] = []
+
+    def _fake_run(args, check):
+        subprocess_calls.append(args)
+        assert check is True
+
+    monkeypatch.setattr(installer.subprocess, "run", _fake_run)
+
+    profile = installer.PyInstallerProfile(
+        entrypoint=tmp_path / "scripts" / "run_local_bot.py",
+        runtime_name="bot_core_runtime",
+        hidden_imports=(),
+        dist_dir=dist_dir,
+        work_dir=None,
+    )
+
+    candidate = installer._build_pyinstaller(profile, "windows")
+
+    assert subprocess_calls
+    assert "--name" in subprocess_calls[0]
+    assert str(expected).replace("\\", "/").endswith(
+        "var/dist/pyinstaller/windows/bot_core_runtime/bot_core_runtime.exe"
+    )
+    assert str(candidate).replace("\\", "/").endswith(
+        "var/dist/pyinstaller/windows/bot_core_runtime/bot_core_runtime.exe"
+    )
+    assert "run_local_bot/run_local_bot.exe" not in str(candidate).replace("\\", "/")
