@@ -191,6 +191,10 @@ from bot_core.runtime.file_metadata import (
     file_reference_metadata,
     log_security_warnings,
 )
+from bot_core.runtime.live_signature_categories import (
+    categorize_live_document,
+    summarize_live_categories_from_documents,
+)
 from bot_core.runtime.paths import RuntimePaths, resolve_core_config_path
 import bot_core.runtime.observability as _observability
 from bot_core.runtime.observability import (
@@ -1792,23 +1796,6 @@ def _resolve_signature_key(key_id: str, *, document_root: Path | None) -> bytes:
     )
 
 
-def _categorize_live_document(document: LiveChecklistDocumentConfig) -> tuple[str, ...]:
-    categories: list[str] = []
-    name_lower = str(document.name).strip().lower()
-    signed_by = {
-        str(entry).strip().lower()
-        for entry in (getattr(document, "signed_by", None) or ())
-        if str(entry).strip()
-    }
-    if "compliance" in signed_by or "kyc" in name_lower or "aml" in name_lower:
-        categories.append("compliance")
-    if "risk" in signed_by or "risk" in name_lower:
-        categories.append("risk")
-    if "penetration" in name_lower or "pentest" in name_lower:
-        categories.append("penetration")
-    return tuple(dict.fromkeys(categories))
-
-
 def _verify_live_document_signature(
     document: LiveChecklistDocumentConfig,
     *,
@@ -2073,7 +2060,7 @@ def _validate_live_signatures(
             resolved_root = document_root
 
     for document in documents_for_verification:
-        categories = _categorize_live_document(document)
+        categories = categorize_live_document(document)
         if not categories:
             continue
         for category in categories:
@@ -2121,6 +2108,7 @@ def _validate_live_signatures(
     return {
         "documents": verification_results,
         "categories": categories_status,
+        "detected_categories": categories_seen,
         "document_root": str(resolved_root) if resolved_root is not None else None,
     }
 
@@ -3820,12 +3808,18 @@ def bootstrap_environment(
                 )
                 # W testach/CI nie przerywamy bootstrapa na invalid signatures,
                 # aby checklistę live dało się zweryfikować w testach.
+                invalid_categories, invalid_detected_categories = (
+                    summarize_live_categories_from_documents(normalized_documents_by_name)
+                )
+
                 live_signature_verification = {
                     "status": "invalid",
                     "error": str(exc),
                     "environment": environment.name,
                     "documents": normalized_documents_by_name,
                     "documents_by_name": normalized_documents_by_name,
+                    "categories": invalid_categories,
+                    "detected_categories": invalid_detected_categories,
                 }
             else:
                 raise RuntimeError(

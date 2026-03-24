@@ -4,7 +4,6 @@ import copy
 import hashlib
 import json
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -465,7 +464,7 @@ def _create_signed_document(
 ) -> Mapping[str, str]:
     """Tworzy podpisany dokument i zapisuje plik klucza w secrets/hmac."""
 
-    normalized_key = re.sub(r"[^A-Za-z0-9]+", "_", key_id).strip("_").lower() or "default"
+    normalized_key = bootstrap_module._normalize_signature_identifier(key_id)
     key_path = root / "secrets" / "hmac" / f"{normalized_key}.key"
     key_path.parent.mkdir(parents=True, exist_ok=True)
     key_bytes = os.urandom(48)
@@ -475,7 +474,7 @@ def _create_signed_document(
     document_path.parent.mkdir(parents=True, exist_ok=True)
     content = f"{doc_relative}:{key_id}".encode("utf-8")
     document_path.write_bytes(content)
-    sha_value = hashlib.sha256(content).hexdigest()
+    sha_value = bootstrap_module._compute_file_sha256(document_path)
 
     payload = {
         "document": {
@@ -1003,6 +1002,11 @@ def test_bootstrap_environment_live_exposes_checklist(
         "penetration_report",
     }
     assert verification["categories"] == {
+        "compliance": True,
+        "risk": True,
+        "penetration": True,
+    }
+    assert verification["detected_categories"] == {
         "compliance": True,
         "risk": True,
         "penetration": True,
@@ -1831,6 +1835,16 @@ def test_live_checklist_blocks_on_invalid_signature(
     assert "error" in verification
     assert isinstance(verification["documents"], Mapping)
     assert verification["documents"] == verification["documents_by_name"]
+    assert verification["categories"] == {
+        "compliance": False,
+        "risk": False,
+        "penetration": False,
+    }
+    assert verification["detected_categories"] == {
+        "compliance": True,
+        "risk": True,
+        "penetration": True,
+    }
 
 
 def test_live_checklist_invalid_signature_fallback_filters_optional_documents(
@@ -1968,6 +1982,16 @@ def test_live_checklist_invalid_signature_fallback_filters_optional_documents(
     verification = context.live_signature_verification
     assert verification is not None
     assert verification["status"] == "invalid"
+    assert verification["categories"] == {
+        "compliance": False,
+        "risk": False,
+        "penetration": False,
+    }
+    assert verification["detected_categories"] == {
+        "compliance": True,
+        "risk": True,
+        "penetration": True,
+    }
     assert isinstance(verification["documents"], Mapping)
     assert set(verification["documents"]) == {
         "kyc_packet",
