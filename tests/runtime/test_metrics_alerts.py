@@ -290,8 +290,12 @@ def test_build_secret_manager_warns_when_secret_store_required(
 @pytest.mark.parametrize(
     ("env_name", "env_value"),
     [
-        pytest.param("BOT_CORE_UI_SECRET_PASSPHRASE", "explicit-passphrase", id="explicit-passphrase"),
-        pytest.param("BOT_CORE_UI_SECRET_PATH", "/tmp/non-existent-secrets.json", id="explicit-path"),
+        pytest.param(
+            "BOT_CORE_UI_SECRET_PASSPHRASE", "explicit-passphrase", id="explicit-passphrase"
+        ),
+        pytest.param(
+            "BOT_CORE_UI_SECRET_PATH", "/tmp/non-existent-secrets.json", id="explicit-path"
+        ),
     ],
 )
 def test_build_secret_manager_warns_for_explicit_secret_config(
