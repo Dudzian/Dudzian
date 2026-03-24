@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Callable, Iterable
+
+from tests.ui._qt_utils import teardown_qml_engine
 from tests.ui._qt import require_pyside6
 from tests.ui._qml_tree import walk_qml_items
 
@@ -113,3 +116,25 @@ def teardown_hosted_item_window(root: QObject, host_window: QQuickWindow | None)
         host_window.deleteLater()
     except RuntimeError:
         pass
+
+
+def teardown_hosted_qml_engine(
+    root: QObject,
+    host_window: QQuickWindow | None,
+    engine: object,
+    *,
+    process_events: Callable[[], None] | None = None,
+    context_properties_to_clear: Iterable[str] = (),
+) -> None:
+    """Spójny teardown dla rootów hostowanych przez ensure_item_has_host_window()."""
+
+    teardown_hosted_item_window(root, host_window)
+    if process_events is not None:
+        process_events()
+
+    teardown_qml_engine(
+        engine,
+        process_events=process_events,
+        context_properties_to_clear=context_properties_to_clear,
+        delete_root_objects=False,
+    )
