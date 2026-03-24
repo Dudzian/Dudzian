@@ -139,6 +139,7 @@ def _ensure_directory(path: Path) -> None:
 
 
 def _build_pyinstaller(profile: PyInstallerProfile, platform_id: str) -> Path:
+    artifact_name = profile.runtime_name or profile.entrypoint.stem
     args = [
         "pyinstaller",
         "--clean",
@@ -158,11 +159,9 @@ def _build_pyinstaller(profile: PyInstallerProfile, platform_id: str) -> Path:
 
     subprocess.run(args, check=True)
 
-    executable_dir = (
-        profile.dist_dir or profile.entrypoint.parent / "dist"
-    ) / profile.entrypoint.stem
+    executable_dir = (profile.dist_dir or profile.entrypoint.parent / "dist") / artifact_name
     extension = ".exe" if platform_id == "windows" else ""
-    candidate = executable_dir / f"{profile.entrypoint.stem}{extension}"
+    candidate = executable_dir / f"{artifact_name}{extension}"
     if not candidate.exists():
         raise SystemExit(f"PyInstaller nie wygenerował binarki runtime pod {candidate}")
     return candidate.resolve()
