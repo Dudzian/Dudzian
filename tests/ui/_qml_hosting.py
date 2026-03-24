@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterable
 
-from tests.ui._qt_utils import teardown_qml_engine
+from tests.ui._qt_utils import teardown_hosted_qml_engine_core
 from tests.ui._qt import require_pyside6
 from tests.ui._qml_tree import walk_qml_items
 
@@ -132,9 +132,8 @@ def teardown_hosted_qml_engine(
     if process_events is not None:
         process_events()
 
-    teardown_qml_engine(
+    teardown_hosted_qml_engine_core(
         engine,
         process_events=process_events,
         context_properties_to_clear=context_properties_to_clear,
-        delete_root_objects=False,
     )

@@ -77,6 +77,56 @@ def test_teardown_qml_engine_can_skip_root_deletion(monkeypatch) -> None:
     assert process_events_calls == ["process"]
 
 
+def test_teardown_hosted_qml_engine_core_is_non_aggressive(monkeypatch) -> None:
+    engine = _FakeEngine()
+    cleanup_calls: list[str] = []
+    process_events_calls: list[str] = []
+
+    monkeypatch.setattr(
+        _qt_utils,
+        "force_qt_cleanup",
+        lambda *, process_events=None, process_rounds=10: cleanup_calls.append(
+            f"cleanup:{process_rounds}"
+        ),
+    )
+
+    _qt_utils.teardown_hosted_qml_engine_core(
+        engine,
+        process_events=lambda: process_events_calls.append("process"),
+        context_properties_to_clear=("alpha", "beta"),
+    )
+
+    assert [root.delete_later_calls for root in engine.roots] == [0, 0]
+    assert engine.context.properties == {"alpha": None, "beta": None}
+    assert engine.clear_component_cache_calls == 0
+    assert engine.collect_garbage_calls == 0
+    assert engine.delete_later_calls == 1
+    assert cleanup_calls == []
+    assert process_events_calls == ["process", "process"]
+
+
+def test_teardown_hosted_qml_engine_alias_forwards_to_core(monkeypatch) -> None:
+    call_args: list[tuple[object, object, tuple[str, ...]]] = []
+
+    monkeypatch.setattr(
+        _qt_utils,
+        "teardown_hosted_qml_engine_core",
+        lambda engine, *, process_events=None, context_properties_to_clear=(): call_args.append(
+            (engine, process_events, tuple(context_properties_to_clear))
+        ),
+    )
+    engine = _FakeEngine()
+    process_events = lambda: None
+
+    _qt_utils.teardown_hosted_qml_engine(
+        engine,
+        process_events=process_events,
+        context_properties_to_clear=("alpha", "beta"),
+    )
+
+    assert call_args == [(engine, process_events, ("alpha", "beta"))]
+
+
 def test_teardown_qml_engine_flushes_roots_before_cache_clear(monkeypatch) -> None:
     engine = _FakeEngine()
     call_order: list[str] = []
@@ -184,18 +234,15 @@ def test_teardown_hosted_qml_engine_contract_ast() -> None:
     assert process_call.func.id == "process_events"
     assert process_call.args == []
 
-    # 3) teardown_qml_engine(..., context_properties_to_clear=..., delete_root_objects=False)
+    # 3) teardown_hosted_qml_engine_core(..., context_properties_to_clear=...)
     third_stmt = helper.body[3]
     assert isinstance(third_stmt, ast.Expr)
     assert isinstance(third_stmt.value, ast.Call)
     assert isinstance(third_stmt.value.func, ast.Name)
-    assert third_stmt.value.func.id == "teardown_qml_engine"
+    assert third_stmt.value.func.id == "teardown_hosted_qml_engine_core"
 
     keyword_map = {keyword.arg: keyword.value for keyword in third_stmt.value.keywords}
     assert "process_events" in keyword_map
     assert "context_properties_to_clear" in keyword_map
-    assert "delete_root_objects" in keyword_map
     assert isinstance(keyword_map["process_events"], ast.Name)
     assert keyword_map["process_events"].id == "process_events"
-    assert isinstance(keyword_map["delete_root_objects"], ast.Constant)
-    assert keyword_map["delete_root_objects"].value is False
