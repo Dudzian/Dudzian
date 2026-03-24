@@ -5,6 +5,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 def _load_installer_module(repo_root: Path, monkeypatch):
     deploy_module = types.ModuleType("deploy")
@@ -111,3 +113,51 @@ def test_build_pyinstaller_uses_runtime_name_for_expected_artifact(monkeypatch, 
         .endswith("var/dist/pyinstaller/windows/bot_core_runtime/bot_core_runtime.exe")
     )
     assert "run_local_bot/run_local_bot.exe" not in str(candidate).replace("\\", "/")
+
+
+def test_main_blocks_windows_pyinstaller_on_non_windows_host(monkeypatch, tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    installer = _load_installer_module(repo_root, monkeypatch)
+
+    profile_file = tmp_path / "windows.toml"
+    profile_file.write_text("platform='windows'\n", encoding="utf-8")
+
+    pyinstaller_profile = installer.PyInstallerProfile(
+        entrypoint=tmp_path / "scripts" / "run_local_bot.py",
+        runtime_name="bot_core_runtime",
+        hidden_imports=(),
+        dist_dir=tmp_path / "dist",
+        work_dir=tmp_path / "work",
+    )
+    bundle_profile = installer.BundleProfile(
+        output_dir=tmp_path / "out",
+        work_dir=tmp_path / "work-installer",
+        qt_dist=None,
+        include=(),
+        metadata_path=tmp_path / "metadata.json",
+        signing_key=None,
+        signing_key_id=None,
+    )
+    profile = installer.Profile(
+        platform="windows",
+        pyinstaller=pyinstaller_profile,
+        briefcase=None,
+        bundle=bundle_profile,
+    )
+
+    monkeypatch.setattr(installer, "_read_profile", lambda _: profile)
+    monkeypatch.setattr(installer.os, "name", "posix", raising=False)
+
+    build_called = False
+
+    def _unexpected_build(*_args, **_kwargs):
+        nonlocal build_called
+        build_called = True
+        raise AssertionError("_build_pyinstaller should not be called on non-Windows host")
+
+    monkeypatch.setattr(installer, "_build_pyinstaller", _unexpected_build)
+
+    with pytest.raises(SystemExit, match="wymaga uruchomienia PyInstaller na Windows"):
+        installer.main(["--profile", str(profile_file), "--version", "1.2.3", "--platform", "windows"])
+
+    assert build_called is False
