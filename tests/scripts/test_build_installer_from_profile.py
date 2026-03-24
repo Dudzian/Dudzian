@@ -100,10 +100,14 @@ def test_build_pyinstaller_uses_runtime_name_for_expected_artifact(monkeypatch, 
 
     assert subprocess_calls
     assert "--name" in subprocess_calls[0]
-    assert str(expected).replace("\\", "/").endswith(
-        "var/dist/pyinstaller/windows/bot_core_runtime/bot_core_runtime.exe"
+    assert (
+        str(expected)
+        .replace("\\", "/")
+        .endswith("var/dist/pyinstaller/windows/bot_core_runtime/bot_core_runtime.exe")
     )
-    assert str(candidate).replace("\\", "/").endswith(
-        "var/dist/pyinstaller/windows/bot_core_runtime/bot_core_runtime.exe"
+    assert (
+        str(candidate)
+        .replace("\\", "/")
+        .endswith("var/dist/pyinstaller/windows/bot_core_runtime/bot_core_runtime.exe")
     )
     assert "run_local_bot/run_local_bot.exe" not in str(candidate).replace("\\", "/")
