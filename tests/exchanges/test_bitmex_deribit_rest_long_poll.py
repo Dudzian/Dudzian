@@ -52,7 +52,9 @@ class _MutationClient(_RecordingClient):
         self.cancel_attempts = 0
         self.ticker_attempts = 0
 
-    def create_order(self, symbol: str, order_type: str, side: str, amount: float, price=None, params=None):
+    def create_order(
+        self, symbol: str, order_type: str, side: str, amount: float, price=None, params=None
+    ):
         self.create_attempts += 1
         raise _TransientError("temporary failure during create")
 
@@ -153,13 +155,20 @@ def test_mutations_disable_retry_explosion(adapter_cls):
         watchdog=watchdog,
         settings={
             "network_error_types": (_TransientError,),
-            "retry_policy": {"max_attempts": 5, "base_delay": 0.0, "max_delay": 0.0, "jitter": (0.0, 0.0)},
+            "retry_policy": {
+                "max_attempts": 5,
+                "base_delay": 0.0,
+                "max_delay": 0.0,
+                "jitter": (0.0, 0.0),
+            },
             "sleep_callable": lambda _: None,
         },
     )
     adapter.configure_network(ip_allowlist=())
 
-    request = OrderRequest(symbol="BTC/USDT", side="buy", quantity=1.0, order_type="limit", price=10.0)
+    request = OrderRequest(
+        symbol="BTC/USDT", side="buy", quantity=1.0, order_type="limit", price=10.0
+    )
 
     with pytest.raises(ExchangeNetworkError):
         adapter.place_order(request)
@@ -183,7 +192,12 @@ def test_reads_still_retry_when_enabled(adapter_cls):
         watchdog=watchdog,
         settings={
             "network_error_types": (_TransientError,),
-            "retry_policy": {"max_attempts": 3, "base_delay": 0.0, "max_delay": 0.0, "jitter": (0.0, 0.0)},
+            "retry_policy": {
+                "max_attempts": 3,
+                "base_delay": 0.0,
+                "max_delay": 0.0,
+                "jitter": (0.0, 0.0),
+            },
             "sleep_callable": lambda _: None,
         },
     )
