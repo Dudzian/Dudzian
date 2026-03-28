@@ -116,6 +116,40 @@ def _canonical_payload(data: Mapping[str, Any] | None) -> str:
     return "&".join(f"{key}={value}" for key, value in items)
 
 
+_SENSITIVE_HEADER_TOKENS = (
+    "sign",
+    "signature",
+    "secret",
+    "token",
+    "key",
+    "passphrase",
+    "auth",
+)
+
+
+def _mask_sensitive_value(value: object) -> str:
+    raw = str(value)
+    if not raw:
+        return "***"
+    if len(raw) <= 4:
+        return "***"
+    return f"{raw[:2]}***{raw[-2:]}"
+
+
+def _scrub_headers(headers: Mapping[str, object] | None) -> dict[str, str]:
+    if not headers:
+        return {}
+    scrubbed: dict[str, str] = {}
+    for key, value in headers.items():
+        key_str = str(key)
+        lowered = key_str.lower()
+        if any(token in lowered for token in _SENSITIVE_HEADER_TOKENS):
+            scrubbed[key_str] = _mask_sensitive_value(value)
+        else:
+            scrubbed[key_str] = str(value)
+    return scrubbed
+
+
 class _RateLimiter:
     """Prosty licznik zużycia limitów w oknie czasowym."""
 
@@ -1545,7 +1579,7 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         timestamp = self._timestamp()
         signature = self.sign_request(timestamp, "POST", "/private/orders", body=payload)
         headers = self.build_auth_headers(timestamp, signature)
-        _LOGGER.debug("Składanie zlecenia %s z nagłówkami %s", payload, headers)
+        _LOGGER.debug("Składanie zlecenia %s z nagłówkami %s", payload, _scrub_headers(headers))
         response = self._http_client.create_order(payload, headers=headers)
         order_id = str(response["orderId"])
         status = str(response.get("status", "accepted"))

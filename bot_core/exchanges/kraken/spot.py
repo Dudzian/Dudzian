@@ -67,6 +67,12 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504, 520, 521, 522, 524}
 _MAX_RETRIES = 3
 _BASE_BACKOFF = 0.5
 _BACKOFF_CAP = 4.0
+_NON_RETRYABLE_PRIVATE_ENDPOINTS = frozenset(
+    {
+        "/0/private/AddOrder",
+        "/0/private/CancelOrder",
+    }
+)
 
 _RATE_LIMIT_DEFAULTS: tuple[RateLimitRule, ...] = (
     RateLimitRule(rate=20, per=1.0),
@@ -698,7 +704,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
                 raw_response=result if isinstance(result, Mapping) else {},
             )
 
-        return self._watchdog.execute("kraken_spot_place_order", _call)
+        # Operacje mutujące nie są retry-owane na poziomie watchdoga, żeby uniknąć
+        # ryzyka podwójnego submitu zlecenia w przypadku niejednoznacznego timeoutu/błędu.
+        return _call()
 
     def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # type: ignore[override]
         if "trade" not in self._permission_set:
@@ -717,7 +725,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
                     payload=payload,
                 )
 
-        self._watchdog.execute("kraken_spot_cancel_order", _call)
+        # Analogicznie do place_order: brak retry dla mutacji, aby ograniczyć
+        # ryzyko niejednoznacznych efektów ubocznych po stronie giełdy.
+        _call()
 
     # ------------------------------------------------------------------
     # Raportowanie stanu konta
@@ -912,7 +922,12 @@ class KrakenSpotAdapter(ExchangeAdapter):
             self._ensure_network_access(url)
             return Request(url, data=data, headers=headers)
 
-        payload = self._perform_request(build_request, endpoint=context.path, signed=True)
+        payload = self._perform_request(
+            build_request,
+            endpoint=context.path,
+            signed=True,
+            max_attempts=self._private_max_attempts(context.path),
+        )
         return payload
 
     def _perform_request(
@@ -921,6 +936,7 @@ class KrakenSpotAdapter(ExchangeAdapter):
         *,
         endpoint: str,
         signed: bool,
+        max_attempts: int = _MAX_RETRIES,
     ) -> Mapping[str, Any]:
         attempt = 0
         backoff = _BASE_BACKOFF
@@ -940,7 +956,7 @@ class KrakenSpotAdapter(ExchangeAdapter):
                 self._metric_http_latency.observe(duration, labels=labels)
                 reason = self._classify_http_error(exc.code)
                 self._metric_api_errors.inc(labels={**labels, "reason": reason})
-                if exc.code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
+                if exc.code in _RETRYABLE_STATUS and attempt < max(1, max_attempts) - 1:
                     attempt += 1
                     self._metric_retries.inc(labels={**labels, "reason": reason})
                     sleep_for = min(backoff * (2 ** (attempt - 1)), _BACKOFF_CAP)
@@ -965,7 +981,7 @@ class KrakenSpotAdapter(ExchangeAdapter):
                 duration = max(time.monotonic() - start, 0.0)
                 self._metric_http_latency.observe(duration, labels=labels)
                 self._metric_api_errors.inc(labels={**labels, "reason": "network"})
-                if attempt < _MAX_RETRIES - 1:
+                if attempt < max(1, max_attempts) - 1:
                     attempt += 1
                     self._metric_retries.inc(labels={**labels, "reason": "network"})
                     sleep_for = min(backoff * (2 ** (attempt - 1)), _BACKOFF_CAP)
@@ -983,6 +999,12 @@ class KrakenSpotAdapter(ExchangeAdapter):
             self._metric_http_latency.observe(duration, labels=labels)
             self._ensure_no_error(payload, endpoint=endpoint, signed=signed)
             return payload
+
+    def _private_max_attempts(self, endpoint: str) -> int:
+        normalized = normalize_relative_api_path(endpoint)
+        if normalized in _NON_RETRYABLE_PRIVATE_ENDPOINTS:
+            return 1
+        return _MAX_RETRIES
 
     def _parse_response(self, body: bytes, labels: Mapping[str, str]) -> Mapping[str, Any]:
         try:
