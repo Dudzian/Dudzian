@@ -23,7 +23,7 @@ from datetime import timezone
 from dataclasses import dataclass
 from typing import Any, Callable, Deque, Iterable, Mapping, MutableMapping, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 from urllib.request import Request
 from email.utils import parsedate_to_datetime
 
@@ -71,6 +71,14 @@ _CONTENT_ENCODING_ALIASES: Mapping[str, str] = {
     "x-zstd": "zstd",
     "zst": "zstd",
 }
+
+_SENSITIVE_QUERY_KEYS = frozenset(
+    {
+        "token",
+        "listenkey",
+        "signature",
+    }
+)
 
 
 def _build_accept_encoding_values() -> list[str]:
@@ -153,6 +161,22 @@ def _build_default_headers() -> dict[str, str]:
         "User-Agent": "bot-core/stream/1.0",
         "Accept-Encoding": _normalize_accept_encoding(None),
     }
+
+
+def _redact_query_for_log(query: str) -> str:
+    if not query:
+        return query
+    pairs = parse_qsl(query, keep_blank_values=True)
+    if not pairs:
+        return query
+    redacted: list[tuple[str, str]] = []
+    for key, value in pairs:
+        lowered = key.strip().lower()
+        if lowered in _SENSITIVE_QUERY_KEYS:
+            redacted.append((key, "***"))
+        else:
+            redacted.append((key, value))
+    return urlencode(redacted, doseq=True)
 
 
 _DEFAULT_HEADERS = _build_default_headers()
@@ -1395,7 +1419,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         url = f"{self._base_url}{self._path}"
         if query:
             url = f"{url}?{query}"
-        _LOGGER.debug("Long-poll %s %s", urlsplit(url).path, query)
+        _LOGGER.debug("Long-poll %s %s", urlsplit(url).path, _redact_query_for_log(query))
         data: bytes | None = None
         content_type: str | None = None
         if body_payload:
@@ -1569,8 +1593,26 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             )
 
         errors_entry = payload.get("errors")
-        if isinstance(errors_entry, Sequence) and errors_entry:
+        if isinstance(errors_entry, Mapping):
+            message = self._format_error_message(errors_entry)
+            raise ExchangeAPIError(
+                f"Stream {self._adapter}/{self._scope} zwrócił błędy: {message}",
+                0,
+                payload=payload,
+            )
+        if isinstance(errors_entry, Sequence) and not isinstance(
+            errors_entry, (str, bytes, bytearray)
+        ):
+            if not errors_entry:
+                return
             message = ", ".join(self._format_error_message(item) for item in errors_entry)
+            raise ExchangeAPIError(
+                f"Stream {self._adapter}/{self._scope} zwrócił błędy: {message}",
+                0,
+                payload=payload,
+            )
+        if errors_entry not in (None, "", False, 0):
+            message = self._format_error_message(errors_entry)
             raise ExchangeAPIError(
                 f"Stream {self._adapter}/{self._scope} zwrócił błędy: {message}",
                 0,
@@ -1805,15 +1847,19 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 return parsed
 
         if isinstance(meta, Mapping):
-            next_cursor = meta.get("next_cursor") or meta.get("nextCursor")
-            parsed = self._normalize_cursor_value(next_cursor)
+            for key in ("next_cursor", "nextCursor"):
+                if key not in meta:
+                    continue
+                parsed = self._normalize_cursor_value(meta.get(key))
+                if parsed is not None:
+                    return parsed
+
+        for key in ("next_cursor", "nextCursor"):
+            if key not in payload:
+                continue
+            parsed = self._normalize_cursor_value(payload.get(key))
             if parsed is not None:
                 return parsed
-
-        next_cursor = payload.get("next_cursor") or payload.get("nextCursor")
-        parsed = self._normalize_cursor_value(next_cursor)
-        if parsed is not None:
-            return parsed
 
         return None
 
