@@ -269,7 +269,7 @@ class _CloudAlertChannel(AlertChannel):
         self._timeout = 5.0
 
     def _ensure_stub(self) -> Any | None:
-        if grpc is None or struct_pb2 is None:
+        if struct_pb2 is None:
             return None
         with self._lock:
             if self._stub is not None:
@@ -283,11 +283,16 @@ class _CloudAlertChannel(AlertChannel):
                 self._channel = self._channel_factory(address)
                 self._stub = self._stub_factory(self._channel)
             except Exception:  # pragma: no cover - diagnostyka RPC
+                self._last_error = "CloudAlertChannel: init_failed"
                 _LOGGER.exception("CloudAlertChannel: nie udało się zainicjalizować kanału gRPC")
                 self._stub = None
             return self._stub
 
     def _build_request(self, message: AlertMessage):
+        if struct_pb2 is None:
+            raise AlertDeliveryError("CloudAlertChannel wymaga struct_pb2")
+        if timestamp_pb2 is None:
+            raise AlertDeliveryError("CloudAlertChannel wymaga timestamp_pb2")
         payload = struct_pb2.Struct()
         timestamp = timestamp_pb2.Timestamp()
         timestamp.FromDatetime(message.timestamp)
