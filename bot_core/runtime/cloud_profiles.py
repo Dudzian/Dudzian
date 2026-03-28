@@ -34,6 +34,8 @@ def resolve_runtime_cloud_client(
     cloud_section: RuntimeCloudSettings | None = getattr(runtime_config, "cloud", None)
     if cloud_section is None:
         return None
+    if not bool(getattr(cloud_section, "enabled", False)):
+        return None
 
     profiles = dict(getattr(cloud_section, "profiles", {}) or {})
     if not profiles:

@@ -1,6 +1,7 @@
 import json
 from concurrent import futures
 from pathlib import Path
+from types import SimpleNamespace
 
 import grpc
 import pytest
@@ -9,6 +10,7 @@ from bot_core.cloud.config import CloudAllowedClientConfig, CloudSecurityConfig
 from bot_core.cloud.security import CloudAuthInterceptor, CloudAuthServicer, CloudSecurityManager
 from bot_core.generated import trading_pb2, trading_pb2_grpc
 from bot_core.runtime.cloud_client import (
+    CloudClientOptions,
     load_cloud_client_options,
     load_license_identity,
     perform_cloud_handshake,
@@ -65,6 +67,74 @@ def test_load_license_identity_reads_file(tmp_path: Path) -> None:
     assert identity.license_id == "LIC-TEST"
     assert identity.fingerprint == "HW-123"
     assert identity.source.endswith("demo.lic")
+
+
+@pytest.mark.parametrize(
+    ("metadata_override", "expected_metadata"),
+    [
+        (None, (("x-default", "1"),)),
+        ((), ()),
+        ((("x-override", "abc"),), (("x-override", "abc"),)),
+    ],
+)
+def test_perform_cloud_handshake_respects_metadata_override_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_override,
+    expected_metadata,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _DummyChannel:
+        def close(self) -> None:
+            captured["closed"] = True
+
+    class _Response:
+        authorized = True
+        message = ""
+        session_token = "tok"
+
+        def HasField(self, name: str) -> bool:  # noqa: N802 - protobuf compat
+            return False
+
+    class _Stub:
+        def __init__(self, channel) -> None:
+            captured["channel"] = channel
+
+        def AuthorizeClient(self, request, *, metadata, timeout):
+            captured["metadata"] = tuple(metadata)
+            captured["timeout"] = timeout
+            captured["request"] = request
+            return _Response()
+
+    options = CloudClientOptions(
+        config_path=Path("config/cloud/client.yaml"),
+        client=SimpleNamespace(address="127.0.0.1:50052"),
+        metadata=[("x-default", "1")],
+        tls_credentials=None,
+        authority_override=None,
+    )
+    identity = SimpleNamespace(license_id="LIC-1", fingerprint="HW-1")
+
+    monkeypatch.setattr("bot_core.runtime.cloud_client._build_channel", lambda *_: _DummyChannel())
+    monkeypatch.setattr("bot_core.runtime.cloud_client.sign_license_payload", lambda *_, **__: {
+        "algorithm": "HMAC",
+        "value": "sig",
+        "key_id": "k1",
+    })
+    monkeypatch.setattr("bot_core.runtime.cloud_client.trading_pb2_grpc.CloudAuthServiceStub", _Stub)
+
+    result = perform_cloud_handshake(
+        options,
+        identity,
+        metadata=metadata_override,
+        license_secret=b"secret",
+        secret_path=None,
+        timeout=1.5,
+    )
+
+    assert result.status == "ok"
+    assert captured["metadata"] == expected_metadata
+    assert captured.get("closed") is True
 
 
 @pytest.mark.integration

@@ -12,6 +12,14 @@ from bot_core.observability.metrics import MetricsRegistry
 from bot_core.backtest.providers import ListHistoryProvider, OHLCVBar
 
 
+def _normalize_limit(limit: Any) -> int:
+    try:
+        limit_value = int(limit)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, limit_value)
+
+
 def _normalize_timestamp(value: Any) -> int:
     if value is None:
         raise ValueError("Wymagany jest znacznik czasu w ms")
@@ -184,10 +192,7 @@ def capture_stream_snapshot(
 ) -> list[MutableMapping[str, Any]]:
     """Pobiera snapshot danych strumieniowych korzystając z LocalLongPollStream."""
 
-    try:
-        limit_value = int(limit)
-    except (TypeError, ValueError):
-        limit_value = 0
+    limit_value = _normalize_limit(limit)
     if limit_value <= 0:
         buffer_size = 512
     else:
@@ -220,7 +225,7 @@ def capture_stream_snapshot(
         for batch in stream:
             for event in batch.events:
                 events.append(_normalize_event(event, channel=batch.channel))
-                if limit and len(events) >= limit:
+                if limit_value > 0 and len(events) >= limit_value:
                     stream.close()
                     return events
     finally:
@@ -243,10 +248,7 @@ async def capture_stream_snapshot_async(
 ) -> list[MutableMapping[str, Any]]:
     """Asynchroniczny odpowiednik :func:`capture_stream_snapshot`."""
 
-    try:
-        limit_value = int(limit)
-    except (TypeError, ValueError):
-        limit_value = 0
+    limit_value = _normalize_limit(limit)
     if limit_value <= 0:
         buffer_size = 512
     else:
@@ -279,7 +281,7 @@ async def capture_stream_snapshot_async(
         async for batch in stream:
             for event in batch.events:
                 events.append(_normalize_event(event, channel=batch.channel))
-                if limit and len(events) >= limit:
+                if limit_value > 0 and len(events) >= limit_value:
                     await stream.aclose()
                     return events
     finally:

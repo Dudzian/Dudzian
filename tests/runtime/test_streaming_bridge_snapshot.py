@@ -211,3 +211,123 @@ def test_capture_stream_snapshot_async_closes_on_prefill_error(
         )
 
     assert captured["closed"] == 1
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected_count"),
+    [
+        (-1, 2),
+        (0, 2),
+        (1, 1),
+        ("abc", 2),
+        (None, 2),
+    ],
+)
+def test_capture_stream_snapshot_limit_edge_cases_lenient(
+    monkeypatch: pytest.MonkeyPatch,
+    limit: object,
+    expected_count: int,
+) -> None:
+    class _StubStream:
+        def __init__(self, *_, **__):
+            pass
+
+        def start(self):
+            return self
+
+        def wait_prefill(self, *, min_batches: int = 1, timeout: float | None = None) -> bool:
+            return True
+
+        def __iter__(self):
+            yield streaming_bridge.StreamBatch(
+                channel="ticker",
+                events=(
+                    {"timestamp_ms": 1000, "open": 1.0},
+                    {"timestamp_ms": 2000, "open": 2.0},
+                ),
+                received_at=0.0,
+            )
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(streaming_bridge, "LocalLongPollStream", _StubStream)
+
+    result = streaming_bridge.capture_stream_snapshot(
+        base_url="http://127.0.0.1:8080",
+        path="/demo",
+        channels=("ticker",),
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        limit=limit,  # type: ignore[arg-type]
+    )
+
+    assert len(result) == expected_count
+    if expected_count:
+        assert result[0]["channel"] == "ticker"
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected_count"),
+    [
+        (-1, 2),
+        (0, 2),
+        (1, 1),
+        ("abc", 2),
+        (None, 2),
+    ],
+)
+def test_capture_stream_snapshot_async_limit_edge_cases_lenient(
+    monkeypatch: pytest.MonkeyPatch,
+    limit: object,
+    expected_count: int,
+) -> None:
+    class _StubStream:
+        def __init__(self, *_, **__):
+            pass
+
+        def start(self):
+            return self
+
+        async def wait_prefill_async(
+            self, *, min_batches: int = 1, timeout: float | None = None
+        ) -> bool:
+            return True
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if getattr(self, "_delivered", False):
+                raise StopAsyncIteration
+            self._delivered = True
+            return streaming_bridge.StreamBatch(
+                channel="ticker",
+                events=(
+                    {"timestamp_ms": 1000, "open": 1.0},
+                    {"timestamp_ms": 2000, "open": 2.0},
+                ),
+                received_at=0.0,
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(streaming_bridge, "LocalLongPollStream", _StubStream)
+
+    result = asyncio.run(
+        streaming_bridge.capture_stream_snapshot_async(
+            base_url="http://127.0.0.1:8080",
+            path="/demo",
+            channels=("ticker",),
+            adapter="demo",
+            scope="public",
+            environment="paper",
+            limit=limit,  # type: ignore[arg-type]
+        )
+    )
+
+    assert len(result) == expected_count
+    if expected_count:
+        assert result[0]["channel"] == "ticker"
