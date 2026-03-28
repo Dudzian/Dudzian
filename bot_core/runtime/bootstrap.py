@@ -2475,6 +2475,7 @@ def bootstrap_environment(
         offline_license_path = os.environ.get("BOT_CORE_LICENSE_PATH")
         offline_public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
         if offline_license_path and offline_public_key:
+
             def _mark_offline_license_load_failure(reason: str) -> None:
                 license_result.warnings.append(
                     make_warning(
@@ -2494,9 +2495,7 @@ def bootstrap_environment(
                 )
             except FileNotFoundError:
                 _LOGGER.warning("Nie znaleziono pliku licencji offline: %s", offline_license_path)
-                _mark_offline_license_load_failure(
-                    f"missing_file:{offline_license_path}"
-                )
+                _mark_offline_license_load_failure(f"missing_file:{offline_license_path}")
             except LicenseServiceError as exc:
                 _LOGGER.error("Błąd podczas ładowania licencji offline: %s", exc)
                 _mark_offline_license_load_failure(f"service_error:{exc}")
