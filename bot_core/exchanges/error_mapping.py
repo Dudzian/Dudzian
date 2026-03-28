@@ -39,6 +39,10 @@ _HTTP_UPSTREAM_TRANSIENT_STATUS_CODES = {
     599,
 }
 
+_EXCHANGE_TRANSIENT_THROTTLE_STATUS_CODES = (
+    _HTTP_THROTTLE_STATUS_CODES | _HTTP_UPSTREAM_TRANSIENT_STATUS_CODES
+)
+
 
 _NETWORK_THROTTLE_KEYWORDS = (
     "gateway timeout",
@@ -354,7 +358,7 @@ def raise_for_binance_error(
             raise ExchangeThrottlingError(message=message, status_code=status_code, payload=payload)
     if status_code == 401 or status_code == 403:
         raise ExchangeAuthError(message=message, status_code=status_code, payload=payload)
-    if status_code in _HTTP_THROTTLE_STATUS_CODES:
+    if status_code in _EXCHANGE_TRANSIENT_THROTTLE_STATUS_CODES:
         raise ExchangeThrottlingError(message=message, status_code=status_code, payload=payload)
     raise ExchangeAPIError(message=message, status_code=status_code, payload=payload)
 
@@ -554,8 +558,10 @@ def raise_for_kraken_error(
             )
     if status_code in {401, 403}:
         raise ExchangeAuthError(message=message, status_code=status_code, payload=payload)
-    if status_code in _HTTP_THROTTLE_STATUS_CODES:
+    if status_code in _EXCHANGE_TRANSIENT_THROTTLE_STATUS_CODES:
         raise ExchangeThrottlingError(message=message, status_code=status_code, payload=payload)
+    if status_code >= 500:
+        raise ExchangeAPIError(message=message, status_code=status_code, payload=payload)
     if messages or errors:
         raise ExchangeAPIError(message=message, status_code=status_code, payload=payload)
 
@@ -652,7 +658,7 @@ def raise_for_zonda_error(
     if isinstance(status, str) and status.lower() in {"fail", "error"}:
         raise ExchangeAPIError(message=message, status_code=status_code, payload=payload)
     normalized_message = message.lower()
-    if status_code in _HTTP_THROTTLE_STATUS_CODES or any(
+    if status_code in _EXCHANGE_TRANSIENT_THROTTLE_STATUS_CODES or any(
         keyword in normalized_message for keyword in _ZONDA_THROTTLE_KEYWORDS
     ):
         raise ExchangeThrottlingError(message=message, status_code=status_code, payload=payload)

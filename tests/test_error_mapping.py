@@ -103,6 +103,27 @@ class TestBinanceErrorMapping:
                 status_code=599, payload=payload, default_message="connect timeout"
             )
 
+    @pytest.mark.parametrize("status_code", [502, 504, 520, 527, 530, 598, 599])
+    def test_upstream_transient_status_without_keywords_is_throttling(
+        self, status_code: int
+    ) -> None:
+        payload = {"msg": "neutral message without throttle or network hints"}
+        with pytest.raises(ExchangeThrottlingError):
+            raise_for_binance_error(
+                status_code=status_code,
+                payload=payload,
+                default_message="neutral fallback",
+            )
+
+    def test_status_outside_transient_and_throttle_set_raises_api_error(self) -> None:
+        payload = {"msg": "neutral message without throttle or network hints"}
+        with pytest.raises(ExchangeAPIError):
+            raise_for_binance_error(
+                status_code=501,
+                payload=payload,
+                default_message="neutral fallback",
+            )
+
     def test_unknown_code_falls_back_to_api_error(self) -> None:
         payload = {"code": -3000, "msg": "Unknown error"}
         with pytest.raises(ExchangeAPIError):
@@ -556,6 +577,27 @@ class TestKrakenErrorMapping:
                 payload=payload, default_message="kraken throttle", status_code=599
             )
 
+    @pytest.mark.parametrize("status_code", [502, 504, 520, 527, 530, 598, 599])
+    def test_upstream_transient_status_without_keywords_is_throttling(
+        self, status_code: int
+    ) -> None:
+        payload = {"error": []}
+        with pytest.raises(ExchangeThrottlingError):
+            raise_for_kraken_error(
+                payload=payload,
+                default_message="neutral fallback",
+                status_code=status_code,
+            )
+
+    def test_status_outside_transient_and_throttle_set_raises_api_error(self) -> None:
+        payload = {"error": []}
+        with pytest.raises(ExchangeAPIError):
+            raise_for_kraken_error(
+                payload=payload,
+                default_message="neutral fallback",
+                status_code=501,
+            )
+
 
 class TestZondaErrorMapping:
     """Mapowanie odpowiedzi błędów Zonda."""
@@ -775,6 +817,27 @@ class TestZondaErrorMapping:
         payload = {"errors": []}
         with pytest.raises(ExchangeThrottlingError):
             raise_for_zonda_error(status_code=599, payload=payload, default_message="fallback")
+
+    @pytest.mark.parametrize("status_code", [502, 504, 520, 527, 530, 598, 599])
+    def test_upstream_transient_status_without_keywords_is_throttling(
+        self, status_code: int
+    ) -> None:
+        payload = {"errors": []}
+        with pytest.raises(ExchangeThrottlingError):
+            raise_for_zonda_error(
+                status_code=status_code,
+                payload=payload,
+                default_message="neutral fallback",
+            )
+
+    def test_status_outside_transient_and_throttle_set_raises_api_error(self) -> None:
+        payload = {"errors": []}
+        with pytest.raises(ExchangeAPIError):
+            raise_for_zonda_error(
+                status_code=501,
+                payload=payload,
+                default_message="neutral fallback",
+            )
 
     def test_timeout_keyword_triggers_throttling(self) -> None:
         payload = {"errors": ["Request timeout exceeded"]}
