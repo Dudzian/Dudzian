@@ -2,7 +2,11 @@ import asyncio
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
-from bot_core.runtime.scheduler import AsyncIOTaskQueue
+from datetime import datetime, timezone
+
+import pytest
+
+from bot_core.runtime.scheduler import AsyncIOTaskQueue, CyclicTaskScheduler, ScheduledTask
 
 
 def test_async_io_task_queue_limits_concurrency() -> None:
@@ -73,5 +77,39 @@ def test_async_io_task_queue_supports_per_exchange_configuration() -> None:
 
         await asyncio.gather(*(queue.submit("nowa_gielda_spot", job) for _ in range(5)))
         assert max_active <= 1
+
+    asyncio.run(runner())
+
+
+def test_cyclic_scheduler_maps_regular_exception_to_failed_result() -> None:
+    async def runner() -> None:
+        scheduler = CyclicTaskScheduler(clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc))
+
+        async def job(_started_at: datetime) -> None:
+            raise RuntimeError("boom")
+
+        scheduler.register(ScheduledTask(name="failing", callback=job))
+        results = await scheduler.run_pending()
+
+        assert len(results) == 1
+        result = results[0]
+        assert result.name == "failing"
+        assert result.success is False
+        assert isinstance(result.error, RuntimeError)
+
+    asyncio.run(runner())
+
+
+def test_cyclic_scheduler_propagates_cancelled_error() -> None:
+    async def runner() -> None:
+        scheduler = CyclicTaskScheduler(clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc))
+
+        async def job(_started_at: datetime) -> None:
+            raise asyncio.CancelledError()
+
+        scheduler.register(ScheduledTask(name="cancelled", callback=job))
+
+        with pytest.raises(asyncio.CancelledError):
+            await scheduler.run_pending()
 
     asyncio.run(runner())

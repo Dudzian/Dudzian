@@ -434,3 +434,18 @@ def test_bootstrap_environment_rejects_disallowed_profile(tmp_path: Path, monkey
         any("Profil licencji" in err for err in (event.context or {}).get("errors", []))
         for event in captured
     )
+
+
+def test_bootstrap_environment_marks_offline_license_load_failure_in_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing_license_path = tmp_path / "missing-offline-license.json"
+    monkeypatch.setenv("BOT_CORE_LICENSE_PATH", str(missing_license_path))
+    monkeypatch.setenv("BOT_CORE_LICENSE_PUBLIC_KEY", "ab" * 32)
+
+    context = _bootstrap(tmp_path, monkeypatch=monkeypatch)
+
+    warning_codes = [
+        getattr(warning, "code", str(warning)) for warning in context.license_validation.warnings
+    ]
+    assert "license.offline_load_failed" in warning_codes

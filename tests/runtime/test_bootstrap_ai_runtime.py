@@ -449,3 +449,52 @@ def test_bootstrap_rejects_invalid_pipeline_schedule(tmp_path: Path, temp_model_
             config_path=config_path,
             secret_manager=secret_manager,
         )
+
+
+def test_bootstrap_initializes_runtime_tco_reporter_exactly_once(
+    tmp_path: Path,
+    temp_model_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_config(tmp_path, temp_model_file)
+    config_payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config_payload["decision_engine"]["tco"] = {
+        "reports": [str(tmp_path / "tco_bootstrap_report.json")],
+        "runtime_enabled": True,
+        "runtime_report_directory": str(tmp_path / "tco_runtime"),
+        "runtime_export_formats": ["json"],
+    }
+    config_path.write_text(yaml.safe_dump(config_payload), encoding="utf-8")
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_exchange_credentials(
+        "paper_secret",
+        ExchangeCredentials(
+            key_id="key",
+            secret="secret",
+            passphrase="phrase",
+            environment=Environment.PAPER,
+            permissions=("trade",),
+        ),
+    )
+
+    init_calls: list[dict[str, object]] = []
+
+    class RecordingRuntimeTCOReporter:
+        def __init__(self, **kwargs):
+            init_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(
+        "bot_core.runtime.bootstrap.RuntimeTCOReporter",
+        RecordingRuntimeTCOReporter,
+    )
+
+    context = bootstrap_environment(
+        "paper_ai",
+        config_path=config_path,
+        secret_manager=secret_manager,
+    )
+
+    assert context.tco_reporter is not None
+    assert len(init_calls) == 1

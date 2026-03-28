@@ -137,7 +137,7 @@ class CyclicTaskScheduler:
             started = self._clock()
             try:
                 payload = await self._invoke(task.callback, started)
-            except BaseException as exc:  # pragma: no cover - defensywne logowanie
+            except Exception as exc:  # pragma: no cover - defensywne logowanie
                 finished = self._clock()
                 task.last_run = finished
                 task._locked = False
