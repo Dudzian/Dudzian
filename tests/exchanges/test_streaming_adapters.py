@@ -1874,6 +1874,46 @@ def test_local_long_poll_stream_raises_on_error_payload(monkeypatch: pytest.Monk
     assert "Invalid channel" in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    ("errors_payload", "expected_fragment"),
+    [
+        ("plain stream error", "plain stream error"),
+        ([{"message": "first issue"}, {"message": "second issue"}], "first issue, second issue"),
+        ({"message": "mapping issue", "code": "E-1"}, "mapping issue"),
+    ],
+)
+def test_local_long_poll_stream_raises_on_errors_payload_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+    errors_payload: object,
+    expected_fragment: str,
+) -> None:
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        payload = json.dumps({"errors": errors_payload}).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9301",
+        path="/errors/shapes",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        next(stream)
+
+    assert expected_fragment in str(exc_info.value)
+
+
 def test_local_long_poll_stream_cursor_from_meta(monkeypatch: pytest.MonkeyPatch) -> None:
     responses = [
         {
@@ -1916,6 +1956,165 @@ def test_local_long_poll_stream_cursor_from_meta(monkeypatch: pytest.MonkeyPatch
     assert second.cursor == "meta-2"
     assert second.heartbeat is True
 
+    stream.close()
+
+
+def test_local_long_poll_stream_debug_logs_redact_sensitive_query_params(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    captured_urls: list[str] = []
+    responses = [
+        {
+            "batches": [
+                {
+                    "channel": "orders",
+                    "events": [{"event": "snapshot"}],
+                    "cursor": "sec-1",
+                }
+            ],
+            "retry_after": 0.0,
+        }
+    ]
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        captured_urls.append(request.full_url)  # type: ignore[attr-defined]
+        payload = json.dumps(responses.pop(0)).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    caplog.set_level("DEBUG", logger="bot_core.exchanges.streaming")
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9500",
+        path="/private",
+        channels=["orders"],
+        adapter="test",
+        scope="private",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        params={"token": "listen-key-1", "signature": "deadbeef", "symbol": "BTCUSDT"},
+    )
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["event"] == "snapshot"
+    stream.close()
+
+    assert captured_urls
+    query = parse_qs(urlparse(captured_urls[0]).query)
+    assert query.get("token") == ["listen-key-1"]
+
+    debug_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "bot_core.exchanges.streaming" and "Long-poll" in record.getMessage()
+    ]
+    assert debug_messages
+    log_message = debug_messages[-1]
+    assert "/private" in log_message
+    assert "token=" in log_message
+    assert "symbol=BTCUSDT" in log_message
+    assert "listen-key-1" not in log_message
+    assert "deadbeef" not in log_message
+
+
+def test_local_long_poll_stream_cursor_from_meta_preserves_zero_next_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        {
+            "meta": {"cursor": "meta-1"},
+            "events": [{"seq": 1}],
+        },
+        {
+            "meta": {"next_cursor": 0},
+            "events": [{"seq": 2}],
+        },
+        {
+            "meta": {"nextCursor": 0},
+            "events": [{"seq": 3}],
+        },
+    ]
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        payload = json.dumps(responses.pop(0)).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9401",
+        path="/meta/zero-cursor",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    first = next(stream)
+    assert first.cursor == "meta-1"
+    second = next(stream)
+    assert second.cursor == "0"
+    third = next(stream)
+    assert third.cursor == "0"
+    stream.close()
+
+
+def test_local_long_poll_stream_cursor_from_payload_preserves_zero_next_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        {
+            "cursor": "payload-1",
+            "events": [{"seq": 1}],
+        },
+        {
+            "next_cursor": 0,
+            "events": [{"seq": 2}],
+        },
+        {
+            "nextCursor": 0,
+            "events": [{"seq": 3}],
+        },
+    ]
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        payload = json.dumps(responses.pop(0)).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9402",
+        path="/payload/zero-cursor",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    first = next(stream)
+    assert first.cursor == "payload-1"
+    second = next(stream)
+    assert second.cursor == "0"
+    third = next(stream)
+    assert third.cursor == "0"
     stream.close()
 
 
