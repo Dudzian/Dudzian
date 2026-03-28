@@ -556,7 +556,9 @@ def test_decision_orchestrator_runtime_mixed_sequence_preserves_batch_and_audit_
     _, accepted_signals = exported[0]
     assert [signal.symbol for signal in accepted_signals] == ["SOLUSDT"]
 
-    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    decision_events = [
+        event for event in journal.events if event.event_type == "decision_evaluation"
+    ]
     assert [event.symbol for event in decision_events] == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     assert [event.status for event in decision_events] == ["filtered", "filtered", "accepted"]
     assert decision_events[0].metadata.get("decision_reason") == "invalid_evaluation"
