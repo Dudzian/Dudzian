@@ -476,13 +476,69 @@ class CCXTSpotAdapter(ExchangeAdapter):
         # ogranicza ryzyko zduplikowanego skutku ubocznego przy błędzie niejednoznacznym.
         try:
             self._call_client("cancel_order", order_id, symbol, retry=False, params=params or None)
-        except ExchangeAPIError as exc:
-            # Minimalna normalizacja idempotentna:
-            # jeżeli giełda raportuje, że zlecenie już nie istnieje / jest finalne,
-            # traktujemy cancel jako bezpieczny sukces.
-            if self._is_idempotent_cancel_error(exc):
+        except (ExchangeNetworkError, ExchangeThrottlingError, ExchangeAPIError) as exc:
+            if isinstance(exc, ExchangeAPIError) and self._is_idempotent_cancel_error(exc):
                 return
+            if not self._is_ambiguous_cancel_error(exc):
+                raise
+            order_still_open = self._is_order_still_open(order_id, symbol=symbol)
+            if order_still_open is False:
+                return
+            # Preserve-original-exception semantics: jeżeli resolve jest niepewny
+            # lub order nadal jest otwarty, zwracamy pierwotny błąd cancel.
             raise
+
+    @staticmethod
+    def _is_ambiguous_cancel_error(exc: Exception) -> bool:
+        if isinstance(exc, (ExchangeNetworkError, ExchangeThrottlingError)):
+            return True
+        if isinstance(exc, ExchangeAPIError):
+            return (exc.status_code or 0) >= 500
+        return False
+
+    def _is_order_still_open(self, order_id: str, *, symbol: str | None = None) -> bool | None:
+        params = dict(self._settings.get("fetch_open_orders_params", {}))
+        try:
+            orders = self._call_client(
+                "fetch_open_orders",
+                symbol,
+                retry=False,
+                params=params or None,
+            )
+        except (
+            AttributeError,
+            ExchangeAPIError,
+            ExchangeNetworkError,
+            ExchangeThrottlingError,
+            NotImplementedError,
+        ):
+            return None
+        if not isinstance(orders, Sequence):
+            return None
+
+        for entry in orders:
+            if not isinstance(entry, Mapping):
+                continue
+            candidate_ids = {
+                entry.get("id"),
+                entry.get("order"),
+                entry.get("orderId"),
+                entry.get("order_id"),
+            }
+            info = entry.get("info")
+            if isinstance(info, Mapping):
+                candidate_ids.update(
+                    {
+                        info.get("id"),
+                        info.get("order"),
+                        info.get("orderId"),
+                        info.get("order_id"),
+                    }
+                )
+            normalized_ids = {str(value) for value in candidate_ids if value is not None}
+            if order_id in normalized_ids:
+                return True
+        return False
 
     @staticmethod
     def _is_idempotent_cancel_error(exc: ExchangeAPIError) -> bool:
