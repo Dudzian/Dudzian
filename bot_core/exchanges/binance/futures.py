@@ -1008,7 +1008,9 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             payload_dict = dict(payload)
             raw_order_id = payload_dict.get("orderId")
             if raw_order_id is None or (isinstance(raw_order_id, str) and not raw_order_id.strip()):
-                raise RuntimeError("Odpowiedź z endpointu futures order nie zawiera poprawnego orderId")
+                raise RuntimeError(
+                    "Odpowiedź z endpointu futures order nie zawiera poprawnego orderId"
+                )
             order_id = str(raw_order_id)
             status = str(payload_dict.get("status", "UNKNOWN"))
             filled_qty = _to_float(payload_dict.get("executedQty", 0.0))
