@@ -1339,7 +1339,10 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
             payload_dict = dict(payload)
 
-            order_id = str(payload_dict.get("orderId"))
+            raw_order_id = payload_dict.get("orderId")
+            if raw_order_id is None or (isinstance(raw_order_id, str) and not raw_order_id.strip()):
+                raise RuntimeError("Odpowiedź z endpointu order nie zawiera poprawnego orderId")
+            order_id = str(raw_order_id)
             status = str(payload_dict.get("status", "UNKNOWN"))
             filled_qty = _to_float(payload_dict.get("executedQty", 0.0))
             raw_price = payload_dict.get("price")
@@ -1358,12 +1361,14 @@ class BinanceSpotAdapter(ExchangeAdapter):
     def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:
         if "trade" not in self._permission_set:
             raise PermissionError("Aktualne poświadczenia nie mają uprawnień tradingowych.")
-        params: dict[str, object] = {"orderId": order_id}
-        if symbol:
-            exchange_symbol = to_exchange_symbol(symbol)
-            if exchange_symbol is None:
-                raise ValueError("Symbol anulowanego zlecenia ma niepoprawny format.")
-            params["symbol"] = exchange_symbol
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("Anulowanie na Binance Spot wymaga podania symbolu.")
+
+        exchange_symbol = to_exchange_symbol(symbol)
+        if exchange_symbol is None:
+            raise ValueError("Symbol anulowanego zlecenia ma niepoprawny format.")
+
+        params: dict[str, object] = {"orderId": order_id, "symbol": exchange_symbol}
 
         def _call() -> None:
             response = self._signed_request("/api/v3/order", method="DELETE", params=params)

@@ -985,8 +985,10 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         if "trade" not in self._permission_set:
             raise PermissionError("Aktualne poświadczenia nie mają uprawnień tradingowych.")
 
+        normalized_symbol = self._normalize_contract_symbol(request.symbol)
+
         params: dict[str, object] = {
-            "symbol": request.symbol,
+            "symbol": normalized_symbol,
             "side": request.side.upper(),
             "type": request.order_type.upper(),
             "quantity": request.quantity,
@@ -1004,7 +1006,10 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                 raise RuntimeError("Odpowiedź z endpointu futures order ma niepoprawny format")
 
             payload_dict = dict(payload)
-            order_id = str(payload_dict.get("orderId"))
+            raw_order_id = payload_dict.get("orderId")
+            if raw_order_id is None or (isinstance(raw_order_id, str) and not raw_order_id.strip()):
+                raise RuntimeError("Odpowiedź z endpointu futures order nie zawiera poprawnego orderId")
+            order_id = str(raw_order_id)
             status = str(payload_dict.get("status", "UNKNOWN"))
             filled_qty = _to_float(payload_dict.get("executedQty", 0.0))
             avg_price_field = payload_dict.get("avgPrice", payload_dict.get("price"))
@@ -1028,14 +1033,15 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         if not symbol:
             raise ValueError("Anulowanie na Binance Futures wymaga podania symbolu.")
 
-        params: dict[str, object] = {"orderId": order_id, "symbol": symbol}
+        normalized_symbol = self._normalize_contract_symbol(symbol)
+        params: dict[str, object] = {"orderId": order_id, "symbol": normalized_symbol}
 
         def _call() -> None:
             response = self._signed_request("/fapi/v1/order", method="DELETE", params=params)
             if isinstance(response, Mapping):
                 response_map = dict(response)
                 status = response_map.get("status")
-                if status in {"CANCELED", "PENDING_CANCEL", "NEW"}:
+                if status in {"CANCELED", "PENDING_CANCEL"}:
                     return
                 raise RuntimeError(
                     f"Nieoczekiwana odpowiedź anulowania z Binance Futures: {response_map}"
