@@ -693,9 +693,10 @@ class WatchdogCCXTAdapter(CCXTSpotAdapter):
         operation = f"{self.name}.{method_name}"
         if not retry:
             return super()._call_client(method_name, *args, retry=False, **kwargs)
+        parent_call = super(WatchdogCCXTAdapter, self)._call_client
         return self._watchdog.execute(
             operation,
-            lambda: super()._call_client(method_name, *args, retry=True, **kwargs),
+            lambda: parent_call(method_name, *args, retry=True, **kwargs),
         )
 
 
