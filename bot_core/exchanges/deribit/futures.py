@@ -149,7 +149,9 @@ class DeribitFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
 
     @staticmethod
     def _decode_error_payload(payload: object) -> object:
-        if isinstance(payload, (Mapping, Sequence)) and not isinstance(payload, (str, bytes, bytearray)):
+        if isinstance(payload, (Mapping, Sequence)) and not isinstance(
+            payload, (str, bytes, bytearray)
+        ):
             return payload
         if isinstance(payload, (bytes, bytearray)):
             try:
