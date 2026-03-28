@@ -362,6 +362,13 @@ class CCXTSpotAdapter(ExchangeAdapter):
 
     def place_order(self, request: OrderRequest) -> OrderResult:
         params = dict(self._settings.get("create_order_params", {}))
+        client_order_id_param = self._settings.get("client_order_id_param")
+        if (
+            request.client_order_id
+            and isinstance(client_order_id_param, str)
+            and client_order_id_param
+        ):
+            params.setdefault(client_order_id_param, request.client_order_id)
         payload = {
             "symbol": request.symbol,
             "type": request.order_type,
@@ -370,17 +377,41 @@ class CCXTSpotAdapter(ExchangeAdapter):
             "price": request.price,
             "params": params or None,
         }
-        response: Mapping[str, Any] = self._call_client(
-            "create_order",
-            payload["symbol"],
-            payload["type"],
-            payload["side"],
-            payload["amount"],
-            payload["price"],
-            retry=False,
-            params=payload["params"],
-        )
+        try:
+            response: Mapping[str, Any] = self._call_client(
+                "create_order",
+                payload["symbol"],
+                payload["type"],
+                payload["side"],
+                payload["amount"],
+                payload["price"],
+                retry=False,
+                params=payload["params"],
+            )
+        except (ExchangeNetworkError, ExchangeThrottlingError, ExchangeAPIError) as exc:
+            if request.client_order_id and self._is_ambiguous_place_order_error(exc):
+                try:
+                    reconciled = self.fetch_order_by_client_id(
+                        request.client_order_id, symbol=request.symbol
+                    )
+                except Exception:
+                    reconciled = None
+                if reconciled is not None:
+                    return reconciled
+            raise
 
+        return self._order_result_from_mapping(response)
+
+    @staticmethod
+    def _is_ambiguous_place_order_error(exc: Exception) -> bool:
+        if isinstance(exc, (ExchangeNetworkError, ExchangeThrottlingError)):
+            return True
+        if isinstance(exc, ExchangeAPIError):
+            return (exc.status_code or 0) >= 500
+        return False
+
+    @staticmethod
+    def _order_result_from_mapping(response: Mapping[str, Any]) -> OrderResult:
         filled_quantity = float(
             response.get("filled") or response.get("amount_filled") or response.get("amount") or 0.0
         )
@@ -406,6 +437,38 @@ class CCXTSpotAdapter(ExchangeAdapter):
             avg_price=avg_price_value,
             raw_response=dict(response),
         )
+
+    def fetch_order_by_client_id(
+        self,
+        client_order_id: str,
+        *,
+        symbol: str | None = None,
+    ) -> OrderResult | None:
+        params = dict(self._settings.get("fetch_open_orders_params", {}))
+        try:
+            orders = self._call_client(
+                "fetch_open_orders",
+                symbol,
+                retry=False,
+                params=params or None,
+            )
+        except (AttributeError, ExchangeAPIError, ExchangeNetworkError, NotImplementedError):
+            return None
+        if not isinstance(orders, Sequence):
+            return None
+        for entry in orders:
+            if not isinstance(entry, Mapping):
+                continue
+            candidate_ids = {
+                entry.get("clientOrderId"),
+                entry.get("client_order_id"),
+            }
+            info = entry.get("info")
+            if isinstance(info, Mapping):
+                candidate_ids.update({info.get("clientOrderId"), info.get("client_order_id")})
+            if client_order_id in {str(value) for value in candidate_ids if value}:
+                return self._order_result_from_mapping(entry)
+        return None
 
     def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:
         params = dict(self._settings.get("cancel_order_params", {}))
