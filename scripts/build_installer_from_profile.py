@@ -62,6 +62,10 @@ class Profile:
     bundle: BundleProfile
 
 
+def _is_windows_host() -> bool:
+    return os.name == "nt"
+
+
 def _normalize_profile_path(path: str, *, base_dir: Path) -> Path:
     """Resolve profile paths while tolerating Windows separators on POSIX hosts."""
 
@@ -326,7 +330,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     runtime_executable: Path | None = None
     if profile.pyinstaller and not args.skip_pyinstaller:
-        if platform_id == "windows" and os.name != "nt":
+        if platform_id == "windows" and not _is_windows_host():
             raise SystemExit(
                 "Budowanie docelowego runtime .exe wymaga uruchomienia PyInstaller na Windows "
                 "(cross-build z Linux/macOS nie jest wspierany)."
