@@ -82,7 +82,9 @@ def test_order_paths_use_same_symbol_normalization_as_market_data() -> None:
     adapter._signed_request = types.MethodType(fake_signed_request, adapter)
 
     adapter.fetch_order_book("BTC/USDT", depth=5)
-    adapter.place_order(OrderRequest(symbol="BTC/USDT", side="buy", quantity=0.01, order_type="market"))
+    adapter.place_order(
+        OrderRequest(symbol="BTC/USDT", side="buy", quantity=0.01, order_type="market")
+    )
     adapter.cancel_order("order-2", symbol="BTC/USDT")
 
     assert captured["market_data_symbol"] == "BTCUSDT"
