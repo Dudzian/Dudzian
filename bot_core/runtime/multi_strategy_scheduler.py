@@ -1064,6 +1064,17 @@ class MultiStrategyScheduler(RuntimeScheduler):
         except asyncio.CancelledError:
             if self._stop_event and not self._stop_event.is_set():
                 self._stop_event.set()
+            for task in self._tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+            raise
+        except Exception:
+            if self._stop_event and not self._stop_event.is_set():
+                self._stop_event.set()
+            for task in self._tasks:
+                if not task.done():
+                    task.cancel()
             await asyncio.gather(*self._tasks, return_exceptions=True)
             raise
         finally:

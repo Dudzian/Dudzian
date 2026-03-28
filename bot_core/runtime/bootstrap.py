@@ -2475,6 +2475,15 @@ def bootstrap_environment(
         offline_license_path = os.environ.get("BOT_CORE_LICENSE_PATH")
         offline_public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
         if offline_license_path and offline_public_key:
+            def _mark_offline_license_load_failure(reason: str) -> None:
+                license_result.warnings.append(
+                    make_warning(
+                        "license.offline_load_failed",
+                        "Nie udało się załadować licencji offline – kontynuuję bez capability guard z licencji offline.",
+                        hint=reason,
+                    )
+                )
+
             try:
                 offline_service = LicenseService(
                     verify_key_hex=offline_public_key,
@@ -2485,8 +2494,12 @@ def bootstrap_environment(
                 )
             except FileNotFoundError:
                 _LOGGER.warning("Nie znaleziono pliku licencji offline: %s", offline_license_path)
+                _mark_offline_license_load_failure(
+                    f"missing_file:{offline_license_path}"
+                )
             except LicenseServiceError as exc:
                 _LOGGER.error("Błąd podczas ładowania licencji offline: %s", exc)
+                _mark_offline_license_load_failure(f"service_error:{exc}")
             else:
                 guard = install_capability_guard(snapshot.capabilities)
                 license_result.capabilities = snapshot.capabilities
@@ -2599,25 +2612,6 @@ def bootstrap_environment(
         )
         if warnings:
             decision_tco_warnings.extend(str(entry) for entry in warnings)
-
-    if decision_engine_config is not None:
-        tco_config = getattr(decision_engine_config, "tco", None)
-        if tco_config is not None:
-            try:
-                reporter_candidate = _initialize_runtime_tco_reporter(
-                    tco_config,
-                    environment=environment,
-                    risk_profile=selected_profile,
-                    runtime_paths=runtime_paths,
-                )
-            except Exception:
-                reporter_candidate = None
-                _LOGGER.exception(
-                    "Nie udało się zainicjalizować RuntimeTCOReporter na podstawie konfiguracji TCO"
-                )
-            else:
-                if reporter_candidate is not None:
-                    tco_reporter = reporter_candidate
 
     if isinstance(environment_ai, EnvironmentAIConfig) and environment_ai.enabled:
         ai_model_bindings = environment_ai.models

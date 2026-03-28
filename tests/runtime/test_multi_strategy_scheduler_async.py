@@ -720,6 +720,73 @@ def test_scheduler_run_forever_stops_gracefully() -> None:
     assert sink.calls
 
 
+def test_scheduler_run_forever_cancels_other_tasks_on_subtask_failure() -> None:
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="failing_schedule",
+        strategy_name="failing_engine",
+        strategy=DummyStrategy(),
+        feed=DummyFeed([]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    scheduler.register_schedule(
+        name="healthy_schedule",
+        strategy_name="healthy_engine",
+        strategy=DummyStrategy(),
+        feed=DummyFeed([]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+
+    healthy_started = asyncio.Event()
+    healthy_cancelled = asyncio.Event()
+    blocker = asyncio.Event()
+
+    async def _run_schedule(schedule) -> None:  # type: ignore[no-untyped-def]
+        if schedule.name == "healthy_schedule":
+            healthy_started.set()
+            try:
+                await blocker.wait()
+            except asyncio.CancelledError:
+                healthy_cancelled.set()
+                raise
+            return
+
+        await asyncio.wait_for(healthy_started.wait(), timeout=1.0)
+        raise RuntimeError("boom")
+
+    scheduler._run_schedule = _run_schedule  # type: ignore[assignment]
+
+    async def _run() -> None:
+        current = asyncio.current_task()
+        with pytest.raises(RuntimeError, match="boom"):
+            await scheduler.run_forever()
+        await asyncio.sleep(0)
+        alive_strategy_tasks = [
+            task
+            for task in asyncio.all_tasks()
+            if task is not current and not task.done() and task.get_name().startswith("strategy:")
+        ]
+        assert not alive_strategy_tasks
+        assert healthy_cancelled.is_set()
+
+    asyncio.run(_run())
+
+
 def test_fixed_weight_allocation_prefers_profile_weights() -> None:
     snapshots_a = [_snapshot(101.0 + i, 5000 + i) for i in range(2)]
     snapshots_b = [_snapshot(201.0 + i, 6000 + i) for i in range(2)]
