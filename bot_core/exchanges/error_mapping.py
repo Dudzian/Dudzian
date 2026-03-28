@@ -701,7 +701,9 @@ def raise_for_nowa_gielda_error(*, status_code: int, payload: object, default_me
     )
 
 
-def raise_for_deribit_error(*, status_code: int | None, payload: object, default_message: str) -> None:
+def raise_for_deribit_error(
+    *, status_code: int | None, payload: object, default_message: str
+) -> None:
     """Mapuje odpowiedź Deribit na wyjątki domenowe."""
 
     message = next(_iter_error_messages(payload), default_message)
@@ -731,7 +733,9 @@ def raise_for_deribit_error(*, status_code: int | None, payload: object, default
         or code in _DERIBIT_AUTH_CODES
         or any(keyword in normalized for keyword in _DERIBIT_AUTH_KEYWORDS)
     ):
-        raise ExchangeAuthError(message=message, status_code=effective_status or 401, payload=payload)
+        raise ExchangeAuthError(
+            message=message, status_code=effective_status or 401, payload=payload
+        )
 
     if (
         status_code in {418, 429}
@@ -776,7 +780,9 @@ def raise_for_bitmex_error(
             for keyword in ("authorization", "authentication", "signature", "permission")
         )
     ):
-        raise ExchangeAuthError(message=message, status_code=effective_status or 401, payload=payload)
+        raise ExchangeAuthError(
+            message=message, status_code=effective_status or 401, payload=payload
+        )
 
     if (
         status_code in {418, 429}

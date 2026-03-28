@@ -243,7 +243,9 @@ def test_cancel_normalizes_obvious_idempotent_edges(adapter_cls, payload, status
 
 @pytest.mark.parametrize("adapter_cls", [DeribitFuturesAdapter, BitmexFuturesAdapter])
 def test_cancel_keeps_raising_for_non_normalized_api_errors(adapter_cls):
-    client = _CancelEdgeClient(payload='{"error":{"message":"Invalid cancel transition"}}', status=409)
+    client = _CancelEdgeClient(
+        payload='{"error":{"message":"Invalid cancel transition"}}', status=409
+    )
     adapter = adapter_cls(_creds(), environment=Environment.LIVE, client=client)
     adapter.configure_network(ip_allowlist=())
 

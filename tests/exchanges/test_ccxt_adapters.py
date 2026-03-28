@@ -297,7 +297,9 @@ def test_raise_for_http_status_distinguishes_429_from_5xx():
     assert throttle_exc.value.status_code == 429
 
     with pytest.raises(ExchangeAPIError) as transient_exc:
-        raise_for_http_status(status_code=503, payload="upstream unavailable", default_message="err")
+        raise_for_http_status(
+            status_code=503, payload="upstream unavailable", default_message="err"
+        )
     assert transient_exc.value.status_code == 503
     assert transient_exc.value.payload == "upstream unavailable"
 
