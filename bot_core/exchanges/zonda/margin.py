@@ -141,19 +141,15 @@ class ZondaMarginAdapter(ZondaSpotAdapter):
                     payload=response,
                     default_message="Zonda margin order error",
                 )
-            order_section = response.get("order")
-            if not isinstance(order_section, Mapping):
+            order = self._parse_order_payload(response)
+            if not order.order_id:
                 raise RuntimeError("Brak danych zamówienia w odpowiedzi margin")
-            order_id = str(order_section.get("id", ""))
-            status = str(order_section.get("status", "new")).upper()
-            filled = _to_float(order_section.get("filledAmount", 0.0))
-            avg_price = _to_float(order_section.get("avgPrice", 0.0)) or None
             return OrderResult(
-                order_id=order_id,
-                status=status,
-                filled_quantity=filled,
-                avg_price=avg_price,
-                raw_response=order_section,
+                order_id=order.order_id,
+                status=order.status,
+                filled_quantity=order.filled_quantity,
+                avg_price=order.avg_price,
+                raw_response=dict(response),
             )
 
         return self._watchdog.execute("zonda_margin_place_order", _call)
@@ -172,6 +168,10 @@ class ZondaMarginAdapter(ZondaSpotAdapter):
                     payload=response,
                     default_message="Zonda margin cancel error",
                 )
+            order = self._parse_order_payload(response)
+            if order.status in {"CANCELLED", "CANCELED", "REJECTED"}:
+                return
+            raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania margin Zonda: {response}")
 
         self._watchdog.execute("zonda_margin_cancel_order", _call)
 
