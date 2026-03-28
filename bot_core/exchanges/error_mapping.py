@@ -407,6 +407,7 @@ _KRAKEN_THROTTLE_KEYWORDS = (
 _KRAKEN_THROTTLE_PREFIXES = (
     "eapi:rate limit",
     "eservice:rate limit",
+    "eservice:unavailable",
     "eservice:temporarily",
     "eservice:busy",
     "equery:busy",

@@ -11,7 +11,7 @@ from urllib.error import HTTPError
 import pytest
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials, OrderRequest
-from bot_core.exchanges.errors import ExchangeThrottlingError
+from bot_core.exchanges.errors import ExchangeAPIError, ExchangeAuthError, ExchangeThrottlingError
 from bot_core.exchanges.kraken.futures import (
     KrakenFuturesAdapter,
     _RequestContext as FuturesRequestContext,
@@ -247,6 +247,146 @@ def test_spot_private_mutation_cancel_order_does_not_retry_on_retryable_http(
         adapter.cancel_order("txid-123")
 
     assert calls["count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_message_fragment"),
+    [
+        (b"not-json", "not-json"),
+        (b"", "Kraken API zgłosiło błąd HTTP 503."),
+        (b"{", r"\{"),
+        (b'{"status":"error"}', "Kraken API zgłosiło błąd HTTP 503."),
+        (b'{"error":{"unexpected":"shape"}}', "Kraken API zgłosiło błąd HTTP 503."),
+    ],
+)
+def test_spot_private_mutation_http_503_fallback_classification(
+    monkeypatch: pytest.MonkeyPatch,
+    kraken_credentials: ExchangeCredentials,
+    payload: bytes,
+    expected_message_fragment: str,
+) -> None:
+    adapter = KrakenSpotAdapter(
+        credentials=kraken_credentials, environment=Environment.PAPER, settings={}
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    def _failing_urlopen(request, timeout: float):  # type: ignore[no-untyped-def]
+        del timeout
+        raise HTTPError(request.full_url, 503, "Service Unavailable", hdrs=None, fp=io.BytesIO(payload))
+
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.urlopen", _failing_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.time.sleep", lambda *_: None)
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.random.uniform", lambda *_: 0.0)
+
+    with pytest.raises(ExchangeAPIError, match=expected_message_fragment):
+        adapter.place_order(
+            OrderRequest(
+                symbol="XBTUSD",
+                side="buy",
+                quantity=0.01,
+                order_type="market",
+            )
+        )
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_spot_private_mutation_http_auth_status_maps_to_auth_error(
+    monkeypatch: pytest.MonkeyPatch, kraken_credentials: ExchangeCredentials, status: int
+) -> None:
+    adapter = KrakenSpotAdapter(
+        credentials=kraken_credentials, environment=Environment.PAPER, settings={}
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    def _failing_urlopen(request, timeout: float):  # type: ignore[no-untyped-def]
+        del timeout
+        raise HTTPError(
+            request.full_url,
+            status,
+            "Unauthorized",
+            hdrs=None,
+            fp=io.BytesIO(b'{"message":"auth failed"}'),
+        )
+
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.urlopen", _failing_urlopen)
+
+    with pytest.raises(ExchangeAuthError):
+        adapter.place_order(
+            OrderRequest(
+                symbol="XBTUSD",
+                side="buy",
+                quantity=0.01,
+                order_type="market",
+            )
+        )
+
+
+def test_spot_private_mutation_http_error_payload_is_read_once(
+    monkeypatch: pytest.MonkeyPatch, kraken_credentials: ExchangeCredentials
+) -> None:
+    adapter = KrakenSpotAdapter(
+        credentials=kraken_credentials, environment=Environment.PAPER, settings={}
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    read_calls = {"count": 0}
+
+    class _CountingBytesIO(io.BytesIO):
+        def read(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            read_calls["count"] += 1
+            return super().read(*args, **kwargs)
+
+    def _failing_urlopen(request, timeout: float):  # type: ignore[no-untyped-def]
+        del timeout
+        raise HTTPError(
+            request.full_url,
+            503,
+            "Service Unavailable",
+            hdrs=None,
+            fp=_CountingBytesIO(b'{"error":["EService:Unavailable"]}'),
+        )
+
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.urlopen", _failing_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.time.sleep", lambda *_: None)
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.random.uniform", lambda *_: 0.0)
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter.place_order(
+            OrderRequest(
+                symbol="XBTUSD",
+                side="buy",
+                quantity=0.01,
+                order_type="market",
+            )
+        )
+    assert read_calls["count"] == 1
+
+
+def test_spot_private_mutation_http_503_with_missing_fp_falls_back(
+    monkeypatch: pytest.MonkeyPatch, kraken_credentials: ExchangeCredentials
+) -> None:
+    adapter = KrakenSpotAdapter(
+        credentials=kraken_credentials, environment=Environment.PAPER, settings={}
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    def _failing_urlopen(request, timeout: float):  # type: ignore[no-untyped-def]
+        del timeout
+        raise HTTPError(request.full_url, 503, "Service Unavailable", hdrs=None, fp=None)
+
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.urlopen", _failing_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.time.sleep", lambda *_: None)
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.random.uniform", lambda *_: 0.0)
+
+    with pytest.raises(ExchangeAPIError, match="Kraken API zgłosiło błąd HTTP 503."):
+        adapter.place_order(
+            OrderRequest(
+                symbol="XBTUSD",
+                side="buy",
+                quantity=0.01,
+                order_type="market",
+            )
+        )
 
 
 def test_futures_nonce_is_monotonic_when_time_does_not_advance(

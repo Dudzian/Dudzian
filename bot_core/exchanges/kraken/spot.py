@@ -970,11 +970,7 @@ class KrakenSpotAdapter(ExchangeAdapter):
                     time.sleep(sleep_for + jitter)
                     continue
                 try:
-                    raise_for_http_status(
-                        status_code=exc.code,
-                        payload=exc.read() or b"",
-                        default_message=f"Kraken API zgłosiło błąd HTTP {exc.code}.",
-                    )
+                    self._raise_for_http_error(exc)
                 except ExchangeAPIError as api_error:
                     raise api_error from exc
             except URLError as exc:
@@ -1034,6 +1030,39 @@ class KrakenSpotAdapter(ExchangeAdapter):
         if 500 <= status_code < 600:
             return "server_error"
         return "http_error"
+
+    def _raise_for_http_error(self, exc: HTTPError) -> None:
+        try:
+            payload_raw = exc.read() or b""
+        except OSError:
+            payload_raw = b""
+        payload_mapping: Mapping[str, object] | None = None
+        if payload_raw:
+            try:
+                parsed = json.loads(payload_raw.decode("utf-8"))
+            except (UnicodeDecodeError, JSONDecodeError):
+                payload_mapping = None
+            else:
+                if isinstance(parsed, Mapping):
+                    payload_mapping = parsed
+
+        if exc.code >= 500 and payload_mapping is not None:
+            try:
+                raise_for_kraken_error(
+                    payload=payload_mapping,
+                    default_message=f"Kraken API zgłosiło błąd HTTP {exc.code}.",
+                    status_code=exc.code,
+                )
+            except (ExchangeAuthError, ExchangeThrottlingError):
+                raise
+            except ExchangeAPIError:
+                pass
+
+        raise_for_http_status(
+            status_code=exc.code,
+            payload=payload_mapping if payload_mapping is not None else payload_raw,
+            default_message=f"Kraken API zgłosiło błąd HTTP {exc.code}.",
+        )
 
     def _ensure_no_error(self, payload: Mapping[str, Any], *, endpoint: str, signed: bool) -> None:
         errors = payload.get("error") if isinstance(payload, Mapping) else None
