@@ -50,6 +50,7 @@ from bot_core.runtime.suspensions import SuspensionManager, SuspensionRecord
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
 
 _LOGGER = logging.getLogger(__name__)
+_MAX_CONSECUTIVE_SCHEDULE_FAILURES = 3
 _LOGGER.propagate = True
 
 
@@ -135,6 +136,7 @@ class _ScheduleContext:
     fallback_schedules: tuple[str, ...] = ()
     active_fallback: str | None = None
     failover_count: int = 0
+    consecutive_failures: int = 0
     cost_report_summary: Mapping[str, float] | None = None
     last_window_state: bool | None = None
     order_index: int = 0
@@ -157,6 +159,7 @@ class StrategyRunContext:
     volatility_target_errors: list[float] = field(default_factory=list)
     arbitrage_captures: list[float] = field(default_factory=list)
     arbitrage_delays: list[float] = field(default_factory=list)
+    failed: bool = False
 
     def latency_ms(self, clock: Callable[[], datetime]) -> float:
         return max(0.0, (clock() - self.timestamp).total_seconds() * 1000)
@@ -1104,7 +1107,8 @@ class MultiStrategyScheduler(RuntimeScheduler):
                 await self._maybe_rebalance_allocation(timestamp)
                 self._handle_suspended_schedule(schedule, timestamp, suspension)
                 continue
-            await self._execute_schedule(schedule, timestamp)
+            succeeded = await self._execute_schedule(schedule, timestamp)
+            self._update_failure_streak(schedule, succeeded=succeeded)
         await self._evaluate_portfolio(force=True)
 
     async def _run_schedule(self, schedule: _ScheduleContext) -> None:
@@ -1122,7 +1126,13 @@ class MultiStrategyScheduler(RuntimeScheduler):
                 await self._maybe_rebalance_allocation(start_time)
                 self._handle_suspended_schedule(schedule, start_time, suspension)
             else:
-                await self._execute_schedule(schedule, start_time)
+                succeeded = await self._execute_schedule(schedule, start_time)
+                self._update_failure_streak(schedule, succeeded=succeeded)
+                if schedule.consecutive_failures >= _MAX_CONSECUTIVE_SCHEDULE_FAILURES:
+                    raise RuntimeError(
+                        f"Schedule {schedule.name} reached consecutive failures threshold "
+                        f"({_MAX_CONSECUTIVE_SCHEDULE_FAILURES})"
+                    )
             elapsed = (self._clock() - start_time).total_seconds()
             schedule.last_run = start_time
             sleep_for = max(0.0, cadence - elapsed)
@@ -1161,7 +1171,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
             except Exception:  # pragma: no cover - diagnostyka runtime
                 _LOGGER.exception("PortfolioGovernor: błąd ewaluacji w schedulerze")
 
-    async def _execute_schedule(self, schedule: _ScheduleContext, timestamp: datetime) -> None:
+    async def _execute_schedule(self, schedule: _ScheduleContext, timestamp: datetime) -> bool:
         context = StrategyRunContext(
             schedule=schedule,
             timestamp=timestamp,
@@ -1169,8 +1179,19 @@ class MultiStrategyScheduler(RuntimeScheduler):
         )
         try:
             await self._run_with_policy(context, self._execute_strategy_once)
-        except Exception:  # pragma: no cover - chronimy scheduler przed przerwaniem
+        except Exception as exc:  # pragma: no cover - chronimy scheduler przed przerwaniem
             _LOGGER.exception("Błąd podczas wykonywania harmonogramu %s", schedule.name)
+            self._handle_schedule_failure(schedule, "execution", exc)
+            context.failed = True
+            return False
+        return not context.failed
+
+    @staticmethod
+    def _update_failure_streak(schedule: _ScheduleContext, *, succeeded: bool) -> None:
+        if succeeded:
+            schedule.consecutive_failures = 0
+            return
+        schedule.consecutive_failures += 1
 
     async def _run_with_policy(
         self,
@@ -1250,6 +1271,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
         try:
             context.snapshots = await self._fetch_latest_async(schedule)
         except Exception as exc:  # pragma: no cover - diagnostyka feedu
+            context.failed = True
             self._handle_schedule_failure(schedule, "feed", exc)
             return
 
@@ -1257,6 +1279,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
             try:
                 raw_signals = list(schedule.strategy.on_data(snapshot))
             except Exception as exc:  # pragma: no cover - diagnostyka strategii
+                context.failed = True
                 self._handle_schedule_failure(schedule, "strategy", exc)
                 return
             if not raw_signals:
@@ -1321,6 +1344,7 @@ class MultiStrategyScheduler(RuntimeScheduler):
                     signals=bounded_signals,
                 )
             except Exception as exc:  # pragma: no cover - diagnostyka sinka
+                context.failed = True
                 self._handle_schedule_failure(schedule, "sink", exc)
                 return
         schedule.metrics["signals"] = float(context.total_signals)
