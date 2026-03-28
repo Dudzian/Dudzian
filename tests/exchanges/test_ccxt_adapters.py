@@ -11,7 +11,11 @@ from bot_core.exchanges.bitmex.futures import BitmexFuturesAdapter
 from bot_core.exchanges.bitget.spot import BitgetSpotAdapter
 from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter
 from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
+from bot_core.exchanges.coinbase.futures import CoinbaseFuturesAdapter
+from bot_core.exchanges.coinbase.margin import CoinbaseMarginAdapter
 from bot_core.exchanges.bybit.spot import BybitSpotAdapter
+from bot_core.exchanges.bybit.futures import BybitFuturesAdapter
+from bot_core.exchanges.bybit.margin import BybitMarginAdapter
 from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
 from bot_core.exchanges.error_mapping import raise_for_http_status
 from bot_core.exchanges.errors import (
@@ -20,9 +24,12 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.exchanges.okx.spot import OKXSpotAdapter
+from bot_core.exchanges.okx.futures import OKXFuturesAdapter
+from bot_core.exchanges.okx.margin import OKXMarginAdapter
 from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
 from bot_core.exchanges.gateio.spot import GateIOSpotAdapter
 from bot_core.exchanges.gemini.spot import GeminiSpotAdapter
+from bot_core.exchanges.health import RetryPolicy, Watchdog
 from bot_core.exchanges.huobi.spot import HuobiSpotAdapter
 from bot_core.exchanges.mexc.spot import MexcSpotAdapter
 
@@ -181,6 +188,57 @@ class _AmbiguousCancelClient(_FakeClient):
         if self.open_orders_error is not None:
             raise self.open_orders_error
         return list(self.open_orders)
+
+
+class _TransientExchangeError(Exception):
+    pass
+
+
+class _WatchdogMutationClient(_FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_attempts = 0
+        self.cancel_attempts = 0
+
+    def create_order(self, symbol, order_type, side, amount, price=None, params=None):  # noqa: ARG002
+        self.create_attempts += 1
+        raise _TransientExchangeError("create timeout")
+
+    def cancel_order(self, order_id, symbol=None, params=None):  # noqa: ARG002
+        self.cancel_attempts += 1
+        raise _TransientExchangeError("cancel timeout")
+
+
+class _WatchdogReadClient(_FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_attempts = 0
+
+    def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None, params=None):  # noqa: ARG002
+        self.read_attempts += 1
+        if self.read_attempts < 3:
+            raise _TransientExchangeError("temporary read timeout")
+        return [[1_700_000_000_000, 100.0, 101.0, 99.0, 100.5, 10.0]]
+
+
+class _AlwaysFailWatchdogReadClient(_FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_attempts = 0
+
+    def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None, params=None):  # noqa: ARG002
+        self.read_attempts += 1
+        raise _TransientExchangeError("permanent read timeout")
+
+
+class _ProbeWatchdog(Watchdog):
+    def __init__(self, *, retry_policy: RetryPolicy) -> None:
+        super().__init__(retry_policy=retry_policy, sleep=lambda _: None)
+        self.operations: list[str] = []
+
+    def execute(self, operation: str, func):  # type: ignore[override]
+        self.operations.append(operation)
+        return super().execute(operation, func)
 
 
 def _build_request(symbol: str = "BTC/USDT") -> OrderRequest:
@@ -698,3 +756,153 @@ def test_huobi_adapter_keeps_default_exchange_id():
 
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
     assert adapter._exchange_id == "huobi"
+
+
+_WATCHDOG_FUTURES_MARGIN_ADAPTERS = (
+    BybitFuturesAdapter,
+    BybitMarginAdapter,
+    CoinbaseFuturesAdapter,
+    CoinbaseMarginAdapter,
+    OKXFuturesAdapter,
+    OKXMarginAdapter,
+)
+
+
+@pytest.mark.parametrize("adapter_cls", _WATCHDOG_FUTURES_MARGIN_ADAPTERS)
+def test_watchdog_futures_margin_mutations_do_not_retry_explosion(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _WatchdogMutationClient()
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "network_error_types": (_TransientExchangeError,),
+            "retry_policy": {
+                "max_attempts": 5,
+                "base_delay": 0.0,
+                "max_delay": 0.0,
+                "jitter": (0.0, 0.0),
+            },
+            "sleep_callable": lambda _: None,
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    request = OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="limit",
+        price=10.0,
+    )
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter.place_order(request)
+    with pytest.raises(ExchangeNetworkError):
+        adapter.cancel_order("order-1", symbol="BTC/USDT")
+
+    assert client.create_attempts == 1
+    assert client.cancel_attempts == 1
+
+
+@pytest.mark.parametrize("adapter_cls", _WATCHDOG_FUTURES_MARGIN_ADAPTERS)
+def test_watchdog_futures_margin_reads_keep_current_retry_semantics(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _WatchdogReadClient()
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "network_error_types": (_TransientExchangeError,),
+            "retry_policy": {
+                "max_attempts": 3,
+                "base_delay": 0.0,
+                "max_delay": 0.0,
+                "jitter": (0.0, 0.0),
+            },
+            "sleep_callable": lambda _: None,
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    candles = adapter.fetch_ohlcv("BTC/USDT", "1m", start=0, end=1_700_000_100_000, limit=1)
+
+    assert len(candles) == 1
+    assert client.read_attempts == 3
+
+
+@pytest.mark.parametrize("adapter_cls", _WATCHDOG_FUTURES_MARGIN_ADAPTERS)
+def test_watchdog_retry_true_read_path_uses_watchdog_without_super_runtime_error(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _WatchdogReadClient()
+    watchdog = _ProbeWatchdog(
+        retry_policy=RetryPolicy(
+            max_attempts=1,
+            base_delay=0.0,
+            max_delay=0.0,
+            jitter=(0.0, 0.0),
+        )
+    )
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        watchdog=watchdog,
+        settings={
+            "network_error_types": (_TransientExchangeError,),
+            "retry_policy": {
+                "max_attempts": 3,
+                "base_delay": 0.0,
+                "max_delay": 0.0,
+                "jitter": (0.0, 0.0),
+            },
+            "sleep_callable": lambda _: None,
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    candles = adapter.fetch_ohlcv("BTC/USDT", "1m", start=0, end=1_700_000_100_000, limit=1)
+
+    assert len(candles) == 1
+    assert client.read_attempts == 3
+    assert watchdog.operations == [f"{adapter.name}.fetch_ohlcv"]
+
+
+@pytest.mark.parametrize("adapter_cls", _WATCHDOG_FUTURES_MARGIN_ADAPTERS)
+def test_watchdog_read_path_permanent_failure_attempt_count_is_predictable(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _AlwaysFailWatchdogReadClient()
+    watchdog = _ProbeWatchdog(
+        retry_policy=RetryPolicy(
+            max_attempts=2,
+            base_delay=0.0,
+            max_delay=0.0,
+            jitter=(0.0, 0.0),
+        )
+    )
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        watchdog=watchdog,
+        settings={
+            "network_error_types": (_TransientExchangeError,),
+            "retry_policy": {
+                "max_attempts": 3,
+                "base_delay": 0.0,
+                "max_delay": 0.0,
+                "jitter": (0.0, 0.0),
+            },
+            "sleep_callable": lambda _: None,
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter.fetch_ohlcv("BTC/USDT", "1m", start=0, end=1_700_000_100_000, limit=1)
+
+    # Obecna semantyka: inner retry (3 próby) wykonywany dla każdego outer retry watchdog-a (2 próby).
+    assert client.read_attempts == 6
+    assert watchdog.operations == [f"{adapter.name}.fetch_ohlcv"]
