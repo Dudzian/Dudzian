@@ -75,7 +75,7 @@ def test_bitmex_futures_stream_defaults_per_environment() -> None:
 
 
 class _ErrorClient:
-    def __init__(self, payload: str, *, status: int = 400) -> None:
+    def __init__(self, payload: object, *, status: int | None = 400) -> None:
         self.payload = payload
         self.status = status
 
@@ -105,3 +105,138 @@ def test_bitmex_futures_maps_rate_limit_errors() -> None:
     adapter.configure_network(ip_allowlist=())
     with pytest.raises(ExchangeThrottlingError):
         adapter.fetch_account_snapshot()
+
+
+def test_bitmex_futures_maps_plain_text_rate_limit_without_status() -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("rate limit exceeded", status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 429
+
+
+def test_bitmex_futures_maps_non_json_string_auth_without_status() -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("permission denied by upstream", status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAuthError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 401
+
+
+def test_bitmex_futures_keeps_api_error_for_missing_payload_without_status() -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient(None, status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 500
+
+
+def test_bitmex_futures_maps_bytes_payload_rate_limit_without_status() -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient(b"rate limit exceeded", status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 429
+
+
+def test_bitmex_futures_maps_json_array_string_payload() -> None:
+    payload = '[{"message":"Too many requests"}]'
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient(payload, status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 429
+
+
+def test_bitmex_futures_neutral_plain_text_503_stays_api_error() -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("upstream node returned nonsense", status=503),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert not isinstance(exc_info.value, (ExchangeAuthError, ExchangeThrottlingError))
+    assert exc_info.value.status_code == 503
+
+
+def test_bitmex_futures_keyword_like_plain_text_without_match_stays_api_error() -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("ratelimiter dashboard offline", status=503),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert not isinstance(exc_info.value, (ExchangeAuthError, ExchangeThrottlingError))
+
+
+def test_bitmex_futures_none_status_falls_back_without_type_error() -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("rate limit exceeded", status=None),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 429
+
+
+def test_bitmex_futures_auth_like_neutral_plain_text_stays_api_error() -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("author service metadata mismatch", status=503),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert not isinstance(exc_info.value, (ExchangeAuthError, ExchangeThrottlingError))
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_bitmex_futures_plain_text_without_keywords_stays_api_error(status: int) -> None:
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("plain upstream glitch", status=status),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert not isinstance(exc_info.value, (ExchangeAuthError, ExchangeThrottlingError))
+    assert exc_info.value.status_code == status

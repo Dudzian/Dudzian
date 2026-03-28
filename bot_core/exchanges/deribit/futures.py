@@ -148,24 +148,25 @@ class DeribitFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
         )
 
     @staticmethod
-    def _decode_error_payload(payload: object) -> Mapping[str, Any] | None:
-        if isinstance(payload, Mapping):
+    def _decode_error_payload(payload: object) -> object:
+        if isinstance(payload, (Mapping, Sequence)) and not isinstance(payload, (str, bytes, bytearray)):
             return payload
         if isinstance(payload, (bytes, bytearray)):
             try:
-                payload = payload.decode("utf-8")
+                payload = payload.decode("utf-8", errors="replace")
             except Exception:  # pragma: no cover - diagnostyka pomocnicza
-                return None
+                return payload
         if isinstance(payload, str):
             text = payload.strip()
-            if text.startswith("{"):
+            if text.startswith(("{", "[")):
                 try:
                     parsed = json.loads(text)
                 except (TypeError, ValueError):
-                    return None
-                if isinstance(parsed, Mapping):
+                    return text
+                if isinstance(parsed, (Mapping, Sequence)):
                     return parsed
-        return None
+            return text
+        return payload
 
     def _call_client(
         self,
@@ -188,15 +189,14 @@ class DeribitFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
             )
         except ExchangeAPIError as exc:
             payload = self._decode_error_payload(exc.payload)
-            if payload is not None:
-                try:
-                    raise_for_deribit_error(
-                        status_code=exc.status_code or 500,
-                        payload=payload,
-                        default_message=str(exc),
-                    )
-                except ExchangeAPIError as mapped:
-                    raise mapped from exc
+            try:
+                raise_for_deribit_error(
+                    status_code=exc.status_code,
+                    payload=payload,
+                    default_message=str(exc),
+                )
+            except ExchangeAPIError as mapped:
+                raise mapped from exc
             raise
 
     @classmethod
