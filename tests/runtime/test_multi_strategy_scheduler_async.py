@@ -18,6 +18,7 @@ from bot_core.runtime.capital_policies import (
     TagQuotaAllocation,
 )
 from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler
+from bot_core.runtime import multi_strategy_scheduler as multi_scheduler_module
 
 from tests.test_multi_strategy_scheduler import (
     DummyFeed,
@@ -375,6 +376,43 @@ class FailingStrategy(DummyStrategy):
         return super().on_data(snapshot)
 
 
+class PatternFailingStrategy(DummyStrategy):
+    def __init__(self, failures: list[bool]) -> None:
+        super().__init__()
+        self._failures = list(failures)
+
+    def on_data(self, snapshot):  # type: ignore[override]
+        if self._failures:
+            should_fail = self._failures.pop(0)
+            if should_fail:
+                raise RuntimeError("pattern failure")
+        return super().on_data(snapshot)
+
+
+class _TickClock:
+    def __init__(self) -> None:
+        self._current = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def __call__(self) -> datetime:
+        current = self._current
+        self._current = self._current + timedelta(seconds=1)
+        return current
+
+
+class _NoMetricFailureScheduler(MultiStrategyScheduler):
+    def _handle_schedule_failure(self, schedule, reason, exc=None):  # type: ignore[override]
+        metadata = {"reason": reason}
+        if exc is not None:
+            metadata["error"] = str(exc)
+        self._record_alert(
+            "strategy-failure",
+            message=f"Harmonogram {schedule.name} zgłosił błąd: {reason}",
+            schedule=schedule.name,
+            metadata=metadata,
+        )
+        self._trigger_failover(schedule, reason, metadata)
+
+
 def test_scheduler_failover_enables_fallback() -> None:
     primary_feed = DummyFeed([_snapshot(101.0, 1000)])
     fallback_feed = DummyFeed([_snapshot(201.0, 2000)])
@@ -429,6 +467,183 @@ def test_scheduler_failover_enables_fallback() -> None:
     assert "primary_schedule" in suspensions
 
 
+def test_scheduler_repeated_real_failures_escalate() -> None:
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_TickClock(),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="failing_schedule",
+        strategy_name="failing_engine",
+        strategy=FailingStrategy(failures=10),
+        feed=DummyFeed([_snapshot(101.0 + i, 1000 + i) for i in range(10)]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+
+    async def _run() -> None:
+        with pytest.raises(RuntimeError, match="consecutive failures"):
+            await asyncio.wait_for(scheduler.run_forever(), timeout=1.0)
+
+    asyncio.run(_run())
+
+
+def test_scheduler_threshold_n_minus_one_does_not_escalate() -> None:
+    threshold = multi_scheduler_module._MAX_CONSECUTIVE_SCHEDULE_FAILURES
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_TickClock(),
+        allocation_rebalance_seconds=0.0,
+    )
+    sink = DummySink()
+    scheduler.register_schedule(
+        name="failing_then_recovering_schedule",
+        strategy_name="failing_then_recovering_engine",
+        strategy=FailingStrategy(failures=threshold - 1),
+        feed=DummyFeed([_snapshot(101.0 + i, 1000 + i) for i in range(20)]),
+        sink=sink,
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    schedule = scheduler._schedules[0]
+
+    async def _run() -> None:
+        runner = asyncio.create_task(scheduler.run_forever())
+        await asyncio.sleep(0.05)
+        scheduler.stop()
+        await asyncio.wait_for(runner, timeout=1.0)
+
+    asyncio.run(_run())
+
+    assert schedule.failover_count == threshold - 1
+    assert schedule.consecutive_failures == 0
+    assert sink.calls
+
+
+def test_scheduler_threshold_exactly_n_escalates() -> None:
+    threshold = multi_scheduler_module._MAX_CONSECUTIVE_SCHEDULE_FAILURES
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_TickClock(),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="failing_schedule",
+        strategy_name="failing_engine",
+        strategy=FailingStrategy(failures=threshold),
+        feed=DummyFeed([_snapshot(101.0 + i, 1000 + i) for i in range(20)]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    schedule = scheduler._schedules[0]
+
+    async def _run() -> None:
+        with pytest.raises(RuntimeError, match="consecutive failures"):
+            await asyncio.wait_for(scheduler.run_forever(), timeout=1.0)
+
+    asyncio.run(_run())
+
+    assert schedule.consecutive_failures == threshold
+    assert schedule.failover_count == threshold
+
+
+def test_scheduler_success_resets_failure_streak() -> None:
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="pattern_schedule",
+        strategy_name="pattern_engine",
+        strategy=PatternFailingStrategy([True, True, False, True]),
+        feed=DummyFeed([_snapshot(101.0 + i, 1000 + i) for i in range(4)]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    schedule = scheduler._schedules[0]
+
+    asyncio.run(scheduler.run_once())
+    assert schedule.consecutive_failures == 1
+    asyncio.run(scheduler.run_once())
+    assert schedule.consecutive_failures == 2
+    asyncio.run(scheduler.run_once())
+    assert schedule.consecutive_failures == 0
+    asyncio.run(scheduler.run_once())
+    assert schedule.consecutive_failures == 1
+
+
+def test_scheduler_no_false_positive_on_sporadic_failures() -> None:
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="sporadic_schedule",
+        strategy_name="sporadic_engine",
+        strategy=PatternFailingStrategy([True, False, True, False, True, False]),
+        feed=DummyFeed([_snapshot(101.0 + i, 1000 + i) for i in range(6)]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    schedule = scheduler._schedules[0]
+
+    for _ in range(6):
+        asyncio.run(scheduler.run_once())
+        assert schedule.consecutive_failures <= 1
+
+
+def test_scheduler_failure_classification_does_not_depend_on_failed_metric() -> None:
+    scheduler = _NoMetricFailureScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="metric_independent_schedule",
+        strategy_name="metric_independent_engine",
+        strategy=FailingStrategy(failures=1),
+        feed=DummyFeed([_snapshot(101.0 + i, 1000 + i) for i in range(3)]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    schedule = scheduler._schedules[0]
+
+    asyncio.run(scheduler.run_once())
+    assert schedule.consecutive_failures == 1
+
+
 def test_scheduler_respects_schedule_windows() -> None:
     strategy = DummyStrategy()
     strategy.metadata = {"schedule_windows": ("22:00-23:00",)}
@@ -460,6 +675,78 @@ def test_scheduler_respects_schedule_windows() -> None:
     assert any(alert["code"] == "schedule-window-closed" for alert in alerts)
     metrics = scheduler.describe_schedules()["window_schedule"]["metrics"]
     assert metrics["window_active"] == 0.0
+
+
+def test_scheduler_window_closed_cycles_do_not_increment_failure_streak() -> None:
+    strategy = DummyStrategy()
+    strategy.metadata = {"schedule_windows": ("22:00-23:00",)}
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_TickClock(),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="window_closed_schedule",
+        strategy_name="window_closed_engine",
+        strategy=strategy,
+        feed=DummyFeed([_snapshot(110.0 + i, 2000 + i) for i in range(10)]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    schedule = scheduler._schedules[0]
+
+    for _ in range(5):
+        asyncio.run(scheduler.run_once())
+        assert schedule.consecutive_failures == 0
+
+    async def _run() -> None:
+        runner = asyncio.create_task(scheduler.run_forever())
+        await asyncio.sleep(0.05)
+        scheduler.stop()
+        await asyncio.wait_for(runner, timeout=1.0)
+
+    asyncio.run(_run())
+    assert schedule.consecutive_failures == 0
+
+
+def test_scheduler_empty_feed_cycles_do_not_increment_failure_streak() -> None:
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_TickClock(),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="empty_feed_schedule",
+        strategy_name="empty_feed_engine",
+        strategy=DummyStrategy(),
+        feed=DummyFeed([]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    schedule = scheduler._schedules[0]
+
+    for _ in range(5):
+        asyncio.run(scheduler.run_once())
+        assert schedule.consecutive_failures == 0
+
+    async def _run() -> None:
+        runner = asyncio.create_task(scheduler.run_forever())
+        await asyncio.sleep(0.05)
+        scheduler.stop()
+        await asyncio.wait_for(runner, timeout=1.0)
+
+    asyncio.run(_run())
+    assert schedule.consecutive_failures == 0
 
 
 def test_metric_weighted_policy_emits_diagnostics() -> None:
@@ -783,6 +1070,53 @@ def test_scheduler_run_forever_cancels_other_tasks_on_subtask_failure() -> None:
         ]
         assert not alive_strategy_tasks
         assert healthy_cancelled.is_set()
+
+    asyncio.run(_run())
+
+
+def test_scheduler_run_forever_cleans_up_sibling_tasks_after_real_escalation() -> None:
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_TickClock(),
+        allocation_rebalance_seconds=0.0,
+    )
+    scheduler.register_schedule(
+        name="failing_schedule",
+        strategy_name="failing_engine",
+        strategy=FailingStrategy(failures=12),
+        feed=DummyFeed([_snapshot(101.0 + i, 1000 + i) for i in range(12)]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+    scheduler.register_schedule(
+        name="healthy_schedule",
+        strategy_name="healthy_engine",
+        strategy=DummyStrategy(),
+        feed=DummyFeed([_snapshot(201.0 + i, 2000 + i) for i in range(12)]),
+        sink=DummySink(),
+        cadence_seconds=1,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+
+    async def _run() -> None:
+        current = asyncio.current_task()
+        with pytest.raises(RuntimeError, match="consecutive failures"):
+            await asyncio.wait_for(scheduler.run_forever(), timeout=1.0)
+        await asyncio.sleep(0)
+        alive_strategy_tasks = [
+            task
+            for task in asyncio.all_tasks()
+            if task is not current and not task.done() and task.get_name().startswith("strategy:")
+        ]
+        assert not alive_strategy_tasks
 
     asyncio.run(_run())
 

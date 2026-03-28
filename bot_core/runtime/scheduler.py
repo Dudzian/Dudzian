@@ -264,6 +264,11 @@ class AsyncIOTaskQueue:
                 ),
                 burst=int(burst),
             )
+        existing = self._queues.get(normalized)
+        if existing is not None and existing.pending > 0:
+            raise RuntimeError(
+                f"Nie można rekonfigurować kolejki {normalized!r} podczas in-flight submissions"
+            )
         self._queues[normalized] = _QueueState(
             limits,
             asyncio.Semaphore(limits.max_concurrency),
