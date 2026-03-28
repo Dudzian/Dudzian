@@ -8,7 +8,7 @@ from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.bitmex import BitmexFuturesAdapter, BitmexSpotAdapter
 from bot_core.exchanges.deribit import DeribitFuturesAdapter, DeribitSpotAdapter
 from bot_core.exchanges.base import OrderRequest
-from bot_core.exchanges.errors import ExchangeNetworkError
+from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError
 from bot_core.exchanges.streaming import LocalLongPollStream
 
 
@@ -67,6 +67,18 @@ class _MutationClient(_RecordingClient):
         if self.ticker_attempts < 3:
             raise _TransientError("temporary failure during read")
         return {"symbol": symbol, "last": 100.0}
+
+
+class _CancelEdgeClient(_RecordingClient):
+    def __init__(self, *, payload: str, status: int) -> None:
+        super().__init__()
+        self.payload = payload
+        self.status = status
+        self.cancel_attempts = 0
+
+    def cancel_order(self, order_id: str, symbol=None, params=None):  # noqa: ARG002
+        self.cancel_attempts += 1
+        raise ExchangeAPIError("cancel failed", status_code=self.status, payload=self.payload)
 
 
 def _creds(secret: str | None = "s") -> ExchangeCredentials:
@@ -208,3 +220,34 @@ def test_reads_still_retry_when_enabled(adapter_cls):
     assert ticker["last"] == pytest.approx(100.0)
     assert client.ticker_attempts == 3
     assert any(op.endswith("fetch_ticker") for op in watchdog.operations)
+
+
+@pytest.mark.parametrize("adapter_cls", [DeribitFuturesAdapter, BitmexFuturesAdapter])
+@pytest.mark.parametrize(
+    "payload,status",
+    [
+        ('{"error":{"message":"Order not found"}}', 404),
+        ('{"error":{"message":"Order already canceled"}}', 409),
+        ('{"error":{"message":"Order already filled"}}', 422),
+    ],
+)
+def test_cancel_normalizes_obvious_idempotent_edges(adapter_cls, payload, status):
+    client = _CancelEdgeClient(payload=payload, status=status)
+    adapter = adapter_cls(_creds(), environment=Environment.LIVE, client=client)
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.cancel_order("order-1", symbol="BTC/USDT")
+
+    assert client.cancel_attempts == 1
+
+
+@pytest.mark.parametrize("adapter_cls", [DeribitFuturesAdapter, BitmexFuturesAdapter])
+def test_cancel_keeps_raising_for_non_normalized_api_errors(adapter_cls):
+    client = _CancelEdgeClient(payload='{"error":{"message":"Invalid cancel transition"}}', status=409)
+    adapter = adapter_cls(_creds(), environment=Environment.LIVE, client=client)
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeAPIError):
+        adapter.cancel_order("order-1", symbol="BTC/USDT")
+
+    assert client.cancel_attempts == 1

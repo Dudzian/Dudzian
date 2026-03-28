@@ -13,7 +13,7 @@ from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter
 from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
 from bot_core.exchanges.bybit.spot import BybitSpotAdapter
 from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
-from bot_core.exchanges.errors import ExchangeNetworkError
+from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError
 from bot_core.exchanges.okx.spot import OKXSpotAdapter
 from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
 from bot_core.exchanges.gateio.spot import GateIOSpotAdapter
@@ -111,6 +111,18 @@ class _AmbiguousCreateClient(_FakeClient):
         return list(self.open_orders)
 
 
+class _CancelApiErrorClient(_FakeClient):
+    def __init__(self, *, status_code: int, payload: object) -> None:
+        super().__init__()
+        self.status_code = status_code
+        self.payload = payload
+
+    def cancel_order(self, order_id, symbol=None, params=None):
+        self._hit("cancel_order")
+        self._cancelled.append((order_id, symbol))
+        raise ExchangeAPIError("cancel failed", status_code=self.status_code, payload=self.payload)
+
+
 def _build_request(symbol: str = "BTC/USDT") -> OrderRequest:
     return OrderRequest(symbol=symbol, side="buy", quantity=1.0, order_type="limit", price=10.5)
 
@@ -179,6 +191,45 @@ def test_okx_adapter_respects_offline_cancellation():
 
     with pytest.raises(NotImplementedError):
         adapter.stream_public_data(channels=["ticker"])
+
+
+def test_shared_ccxt_cancel_normalizes_obvious_idempotent_api_error():
+    credentials = ExchangeCredentials(key_id="k", secret="s", passphrase="p")
+    client = _CancelApiErrorClient(
+        status_code=404,
+        payload='{"error":{"message":"Order not found"}}',
+    )
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+
+    adapter.configure_network(ip_allowlist=())
+    adapter.cancel_order("order-404", symbol="BTC/USDT")
+
+    assert client._calls["cancel_order"] == 1
+    assert client._cancelled == [("order-404", "BTC/USDT")]
+
+
+def test_shared_ccxt_cancel_raises_for_non_normalized_api_error():
+    credentials = ExchangeCredentials(key_id="k", secret="s", passphrase="p")
+    client = _CancelApiErrorClient(
+        status_code=409,
+        payload='{"error":{"message":"Invalid cancel transition"}}',
+    )
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeAPIError):
+        adapter.cancel_order("order-409", symbol="BTC/USDT")
+
+    assert client._calls["cancel_order"] == 1
 
 
 def test_place_order_injects_deterministic_anchor_and_reconciles_success():

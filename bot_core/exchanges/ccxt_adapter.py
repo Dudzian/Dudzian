@@ -474,7 +474,39 @@ class CCXTSpotAdapter(ExchangeAdapter):
         params = dict(self._settings.get("cancel_order_params", {}))
         # Dla mutacji preferujemy safety > availability: brak automatycznego retry
         # ogranicza ryzyko zduplikowanego skutku ubocznego przy błędzie niejednoznacznym.
-        self._call_client("cancel_order", order_id, symbol, retry=False, params=params or None)
+        try:
+            self._call_client("cancel_order", order_id, symbol, retry=False, params=params or None)
+        except ExchangeAPIError as exc:
+            # Minimalna normalizacja idempotentna:
+            # jeżeli giełda raportuje, że zlecenie już nie istnieje / jest finalne,
+            # traktujemy cancel jako bezpieczny sukces.
+            if self._is_idempotent_cancel_error(exc):
+                return
+            raise
+
+    @staticmethod
+    def _is_idempotent_cancel_error(exc: ExchangeAPIError) -> bool:
+        if exc.status_code not in {404, 409, 410, 422}:
+            return False
+        text = " ".join(
+            part.lower()
+            for part in (str(exc.message or ""), str(exc.payload or ""))
+            if part and part != "None"
+        )
+        if not text:
+            return False
+        markers = (
+            "order not found",
+            "unknown order",
+            "not open order",
+            "already canceled",
+            "already cancelled",
+            "already closed",
+            "already filled",
+            "does not exist",
+            "no such order",
+        )
+        return any(marker in text for marker in markers)
 
     def stream_public_data(self, *, channels: Sequence[str]):
         raise NotImplementedError(
