@@ -94,6 +94,23 @@ class _CustomNetworkError(Exception):
     pass
 
 
+class _AmbiguousCreateClient(_FakeClient):
+    def __init__(self, *, open_orders: list[dict[str, object]]) -> None:
+        super().__init__()
+        self.open_orders = open_orders
+        self.last_create_params: dict[str, object] | None = None
+
+    def create_order(self, symbol, order_type, side, amount, price=None, params=None):
+        del symbol, order_type, side, amount, price
+        self._hit("create_order")
+        self.last_create_params = dict(params or {})
+        raise _CustomNetworkError("timeout on create")
+
+    def fetch_open_orders(self, symbol=None, params=None):  # noqa: ARG002
+        self._hit("fetch_open_orders")
+        return list(self.open_orders)
+
+
 def _build_request(symbol: str = "BTC/USDT") -> OrderRequest:
     return OrderRequest(symbol=symbol, side="buy", quantity=1.0, order_type="limit", price=10.5)
 
@@ -162,6 +179,80 @@ def test_okx_adapter_respects_offline_cancellation():
 
     with pytest.raises(NotImplementedError):
         adapter.stream_public_data(channels=["ticker"])
+
+
+def test_place_order_injects_deterministic_anchor_and_reconciles_success():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _AmbiguousCreateClient(
+        open_orders=[
+            {
+                "id": "resolved-1",
+                "status": "open",
+                "amount": 1.0,
+                "remaining": 0.4,
+                "filled": 0.6,
+                "price": 10.5,
+                "clientOrderId": "cli-anchor-1",
+            }
+        ]
+    )
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "network_error_types": (_CustomNetworkError,),
+            "client_order_id_param": "newClientOrderId",
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    result = adapter.place_order(
+        OrderRequest(
+            symbol="BTC/USDT",
+            side="buy",
+            quantity=1.0,
+            order_type="limit",
+            price=10.5,
+            client_order_id="cli-anchor-1",
+        )
+    )
+
+    assert result.order_id == "resolved-1"
+    assert client.last_create_params == {"newClientOrderId": "cli-anchor-1"}
+    assert client._calls["create_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+def test_place_order_injects_anchor_and_raises_on_reconcile_miss_without_resubmit():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _AmbiguousCreateClient(open_orders=[])
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "network_error_types": (_CustomNetworkError,),
+            "client_order_id_param": "newClientOrderId",
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter.place_order(
+            OrderRequest(
+                symbol="BTC/USDT",
+                side="buy",
+                quantity=1.0,
+                order_type="limit",
+                price=10.5,
+                client_order_id="cli-anchor-miss",
+            )
+        )
+
+    assert client.last_create_params == {"newClientOrderId": "cli-anchor-miss"}
+    assert client._calls["create_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
 
 
 def test_kucoin_adapter_merges_nested_settings():
