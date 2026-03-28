@@ -13,7 +13,11 @@ from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter
 from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
 from bot_core.exchanges.bybit.spot import BybitSpotAdapter
 from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
-from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError
+from bot_core.exchanges.errors import (
+    ExchangeAPIError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
 from bot_core.exchanges.okx.spot import OKXSpotAdapter
 from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
 from bot_core.exchanges.gateio.spot import GateIOSpotAdapter
@@ -123,6 +127,31 @@ class _CancelApiErrorClient(_FakeClient):
         raise ExchangeAPIError("cancel failed", status_code=self.status_code, payload=self.payload)
 
 
+class _AmbiguousCancelClient(_FakeClient):
+    def __init__(
+        self,
+        *,
+        cancel_error: Exception,
+        open_orders: list[dict[str, object]] | None = None,
+        open_orders_error: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self.cancel_error = cancel_error
+        self.open_orders = list(open_orders or [])
+        self.open_orders_error = open_orders_error
+
+    def cancel_order(self, order_id, symbol=None, params=None):
+        self._hit("cancel_order")
+        self._cancelled.append((order_id, symbol))
+        raise self.cancel_error
+
+    def fetch_open_orders(self, symbol=None, params=None):  # noqa: ARG002
+        self._hit("fetch_open_orders")
+        if self.open_orders_error is not None:
+            raise self.open_orders_error
+        return list(self.open_orders)
+
+
 def _build_request(symbol: str = "BTC/USDT") -> OrderRequest:
     return OrderRequest(symbol=symbol, side="buy", quantity=1.0, order_type="limit", price=10.5)
 
@@ -230,6 +259,67 @@ def test_shared_ccxt_cancel_raises_for_non_normalized_api_error():
         adapter.cancel_order("order-409", symbol="BTC/USDT")
 
     assert client._calls["cancel_order"] == 1
+
+
+def test_shared_ccxt_cancel_ambiguous_network_error_resolves_when_order_absent():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    cancel_error = ExchangeNetworkError("cancel timeout")
+    client = _AmbiguousCancelClient(cancel_error=cancel_error, open_orders=[])
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.cancel_order("order-amb", symbol="BTC/USDT")
+
+    assert client._calls["cancel_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+def test_shared_ccxt_cancel_ambiguous_5xx_raises_original_when_order_still_open():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    cancel_error = ExchangeAPIError("cancel ambiguous", status_code=503, payload="upstream timeout")
+    client = _AmbiguousCancelClient(
+        cancel_error=cancel_error,
+        open_orders=[{"id": "order-open"}],
+    )
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.cancel_order("order-open", symbol="BTC/USDT")
+
+    assert exc_info.value is cancel_error
+    assert client._calls["cancel_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+def test_shared_ccxt_cancel_ambiguous_read_failure_raises_original():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    cancel_error = ExchangeThrottlingError("cancel throttled", status_code=429)
+    client = _AmbiguousCancelClient(
+        cancel_error=cancel_error,
+        open_orders_error=ExchangeNetworkError("read failed"),
+    )
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.cancel_order("order-unknown", symbol="BTC/USDT")
+
+    assert exc_info.value is cancel_error
+    assert client._calls["cancel_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
 
 
 def test_place_order_injects_deterministic_anchor_and_reconciles_success():
