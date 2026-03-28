@@ -11,9 +11,7 @@ from tests.scripts import test_path_patch_safety as guard
     ("snippet", "expected"),
     [
         (
-            "import os\n"
-            "def test_x(monkeypatch):\n"
-            "    monkeypatch.setattr(os, 'name', 'posix')\n",
+            "import os\ndef test_x(monkeypatch):\n    monkeypatch.setattr(os, 'name', 'posix')\n",
             True,
         ),
         (
@@ -59,19 +57,15 @@ from tests.scripts import test_path_patch_safety as guard
             True,
         ),
         (
-            "from unittest.mock import patch as p\n"
-            "def test_x():\n"
-            "    p('os.name', 'posix')\n",
+            "from unittest.mock import patch as p\ndef test_x():\n    p('os.name', 'posix')\n",
             True,
         ),
         (
-            "def test_x(monkeypatch):\n"
-            "    monkeypatch.setattr('os.name', 'posix')\n",
+            "def test_x(monkeypatch):\n    monkeypatch.setattr('os.name', 'posix')\n",
             True,
         ),
         (
-            "def test_x(monkeypatch):\n"
-            "    monkeypatch.setattr('pathlib.Path.cwd', lambda: None)\n",
+            "def test_x(monkeypatch):\n    monkeypatch.setattr('pathlib.Path.cwd', lambda: None)\n",
             True,
         ),
         (
