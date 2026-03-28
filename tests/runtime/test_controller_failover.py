@@ -179,6 +179,5 @@ def test_controller_recovers_after_snapshot_error_is_resolved() -> None:
     second_cycle_modes = [request.metadata.get("mode") for request in execution.requests]
     assert second_cycle_modes == ["ai", "rules"]
     assert any(
-        event.event_type == "ai_failover" and event.status == "cleared"
-        for event in journal.events
+        event.event_type == "ai_failover" and event.status == "cleared" for event in journal.events
     )
