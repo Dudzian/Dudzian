@@ -64,6 +64,7 @@ class DailyTrendRealtimeRunner:
     trading_controller: TradingController
     history_bars: int = 120
     clock: Callable[[], datetime] = _utc_now
+    monotonic_clock: Callable[[], float] = time.perf_counter
     sleep: Callable[[float], None] = time.sleep
     on_cycle_error: Callable[[Exception], None] | None = None
     on_cycle_complete: Callable[[Sequence[OrderResult]], None] | None = None
@@ -120,6 +121,7 @@ class DailyTrendRealtimeRunner:
                 break
 
             cycle_start = self.clock()
+            pacing_start = self.monotonic_clock()
             success = False
 
             try:
@@ -151,7 +153,7 @@ class DailyTrendRealtimeRunner:
                 break
 
             interval_seconds = max(1.0, float(self.controller.tick_seconds))
-            elapsed = (self.clock() - cycle_start).total_seconds()
+            elapsed = max(0.0, self.monotonic_clock() - pacing_start)
             sleep_seconds = max(0.0, interval_seconds - elapsed)
             if not success:
                 sleep_seconds = max(min_sleep, sleep_seconds)

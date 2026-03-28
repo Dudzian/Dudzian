@@ -44,3 +44,45 @@ def test_resolve_runtime_cloud_client_loads_manifest(monkeypatch) -> None:
     assert selection is not None
     assert selection.profile_name == "remote"
     assert selection.client.address == "cloud.example:50052"
+
+
+def test_resolve_runtime_cloud_client_returns_none_when_cloud_disabled(monkeypatch) -> None:
+    cloud_section = SimpleNamespace(
+        enabled=False,
+        default_profile="remote",
+        profiles={
+            "remote": SimpleNamespace(
+                mode="remote",
+                client_config_path="config/cloud/client.yaml",
+                entrypoint="cloud-entry",
+            )
+        },
+    )
+    runtime_cfg = SimpleNamespace(cloud=cloud_section)
+    client_cfg = SimpleNamespace(address="cloud.example:50052")
+    monkeypatch.setattr(cloud_profiles, "load_runtime_app_config", lambda path: runtime_cfg)
+    monkeypatch.setattr(cloud_profiles, "load_cloud_client_config", lambda path: client_cfg)
+
+    selection = cloud_profiles.resolve_runtime_cloud_client("config/runtime.yaml")
+
+    assert selection is None
+
+
+def test_resolve_runtime_cloud_client_returns_none_without_remote_profile(monkeypatch) -> None:
+    cloud_section = SimpleNamespace(
+        enabled=True,
+        default_profile="local_only",
+        profiles={
+            "local_only": SimpleNamespace(
+                mode="local",
+                client_config_path="config/cloud/local.yaml",
+                entrypoint="local-entry",
+            )
+        },
+    )
+    runtime_cfg = SimpleNamespace(cloud=cloud_section)
+    monkeypatch.setattr(cloud_profiles, "load_runtime_app_config", lambda path: runtime_cfg)
+
+    selection = cloud_profiles.resolve_runtime_cloud_client("config/runtime.yaml")
+
+    assert selection is None

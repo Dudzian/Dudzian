@@ -171,7 +171,7 @@ def perform_cloud_handshake(
     if options.authority_override:
         channel_options.append(("grpc.ssl_target_name_override", options.authority_override))
     channel = _build_channel(options, tuple(channel_options))
-    metadata_seq = tuple(metadata or options.metadata)
+    metadata_seq = tuple(options.metadata if metadata is None else metadata)
 
     try:
         stub = trading_pb2_grpc.CloudAuthServiceStub(channel)
