@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from bot_core.ai.health import ModelHealthMonitor
@@ -100,4 +101,84 @@ def test_controller_restores_ai_after_failover() -> None:
     assert modes.count("rules") == 1
     assert any(
         event.event_type == "ai_failover" and event.status == "cleared" for event in journal.events
+    )
+
+
+def test_process_signals_survives_ai_monitor_snapshot_exception(caplog) -> None:
+    class _ExplodingMonitor(ModelHealthMonitor):
+        def snapshot(self):  # type: ignore[override]
+            raise RuntimeError("snapshot boom")
+
+    monitor = _ExplodingMonitor()
+    controller, execution, journal = _controller(monitor)
+
+    with caplog.at_level(logging.ERROR):
+        controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+
+    assert [request.metadata.get("mode") for request in execution.requests] == ["rules"]
+    assert any(
+        event.event_type == "ai_failover"
+        and event.status == "activated"
+        and event.metadata.get("reason") == "ai_health_snapshot_error"
+        for event in journal.events
+    )
+    assert "snapshot" in caplog.text.lower()
+
+
+def test_controller_does_not_duplicate_failover_activation_on_repeated_snapshot_error(
+    caplog,
+) -> None:
+    class _ExplodingMonitor(ModelHealthMonitor):
+        def snapshot(self):  # type: ignore[override]
+            raise RuntimeError("snapshot boom")
+
+    monitor = _ExplodingMonitor()
+    controller, execution, journal = _controller(monitor)
+
+    with caplog.at_level(logging.ERROR):
+        controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+        controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+
+    assert [request.metadata.get("mode") for request in execution.requests] == ["rules", "rules"]
+    activated_events = [
+        event
+        for event in journal.events
+        if event.event_type == "ai_failover" and event.status == "activated"
+    ]
+    assert len(activated_events) == 1
+    assert activated_events[0].metadata.get("reason") == "ai_health_snapshot_error"
+    assert caplog.text.lower().count("snapshot failed") >= 2
+
+
+def test_controller_recovers_after_snapshot_error_is_resolved() -> None:
+    class _FlakyMonitor(ModelHealthMonitor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_snapshot = True
+
+        def snapshot(self):  # type: ignore[override]
+            if self.fail_snapshot:
+                raise RuntimeError("snapshot boom")
+            return super().snapshot()
+
+    monitor = _FlakyMonitor()
+    controller, execution, journal = _controller(monitor)
+
+    controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+    first_cycle_modes = [request.metadata.get("mode") for request in execution.requests]
+    assert first_cycle_modes == ["rules"]
+    assert any(
+        event.event_type == "ai_failover" and event.status == "activated"
+        for event in journal.events
+    )
+
+    execution.requests.clear()
+    monitor.fail_snapshot = False
+    controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+
+    second_cycle_modes = [request.metadata.get("mode") for request in execution.requests]
+    assert second_cycle_modes == ["ai", "rules"]
+    assert any(
+        event.event_type == "ai_failover" and event.status == "cleared"
+        for event in journal.events
     )

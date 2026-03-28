@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -1005,3 +1006,42 @@ def test_controller_generates_client_order_id_when_missing() -> None:
     )
     assert order_submitted_event.get("client_order_id") == request.client_order_id
     assert order_submitted_event.get("order_generated_client_order_id") == "True"
+
+
+def test_process_signals_survives_health_dispatch_exception(caplog) -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    initial_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    current_now = initial_now
+
+    def clock() -> datetime:
+        return current_now
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(seconds=1),
+        clock=clock,
+    )
+    current_now = initial_now + timedelta(seconds=2)
+    original_dispatch = router.dispatch
+
+    def flaky_dispatch(message):
+        if getattr(message, "category", "") == "health":
+            raise RuntimeError("health dispatch boom")
+        return original_dispatch(message)
+
+    router.dispatch = flaky_dispatch  # type: ignore[assignment]
+
+    with caplog.at_level(logging.ERROR):
+        results = controller.process_signals([_signal("BUY")])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    assert "health-check" in caplog.text.lower()

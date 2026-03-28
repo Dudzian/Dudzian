@@ -411,6 +411,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
 
         task = self._async_task
         if task is None:
+            self._unregister_instance()
             return
         if not task.done():
             task.cancel()

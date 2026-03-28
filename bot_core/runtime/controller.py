@@ -594,7 +594,23 @@ class TradingController:
                 self._ai_failover_reason = None
             return False
 
-        status = monitor.snapshot()
+        try:
+            status = monitor.snapshot()
+        except Exception as exc:  # pragma: no cover - defensywnie wobec monitorów zewnętrznych
+            _LOGGER.exception("AI health monitor snapshot failed")
+            self._ai_health_status = None
+            reason = "ai_health_snapshot_error"
+            if not self._ai_failover_active:
+                self._ai_failover_active = True
+                self._ai_failover_reason = reason
+                self._record_decision_event(
+                    "ai_failover",
+                    status="activated",
+                    metadata={"reason": reason, "error": str(exc)},
+                )
+            elif not self._ai_failover_reason:
+                self._ai_failover_reason = reason
+            return True
         self._ai_health_status = status
         degraded = bool(status.degraded or status.backend_degraded or status.quality_failures > 0)
         reason = status.reason or ("backend_degraded" if status.backend_degraded else None)
@@ -776,7 +792,11 @@ class TradingController:
             },
         )
         _LOGGER.info("Publikuję raport health-check (%s kanałów)", len(snapshot))
-        self.alert_router.dispatch(message)
+        try:
+            self.alert_router.dispatch(message)
+        except Exception:  # pragma: no cover - diagnostyka kanałów alertowych
+            _LOGGER.exception("Nie udało się wysłać raportu health-check")
+            return
         self._last_health_report = now
         self._metric_health_reports.inc(labels=self._metric_labels)
 

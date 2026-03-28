@@ -1,7 +1,8 @@
+import asyncio
 import pytest
 
 from bot_core.exchanges.streaming import StreamBatch
-from bot_core.runtime.pipeline import consume_stream
+from bot_core.runtime.pipeline import consume_stream, consume_stream_async
 
 
 class _ClosableStream:
@@ -17,6 +18,57 @@ class _ClosableStream:
 
     def close(self) -> None:  # noqa: D401
         self.close_calls += 1
+
+
+class _DualCloseSyncIterator:
+    def __init__(self, stream: "_DualCloseSyncStream") -> None:
+        self._iterator = iter(stream._batches)
+        self.close = stream.close
+
+    def __iter__(self) -> "_DualCloseSyncIterator":
+        return self
+
+    def __next__(self) -> StreamBatch:
+        return next(self._iterator)
+
+
+class _DualCloseSyncStream:
+    def __init__(self, batches: list[StreamBatch]):
+        self._batches = batches
+        self.close_calls = 0
+
+    def __iter__(self) -> _DualCloseSyncIterator:
+        return _DualCloseSyncIterator(self)
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+class _DualCloseAsyncIterator:
+    def __init__(self, stream: "_DualCloseAsyncStream") -> None:
+        self._iterator = iter(stream._batches)
+        self.aclose = stream.aclose
+
+    def __aiter__(self) -> "_DualCloseAsyncIterator":
+        return self
+
+    async def __anext__(self) -> StreamBatch:
+        try:
+            return next(self._iterator)
+        except StopIteration as exc:  # pragma: no cover - standard async iterator contract
+            raise StopAsyncIteration from exc
+
+
+class _DualCloseAsyncStream:
+    def __init__(self, batches: list[StreamBatch]):
+        self._batches = batches
+        self.aclose_calls = 0
+
+    def __aiter__(self) -> _DualCloseAsyncIterator:
+        return _DualCloseAsyncIterator(self)
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
 
 
 def test_consume_stream_processes_events_and_heartbeats() -> None:
@@ -98,3 +150,38 @@ def test_consume_stream_closes_stream_on_exception() -> None:
         )
 
     assert stream.close_calls == 1
+
+
+def test_consume_stream_deduplicates_stream_and_iterator_close() -> None:
+    stream = _DualCloseSyncStream(
+        [StreamBatch(channel="ticker", events=({"price": 10.0},), received_at=0.0)]
+    )
+
+    consume_stream(
+        stream,
+        handle_batch=lambda batch: None,
+        heartbeat_interval=1.0,
+        idle_timeout=30.0,
+        clock=lambda: 0.0,
+    )
+
+    assert stream.close_calls == 1
+
+
+def test_consume_stream_async_deduplicates_stream_and_iterator_aclose() -> None:
+    stream = _DualCloseAsyncStream(
+        [StreamBatch(channel="ticker", events=({"price": 10.0},), received_at=0.0)]
+    )
+
+    async def _run() -> None:
+        await consume_stream_async(
+            stream,
+            handle_batch=lambda batch: None,
+            heartbeat_interval=1.0,
+            idle_timeout=30.0,
+            clock=lambda: 0.0,
+        )
+
+    asyncio.run(_run())
+
+    assert stream.aclose_calls == 1

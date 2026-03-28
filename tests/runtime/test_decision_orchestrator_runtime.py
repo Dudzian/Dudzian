@@ -7,6 +7,7 @@ from typing import Deque, Mapping, Sequence
 import pytest
 
 from bot_core.decision import DecisionContext, DecisionEvaluation
+from bot_core.runtime.journal import TradingDecisionEvent
 from bot_core.runtime.pipeline import DecisionAwareSignalSink, InMemoryStrategySignalSink
 from bot_core.strategies.base import StrategySignal
 
@@ -49,6 +50,14 @@ class _StubRiskEngine:
     ) -> Mapping[str, object]:  # pragma: no cover - prosty stub
         self.requested_profiles.append(profile)
         return dict(self._snapshot)
+
+
+class _CollectingJournal:
+    def __init__(self) -> None:
+        self.events: list[TradingDecisionEvent] = []
+
+    def record(self, event: TradingDecisionEvent) -> None:
+        self.events.append(event)
 
 
 def test_decision_orchestrator_runtime_filters_and_summarizes() -> None:
@@ -333,3 +342,228 @@ def test_decision_orchestrator_runtime_filters_and_summarizes() -> None:
     assert summary["std_model_expected_return_bps"] == pytest.approx(4.5)
     assert summary["std_model_expected_value_bps"] == pytest.approx(3.87)
     assert summary["std_model_expected_value_minus_cost_bps"] == pytest.approx(4.295)
+
+
+def test_decision_orchestrator_runtime_skips_invalid_evaluation_without_crashing(caplog) -> None:
+    class _InvalidEvaluationOrchestrator:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def evaluate_candidate(self, candidate, context):  # pragma: no cover - prosty stub
+            self.calls += 1
+            if self.calls == 1:
+                return object()
+            return DecisionEvaluation(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=1.0,
+                net_edge_bps=2.0,
+            )
+
+    orchestrator = _InvalidEvaluationOrchestrator()
+    risk_engine = _StubRiskEngine({"equity": 100_000})
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=orchestrator,
+        risk_engine=risk_engine,
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.2,
+    )
+
+    timestamp = datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc)
+    signals = (
+        StrategySignal(
+            symbol="BTCUSDT",
+            side="BUY",
+            confidence=0.9,
+            metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+        ),
+        StrategySignal(
+            symbol="ETHUSDT",
+            side="BUY",
+            confidence=0.9,
+            metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        sink.submit(
+            strategy_name="trend-d1",
+            schedule_name="trend-d1",
+            risk_profile="balanced",
+            timestamp=timestamp,
+            signals=signals,
+        )
+
+    exported = sink.export()
+    assert len(exported) == 1
+    _, accepted = exported[0]
+    assert [signal.symbol for signal in accepted] == ["ETHUSDT"]
+    assert "niepoprawną ewaluację" in caplog.text.lower()
+
+
+def test_decision_orchestrator_runtime_records_audit_event_for_orchestrator_exception() -> None:
+    class _ExplodingOrchestrator:
+        def evaluate_candidate(self, candidate, context):  # pragma: no cover - prosty stub
+            raise RuntimeError("orchestrator boom")
+
+    journal = _CollectingJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_ExplodingOrchestrator(),
+        risk_engine=_StubRiskEngine({"equity": 100_000}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.2,
+        journal=journal,
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+    )
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    assert journal.events
+    event = journal.events[-1]
+    assert event.event_type == "decision_evaluation"
+    assert event.status == "filtered"
+    assert event.metadata.get("decision_reason") == "orchestrator_exception"
+
+
+def test_decision_orchestrator_runtime_uses_empty_snapshot_on_snapshot_state_error() -> None:
+    class _ExplodingRiskEngine:
+        def snapshot_state(self, profile: str):  # pragma: no cover - prosty stub
+            raise RuntimeError("snapshot error")
+
+    class _CapturingOrchestrator:
+        def __init__(self) -> None:
+            self.snapshots: list[Mapping[str, object]] = []
+
+        def evaluate_candidate(self, candidate, context):  # pragma: no cover - prosty stub
+            self.snapshots.append(dict(getattr(context, "risk_snapshot", {}) or {}))
+            return DecisionEvaluation(
+                candidate=candidate,
+                accepted=False,
+                cost_bps=1.0,
+                net_edge_bps=-1.0,
+                reasons=("no_edge",),
+            )
+
+    orchestrator = _CapturingOrchestrator()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=orchestrator,
+        risk_engine=_ExplodingRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.2,
+    )
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(
+            StrategySignal(
+                symbol="BTCUSDT",
+                side="BUY",
+                confidence=0.9,
+                metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+            ),
+        ),
+    )
+
+    assert orchestrator.snapshots == [{}]
+
+
+def test_decision_orchestrator_runtime_mixed_sequence_preserves_batch_and_audit_order() -> None:
+    class _MixedOutcomeOrchestrator:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def evaluate_candidate(self, candidate, context):  # pragma: no cover - prosty stub
+            self.calls += 1
+            if self.calls == 1:
+                return object()
+            if self.calls == 2:
+                raise RuntimeError("orchestrator boom")
+            return DecisionEvaluation(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=1.0,
+                net_edge_bps=3.0,
+                reasons=(),
+            )
+
+    journal = _CollectingJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_MixedOutcomeOrchestrator(),
+        risk_engine=_StubRiskEngine({"equity": 100_000}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.2,
+        journal=journal,
+    )
+
+    signals = (
+        StrategySignal(
+            symbol="BTCUSDT",
+            side="BUY",
+            confidence=0.9,
+            metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+        ),
+        StrategySignal(
+            symbol="ETHUSDT",
+            side="BUY",
+            confidence=0.9,
+            metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+        ),
+        StrategySignal(
+            symbol="SOLUSDT",
+            side="BUY",
+            confidence=0.9,
+            metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+        ),
+    )
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=signals,
+    )
+
+    exported = sink.export()
+    assert len(exported) == 1
+    _, accepted_signals = exported[0]
+    assert [signal.symbol for signal in accepted_signals] == ["SOLUSDT"]
+
+    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    assert [event.symbol for event in decision_events] == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    assert [event.status for event in decision_events] == ["filtered", "filtered", "accepted"]
+    assert decision_events[0].metadata.get("decision_reason") == "invalid_evaluation"
+    assert decision_events[1].metadata.get("decision_reason") == "orchestrator_exception"
+    assert decision_events[2].metadata.get("decision_status") == "accepted"
+
+    history = sink.evaluation_history(include_candidates=True)
+    assert len(history) == 1
+    assert history[0]["accepted"] is True
+    assert history[0]["candidate"]["symbol"] == "SOLUSDT"
