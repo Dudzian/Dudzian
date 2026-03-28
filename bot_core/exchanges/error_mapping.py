@@ -145,7 +145,8 @@ _DERIBIT_THROTTLE_CODES = {
 }
 
 _DERIBIT_AUTH_KEYWORDS = (
-    "auth",
+    "authorization",
+    "authentication",
     "sign",
     "permission",
     "privilege",
@@ -513,6 +514,12 @@ def _parse_int(value: object) -> int | None:
     return None
 
 
+def _coerce_positive_status(status_code: object) -> int | None:
+    if isinstance(status_code, int) and status_code > 0:
+        return status_code
+    return None
+
+
 def raise_for_kraken_error(
     *, payload: Mapping[str, object], default_message: str, status_code: int = 400
 ) -> None:
@@ -694,27 +701,29 @@ def raise_for_nowa_gielda_error(*, status_code: int, payload: object, default_me
     )
 
 
-def raise_for_deribit_error(
-    *, status_code: int, payload: Mapping[str, object], default_message: str
-) -> None:
+def raise_for_deribit_error(*, status_code: int | None, payload: object, default_message: str) -> None:
     """Mapuje odpowiedź Deribit na wyjątki domenowe."""
 
-    message = default_message
-    code = _parse_int(payload.get("code"))
-    error_section = payload.get("error")
-    if isinstance(error_section, Mapping):
-        code = _parse_int(error_section.get("code")) or code
-        message = str(error_section.get("message") or message)
-        data = error_section.get("data")
-        if isinstance(data, Mapping) and not code:
-            code = _parse_int(data.get("error")) or _parse_int(data.get("code"))
-        elif isinstance(data, (str, bytes)):
-            try:
-                extra = json.loads(data)
-            except (TypeError, ValueError):  # pragma: no cover - dane bez JSON
-                extra = None
-            if isinstance(extra, Mapping) and not code:
-                code = _parse_int(extra.get("code"))
+    message = next(_iter_error_messages(payload), default_message)
+    code = None
+    if isinstance(payload, Mapping):
+        code = _parse_int(payload.get("code"))
+        error_section = payload.get("error")
+        if isinstance(error_section, Mapping):
+            code = _parse_int(error_section.get("code")) or code
+            message = str(error_section.get("message") or message)
+            data = error_section.get("data")
+            if isinstance(data, Mapping) and not code:
+                code = _parse_int(data.get("error")) or _parse_int(data.get("code"))
+            elif isinstance(data, (str, bytes)):
+                try:
+                    extra = json.loads(data)
+                except (TypeError, ValueError):  # pragma: no cover - dane bez JSON
+                    extra = None
+                if isinstance(extra, Mapping) and not code:
+                    code = _parse_int(extra.get("code"))
+
+    effective_status = _coerce_positive_status(status_code)
 
     normalized = message.lower()
     if (
@@ -722,7 +731,7 @@ def raise_for_deribit_error(
         or code in _DERIBIT_AUTH_CODES
         or any(keyword in normalized for keyword in _DERIBIT_AUTH_KEYWORDS)
     ):
-        raise ExchangeAuthError(message=message, status_code=status_code or 401, payload=payload)
+        raise ExchangeAuthError(message=message, status_code=effective_status or 401, payload=payload)
 
     if (
         status_code in {418, 429}
@@ -730,37 +739,44 @@ def raise_for_deribit_error(
         or any(keyword in normalized for keyword in _DERIBIT_THROTTLE_KEYWORDS)
     ):
         raise ExchangeThrottlingError(
-            message=message, status_code=status_code or 429, payload=payload
+            message=message, status_code=effective_status or 429, payload=payload
         )
 
-    raise ExchangeAPIError(message=message, status_code=status_code or 500, payload=payload)
+    raise ExchangeAPIError(message=message, status_code=effective_status or 500, payload=payload)
 
 
 def raise_for_bitmex_error(
-    *, status_code: int, payload: Mapping[str, object], default_message: str
+    *, status_code: int | None, payload: object, default_message: str
 ) -> None:
     """Mapuje błędy BitMEX na wyjątki domenowe."""
 
-    message = default_message
-    code = _parse_int(payload.get("errorCode"))
-    error_section = payload.get("error")
+    message = next(_iter_error_messages(payload), default_message)
+    code = None
     name = None
-    if isinstance(error_section, Mapping):
-        name_value = error_section.get("name")
-        if isinstance(name_value, str):
-            name = name_value.strip().lower()
-        message_value = error_section.get("message")
-        if isinstance(message_value, (str, bytes)):
-            message = next(_iter_error_messages(message_value), message)
-        code = _parse_int(error_section.get("code")) or code
+    if isinstance(payload, Mapping):
+        code = _parse_int(payload.get("errorCode"))
+        error_section = payload.get("error")
+        if isinstance(error_section, Mapping):
+            name_value = error_section.get("name")
+            if isinstance(name_value, str):
+                name = name_value.strip().lower()
+            message_value = error_section.get("message")
+            if isinstance(message_value, (str, bytes)):
+                message = next(_iter_error_messages(message_value), message)
+            code = _parse_int(error_section.get("code")) or code
+
+    effective_status = _coerce_positive_status(status_code)
 
     normalized_message = message.lower()
     if (
         status_code in {401, 403}
         or name in _BITMEX_AUTH_NAMES
-        or any(keyword in normalized_message for keyword in ("auth", "signature", "permission"))
+        or any(
+            keyword in normalized_message
+            for keyword in ("authorization", "authentication", "signature", "permission")
+        )
     ):
-        raise ExchangeAuthError(message=message, status_code=status_code or 401, payload=payload)
+        raise ExchangeAuthError(message=message, status_code=effective_status or 401, payload=payload)
 
     if (
         status_code in {418, 429}
@@ -769,10 +785,10 @@ def raise_for_bitmex_error(
         or any(keyword in normalized_message for keyword in _BITMEX_THROTTLE_KEYWORDS)
     ):
         raise ExchangeThrottlingError(
-            message=message, status_code=status_code or 429, payload=payload
+            message=message, status_code=effective_status or 429, payload=payload
         )
 
-    raise ExchangeAPIError(message=message, status_code=status_code or 500, payload=payload)
+    raise ExchangeAPIError(message=message, status_code=effective_status or 500, payload=payload)
 
 
 __all__ = [

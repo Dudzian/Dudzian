@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials
+from bot_core.exchanges.bitmex import BitmexFuturesAdapter
 from bot_core.exchanges.deribit import DeribitFuturesAdapter, DeribitSpotAdapter
 from bot_core.exchanges.errors import ExchangeAPIError, ExchangeAuthError, ExchangeThrottlingError
 from bot_core.exchanges.streaming import LocalLongPollStream
@@ -75,7 +76,7 @@ def test_deribit_futures_stream_defaults_per_environment() -> None:
 
 
 class _ErrorClient:
-    def __init__(self, payload: str, *, status: int = 400) -> None:
+    def __init__(self, payload: object, *, status: int | None = 400) -> None:
         self.payload = payload
         self.status = status
 
@@ -105,3 +106,145 @@ def test_deribit_futures_maps_rate_limit_errors() -> None:
     adapter.configure_network(ip_allowlist=())
     with pytest.raises(ExchangeThrottlingError):
         adapter.fetch_account_snapshot()
+
+
+def test_deribit_futures_maps_plain_text_auth_without_status() -> None:
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("authorization invalid", status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAuthError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 401
+
+
+def test_deribit_futures_maps_list_payload_rate_limit_without_status() -> None:
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient(["Too many requests"], status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 429
+
+
+def test_deribit_futures_keeps_api_error_for_missing_payload_without_status() -> None:
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient(None, status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 500
+
+
+def test_deribit_futures_maps_bytes_payload_rate_limit_without_status() -> None:
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient(b"Too many requests", status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 429
+
+
+def test_deribit_futures_maps_json_array_string_payload() -> None:
+    payload = '[{"message": "authorization invalid"}]'
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient(payload, status=0),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAuthError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 401
+
+
+def test_deribit_futures_neutral_plain_text_503_stays_api_error() -> None:
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("upstream node returned nonsense", status=503),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert not isinstance(exc_info.value, (ExchangeAuthError, ExchangeThrottlingError))
+    assert exc_info.value.status_code == 503
+
+
+def test_deribit_futures_none_status_falls_back_without_type_error() -> None:
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("authorization invalid", status=None),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAuthError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 401
+
+
+def test_deribit_futures_auth_like_neutral_plain_text_stays_api_error() -> None:
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("author service metadata mismatch", status=503),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert not isinstance(exc_info.value, (ExchangeAuthError, ExchangeThrottlingError))
+    assert exc_info.value.status_code == 503
+
+
+def test_deribit_futures_throttle_like_neutral_plain_text_stays_api_error() -> None:
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient("rate-limiter dashboard unavailable", status=503),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert not isinstance(exc_info.value, (ExchangeAuthError, ExchangeThrottlingError))
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.parametrize(
+    ("adapter_cls", "payload"),
+    (
+        (DeribitFuturesAdapter, b"upstream node returned nonsense"),
+        (BitmexFuturesAdapter, b"upstream node returned nonsense"),
+    ),
+)
+def test_futures_adapters_bytes_neutral_payload_stays_api_error(adapter_cls, payload) -> None:
+    adapter = adapter_cls(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=_ErrorClient(payload, status=503),
+    )
+    adapter.configure_network(ip_allowlist=())
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert not isinstance(exc_info.value, (ExchangeAuthError, ExchangeThrottlingError))
+    assert exc_info.value.status_code == 503
