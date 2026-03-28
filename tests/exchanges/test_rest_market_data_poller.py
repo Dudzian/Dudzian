@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -50,6 +51,74 @@ def test_rest_market_data_poller_collects_snapshot() -> None:
     assert entry["instrument"]["symbol"] == "BTC/USDT"
     assert entry["price_step"] == 0.1
     assert entry["max_amount"] == 5.0
+
+
+def test_refresh_now_isolates_exchange_failures(caplog: pytest.LogCaptureFixture) -> None:
+    class _FailingManager:
+        def __init__(self) -> None:
+            self._public = _FakePublic()
+
+        def load_markets(self):
+            class _BrokenRules:
+                price_step = "broken"
+                amount_step = 0.01
+                min_notional = 5.0
+                min_amount = 0.001
+
+            return {"BTC/USDT": _BrokenRules()}
+
+    good_manager = _FakeManager()
+    poller = RestMarketDataPoller(
+        ["broken", "binance"],
+        manager_lookup={"BROKEN": _FailingManager(), "BINANCE": good_manager},
+        interval=0.01,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        poller.refresh_now()
+
+    assert poller.snapshot("binance")
+    assert poller.snapshot("broken") == []
+    assert "Nie udało się odświeżyć danych dla BROKEN" in caplog.text
+
+
+def test_snapshot_returns_deep_copy_for_nested_payloads() -> None:
+    manager = _FakeManager()
+    poller = RestMarketDataPoller(["binance"], manager_lookup={"BINANCE": manager}, interval=0.01)
+    poller.refresh_now()
+
+    snapshot = poller.snapshot("binance")
+    snapshot[0]["instrument"]["symbol"] = "MUTATED"
+    snapshot[0]["price_step"] = 999
+
+    fresh = poller.snapshot("binance")
+    assert fresh[0]["instrument"]["symbol"] == "BTC/USDT"
+    assert fresh[0]["price_step"] == 0.1
+
+
+def test_stop_does_not_clear_thread_reference_when_thread_is_still_alive(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _HangingThread:
+        def __init__(self) -> None:
+            self.join_calls: list[float] = []
+
+        def is_alive(self) -> bool:
+            return True
+
+        def join(self, timeout: float | None = None) -> None:
+            self.join_calls.append(timeout if timeout is not None else -1.0)
+
+    poller = RestMarketDataPoller(["binance"], manager_lookup={"BINANCE": _FakeManager()}, interval=0.5)
+    thread = _HangingThread()
+    poller._thread = thread  # pylint: disable=protected-access
+
+    with caplog.at_level(logging.WARNING):
+        poller.stop()
+
+    assert thread.join_calls == [1.5]
+    assert poller._thread is thread  # pylint: disable=protected-access
+    assert "Wątek pollera REST nie zakończył pracy" in caplog.text
 
 
 def test_rest_market_data_poller_applies_environment_profile(
@@ -200,6 +269,11 @@ def test_rest_market_data_poller_integrates_with_exchange_profiles(
     monkeypatch.setattr(manager_module, "PaperBackend", _StubPaperBackend)
     monkeypatch.setattr(manager_module, "PaperMarginSimulator", _StubPaperBackend)
     monkeypatch.setattr(manager_module, "PaperFuturesSimulator", _StubPaperBackend)
+    monkeypatch.setattr(
+        manager_module.ExchangeManager,
+        "_rebuild_strategy_contexts",
+        lambda self: None,
+    )
 
     _StubPaperBackend.created.clear()
     manager_module._EXCHANGE_PROFILE_CACHE.clear()

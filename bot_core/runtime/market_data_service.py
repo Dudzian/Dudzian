@@ -7,6 +7,7 @@ danych rynku w środowiskach, gdzie stuby gRPC nie są dostępne.
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import threading
@@ -434,15 +435,24 @@ class RestMarketDataPoller:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=self._interval + 1.0)
-            self._thread = None
+            if self._thread.is_alive():
+                self._logger.warning(
+                    "Wątek pollera REST nie zakończył pracy po timeout=%.2fs",
+                    self._interval + 1.0,
+                )
+            else:
+                self._thread = None
 
     def refresh_now(self) -> None:
         for exchange in self._exchanges:
-            self._update_exchange(exchange)
+            try:
+                self._update_exchange(exchange)
+            except Exception:  # pragma: no cover - testowane przez ścieżki błędów
+                self._logger.exception("Nie udało się odświeżyć danych dla %s", exchange)
 
     def snapshot(self, exchange: str) -> list[Dict[str, Any]]:
         with self._lock:
-            return [dict(item) for item in self._snapshots.get(exchange.upper(), [])]
+            return copy.deepcopy(self._snapshots.get(exchange.upper(), []))
 
     # ------------------------------------------------------------------
     # Internal helpers

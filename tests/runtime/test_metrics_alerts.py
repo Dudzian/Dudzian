@@ -197,6 +197,178 @@ def test_cloud_alert_channel_sends_payload(monkeypatch: pytest.MonkeyPatch) -> N
     assert payload["environment"] == "prod"
 
 
+def test_cloud_alert_channel_works_without_global_grpc_when_factories_injected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if metrics_alerts.struct_pb2 is None or metrics_alerts.timestamp_pb2 is None:
+        pytest.skip("protobuf structs not available")
+
+    monkeypatch.setattr(metrics_alerts, "grpc", None, raising=False)
+    selection = SimpleNamespace(
+        profile_name="remote",
+        client=SimpleNamespace(
+            address="127.0.0.1:5000",
+            use_tls=False,
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+        ),
+    )
+    published: list[dict[str, object]] = []
+
+    class _Stub:
+        def PublishAlert(self, request, metadata=None, timeout=None) -> None:  # pragma: no cover
+            payload = json_format.MessageToDict(request)
+            payload["metadata"] = metadata or []
+            payload["timeout"] = timeout
+            published.append(payload)
+
+    channel = metrics_alerts._CloudAlertChannel(
+        selection,
+        environment="prod",
+        channel_factory=lambda _addr: object(),
+        stub_factory=lambda _channel: _Stub(),
+    )
+
+    channel.send(
+        AlertMessage(
+            category="ui.feed.health",
+            title="Latency threshold exceeded",
+            body="p95 4.2s",
+            severity="critical",
+            context={"metric": "latency", "adapter": "grpc"},
+        )
+    )
+
+    assert published, "Injected factories should bypass global grpc optional dependency"
+
+
+def test_cloud_alert_channel_reports_clear_error_when_timestamp_pb2_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if metrics_alerts.struct_pb2 is None:
+        pytest.skip("protobuf structs not available")
+
+    selection = SimpleNamespace(
+        profile_name="remote",
+        client=SimpleNamespace(
+            address="127.0.0.1:5000",
+            use_tls=False,
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+        ),
+    )
+
+    monkeypatch.setattr(metrics_alerts, "timestamp_pb2", None, raising=False)
+    channel = metrics_alerts._CloudAlertChannel(
+        selection,
+        environment="prod",
+        channel_factory=lambda _addr: object(),
+        stub_factory=lambda _channel: SimpleNamespace(PublishAlert=lambda *_a, **_k: None),
+    )
+
+    with pytest.raises(metrics_alerts.AlertDeliveryError, match="timestamp_pb2"):
+        channel.send(
+            AlertMessage(
+                category="ui.feed.health",
+                title="Latency threshold exceeded",
+                body="p95 4.2s",
+                severity="critical",
+                context={"metric": "latency"},
+            )
+        )
+
+
+def test_cloud_alert_channel_init_failure_marks_health_degraded() -> None:
+    if metrics_alerts.struct_pb2 is None or metrics_alerts.timestamp_pb2 is None:
+        pytest.skip("protobuf structs not available")
+
+    selection = SimpleNamespace(
+        profile_name="remote",
+        client=SimpleNamespace(
+            address="127.0.0.1:5000",
+            use_tls=False,
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+        ),
+    )
+    channel = metrics_alerts._CloudAlertChannel(
+        selection,
+        environment="prod",
+        channel_factory=lambda _addr: (_ for _ in ()).throw(RuntimeError("channel init boom")),
+        stub_factory=lambda _channel: SimpleNamespace(PublishAlert=lambda *_a, **_k: None),
+    )
+
+    with pytest.raises(metrics_alerts.AlertDeliveryError):
+        channel.send(
+            AlertMessage(
+                category="ui.feed.health",
+                title="Latency threshold exceeded",
+                body="p95 4.2s",
+                severity="critical",
+                context={"metric": "latency"},
+            )
+        )
+
+    health = channel.health_check()
+    assert health["status"] == "degraded"
+
+
+def test_cloud_alert_channel_health_recovers_after_successful_send() -> None:
+    if metrics_alerts.struct_pb2 is None or metrics_alerts.timestamp_pb2 is None:
+        pytest.skip("protobuf structs not available")
+
+    selection = SimpleNamespace(
+        profile_name="remote",
+        client=SimpleNamespace(
+            address="127.0.0.1:5000",
+            use_tls=False,
+            metadata={},
+            metadata_env={},
+            metadata_files={},
+        ),
+    )
+    attempts = {"count": 0}
+
+    def _channel_factory(_addr: str):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("channel init boom")
+        return object()
+
+    channel = metrics_alerts._CloudAlertChannel(
+        selection,
+        environment="prod",
+        channel_factory=_channel_factory,
+        stub_factory=lambda _channel: SimpleNamespace(PublishAlert=lambda *_a, **_k: None),
+    )
+
+    with pytest.raises(metrics_alerts.AlertDeliveryError):
+        channel.send(
+            AlertMessage(
+                category="ui.feed.health",
+                title="first",
+                body="fail",
+                severity="warning",
+                context={},
+            )
+        )
+    assert channel.health_check()["status"] == "degraded"
+
+    channel.send(
+        AlertMessage(
+            category="ui.feed.health",
+            title="second",
+            body="ok",
+            severity="info",
+            context={},
+        )
+    )
+    assert channel.health_check()["status"] == "ok"
+
+
 def test_build_cloud_alert_channel_registers_remote_profile(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
