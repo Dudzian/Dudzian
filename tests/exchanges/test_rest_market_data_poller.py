@@ -109,7 +109,9 @@ def test_stop_does_not_clear_thread_reference_when_thread_is_still_alive(
         def join(self, timeout: float | None = None) -> None:
             self.join_calls.append(timeout if timeout is not None else -1.0)
 
-    poller = RestMarketDataPoller(["binance"], manager_lookup={"BINANCE": _FakeManager()}, interval=0.5)
+    poller = RestMarketDataPoller(
+        ["binance"], manager_lookup={"BINANCE": _FakeManager()}, interval=0.5
+    )
     thread = _HangingThread()
     poller._thread = thread  # pylint: disable=protected-access
 
