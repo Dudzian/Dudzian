@@ -116,12 +116,17 @@ def test_perform_cloud_handshake_respects_metadata_override_contract(
     identity = SimpleNamespace(license_id="LIC-1", fingerprint="HW-1")
 
     monkeypatch.setattr("bot_core.runtime.cloud_client._build_channel", lambda *_: _DummyChannel())
-    monkeypatch.setattr("bot_core.runtime.cloud_client.sign_license_payload", lambda *_, **__: {
-        "algorithm": "HMAC",
-        "value": "sig",
-        "key_id": "k1",
-    })
-    monkeypatch.setattr("bot_core.runtime.cloud_client.trading_pb2_grpc.CloudAuthServiceStub", _Stub)
+    monkeypatch.setattr(
+        "bot_core.runtime.cloud_client.sign_license_payload",
+        lambda *_, **__: {
+            "algorithm": "HMAC",
+            "value": "sig",
+            "key_id": "k1",
+        },
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.cloud_client.trading_pb2_grpc.CloudAuthServiceStub", _Stub
+    )
 
     result = perform_cloud_handshake(
         options,
