@@ -171,12 +171,24 @@ class BitmexFuturesAdapter(CCXTLongPollMixin, WatchdogCCXTAdapter):
                     return parsed
         return None
 
-    def _call_client(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+    def _call_client(
+        self,
+        method_name: str,
+        *args: Any,
+        retry: bool = True,
+        **kwargs: Any,
+    ) -> Any:
         operation = f"{self.name}.{method_name}"
         try:
+            if not retry:
+                return super(WatchdogCCXTAdapter, self)._call_client(
+                    method_name, *args, retry=False, **kwargs
+                )
             return self._watchdog.execute(  # type: ignore[attr-defined]
                 operation,
-                lambda: super(WatchdogCCXTAdapter, self)._call_client(method_name, *args, **kwargs),
+                lambda: super(WatchdogCCXTAdapter, self)._call_client(
+                    method_name, *args, retry=True, **kwargs
+                ),
             )
         except ExchangeAPIError as exc:
             payload = self._decode_error_payload(exc.payload)
