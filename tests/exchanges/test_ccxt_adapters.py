@@ -556,6 +556,177 @@ def test_place_order_injects_anchor_and_raises_on_reconcile_miss_without_resubmi
     assert client._calls["fetch_open_orders"] == 1
 
 
+_FUTURES_MARGIN_ADAPTERS = (
+    BybitFuturesAdapter,
+    BybitMarginAdapter,
+    CoinbaseFuturesAdapter,
+    CoinbaseMarginAdapter,
+    OKXFuturesAdapter,
+    OKXMarginAdapter,
+)
+
+
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
+def test_futures_margin_cancel_normalizes_obvious_idempotent_api_error(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s", passphrase="p")
+    client = _CancelApiErrorClient(
+        status_code=404,
+        payload='{"error":{"message":"Order not found"}}',
+    )
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.cancel_order("order-404", symbol="BTC/USDT")
+
+    assert client._calls["cancel_order"] == 1
+    assert client._cancelled == [("order-404", "BTC/USDT")]
+
+
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
+def test_futures_margin_cancel_ambiguous_network_error_resolves_when_order_absent(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    cancel_error = ExchangeNetworkError("cancel timeout")
+    client = _AmbiguousCancelClient(cancel_error=cancel_error, open_orders=[])
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.cancel_order("order-amb", symbol="BTC/USDT")
+
+    assert client._calls["cancel_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
+def test_futures_margin_cancel_ambiguous_5xx_raises_original_when_order_still_open(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    cancel_error = ExchangeAPIError("cancel ambiguous", status_code=503, payload="upstream timeout")
+    client = _AmbiguousCancelClient(
+        cancel_error=cancel_error,
+        open_orders=[{"id": "order-open"}],
+    )
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.cancel_order("order-open", symbol="BTC/USDT")
+
+    assert exc_info.value is cancel_error
+    assert client._calls["cancel_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
+def test_futures_margin_cancel_ambiguous_read_failure_raises_original(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    cancel_error = ExchangeThrottlingError("cancel throttled", status_code=429)
+    client = _AmbiguousCancelClient(
+        cancel_error=cancel_error,
+        open_orders_error=ExchangeNetworkError("read failed"),
+    )
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.cancel_order("order-unknown", symbol="BTC/USDT")
+
+    assert exc_info.value is cancel_error
+    assert client._calls["cancel_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
+def test_futures_margin_adapters_inject_client_anchor_into_create_params(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _AmbiguousCreateClient(open_orders=[])
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "network_error_types": (_CustomNetworkError,),
+            "client_order_id_param": "testAnchorKey",
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter.place_order(
+            OrderRequest(
+                symbol="BTC/USDT",
+                side="buy",
+                quantity=1.0,
+                order_type="limit",
+                price=10.5,
+                client_order_id="anchor-inject-1",
+            )
+        )
+
+    assert client.last_create_params is not None
+    assert client.last_create_params["testAnchorKey"] == "anchor-inject-1"
+    assert client._calls["create_order"] == 1
+
+
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
+def test_futures_margin_adapters_ambiguous_create_reconcile_uses_single_submit(adapter_cls):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _AmbiguousCreateClient(
+        open_orders=[
+            {
+                "id": "resolved-fm-1",
+                "status": "open",
+                "amount": 1.0,
+                "remaining": 0.4,
+                "filled": 0.6,
+                "price": 10.5,
+                "clientOrderId": "anchor-reconcile-1",
+            }
+        ]
+    )
+    adapter = adapter_cls(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "network_error_types": (_CustomNetworkError,),
+            "client_order_id_param": "testAnchorKey",
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    result = adapter.place_order(
+        OrderRequest(
+            symbol="BTC/USDT",
+            side="buy",
+            quantity=1.0,
+            order_type="limit",
+            price=10.5,
+            client_order_id="anchor-reconcile-1",
+        )
+    )
+
+    assert result.order_id == "resolved-fm-1"
+    assert client.last_create_params is not None
+    assert client.last_create_params["testAnchorKey"] == "anchor-reconcile-1"
+    assert client._calls["create_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
 def test_kucoin_adapter_merges_nested_settings():
     credentials = ExchangeCredentials(key_id="k", secret="s")
     client = _FakeClient()
@@ -758,17 +929,7 @@ def test_huobi_adapter_keeps_default_exchange_id():
     assert adapter._exchange_id == "huobi"
 
 
-_WATCHDOG_FUTURES_MARGIN_ADAPTERS = (
-    BybitFuturesAdapter,
-    BybitMarginAdapter,
-    CoinbaseFuturesAdapter,
-    CoinbaseMarginAdapter,
-    OKXFuturesAdapter,
-    OKXMarginAdapter,
-)
-
-
-@pytest.mark.parametrize("adapter_cls", _WATCHDOG_FUTURES_MARGIN_ADAPTERS)
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
 def test_watchdog_futures_margin_mutations_do_not_retry_explosion(adapter_cls):
     credentials = ExchangeCredentials(key_id="k", secret="s")
     client = _WatchdogMutationClient()
@@ -806,7 +967,7 @@ def test_watchdog_futures_margin_mutations_do_not_retry_explosion(adapter_cls):
     assert client.cancel_attempts == 1
 
 
-@pytest.mark.parametrize("adapter_cls", _WATCHDOG_FUTURES_MARGIN_ADAPTERS)
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
 def test_watchdog_futures_margin_reads_keep_current_retry_semantics(adapter_cls):
     credentials = ExchangeCredentials(key_id="k", secret="s")
     client = _WatchdogReadClient()
@@ -833,7 +994,7 @@ def test_watchdog_futures_margin_reads_keep_current_retry_semantics(adapter_cls)
     assert client.read_attempts == 3
 
 
-@pytest.mark.parametrize("adapter_cls", _WATCHDOG_FUTURES_MARGIN_ADAPTERS)
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
 def test_watchdog_retry_true_read_path_uses_watchdog_without_super_runtime_error(adapter_cls):
     credentials = ExchangeCredentials(key_id="k", secret="s")
     client = _WatchdogReadClient()
@@ -870,7 +1031,7 @@ def test_watchdog_retry_true_read_path_uses_watchdog_without_super_runtime_error
     assert watchdog.operations == [f"{adapter.name}.fetch_ohlcv"]
 
 
-@pytest.mark.parametrize("adapter_cls", _WATCHDOG_FUTURES_MARGIN_ADAPTERS)
+@pytest.mark.parametrize("adapter_cls", _FUTURES_MARGIN_ADAPTERS)
 def test_watchdog_read_path_permanent_failure_attempt_count_is_predictable(adapter_cls):
     credentials = ExchangeCredentials(key_id="k", secret="s")
     client = _AlwaysFailWatchdogReadClient()

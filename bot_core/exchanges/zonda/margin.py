@@ -116,6 +116,9 @@ class ZondaMarginAdapter(ZondaSpotAdapter):
         return self._watchdog.execute("zonda_margin_fetch_account", _call)
 
     def place_order(self, request: OrderRequest) -> OrderResult:
+        if "trade" not in self._permission_set:
+            raise PermissionError("Poświadczenia Zonda nie mają uprawnień tradingowych.")
+
         def _call() -> OrderResult:
             payload = {
                 "market": request.symbol,
@@ -156,6 +159,9 @@ class ZondaMarginAdapter(ZondaSpotAdapter):
         return self._watchdog.execute("zonda_margin_place_order", _call)
 
     def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:
+        if "trade" not in self._permission_set:
+            raise PermissionError("Poświadczenia Zonda nie mają uprawnień tradingowych.")
+
         def _call() -> None:
             response = self._signed_request("DELETE", f"/trading/margin/order/{order_id}")
             if not isinstance(response, Mapping):
