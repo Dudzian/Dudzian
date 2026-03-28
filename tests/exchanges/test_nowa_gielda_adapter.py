@@ -330,6 +330,53 @@ def test_place_order_sends_signed_payload(api_mock: "respx.Router") -> None:
     assert call.request.headers["X-API-KEY"] == "test-key"
 
 
+def test_place_order_logs_scrubbed_auth_headers(
+    api_mock: "respx.Router", caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = _build_adapter()
+    monkeypatch.setattr(adapter, "_timestamp", lambda: 1_700_000_000_000)
+    api_mock.post("/private/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "orderId": "sim-1",
+                "status": "NEW",
+                "filledQuantity": "0",
+                "avgPrice": None,
+            },
+        )
+    )
+
+    request = OrderRequest(
+        symbol="BTC_USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="limit",
+        price=25_000.0,
+    )
+
+    with caplog.at_level("DEBUG", logger="bot_core.exchanges.nowa_gielda.spot"):
+        adapter.place_order(request)
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    raw_signature = adapter.sign_request(
+        1_700_000_000_000,
+        "POST",
+        "/private/orders",
+        body={
+            "symbol": "BTC-USDT",
+            "side": "buy",
+            "type": "limit",
+            "quantity": 1.0,
+            "price": 25_000.0,
+        },
+    )
+    assert "X-API-KEY': 'test-key'" not in joined
+    assert raw_signature not in joined
+    assert "X-API-KEY': 'te***ey'" in joined
+    assert "X-API-SIGN': '" in joined and "***" in joined
+
+
 def test_place_order_maps_auth_errors(api_mock: "respx.Router") -> None:
     adapter = _build_adapter()
     api_mock.post("/private/orders").mock(

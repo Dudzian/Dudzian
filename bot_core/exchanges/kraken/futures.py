@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Sequence
@@ -92,6 +93,8 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         self._settings = dict(settings or {})
         self._watchdog = watchdog or Watchdog()
         self._network_guard = NetworkAccessGuard(logger=_LOGGER)
+        self._nonce_lock = threading.Lock()
+        self._last_nonce = 0
 
     # ------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -479,7 +482,7 @@ class KrakenFuturesAdapter(ExchangeAdapter):
                 separators=(",", ":"),
                 sort_keys=True,
             ).encode("utf-8")
-        nonce = str(int(time.time() * 1000))
+        nonce = self._generate_nonce()
         message = nonce.encode("utf-8") + path.encode("utf-8") + query.encode("utf-8") + body_bytes
         sha_digest = hashlib.sha256(message).digest()
         decoded_secret = base64.b64decode(self.credentials.secret)
@@ -501,6 +504,14 @@ class KrakenFuturesAdapter(ExchangeAdapter):
             payload = json.loads(response.read().decode("utf-8"))
         _ensure_success(payload)
         return payload
+
+    def _generate_nonce(self) -> str:
+        with self._nonce_lock:
+            candidate = int(time.time() * 1000)
+            if candidate <= self._last_nonce:
+                candidate = self._last_nonce + 1
+            self._last_nonce = candidate
+            return str(candidate)
 
 
 def _to_float(value: Any) -> float:
