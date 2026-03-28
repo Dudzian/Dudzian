@@ -146,7 +146,7 @@ def test_main_blocks_windows_pyinstaller_on_non_windows_host(monkeypatch, tmp_pa
     )
 
     monkeypatch.setattr(installer, "_read_profile", lambda _: profile)
-    monkeypatch.setattr(installer.os, "name", "posix", raising=False)
+    monkeypatch.setattr(installer, "_is_windows_host", lambda: False)
 
     build_called = False
 
