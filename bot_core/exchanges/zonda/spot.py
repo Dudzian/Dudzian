@@ -1231,6 +1231,8 @@ class ZondaSpotAdapter(ExchangeAdapter):
             if not isinstance(response, Mapping):
                 raise RuntimeError("Niepoprawna odpowiedź zlecenia z Zonda")
             order = self._parse_order_payload(response)
+            if not order.order_id:
+                raise RuntimeError("Brak danych zamówienia w odpowiedzi Zonda")
             return OrderResult(
                 order_id=order.order_id,
                 status=order.status,
