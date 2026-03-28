@@ -239,7 +239,13 @@ class CCXTSpotAdapter(ExchangeAdapter):
                 _LOGGER.debug("Nie udało się włączyć trybu sandbox dla %s", self.name)
         return client
 
-    def _wrap_call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    def _wrap_call(
+        self,
+        func: Callable[..., Any],
+        *args: Any,
+        retry: bool = True,
+        **kwargs: Any,
+    ) -> Any:
         last_exception: tuple[Exception, BaseException | None, bool] | None = None
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             self._ensure_network_access()
@@ -277,7 +283,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
             if last_exception is None:
                 continue
             wrapped_exc, original_exc, should_retry = last_exception
-            if should_retry and attempt < self._retry_policy.max_attempts:
+            if retry and should_retry and attempt < self._retry_policy.max_attempts:
                 delay = self._retry_policy.compute_delay(attempt)
                 self._sleep(delay)
                 last_exception = None
@@ -286,9 +292,15 @@ class CCXTSpotAdapter(ExchangeAdapter):
                 raise wrapped_exc from original_exc
             raise wrapped_exc
 
-    def _call_client(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+    def _call_client(
+        self,
+        method_name: str,
+        *args: Any,
+        retry: bool = True,
+        **kwargs: Any,
+    ) -> Any:
         method = getattr(self._client, method_name)
-        return self._wrap_call(method, *args, **kwargs)
+        return self._wrap_call(method, *args, retry=retry, **kwargs)
 
     # --- Implementacja interfejsu ExchangeAdapter -------------------------
 
@@ -365,6 +377,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
             payload["side"],
             payload["amount"],
             payload["price"],
+            retry=False,
             params=payload["params"],
         )
 
@@ -396,7 +409,9 @@ class CCXTSpotAdapter(ExchangeAdapter):
 
     def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:
         params = dict(self._settings.get("cancel_order_params", {}))
-        self._call_client("cancel_order", order_id, symbol, params=params or None)
+        # Dla mutacji preferujemy safety > availability: brak automatycznego retry
+        # ogranicza ryzyko zduplikowanego skutku ubocznego przy błędzie niejednoznacznym.
+        self._call_client("cancel_order", order_id, symbol, retry=False, params=params or None)
 
     def stream_public_data(self, *, channels: Sequence[str]):
         raise NotImplementedError(
@@ -448,11 +463,19 @@ class WatchdogCCXTAdapter(CCXTSpotAdapter):
             network_guard=guard,
         )
 
-    def _call_client(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+    def _call_client(
+        self,
+        method_name: str,
+        *args: Any,
+        retry: bool = True,
+        **kwargs: Any,
+    ) -> Any:
         operation = f"{self.name}.{method_name}"
+        if not retry:
+            return super()._call_client(method_name, *args, retry=False, **kwargs)
         return self._watchdog.execute(
             operation,
-            lambda: super()._call_client(method_name, *args, **kwargs),
+            lambda: super()._call_client(method_name, *args, retry=True, **kwargs),
         )
 
 
