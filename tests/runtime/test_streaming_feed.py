@@ -8,6 +8,7 @@ from typing import Sequence
 
 import pytest
 
+import bot_core.runtime.data_pipeline as data_pipeline_module
 import bot_core.runtime.pipeline as pipeline_module
 from bot_core.config.models import EnvironmentConfig, EnvironmentStreamConfig
 from bot_core.decision.models import DecisionEvaluation
@@ -407,6 +408,23 @@ def test_multi_strategy_runtime_shutdown_cancels_task_and_stops_scheduler() -> N
     assert stream.stop_calls == 1
     assert scheduler.stop_calls == 1
     assert runtime.stream_feed_task is None
+
+
+def test_streaming_strategy_feed_stop_async_unregisters_when_no_task() -> None:
+    feed = data_pipeline_module.StreamingStrategyFeed(
+        history_feed=_DummyHistoryFeed(),
+        stream_factory=lambda: iter(()),
+        symbols_map={"trend-d1": ("BTC/USDT",)},
+    )
+    feed._register_instance()
+
+    async def _run() -> None:
+        await feed.stop_async()
+
+    asyncio.run(_run())
+
+    active = list(data_pipeline_module.StreamingStrategyFeed._active_instances)
+    assert feed not in active
 
 
 def test_decision_aware_sink_filters_signals() -> None:

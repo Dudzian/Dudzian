@@ -3127,8 +3127,38 @@ class DecisionAwareSignalSink(StrategySignalSink):
                         },
                     ),
                 )
-            except Exception:  # pragma: no cover - diagnostyka orchestratora
+            except Exception as exc:  # pragma: no cover - diagnostyka orchestratora
                 self._logger.exception("DecisionOrchestrator odrzucił kandydata przez wyjątek")
+                self._record_filtered_signal(
+                    signal=signal,
+                    strategy_name=strategy_name,
+                    schedule_name=schedule_name,
+                    risk_profile=risk_profile,
+                    timestamp=timestamp,
+                    rejection_info={
+                        "reason": "orchestrator_exception",
+                        "error": str(exc),
+                    },
+                )
+                continue
+            if evaluation is None or not hasattr(evaluation, "accepted"):
+                self._logger.warning(
+                    "DecisionOrchestrator zwrócił niepoprawną ewaluację (%s)",
+                    type(evaluation).__name__ if evaluation is not None else "None",
+                )
+                self._record_filtered_signal(
+                    signal=signal,
+                    strategy_name=strategy_name,
+                    schedule_name=schedule_name,
+                    risk_profile=risk_profile,
+                    timestamp=timestamp,
+                    rejection_info={
+                        "reason": "invalid_evaluation",
+                        "evaluation_type": type(evaluation).__name__
+                        if evaluation is not None
+                        else "None",
+                    },
+                )
                 continue
             self._evaluations.append(evaluation)
             self._record_evaluation(
@@ -3404,10 +3434,14 @@ class DecisionAwareSignalSink(StrategySignalSink):
         reason: str | None = None
         probability: float | None = None
         min_probability: float | None = None
+        error_detail: str | None = None
+        evaluation_type: str | None = None
         if rejection_info:
             reason = str(rejection_info.get("reason") or "") or None
             raw_probability = rejection_info.get("probability")
             raw_min_probability = rejection_info.get("min_probability")
+            error_detail = str(rejection_info.get("error") or "") or None
+            evaluation_type = str(rejection_info.get("evaluation_type") or "") or None
             try:
                 probability = float(raw_probability) if raw_probability is not None else None
             except (TypeError, ValueError):  # pragma: no cover - defensywnie
@@ -3425,6 +3459,10 @@ class DecisionAwareSignalSink(StrategySignalSink):
             metadata.setdefault("min_probability", f"{min_probability:.6f}")
         if probability is not None:
             metadata.setdefault("expected_probability", f"{probability:.6f}")
+        if error_detail:
+            metadata.setdefault("decision_error", error_detail)
+        if evaluation_type:
+            metadata.setdefault("evaluation_type", evaluation_type)
 
         metadata.setdefault("environment", self._environment)
         metadata.setdefault("exchange", self._exchange)
