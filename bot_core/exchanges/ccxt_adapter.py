@@ -272,8 +272,21 @@ class CCXTSpotAdapter(ExchangeAdapter):
                 last_exception = (wrapped, exc, True)
             except tuple(self._base_errors) as exc:
                 self._metric_failures.inc(labels=self._metric_labels)
-                wrapped = ExchangeAPIError("Błąd CCXT", status_code=500, payload=str(exc))
-                last_exception = (wrapped, exc, False)
+                status_code, payload = self._extract_error_context(exc)
+                if status_code == 429:
+                    wrapped = ExchangeThrottlingError(
+                        "Przekroczono limity CCXT",
+                        status_code=status_code,
+                        payload=payload,
+                    )
+                    last_exception = (wrapped, exc, True)
+                else:
+                    wrapped = ExchangeAPIError(
+                        "Błąd CCXT",
+                        status_code=status_code or 500,
+                        payload=payload,
+                    )
+                    last_exception = (wrapped, exc, False)
             else:
                 return result
             finally:
@@ -291,6 +304,62 @@ class CCXTSpotAdapter(ExchangeAdapter):
             if original_exc is not None:
                 raise wrapped_exc from original_exc
             raise wrapped_exc
+
+    @staticmethod
+    def _extract_error_context(exc: BaseException) -> tuple[int | None, object]:
+        """Wydobywa status/payload z wyjątków CCXT bez zgadywania struktury."""
+
+        def _parse_status(value: object) -> int | None:
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped:
+                    try:
+                        return int(stripped)
+                    except ValueError:
+                        return None
+            return None
+
+        payload: object | None = None
+        status_code: int | None = None
+
+        status_candidates = (
+            getattr(exc, "status", None),
+            getattr(exc, "status_code", None),
+            getattr(exc, "http_status", None),
+        )
+        for candidate in status_candidates:
+            parsed = _parse_status(candidate)
+            if parsed is not None:
+                status_code = parsed
+                break
+
+        response = getattr(exc, "response", None)
+        if isinstance(response, Mapping):
+            if status_code is None:
+                for key in ("status", "status_code", "http_status", "code"):
+                    parsed = _parse_status(response.get(key))
+                    if parsed is not None:
+                        status_code = parsed
+                        break
+            for key in ("payload", "body", "message", "error"):
+                if response.get(key) is not None:
+                    payload = response.get(key)
+                    break
+        elif response is not None:
+            payload = response
+
+        if payload is None:
+            for attr in ("payload", "body"):
+                candidate = getattr(exc, attr, None)
+                if candidate is not None:
+                    payload = candidate
+                    break
+        if payload is None:
+            payload = str(exc)
+
+        return status_code, payload
 
     def _call_client(
         self,

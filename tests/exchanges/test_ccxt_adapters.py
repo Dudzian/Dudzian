@@ -13,6 +13,7 @@ from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter
 from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
 from bot_core.exchanges.bybit.spot import BybitSpotAdapter
 from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
+from bot_core.exchanges.error_mapping import raise_for_http_status
 from bot_core.exchanges.errors import (
     ExchangeAPIError,
     ExchangeNetworkError,
@@ -96,6 +97,36 @@ class _OfflineClient(_FakeClient):
 
 class _CustomNetworkError(Exception):
     pass
+
+
+class _CustomBaseError(Exception):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: object | None = None,
+        status_code: object | None = None,
+        http_status: object | None = None,
+        response: object | None = None,
+        body: object | None = None,
+        payload: object | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.status_code = status_code
+        self.http_status = http_status
+        self.response = response
+        self.body = body
+        self.payload = payload
+
+
+class _BaseErrorClient(_FakeClient):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    def fetch_balance(self):
+        raise self._error
 
 
 class _AmbiguousCreateClient(_FakeClient):
@@ -200,6 +231,75 @@ def test_adapter_translates_network_errors():
 
     with pytest.raises(ExchangeNetworkError):
         adapter.fetch_ohlcv("BTC/USDT", "1m", start=0, end=1, limit=1)
+
+
+def test_adapter_base_error_maps_429_to_throttling_with_json_payload():
+    credentials = ExchangeCredentials(key_id="k")
+    error = _CustomBaseError(
+        "rate limited",
+        status_code=429,
+        payload={"error": {"message": "Too many requests"}},
+    )
+    adapter = BitfinexSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=_BaseErrorClient(error),
+        settings={"base_error_types": (_CustomBaseError,)},
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeThrottlingError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.payload == {"error": {"message": "Too many requests"}}
+
+
+def test_adapter_base_error_preserves_503_plain_text_payload():
+    credentials = ExchangeCredentials(key_id="k")
+    error = _CustomBaseError("upstream error", http_status=503, body="gateway timeout")
+    adapter = BitfinexSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=_BaseErrorClient(error),
+        settings={"base_error_types": (_CustomBaseError,)},
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.payload == "gateway timeout"
+
+
+def test_adapter_base_error_defaults_when_status_and_payload_missing():
+    credentials = ExchangeCredentials(key_id="k")
+    error = _CustomBaseError("opaque base error")
+    adapter = BitfinexSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=_BaseErrorClient(error),
+        settings={"base_error_types": (_CustomBaseError,)},
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeAPIError) as exc_info:
+        adapter.fetch_account_snapshot()
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.payload == "opaque base error"
+
+
+def test_raise_for_http_status_distinguishes_429_from_5xx():
+    with pytest.raises(ExchangeThrottlingError) as throttle_exc:
+        raise_for_http_status(status_code=429, payload="too many requests", default_message="err")
+    assert throttle_exc.value.status_code == 429
+
+    with pytest.raises(ExchangeAPIError) as transient_exc:
+        raise_for_http_status(status_code=503, payload="upstream unavailable", default_message="err")
+    assert transient_exc.value.status_code == 503
+    assert transient_exc.value.payload == "upstream unavailable"
 
 
 def test_okx_adapter_respects_offline_cancellation():
