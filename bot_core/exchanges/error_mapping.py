@@ -18,6 +18,9 @@ _HTTP_THROTTLE_STATUS_CODES = {
     429,
     444,
     499,
+}
+
+_HTTP_UPSTREAM_TRANSIENT_STATUS_CODES = {
     502,
     503,
     504,
@@ -489,6 +492,8 @@ def raise_for_http_status(
             status_code=status_code,
             payload=payload,
         )
+    if status_code in _HTTP_UPSTREAM_TRANSIENT_STATUS_CODES:
+        raise ExchangeAPIError(message=message, status_code=status_code, payload=payload)
     raise ExchangeAPIError(message=message, status_code=status_code, payload=payload)
 
 
