@@ -147,7 +147,9 @@ def _find_forbidden_monkeypatches(test_file: Path) -> list[str]:
                     offenders.append(
                         f"L{node.lineno}: {func_name}({target_name}, '{attr_name}', ...)"
                     )
-                if _is_pathlib_global_target_name(target_name, pathlib_type_aliases, pathlib_aliases):
+                if _is_pathlib_global_target_name(
+                    target_name, pathlib_type_aliases, pathlib_aliases
+                ):
                     offenders.append(f"L{node.lineno}: {func_name}({target_name}, ...)")
     return offenders
 
