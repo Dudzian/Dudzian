@@ -153,6 +153,26 @@ class _AmbiguousCreateClient(_FakeClient):
         return list(self.open_orders)
 
 
+class _ReconcileErrorCreateClient(_AmbiguousCreateClient):
+    def __init__(self, *, reconcile_error: Exception) -> None:
+        super().__init__(open_orders=[])
+        self.reconcile_error = reconcile_error
+
+    def fetch_open_orders(self, symbol=None, params=None):  # noqa: ARG002
+        self._hit("fetch_open_orders")
+        raise self.reconcile_error
+
+
+class _RawOpenOrdersClient(_FakeClient):
+    def __init__(self, payload: object) -> None:
+        super().__init__()
+        self.payload = payload
+
+    def fetch_open_orders(self, symbol=None, params=None):  # noqa: ARG002
+        self._hit("fetch_open_orders")
+        return self.payload
+
+
 class _CancelApiErrorClient(_FakeClient):
     def __init__(self, *, status_code: int, payload: object) -> None:
         super().__init__()
@@ -188,6 +208,22 @@ class _AmbiguousCancelClient(_FakeClient):
         if self.open_orders_error is not None:
             raise self.open_orders_error
         return list(self.open_orders)
+
+
+class _AmbiguousCancelRawPayloadClient(_FakeClient):
+    def __init__(self, *, cancel_error: Exception, open_orders_payload: object) -> None:
+        super().__init__()
+        self.cancel_error = cancel_error
+        self.open_orders_payload = open_orders_payload
+
+    def cancel_order(self, order_id, symbol=None, params=None):
+        self._hit("cancel_order")
+        self._cancelled.append((order_id, symbol))
+        raise self.cancel_error
+
+    def fetch_open_orders(self, symbol=None, params=None):  # noqa: ARG002
+        self._hit("fetch_open_orders")
+        return self.open_orders_payload
 
 
 class _TransientExchangeError(Exception):
@@ -229,6 +265,26 @@ class _AlwaysFailWatchdogReadClient(_FakeClient):
     def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None, params=None):  # noqa: ARG002
         self.read_attempts += 1
         raise _TransientExchangeError("permanent read timeout")
+
+
+class _StringPayloadOrders(str):
+    def __new__(cls, value: str, entries: list[dict[str, object]]):
+        obj = str.__new__(cls, value)
+        obj._entries = entries
+        return obj
+
+    def __iter__(self):
+        return iter(self._entries)
+
+
+class _BytesPayloadOrders(bytes):
+    def __new__(cls, value: bytes, entries: list[dict[str, object]]):
+        obj = bytes.__new__(cls, value)
+        obj._entries = entries
+        return obj
+
+    def __iter__(self):
+        return iter(self._entries)
 
 
 class _ProbeWatchdog(Watchdog):
@@ -482,6 +538,56 @@ def test_shared_ccxt_cancel_ambiguous_read_failure_raises_original():
     assert client._calls["fetch_open_orders"] == 1
 
 
+@pytest.mark.parametrize(
+    ("payload", "order_id"),
+    [
+        ("not-a-list", "order-str"),
+        (b"not-a-list", "order-bytes"),
+        (bytearray(b"not-a-list"), "order-bytearray"),
+    ],
+)
+def test_shared_ccxt_cancel_ambiguous_raw_sequence_payload_raises_original(payload, order_id):
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    cancel_error = ExchangeNetworkError("cancel timeout")
+    client = _AmbiguousCancelRawPayloadClient(
+        cancel_error=cancel_error,
+        open_orders_payload=payload,
+    )
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeNetworkError) as exc_info:
+        adapter.cancel_order(order_id, symbol="BTC/USDT")
+
+    assert exc_info.value is cancel_error
+    assert client._calls["cancel_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+def test_shared_ccxt_cancel_ambiguous_valid_list_payload_still_resolves_absence():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    cancel_error = ExchangeNetworkError("cancel timeout")
+    client = _AmbiguousCancelRawPayloadClient(
+        cancel_error=cancel_error,
+        open_orders_payload=[{"id": "other-order"}],
+    )
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.cancel_order("order-amb", symbol="BTC/USDT")
+
+    assert client._calls["cancel_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
 def test_place_order_injects_deterministic_anchor_and_reconciles_success():
     credentials = ExchangeCredentials(key_id="k", secret="s")
     client = _AmbiguousCreateClient(
@@ -554,6 +660,112 @@ def test_place_order_injects_anchor_and_raises_on_reconcile_miss_without_resubmi
     assert client.last_create_params == {"newClientOrderId": "cli-anchor-miss"}
     assert client._calls["create_order"] == 1
     assert client._calls["fetch_open_orders"] == 1
+
+
+def test_place_order_reconcile_expected_error_keeps_original_mutation_error():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _ReconcileErrorCreateClient(
+        reconcile_error=ExchangeAPIError("read failed", status_code=503, payload="upstream")
+    )
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "network_error_types": (_CustomNetworkError,),
+            "client_order_id_param": "newClientOrderId",
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(ExchangeNetworkError, match="Błąd sieci CCXT"):
+        adapter.place_order(
+            OrderRequest(
+                symbol="BTC/USDT",
+                side="buy",
+                quantity=1.0,
+                order_type="limit",
+                price=10.5,
+                client_order_id="cli-anchor-expected-failure",
+            )
+        )
+
+    assert client._calls["create_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+def test_place_order_reconcile_programming_error_is_not_swallowed():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _ReconcileErrorCreateClient(reconcile_error=RuntimeError("programming bug"))
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "network_error_types": (_CustomNetworkError,),
+            "client_order_id_param": "newClientOrderId",
+        },
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    with pytest.raises(RuntimeError, match="programming bug"):
+        adapter.place_order(
+            OrderRequest(
+                symbol="BTC/USDT",
+                side="buy",
+                quantity=1.0,
+                order_type="limit",
+                price=10.5,
+                client_order_id="cli-anchor-programming-error",
+            )
+        )
+
+    assert client._calls["create_order"] == 1
+    assert client._calls["fetch_open_orders"] == 1
+
+
+def test_order_result_fallbacks_to_filled_when_remaining_present_but_amount_missing():
+    response = {
+        "id": "ord-1",
+        "status": "open",
+        "remaining": 0.4,
+        "filled": 0.6,
+        "price": 10.5,
+    }
+
+    result = CoinbaseSpotAdapter._order_result_from_mapping(response)
+
+    assert result.filled_quantity == pytest.approx(0.6)
+
+
+def test_order_result_fallbacks_to_amount_filled_when_amount_is_none():
+    response = {
+        "id": "ord-2",
+        "status": "open",
+        "amount": None,
+        "remaining": 0.4,
+        "amount_filled": 0.6,
+        "price": 10.5,
+    }
+
+    result = CoinbaseSpotAdapter._order_result_from_mapping(response)
+
+    assert result.filled_quantity == pytest.approx(0.6)
+
+
+def test_order_result_boundary_amount_lower_than_remaining_keeps_arithmetic_result():
+    response = {
+        "id": "ord-boundary",
+        "status": "open",
+        "amount": 0.25,
+        "remaining": 0.4,
+        "filled": 0.2,
+        "price": 10.5,
+    }
+
+    result = CoinbaseSpotAdapter._order_result_from_mapping(response)
+
+    assert result.filled_quantity == pytest.approx(-0.15)
 
 
 _FUTURES_MARGIN_ADAPTERS = (
@@ -725,6 +937,56 @@ def test_futures_margin_adapters_ambiguous_create_reconcile_uses_single_submit(a
     assert client.last_create_params["testAnchorKey"] == "anchor-reconcile-1"
     assert client._calls["create_order"] == 1
     assert client._calls["fetch_open_orders"] == 1
+
+
+def test_fetch_order_by_client_id_rejects_string_payload_sequence():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    entries = [
+        {
+            "id": "resolved-from-string",
+            "status": "open",
+            "amount": 1.0,
+            "remaining": 0.1,
+            "filled": 0.9,
+            "clientOrderId": "cli-string",
+        }
+    ]
+    client = _RawOpenOrdersClient(_StringPayloadOrders("not-a-real-list", entries))
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    resolved = adapter.fetch_order_by_client_id("cli-string", symbol="BTC/USDT")
+
+    assert resolved is None
+
+
+def test_fetch_order_by_client_id_rejects_bytes_payload_sequence():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    entries = [
+        {
+            "id": "resolved-from-bytes",
+            "status": "open",
+            "amount": 1.0,
+            "remaining": 0.1,
+            "filled": 0.9,
+            "clientOrderId": "cli-bytes",
+        }
+    ]
+    client = _RawOpenOrdersClient(_BytesPayloadOrders(b"not-a-real-list", entries))
+    adapter = CoinbaseSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    resolved = adapter.fetch_order_by_client_id("cli-bytes", symbol="BTC/USDT")
+
+    assert resolved is None
 
 
 def test_kucoin_adapter_merges_nested_settings():

@@ -463,7 +463,13 @@ class CCXTSpotAdapter(ExchangeAdapter):
                     reconciled = self.fetch_order_by_client_id(
                         request.client_order_id, symbol=request.symbol
                     )
-                except Exception:
+                except (
+                    AttributeError,
+                    ExchangeAPIError,
+                    ExchangeNetworkError,
+                    ExchangeThrottlingError,
+                    NotImplementedError,
+                ):
                     reconciled = None
                 if reconciled is not None:
                     return reconciled
@@ -487,7 +493,9 @@ class CCXTSpotAdapter(ExchangeAdapter):
         remaining = response.get("remaining")
         if remaining is not None:
             try:
-                filled_quantity = float(response.get("amount", 0.0)) - float(remaining)
+                amount = response.get("amount")
+                if amount is not None:
+                    filled_quantity = float(amount) - float(remaining)
             except (TypeError, ValueError):
                 filled_quantity = float(response.get("filled") or filled_quantity)
 
@@ -523,7 +531,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
             )
         except (AttributeError, ExchangeAPIError, ExchangeNetworkError, NotImplementedError):
             return None
-        if not isinstance(orders, Sequence):
+        if not self._is_valid_orders_payload(orders):
             return None
         for entry in orders:
             if not isinstance(entry, Mapping):
@@ -582,7 +590,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
             NotImplementedError,
         ):
             return None
-        if not isinstance(orders, Sequence):
+        if not self._is_valid_orders_payload(orders):
             return None
 
         for entry in orders:
@@ -608,6 +616,10 @@ class CCXTSpotAdapter(ExchangeAdapter):
             if order_id in normalized_ids:
                 return True
         return False
+
+    @staticmethod
+    def _is_valid_orders_payload(payload: object) -> bool:
+        return isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray))
 
     @staticmethod
     def _is_idempotent_cancel_error(exc: ExchangeAPIError) -> bool:
