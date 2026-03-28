@@ -272,7 +272,9 @@ def test_spot_private_mutation_http_503_fallback_classification(
 
     def _failing_urlopen(request, timeout: float):  # type: ignore[no-untyped-def]
         del timeout
-        raise HTTPError(request.full_url, 503, "Service Unavailable", hdrs=None, fp=io.BytesIO(payload))
+        raise HTTPError(
+            request.full_url, 503, "Service Unavailable", hdrs=None, fp=io.BytesIO(payload)
+        )
 
     monkeypatch.setattr("bot_core.exchanges.kraken.spot.urlopen", _failing_urlopen)
     monkeypatch.setattr("bot_core.exchanges.kraken.spot.time.sleep", lambda *_: None)
