@@ -84,6 +84,91 @@ def test_controller_skips_ai_signals_during_failover() -> None:
     )
 
 
+def test_controller_skips_unknown_mode_when_ai_manager_metadata_present_during_failover() -> None:
+    monitor = ModelHealthMonitor()
+    monitor.record_backend_failure(reason="backend_offline")
+    controller, execution, journal = _controller(monitor)
+
+    ai_like_unknown_mode = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "quantity": "1",
+            "price": "100",
+            "order_type": "market",
+            "mode": "model_x",
+            "ai_manager": {
+                "success_probability": 0.91,
+                "expected_return_bps": 12.0,
+            },
+        },
+    )
+
+    controller.process_signals([_signal(mode="rules"), ai_like_unknown_mode])
+
+    assert [request.metadata.get("mode") for request in execution.requests] == ["rules"]
+    assert any(
+        event.event_type == "signal_skipped"
+        and event.metadata.get("reason") == "ai_failover_active"
+        for event in journal.events
+    )
+
+
+def test_controller_skips_unknown_mode_when_top_level_ai_indicator_present_during_failover() -> None:
+    monitor = ModelHealthMonitor()
+    monitor.record_backend_failure(reason="backend_offline")
+    controller, execution, journal = _controller(monitor)
+
+    ai_like_unknown_mode = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "quantity": "1",
+            "price": "100",
+            "order_type": "market",
+            "mode": "model_x",
+            "model_name": "xgb_v3",
+        },
+    )
+
+    controller.process_signals([ai_like_unknown_mode])
+
+    assert execution.requests == []
+    skipped_events = [event for event in journal.events if event.event_type == "signal_skipped"]
+    assert len(skipped_events) == 1
+    assert skipped_events[0].metadata.get("reason") == "ai_failover_active"
+    assert skipped_events[0].metadata.get("mode") == "ai"
+
+
+def test_controller_mixed_rules_and_unknown_ai_indicator_signal_is_deterministic_under_failover() -> None:
+    monitor = ModelHealthMonitor()
+    monitor.record_backend_failure(reason="backend_offline")
+    controller, execution, journal = _controller(monitor)
+
+    ai_like_unknown_mode = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "quantity": "1",
+            "price": "100",
+            "order_type": "market",
+            "mode": "model_x",
+            "probability": 0.88,
+        },
+    )
+
+    controller.process_signals([ai_like_unknown_mode, _signal(mode="rules")])
+
+    assert [request.metadata.get("mode") for request in execution.requests] == ["rules"]
+    skipped_events = [event for event in journal.events if event.event_type == "signal_skipped"]
+    assert len(skipped_events) == 1
+    assert skipped_events[0].metadata.get("reason") == "ai_failover_active"
+    assert skipped_events[0].metadata.get("mode") == "ai"
+
+
 def test_controller_restores_ai_after_failover() -> None:
     monitor = ModelHealthMonitor()
     controller, execution, journal = _controller(monitor)
