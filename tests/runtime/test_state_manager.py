@@ -41,6 +41,7 @@ def test_require_checkpoint_accepts_demo_checkpoint_for_paper_and_live(
     checkpoint = manager.require_checkpoint(target_mode=target_mode, entrypoint="demo_desktop")
     assert checkpoint.entrypoint == "demo_desktop"
 
+
 def test_require_checkpoint_rejects_missing_checkpoint(tmp_path: Path) -> None:
     manager = RuntimeStateManager(tmp_path)
 
