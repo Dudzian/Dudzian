@@ -139,10 +139,10 @@ class _AutoRetrainJob:
                 _LOGGER.exception("Nie udało się zarejestrować modeli po retrainingu %s", self.name)
                 success = False
                 failures.append("registration_failed")
+        event_status = "success" if success else "failed"
         event_metadata: dict[str, str] = {
             "profile": self.profile_name,
             "models": ",".join(result.spec.name for result in summary.models),
-            "status": "success" if success else "failed",
         }
         if metrics:
             event_metadata["metrics"] = json.dumps(metrics, ensure_ascii=False)
@@ -161,6 +161,7 @@ class _AutoRetrainJob:
                         environment=self.policy.journal_environment,
                         portfolio=self.policy.journal_portfolio,
                         risk_profile=self.policy.journal_risk_profile,
+                        status=event_status,
                         schedule=f"auto_retrain:{self.profile_name}",
                         strategy=self.policy.journal_strategy,
                         metadata=event_metadata,
