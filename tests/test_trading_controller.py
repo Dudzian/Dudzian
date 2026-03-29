@@ -211,6 +211,8 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     assert execution.requests[0].side == "BUY"
     assert [message.category for message in channel.messages] == ["strategy", "execution"]
     assert channel.messages[1].severity == "info"
+    assert execution.requests[0].client_order_id
+    assert channel.messages[1].context["client_order_id"] == execution.requests[0].client_order_id
     exported = tuple(audit.export())
     assert len(exported) >= 2
     assert any(event["event"] == "order_executed" for event in journal.export())
@@ -296,6 +298,8 @@ def test_controller_non_filled_result_not_recorded_as_order_executed() -> None:
     assert execution_message.severity == "warning"
     assert "zrealizowane" not in execution_message.title.lower()
     assert execution_message.context["status"] == "rejected"
+    assert execution.requests[0].client_order_id
+    assert execution_message.context["client_order_id"] == execution.requests[0].client_order_id
 
 
 def test_controller_non_filled_result_preserves_zero_fill_and_missing_avg_price() -> None:
@@ -937,6 +941,62 @@ def test_controller_syncs_metadata_quantity_after_risk_adjustment() -> None:
         assert float(event["order_quantity"]) == pytest.approx(0.25)
 
 
+def test_controller_risk_adjust_preserves_existing_client_order_id() -> None:
+    risk_engine = DummyRiskEngine()
+    disallowed = RiskCheckResult(
+        allowed=False,
+        reason="Limit ekspozycji przekroczony",
+        adjustments={"max_quantity": 0.25},
+    )
+    allowed = RiskCheckResult(allowed=True)
+    risk_engine.set_result_sequence([disallowed, allowed])
+
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    existing_client_order_id = "existing-client-id-123"
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.75,
+        metadata={
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "client_order_id": existing_client_order_id,
+        },
+    )
+
+    controller.process_signals([signal])
+
+    assert len(execution.requests) == 1
+    adjusted_request = execution.requests[0]
+    assert adjusted_request.quantity == pytest.approx(0.25)
+    assert adjusted_request.client_order_id == existing_client_order_id
+    assert adjusted_request.metadata is not None
+    assert adjusted_request.metadata.get("generated_client_order_id") is not True
+
+    exported = list(journal.export())
+    risk_adjusted = next(event for event in exported if event["event"] == "risk_adjusted")
+    submitted = next(event for event in exported if event["event"] == "order_submitted")
+    for event in (risk_adjusted, submitted):
+        assert event["client_order_id"] == existing_client_order_id
+        assert event.get("order_client_order_id") == existing_client_order_id
+        assert "order_generated_client_order_id" not in event
+
+
 def test_controller_records_explainability_metadata() -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -1200,7 +1260,11 @@ def test_liquidation_metric_reflects_force_state() -> None:
 
 
 class FailingExecutionService(ExecutionService):
+    def __init__(self) -> None:
+        self.requests: list[OrderRequest] = []
+
     def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+        self.requests.append(request)
         raise RuntimeError("API niedostępne")
 
     def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
@@ -1231,6 +1295,11 @@ def test_controller_emits_alert_on_execution_error() -> None:
     categories = [message.category for message in channel.messages]
     assert categories == ["strategy", "execution"]
     assert channel.messages[1].severity == "critical"
+    execution_alert = channel.messages[1]
+    assert len(execution.requests) == 1
+    failed_request = execution.requests[0]
+    assert failed_request.client_order_id
+    assert execution_alert.context["client_order_id"] == failed_request.client_order_id
     exported = tuple(audit.export())
     assert len(exported) == 2
     assert exported[1]["severity"] == "critical"

@@ -1938,6 +1938,7 @@ class TradingController:
             "symbol": request.symbol,
             "side": request.side,
             "order_id": order_id,
+            "client_order_id": request.client_order_id or "",
             "avg_price": "unknown" if avg_price is None else f"{avg_price:.8f}",
             "filled_quantity": "unknown" if filled_qty is None else f"{filled_qty:.8f}",
             "status": result.status or "unknown",
@@ -1985,6 +1986,7 @@ class TradingController:
             "symbol": request.symbol,
             "side": request.side,
             "order_id": result.order_id or "",
+            "client_order_id": request.client_order_id or "",
             "status": normalized_status,
             "environment": self.environment,
             "risk_profile": self.risk_profile,
@@ -2015,6 +2017,7 @@ class TradingController:
         context = {
             "symbol": request.symbol,
             "side": request.side,
+            "client_order_id": request.client_order_id or "",
             "environment": self.environment,
             "risk_profile": self.risk_profile,
             "error_type": type(error).__name__,
