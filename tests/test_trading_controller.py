@@ -114,6 +114,36 @@ class DummyExecutionService(ExecutionService):
         return None
 
 
+class StatusExecutionService(ExecutionService):
+    def __init__(
+        self,
+        *,
+        status: str,
+        filled_quantity: float | None = None,
+        avg_price: float | None = 100.0,
+    ) -> None:
+        self.status = status
+        self._filled_quantity = filled_quantity
+        self._avg_price = avg_price
+        self.requests: list[OrderRequest] = []
+
+    def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+        self.requests.append(request)
+        return OrderResult(
+            order_id="order-status-1",
+            status=self.status,
+            filled_quantity=request.quantity if self._filled_quantity is None else self._filled_quantity,
+            avg_price=self._avg_price,
+            raw_response={"context": context.metadata},
+        )
+
+    def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+        return None
+
+    def flush(self) -> None:
+        return None
+
+
 def _account_snapshot() -> AccountSnapshot:
     return AccountSnapshot(
         balances={},
@@ -231,6 +261,121 @@ def test_controller_handles_multi_leg_signal() -> None:
         if message.category == "execution"
     )
     assert any(event["event"] == "order_executed" for event in journal.export())
+
+
+def test_controller_non_filled_result_not_recorded_as_order_executed() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = StatusExecutionService(status="rejected", filled_quantity=0.0)
+    router, channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    results = controller.process_signals([_signal("BUY")])
+
+    assert len(results) == 1
+    events = [event["event"] for event in journal.export()]
+    assert "order_executed" not in events
+    assert "order_execution_result" in events
+    execution_message = next(message for message in channel.messages if message.category == "execution")
+    assert execution_message.severity == "warning"
+    assert "zrealizowane" not in execution_message.title.lower()
+    assert execution_message.context["status"] == "rejected"
+
+
+def test_controller_non_filled_result_preserves_zero_fill_and_missing_avg_price() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = StatusExecutionService(status="rejected", filled_quantity=0.0, avg_price=None)
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    controller.process_signals([_signal("BUY", quantity=2.0, price=123.0)])
+
+    non_filled_event = next(
+        event for event in journal.export() if event["event"] == "order_execution_result"
+    )
+    assert non_filled_event["status"] == "rejected"
+    assert non_filled_event["filled_quantity"] == "0.00000000"
+    assert non_filled_event["avg_price"] == "null"
+    assert non_filled_event["filled_quantity"] != "2.00000000"
+    assert non_filled_event["avg_price"] != "123.00000000"
+
+
+def test_controller_partial_result_uses_distinct_journal_event() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = StatusExecutionService(status="partially_filled", filled_quantity=0.25)
+    router, channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    results = controller.process_signals([_signal("BUY", quantity=1.0)])
+
+    assert len(results) == 1
+    events = [event["event"] for event in journal.export()]
+    assert "order_partially_executed" in events
+    assert "order_executed" not in events
+    execution_message = next(message for message in channel.messages if message.category == "execution")
+    assert execution_message.severity == "info"
+    assert "częściowo" in execution_message.title.lower()
+
+
+def test_controller_partial_result_without_execution_fill_data_does_not_fallback_to_request() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = StatusExecutionService(status="partially_filled", filled_quantity=None, avg_price=None)
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    controller.process_signals([_signal("BUY", quantity=3.0, price=321.0)])
+
+    partial_event = next(
+        event for event in journal.export() if event["event"] == "order_partially_executed"
+    )
+    assert partial_event["status"] == "partially_filled"
+    assert partial_event["filled_quantity"] == "null"
+    assert partial_event["avg_price"] == "null"
+    assert partial_event["filled_quantity"] != "3.00000000"
+    assert partial_event["avg_price"] != "321.00000000"
 
 
 def test_controller_skips_neutral_signal() -> None:
@@ -539,6 +684,35 @@ def test_controller_records_tco_event_with_reporter() -> None:
     assert isinstance(metadata, Mapping)
     assert metadata.get("source") == "unit-test"
     assert metadata.get("controller") == "TradingController"
+
+
+def test_controller_skips_tco_for_partial_when_execution_data_missing() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = StatusExecutionService(status="partially_filled", filled_quantity=None, avg_price=None)
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    reporter = StubTCOReporter()
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+        strategy_name="core_trend",
+        exchange_name="binance_spot",
+        tco_reporter=reporter,
+    )
+
+    controller.process_signals([_signal("BUY", quantity=3.0, price=321.0)])
+
+    events = [event["event"] for event in journal.export()]
+    assert "order_partially_executed" in events
+    assert reporter.calls == []
 
 
 def test_controller_runs_health_report() -> None:

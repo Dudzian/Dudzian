@@ -187,6 +187,8 @@ _SIDE_ALIASES = {
     "EXIT_LONG": "SELL",
     "SELL_TO_CLOSE": "SELL",
 }
+_FILLED_EXECUTION_STATUSES = frozenset({"filled", "executed", "complete", "completed"})
+_PARTIAL_EXECUTION_STATUSES = frozenset({"partial", "partially_filled", "partially-filled"})
 
 
 def _normalize_trade_side(value: object | None) -> str | None:
@@ -200,6 +202,11 @@ def _normalize_trade_side(value: object | None) -> str | None:
     if candidate in {"BUY", "SELL"}:
         return candidate
     return _SIDE_ALIASES.get(candidate)
+
+
+def _normalize_execution_status(value: object | None) -> str:
+    candidate = str(value or "").strip().lower()
+    return candidate or "unknown"
 
 
 def _extract_adjusted_quantity(
@@ -1086,15 +1093,35 @@ class TradingController:
             )
             raise
 
-        self._emit_order_filled_alert(signal, adjusted_request, result)
+        normalized_status = _normalize_execution_status(result.status)
+        is_partial = normalized_status in _PARTIAL_EXECUTION_STATUSES
+        is_filled = normalized_status in _FILLED_EXECUTION_STATUSES
+        if is_filled or is_partial:
+            self._emit_order_filled_alert(signal, adjusted_request, result, partial=is_partial)
+        else:
+            self._emit_order_not_filled_alert(
+                signal,
+                adjusted_request,
+                result,
+                normalized_status=normalized_status,
+            )
         order_id = result.order_id or ""
-        avg_price = result.avg_price or adjusted_request.price or 0.0
-        filled_qty = result.filled_quantity or adjusted_request.quantity
+        execution_avg_price = result.avg_price
+        execution_filled_qty = result.filled_quantity
+        if is_filled:
+            if execution_avg_price is None:
+                execution_avg_price = adjusted_request.price
+            if execution_filled_qty is None:
+                execution_filled_qty = adjusted_request.quantity
         metadata: dict[str, object] = {
             "order_id": order_id,
-            "filled_quantity": f"{filled_qty:.8f}",
-            "avg_price": f"{avg_price:.8f}",
-            "status": result.status or "filled",
+            "filled_quantity": (
+                "null"
+                if execution_filled_qty is None
+                else f"{execution_filled_qty:.8f}"
+            ),
+            "avg_price": "null" if execution_avg_price is None else f"{execution_avg_price:.8f}",
+            "status": normalized_status,
         }
         if isinstance(result.raw_response, TypingMapping):
             fee = result.raw_response.get("fee")
@@ -1103,21 +1130,55 @@ class TradingController:
                 metadata["fee"] = fee
             if fee_asset:
                 metadata["fee_asset"] = fee_asset
-        self._record_decision_event(
-            "order_executed",
-            signal=signal,
-            request=adjusted_request,
-            status=result.status or "filled",
-            metadata=metadata,
-        )
-        self._record_tco_execution(
-            signal=signal,
-            request=adjusted_request,
-            result=result,
-            order_id=order_id,
-            avg_price=avg_price,
-            filled_qty=filled_qty,
-        )
+        if is_filled:
+            self._record_decision_event(
+                "order_executed",
+                signal=signal,
+                request=adjusted_request,
+                status=normalized_status,
+                metadata=metadata,
+            )
+            self._record_tco_execution(
+                signal=signal,
+                request=adjusted_request,
+                result=result,
+                order_id=order_id,
+                avg_price=(
+                    execution_avg_price
+                    if execution_avg_price is not None
+                    else (adjusted_request.price or 0.0)
+                ),
+                filled_qty=(
+                    execution_filled_qty
+                    if execution_filled_qty is not None
+                    else adjusted_request.quantity
+                ),
+            )
+        elif is_partial:
+            self._record_decision_event(
+                "order_partially_executed",
+                signal=signal,
+                request=adjusted_request,
+                status=normalized_status,
+                metadata=metadata,
+            )
+            if execution_avg_price is not None and execution_filled_qty is not None:
+                self._record_tco_execution(
+                    signal=signal,
+                    request=adjusted_request,
+                    result=result,
+                    order_id=order_id,
+                    avg_price=execution_avg_price,
+                    filled_qty=execution_filled_qty,
+                )
+        else:
+            self._record_decision_event(
+                "order_execution_result",
+                signal=signal,
+                request=adjusted_request,
+                status=normalized_status,
+                metadata=metadata,
+            )
         self._handle_liquidation_state(risk_result)
         return result
 
@@ -1851,17 +1912,25 @@ class TradingController:
         signal: StrategySignal,
         request: OrderRequest,
         result: OrderResult,
+        *,
+        partial: bool = False,
     ) -> None:
         order_id = result.order_id or ""
-        avg_price = result.avg_price or request.price or 0.0
-        filled_qty = result.filled_quantity or request.quantity
+        if partial:
+            avg_price = result.avg_price
+            filled_qty = result.filled_quantity
+        else:
+            avg_price = result.avg_price if result.avg_price is not None else (request.price or 0.0)
+            filled_qty = (
+                result.filled_quantity if result.filled_quantity is not None else request.quantity
+            )
 
         context = {
             "symbol": request.symbol,
             "side": request.side,
             "order_id": order_id,
-            "avg_price": f"{avg_price:.8f}",
-            "filled_quantity": f"{filled_qty:.8f}",
+            "avg_price": "unknown" if avg_price is None else f"{avg_price:.8f}",
+            "filled_quantity": "unknown" if filled_qty is None else f"{filled_qty:.8f}",
             "status": result.status or "unknown",
             "environment": self.environment,
             "risk_profile": self.risk_profile,
@@ -1872,8 +1941,16 @@ class TradingController:
 
         message = AlertMessage(
             category="execution",
-            title=f"Zlecenie {request.side} {request.symbol} zrealizowane",
-            body="Zlecenie zostało wykonane w symulatorze/na giełdzie.",
+            title=(
+                f"Zlecenie {request.side} {request.symbol} częściowo zrealizowane"
+                if partial
+                else f"Zlecenie {request.side} {request.symbol} zrealizowane"
+            ),
+            body=(
+                "Zlecenie zostało częściowo wykonane w symulatorze/na giełdzie."
+                if partial
+                else "Zlecenie zostało wykonane w symulatorze/na giełdzie."
+            ),
             severity="info",
             context=context,
         )
@@ -1884,6 +1961,42 @@ class TradingController:
             order_id,
             filled_qty,
             avg_price,
+        )
+        self.alert_router.dispatch(message)
+
+    def _emit_order_not_filled_alert(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+        result: OrderResult,
+        *,
+        normalized_status: str,
+    ) -> None:
+        context = {
+            "symbol": request.symbol,
+            "side": request.side,
+            "order_id": result.order_id or "",
+            "status": normalized_status,
+            "environment": self.environment,
+            "risk_profile": self.risk_profile,
+        }
+        for key, value in signal.metadata.items():
+            context.setdefault(f"meta_{key}", str(value))
+        message = AlertMessage(
+            category="execution",
+            title=f"Zlecenie {request.side} {request.symbol} nie zostało wykonane",
+            body=(
+                "Egzekucja zwróciła wynik bez pełnego wykonania "
+                f"(status={normalized_status})."
+            ),
+            severity="warning",
+            context=context,
+        )
+        _LOGGER.warning(
+            "Zlecenie %s %s zwróciło status bez wykonania: %s",
+            request.side,
+            request.symbol,
+            normalized_status,
         )
         self.alert_router.dispatch(message)
 
