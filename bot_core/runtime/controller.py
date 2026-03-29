@@ -607,9 +607,15 @@ class TradingController:
     def _update_ai_failover_state(self) -> bool:
         monitor = self._ai_health_monitor
         if monitor is None:
+            self._ai_health_status = None
             if self._ai_failover_active:
                 self._ai_failover_active = False
                 self._ai_failover_reason = None
+                self._record_decision_event(
+                    "ai_failover",
+                    status="cleared",
+                    metadata={"reason": "ai_health_monitor_unavailable"},
+                )
             return False
 
         try:
