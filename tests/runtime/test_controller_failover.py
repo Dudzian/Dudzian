@@ -115,7 +115,9 @@ def test_controller_skips_unknown_mode_when_ai_manager_metadata_present_during_f
     )
 
 
-def test_controller_skips_unknown_mode_when_top_level_ai_indicator_present_during_failover() -> None:
+def test_controller_skips_unknown_mode_when_top_level_ai_indicator_present_during_failover() -> (
+    None
+):
     monitor = ModelHealthMonitor()
     monitor.record_backend_failure(reason="backend_offline")
     controller, execution, journal = _controller(monitor)
@@ -142,7 +144,9 @@ def test_controller_skips_unknown_mode_when_top_level_ai_indicator_present_durin
     assert skipped_events[0].metadata.get("mode") == "ai"
 
 
-def test_controller_mixed_rules_and_unknown_ai_indicator_signal_is_deterministic_under_failover() -> None:
+def test_controller_mixed_rules_and_unknown_ai_indicator_signal_is_deterministic_under_failover() -> (
+    None
+):
     monitor = ModelHealthMonitor()
     monitor.record_backend_failure(reason="backend_offline")
     controller, execution, journal = _controller(monitor)
