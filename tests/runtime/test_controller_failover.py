@@ -181,3 +181,51 @@ def test_controller_recovers_after_snapshot_error_is_resolved() -> None:
     assert any(
         event.event_type == "ai_failover" and event.status == "cleared" for event in journal.events
     )
+
+
+def test_controller_emits_single_clear_when_ai_monitor_becomes_unavailable() -> None:
+    monitor = ModelHealthMonitor()
+    controller, execution, journal = _controller(monitor)
+
+    monitor.record_backend_failure(reason="backend_offline")
+    controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+    assert any(
+        event.event_type == "ai_failover" and event.status == "activated"
+        for event in journal.events
+    )
+
+    journal.events.clear()
+    execution.requests.clear()
+    controller._ai_health_monitor = None
+
+    controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+    controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+
+    cleared_events = [
+        event
+        for event in journal.events
+        if event.event_type == "ai_failover" and event.status == "cleared"
+    ]
+    assert len(cleared_events) == 1
+    assert cleared_events[0].metadata.get("reason") == "ai_health_monitor_unavailable"
+
+
+def test_controller_clears_ai_health_status_without_clear_event_when_monitor_removed_and_failover_inactive() -> None:
+    monitor = ModelHealthMonitor()
+    controller, _execution, journal = _controller(monitor)
+
+    controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+
+    assert controller._ai_failover_active is False
+    assert controller._ai_health_status is not None
+
+    journal.events.clear()
+    controller._ai_health_monitor = None
+
+    controller.process_signals([_signal(mode="rules"), _signal(mode="ai")])
+
+    assert controller._ai_health_status is None
+    assert all(
+        not (event.event_type == "ai_failover" and event.status == "cleared")
+        for event in journal.events
+    )
