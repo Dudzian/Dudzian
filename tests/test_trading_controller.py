@@ -115,11 +115,13 @@ class DummyExecutionService(ExecutionService):
 
 
 class StatusExecutionService(ExecutionService):
+    _USE_REQUEST_FILLED_QUANTITY = object()
+
     def __init__(
         self,
         *,
         status: str,
-        filled_quantity: float | None = None,
+        filled_quantity: float | None | object = _USE_REQUEST_FILLED_QUANTITY,
         avg_price: float | None = 100.0,
     ) -> None:
         self.status = status
@@ -133,7 +135,7 @@ class StatusExecutionService(ExecutionService):
             order_id="order-status-1",
             status=self.status,
             filled_quantity=request.quantity
-            if self._filled_quantity is None
+            if self._filled_quantity is self._USE_REQUEST_FILLED_QUANTITY
             else self._filled_quantity,
             avg_price=self._avg_price,
             raw_response={"context": context.metadata},
@@ -386,6 +388,33 @@ def test_controller_partial_result_without_execution_fill_data_does_not_fallback
     assert partial_event["avg_price"] == "null"
     assert partial_event["filled_quantity"] != "3.00000000"
     assert partial_event["avg_price"] != "321.00000000"
+
+
+def test_controller_partial_result_without_filled_quantity_argument_falls_back_to_request() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = StatusExecutionService(status="partially_filled", avg_price=None)
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    controller.process_signals([_signal("BUY", quantity=3.0, price=321.0)])
+
+    partial_event = next(
+        event for event in journal.export() if event["event"] == "order_partially_executed"
+    )
+    assert partial_event["status"] == "partially_filled"
+    assert partial_event["filled_quantity"] == "3.00000000"
+    assert partial_event["avg_price"] == "null"
 
 
 def test_controller_skips_neutral_signal() -> None:
