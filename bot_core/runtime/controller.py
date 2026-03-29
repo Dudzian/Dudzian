@@ -1360,7 +1360,7 @@ class TradingController:
             client_order_id=request.client_order_id,
             stop_price=request.stop_price,
             atr=request.atr,
-            metadata=request.metadata,
+            metadata={**dict(request.metadata or {}), "quantity": float(quantity)},
         )
         new_result = self.risk_engine.apply_pre_trade_checks(
             adjusted_request,
