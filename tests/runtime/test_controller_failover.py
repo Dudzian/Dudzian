@@ -210,7 +210,9 @@ def test_controller_emits_single_clear_when_ai_monitor_becomes_unavailable() -> 
     assert cleared_events[0].metadata.get("reason") == "ai_health_monitor_unavailable"
 
 
-def test_controller_clears_ai_health_status_without_clear_event_when_monitor_removed_and_failover_inactive() -> None:
+def test_controller_clears_ai_health_status_without_clear_event_when_monitor_removed_and_failover_inactive() -> (
+    None
+):
     monitor = ModelHealthMonitor()
     controller, _execution, journal = _controller(monitor)
 
