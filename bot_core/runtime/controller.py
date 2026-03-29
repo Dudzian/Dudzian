@@ -41,6 +41,7 @@ from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
 
 # Alerts
 from bot_core.alerts import AlertMessage  # dostępne w obu gałęziach
+
 if TYPE_CHECKING:
     from bot_core.runtime.observability import AlertSink
 else:
@@ -52,6 +53,7 @@ else:
 
         def health_snapshot(self) -> Mapping[str, Mapping[str, object]]: ...
 
+
 # Execution
 try:
     from bot_core.execution import ExecutionContext, ExecutionService  # re-eksport
@@ -61,12 +63,14 @@ except Exception:  # pragma: no cover
 # Exchanges commons
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+
 try:
     from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 except Exception:  # pragma: no cover - fallback dla środowisk bez zależności TCO
 
     class RuntimeTCOReporter(Protocol):  # type: ignore[misc]
         def record_execution(self, **kwargs: object) -> None: ...
+
 
 # Risk
 try:
