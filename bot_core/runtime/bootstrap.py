@@ -73,8 +73,7 @@ def _raise_optional_dependency_unavailable(
     cause: BaseException | None = None,
 ) -> None:
     message = (
-        f"Niedostępny symbol optional dependency: {symbol}. "
-        f"Wymagany chain: {dependency_chain}."
+        f"Niedostępny symbol optional dependency: {symbol}. Wymagany chain: {dependency_chain}."
     )
     if cause is not None:
         raise RuntimeError(message) from cause
@@ -134,6 +133,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - brak opcjonalnych zale�
 from bot_core.exchanges.deribit import DeribitFuturesAdapter
 from bot_core.exchanges.kucoin import KuCoinSpotAdapter
 from bot_core.exchanges.okx import OKXFuturesAdapter, OKXMarginAdapter, OKXSpotAdapter
+
 try:  # pragma: no cover - loopback może wymagać opcjonalnego klienta HTTP
     from bot_core.exchanges.testing.loopback import LoopbackExchangeAdapter
 except ModuleNotFoundError as exc:  # pragma: no cover
@@ -152,6 +152,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover
 from bot_core.exchanges.health import HealthCheckResult, HealthMonitor, HealthStatus
 from bot_core.exchanges.health_checks import build_standard_health_checks
 from bot_core.exchanges.zonda import ZondaSpotAdapter
+
 try:  # pragma: no cover - moduły risk mogą zależeć od opcjonalnych komponentów security
     from bot_core.risk.base import RiskRepository
     from bot_core.risk.engine import ThresholdRiskEngine
@@ -455,6 +456,7 @@ from bot_core.runtime.observability import (
     build_ui_alert_audit_metadata,
 )
 from bot_core.observability.metrics import get_global_metrics_registry
+
 try:  # pragma: no cover - portfolio log może zależeć od opcjonalnego security stacku
     from bot_core.portfolio import PortfolioDecisionLog
 except ModuleNotFoundError as exc:  # pragma: no cover

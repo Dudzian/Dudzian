@@ -56,6 +56,7 @@ except Exception:  # pragma: no cover
     def get_capability_guard() -> Any | None:
         return None
 
+
 _LOGGER = logging.getLogger(__name__)
 
 _ADVANCED_ALERT_TYPES = frozenset({"sms", "signal", "whatsapp", "messenger"})
