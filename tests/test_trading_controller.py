@@ -681,6 +681,102 @@ def test_decision_journal_event_order() -> None:
     assert "order_executed" in events
 
 
+def test_record_decision_event_preserves_structured_metadata_for_serializer() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    controller._record_decision_event(  # pyright: ignore[reportPrivateUsage]
+        "decision_evaluation",
+        status="accepted",
+        metadata={
+            "structured": {"z": 2, "a": 1},
+            "items": ["x", {"k": 1}],
+            "flag": True,
+            "missing": None,
+        },
+    )
+
+    exported = journal.export()
+    assert len(exported) == 1
+    event = exported[0]
+    assert event["structured"] == '{"a":1,"z":2}'
+    assert event["items"] == '["x",{"k":1}]'
+    assert event["flag"] == "true"
+    assert event["missing"] == "null"
+
+
+def test_record_decision_event_preserves_structured_signal_and_order_metadata() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "quantity": "1",
+            "price": "100",
+            "structured": {"z": 2, "a": 1},
+            "items": ["x", {"k": 1}],
+        },
+    )
+    request = OrderRequest(
+        symbol="BTC/USDT",
+        side="BUY",
+        quantity=1.0,
+        order_type="market",
+        price=100.0,
+        metadata={
+            "structured": {"beta": 2, "alpha": 1},
+            "items": ["a", {"b": 2}],
+            "flag": True,
+            "missing": None,
+        },
+    )
+
+    controller._record_decision_event(  # pyright: ignore[reportPrivateUsage]
+        "order_submitted",
+        signal=signal,
+        request=request,
+        status="submitted",
+    )
+
+    exported = journal.export()
+    assert len(exported) == 1
+    event = exported[0]
+    assert event["signal_structured"] == '{"a":1,"z":2}'
+    assert event["signal_items"] == '["x",{"k":1}]'
+    assert event["order_structured"] == '{"alpha":1,"beta":2}'
+    assert event["order_items"] == '["a",{"b":2}]'
+    assert event["order_flag"] == "true"
+    assert event["order_missing"] == "null"
+
+
 def test_controller_updates_metrics_counters_and_gauge() -> None:
     registry = MetricsRegistry()
     risk_engine = DummyRiskEngine()

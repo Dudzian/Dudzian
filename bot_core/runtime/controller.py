@@ -522,15 +522,15 @@ class TradingController:
         if self._decision_journal is None:
             return
 
-        meta: dict[str, str] = {}
+        meta: dict[str, object] = {}
         if metadata:
-            meta.update({str(k): str(v) for k, v in metadata.items()})
+            meta.update({str(k): v for k, v in metadata.items()})
         if signal is not None:
             meta.setdefault("signal_confidence", f"{signal.confidence:.6f}")
             enriched_signal_metadata = self._clone_metadata(signal.metadata)
             self._inject_explainability_metadata(enriched_signal_metadata)
             for key, value in enriched_signal_metadata.items():
-                meta.setdefault(f"signal_{key}", str(value))
+                meta.setdefault(f"signal_{key}", value)
         if request is not None:
             meta.setdefault("order_type", request.order_type)
             if request.time_in_force:
@@ -540,7 +540,7 @@ class TradingController:
             enriched_request_metadata = self._clone_metadata(getattr(request, "metadata", None))
             self._inject_explainability_metadata(enriched_request_metadata)
             for key, value in enriched_request_metadata.items():
-                meta.setdefault(f"order_{key}", str(value))
+                meta.setdefault(f"order_{key}", value)
 
         symbol = request.symbol if request else (signal.symbol if signal else None)
         side = None
