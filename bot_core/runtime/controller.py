@@ -601,6 +601,9 @@ class TradingController:
             indicator_keys = {"probability", "model_name", "prediction", "threshold"}
             if indicator_keys & set(metadata):
                 return self._ai_signal_modes[0] if self._ai_signal_modes else "ai"
+            ai_manager_payload = metadata.get("ai_manager")
+            if isinstance(ai_manager_payload, Mapping):
+                return self._ai_signal_modes[0] if self._ai_signal_modes else "ai"
 
         return candidate or "default"
 
