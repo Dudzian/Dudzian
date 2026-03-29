@@ -215,18 +215,32 @@ def test_run_forever_respects_stop_condition_and_sleep() -> None:
     class _Clock:
         def __init__(self) -> None:
             self.current = datetime(2024, 1, 1, tzinfo=timezone.utc)
+            self.calls = 0
 
         def __call__(self) -> datetime:
+            self.calls += 1
             value = self.current
             self.current = value + timedelta(seconds=60)
             return value
 
+    class _MonotonicClock:
+        def __init__(self) -> None:
+            self.values = iter((100.0, 220.0, 300.0))
+            self.calls = 0
+
+        def __call__(self) -> float:
+            self.calls += 1
+            return next(self.values, 300.0)
+
+    wall_clock = _Clock()
+    monotonic_clock = _MonotonicClock()
     sleep_calls: list[float] = []
 
     runner = DailyTrendRealtimeRunner(
         controller=controller,
         trading_controller=trading_controller,
-        clock=_Clock(),
+        clock=wall_clock,
+        monotonic_clock=monotonic_clock,
         sleep=lambda seconds: sleep_calls.append(seconds),
         history_bars=3,
     )
@@ -235,7 +249,9 @@ def test_run_forever_respects_stop_condition_and_sleep() -> None:
 
     assert len(controller.calls) == 2
     assert trading_controller.health_checks == 2
-    assert sleep_calls == [pytest.approx(60.0)]
+    assert sleep_calls == [60.0]
+    assert wall_clock.calls == 2
+    assert monotonic_clock.calls == 3
 
 
 def test_run_forever_uses_error_handler_and_continues() -> None:
@@ -251,6 +267,8 @@ def test_run_forever_uses_error_handler_and_continues() -> None:
             self.current = value + timedelta(seconds=60)
             return value
 
+    monotonic_values = iter((10.0, 130.0, 200.0))
+
     sleep_calls: list[float] = []
     captured: list[Exception] = []
 
@@ -258,6 +276,7 @@ def test_run_forever_uses_error_handler_and_continues() -> None:
         controller=controller,
         trading_controller=trading_controller,
         clock=_Clock(),
+        monotonic_clock=lambda: next(monotonic_values, 200.0),
         sleep=lambda seconds: sleep_calls.append(seconds),
         on_cycle_error=lambda exc: captured.append(exc),
         min_sleep_seconds=5.0,
@@ -268,4 +287,160 @@ def test_run_forever_uses_error_handler_and_continues() -> None:
     assert controller.failures == 2
     assert len(captured) == 2
     assert all(isinstance(exc, RuntimeError) for exc in captured)
-    assert sleep_calls == [pytest.approx(60.0)]
+    assert sleep_calls == [60.0]
+
+
+def test_run_forever_does_not_sleep_when_stop_condition_is_initially_true() -> None:
+    controller = _StubRealtimeController(interval="1d", tick_seconds=180.0)
+    trading_controller = _StubTradingController()
+
+    class _CountingClock:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> datetime:
+            self.calls += 1
+            return datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    class _CountingMonotonic:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> float:
+            self.calls += 1
+            return 100.0
+
+    wall_clock = _CountingClock()
+    monotonic_clock = _CountingMonotonic()
+    sleep_calls: list[float] = []
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        clock=wall_clock,
+        monotonic_clock=monotonic_clock,
+        sleep=lambda seconds: sleep_calls.append(seconds),
+    )
+
+    runner.run_forever(stop_condition=lambda: True)
+
+    assert controller.calls == []
+    assert trading_controller.health_checks == 0
+    assert sleep_calls == []
+    assert wall_clock.calls == 0
+    assert monotonic_clock.calls == 0
+
+
+def test_run_forever_sleep_budget_ignores_wall_clock_jumps() -> None:
+    controller = _StubRealtimeController(interval="1d", tick_seconds=180.0)
+    trading_controller = _StubTradingController()
+
+    wall_clock_values = iter(
+        (
+            datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 2, 0, 0, tzinfo=timezone.utc),
+            datetime(2023, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2023, 1, 1, 0, 1, tzinfo=timezone.utc),
+        )
+    )
+    monotonic_values = iter((100.0, 160.0, 200.0))
+    sleep_calls: list[float] = []
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        clock=lambda: next(wall_clock_values),
+        monotonic_clock=lambda: next(monotonic_values, 200.0),
+        sleep=lambda seconds: sleep_calls.append(seconds),
+    )
+
+    runner.run_forever(stop_condition=lambda: len(controller.calls) >= 2)
+
+    assert len(controller.calls) == 2
+    assert sleep_calls == [120.0]
+
+
+def test_run_forever_overrun_skips_sleep_on_success_even_with_min_sleep() -> None:
+    controller = _StubRealtimeController(interval="1d", tick_seconds=60.0)
+    trading_controller = _StubTradingController()
+
+    wall_clock_values = iter(
+        (
+            datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc),
+        )
+    )
+    monotonic_values = iter((10.0, 100.0, 200.0))
+    sleep_calls: list[float] = []
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        clock=lambda: next(wall_clock_values, datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc)),
+        monotonic_clock=lambda: next(monotonic_values, 200.0),
+        sleep=lambda seconds: sleep_calls.append(seconds),
+        min_sleep_seconds=5.0,
+    )
+
+    runner.run_forever(stop_condition=lambda: len(controller.calls) >= 2)
+
+    assert len(controller.calls) == 2
+    assert sleep_calls == []
+
+
+def test_run_forever_overrun_enforces_min_sleep_on_error() -> None:
+    controller = _FailingRealtimeController(interval="1d", tick_seconds=60.0)
+    trading_controller = _StubTradingController()
+
+    wall_clock_values = iter(
+        (
+            datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc),
+        )
+    )
+    monotonic_values = iter((10.0, 100.0, 200.0))
+    sleep_calls: list[float] = []
+    errors: list[Exception] = []
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        clock=lambda: next(wall_clock_values, datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc)),
+        monotonic_clock=lambda: next(monotonic_values, 200.0),
+        sleep=lambda seconds: sleep_calls.append(seconds),
+        on_cycle_error=errors.append,
+        min_sleep_seconds=5.0,
+    )
+
+    runner.run_forever(stop_condition=lambda: controller.failures >= 2)
+
+    assert controller.failures == 2
+    assert len(errors) == 2
+    assert sleep_calls == [5.0]
+
+
+def test_run_forever_elapsed_equal_tick_skips_sleep_on_success() -> None:
+    controller = _StubRealtimeController(interval="1d", tick_seconds=60.0)
+    trading_controller = _StubTradingController()
+
+    wall_clock_values = iter(
+        (
+            datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc),
+        )
+    )
+    monotonic_values = iter((50.0, 110.0, 200.0))
+    sleep_calls: list[float] = []
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        clock=lambda: next(wall_clock_values, datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc)),
+        monotonic_clock=lambda: next(monotonic_values, 200.0),
+        sleep=lambda seconds: sleep_calls.append(seconds),
+    )
+
+    runner.run_forever(stop_condition=lambda: len(controller.calls) >= 2)
+
+    assert len(controller.calls) == 2
+    assert sleep_calls == []

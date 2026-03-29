@@ -63,7 +63,9 @@ class DailyTrendRealtimeRunner:
     controller: DailyTrendController
     trading_controller: TradingController
     history_bars: int = 120
+    # Wall-clock for business timestamps (OHLCV windows / signal horizon).
     clock: Callable[[], datetime] = _utc_now
+    # Monotonic source for pacing and sleep budget (immune to wall-clock jumps).
     monotonic_clock: Callable[[], float] = time.perf_counter
     sleep: Callable[[float], None] = time.sleep
     on_cycle_error: Callable[[Exception], None] | None = None
@@ -120,7 +122,8 @@ class DailyTrendRealtimeRunner:
             if stop_condition and stop_condition():
                 break
 
-            cycle_start = self.clock()
+            # Sleep budgeting uses monotonic time to avoid wall-clock jumps
+            # (NTP/DST/manual corrections) impacting realtime pacing.
             pacing_start = self.monotonic_clock()
             success = False
 
@@ -156,6 +159,7 @@ class DailyTrendRealtimeRunner:
             elapsed = max(0.0, self.monotonic_clock() - pacing_start)
             sleep_seconds = max(0.0, interval_seconds - elapsed)
             if not success:
+                # Enforce minimum backoff only after failed cycles.
                 sleep_seconds = max(min_sleep, sleep_seconds)
 
             if sleep_seconds > 0:
