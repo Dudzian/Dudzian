@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
+import os
+import subprocess
+import sys
+import types
 
 import pytest
 
@@ -102,6 +107,50 @@ def test_capture_stream_snapshot_uses_metrics_registry(monkeypatch: pytest.Monke
     assert captured.get("wait_prefill") == {"min_batches": 1, "timeout": 1.0}
 
 
+def test_capture_stream_snapshot_closes_once_when_limit_reached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, int] = {"closed": 0}
+
+    class _StubStream:
+        def __init__(self, *_, **__):
+            pass
+
+        def start(self):
+            return self
+
+        def wait_prefill(self, *, min_batches: int = 1, timeout: float | None = None) -> bool:
+            return True
+
+        def __iter__(self):
+            yield streaming_bridge.StreamBatch(
+                channel="ticker",
+                events=(
+                    {"timestamp_ms": 1000, "open": 1.0},
+                    {"timestamp_ms": 2000, "open": 2.0},
+                ),
+                received_at=0.0,
+            )
+
+        def close(self) -> None:
+            captured["closed"] += 1
+
+    monkeypatch.setattr(streaming_bridge, "LocalLongPollStream", _StubStream)
+
+    result = streaming_bridge.capture_stream_snapshot(
+        base_url="http://127.0.0.1:8080",
+        path="/demo",
+        channels=("ticker",),
+        adapter="demo",
+        scope="public",
+        environment="paper",
+        limit=1,
+    )
+
+    assert result == [{"timestamp_ms": 1000, "open": 1.0, "channel": "ticker"}]
+    assert captured["closed"] == 1
+
+
 def test_capture_stream_snapshot_async_prefills_and_limits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -169,7 +218,7 @@ def test_capture_stream_snapshot_async_prefills_and_limits(
     assert captured.get("started") is True
     assert captured.get("iterated") is True
     assert captured.get("wait_prefill_async") == {"min_batches": 1, "timeout": 1.0}
-    assert captured.get("closed") == 2
+    assert captured.get("closed") == 1
 
 
 def test_capture_stream_snapshot_async_closes_on_prefill_error(
@@ -211,6 +260,134 @@ def test_capture_stream_snapshot_async_closes_on_prefill_error(
         )
 
     assert captured["closed"] == 1
+
+
+def test_streaming_bridge_import_without_pandas_and_lazy_error(tmp_path) -> None:
+    script = """
+import builtins
+import importlib
+import sys
+
+real_import = builtins.__import__
+def guard(name, *args, **kwargs):
+    if name == "pandas" or name.startswith("pandas."):
+        raise ModuleNotFoundError("No module named 'pandas'")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = guard
+module = importlib.import_module("bot_core.runtime.streaming_bridge")
+assert hasattr(module, "capture_stream_snapshot")
+try:
+    module.stream_batches_to_frame([])
+except ModuleNotFoundError as exc:
+    assert "pandas" in str(exc)
+else:
+    raise AssertionError("Expected ModuleNotFoundError for pandas when using stream_batches_to_frame")
+"""
+
+    env = os.environ.copy()
+    pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = os.getcwd() if not pythonpath else f"{os.getcwd()}:{pythonpath}"
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_history_to_stream_batches_accepts_mapping_without_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = __import__
+
+    def guard(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if name == "bot_core.backtest.providers" or name.startswith("bot_core.backtest.providers"):
+            raise ModuleNotFoundError("providers unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", guard)
+
+    batches = streaming_bridge.history_to_stream_batches(
+        history=(
+            {"timestamp_ms": 1000, "open": 1.0},
+            {"timestamp_ms": 2000, "open": 2.0},
+        ),
+        channel="ticker",
+        batch_size=2,
+    )
+
+    assert len(batches) == 1
+    assert batches[0]["channel"] == "ticker"
+    assert [event["timestamp_ms"] for event in batches[0]["events"]] == [1000, 2000]
+
+
+def test_history_to_stream_batches_rejects_exotic_entry_without_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = __import__
+
+    def guard(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if name == "bot_core.backtest.providers" or name.startswith("bot_core.backtest.providers"):
+            raise ModuleNotFoundError("providers unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", guard)
+
+    with pytest.raises(TypeError, match="Nieobsługiwany typ wpisu historii"):
+        streaming_bridge.history_to_stream_batches(
+            history=(object(),),
+            channel="ticker",
+        )
+
+
+def test_history_to_stream_batches_supports_provider_ohlcvbar_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @dataclass
+    class _FakeOHLCVBar:
+        timestamp: object
+        open: float
+        high: float
+        low: float
+        close: float
+        volume: float
+
+    fake_module = types.ModuleType("bot_core.backtest.providers")
+    fake_module.OHLCVBar = _FakeOHLCVBar  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "bot_core.backtest.providers", fake_module)
+
+    bar = _FakeOHLCVBar(
+        timestamp="1970-01-01T00:00:01Z",
+        open=1.0,
+        high=1.5,
+        low=0.5,
+        close=1.2,
+        volume=3.0,
+    )
+    batches = streaming_bridge.history_to_stream_batches(
+        history=(bar,),
+        channel="ohlcv",
+        batch_size=1,
+    )
+
+    assert len(batches) == 1
+    assert batches[0]["channel"] == "ohlcv"
+    assert batches[0]["cursor"] == "cursor-1"
+    assert batches[0]["events"] == [
+        {
+            "open": 1.0,
+            "high": 1.5,
+            "low": 0.5,
+            "close": 1.2,
+            "volume": 3.0,
+            "timestamp": "1970-01-01T00:00:01Z",
+            "timestamp_ms": 1000,
+            "channel": "ohlcv",
+        }
+    ]
 
 
 @pytest.mark.parametrize(

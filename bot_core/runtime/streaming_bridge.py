@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, MutableMapping, Sequence
-
-import pandas as pd
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.observability.metrics import MetricsRegistry
-from bot_core.backtest.providers import ListHistoryProvider, OHLCVBar
+
+if TYPE_CHECKING:  # pragma: no cover
+    from bot_core.backtest.providers import ListHistoryProvider, OHLCVBar
 
 
 def _normalize_limit(limit: Any) -> int:
@@ -55,7 +55,7 @@ def _normalize_event(
 
 
 def history_to_stream_batches(
-    history: Sequence[Mapping[str, Any]] | Sequence[OHLCVBar],
+    history: Sequence[Mapping[str, Any]] | Sequence["OHLCVBar"],
     *,
     channel: str,
     batch_size: int = 250,
@@ -63,11 +63,16 @@ def history_to_stream_batches(
 ) -> list[dict[str, Any]]:
     """Konwertuje historię OHLCV na sekwencję paczek streamu long-pollowego."""
 
+    try:
+        from bot_core.backtest.providers import OHLCVBar
+    except ModuleNotFoundError:
+        OHLCVBar = None  # type: ignore[assignment]
+
     batches: list[dict[str, Any]] = []
     buffer: list[Mapping[str, Any]] = []
     cursor_counter = 0
     for entry in history:
-        if isinstance(entry, OHLCVBar):
+        if OHLCVBar is not None and isinstance(entry, OHLCVBar):
             payload: Mapping[str, Any] = {
                 "open": entry.open,
                 "high": entry.high,
@@ -77,6 +82,10 @@ def history_to_stream_batches(
                 "timestamp": entry.timestamp,
             }
         else:
+            if not isinstance(entry, Mapping):
+                raise TypeError(
+                    "Nieobsługiwany typ wpisu historii; oczekiwano Mapping lub OHLCVBar."
+                )
             payload = entry
         buffer.append(_normalize_event(payload, channel=channel))
         if len(buffer) >= max(1, batch_size):
@@ -101,8 +110,15 @@ def history_to_stream_batches(
     return batches
 
 
-def stream_batches_to_frame(batches: Iterable[StreamBatch]) -> pd.DataFrame:
+def stream_batches_to_frame(batches: Iterable[StreamBatch]) -> Any:
     """Buduje ramkę danych OHLCV na podstawie paczek strumienia."""
+
+    try:
+        import pandas as pd
+    except ModuleNotFoundError as exc:  # pragma: no cover - zależne od środowiska
+        raise ModuleNotFoundError(
+            "Brak zależności 'pandas' wymaganej przez stream_batches_to_frame."
+        ) from exc
 
     rows: list[MutableMapping[str, Any]] = []
     for batch in batches:
@@ -121,9 +137,11 @@ def stream_batches_to_frame(batches: Iterable[StreamBatch]) -> pd.DataFrame:
 
 
 def history_events_to_provider(
-    history: Sequence[Mapping[str, Any]] | Sequence[OHLCVBar],
-) -> ListHistoryProvider:
+    history: Sequence[Mapping[str, Any]] | Sequence["OHLCVBar"],
+) -> "ListHistoryProvider":
     """Konwertuje snapshot historii OHLCV do interfejsu providerów backtest/runtime."""
+
+    from bot_core.backtest.providers import ListHistoryProvider, OHLCVBar
 
     bars: list[OHLCVBar] = []
     for entry in history:
@@ -226,7 +244,6 @@ def capture_stream_snapshot(
             for event in batch.events:
                 events.append(_normalize_event(event, channel=batch.channel))
                 if limit_value > 0 and len(events) >= limit_value:
-                    stream.close()
                     return events
     finally:
         stream.close()
@@ -282,7 +299,6 @@ async def capture_stream_snapshot_async(
             for event in batch.events:
                 events.append(_normalize_event(event, channel=batch.channel))
                 if limit_value > 0 and len(events) >= limit_value:
-                    await stream.aclose()
                     return events
     finally:
         await stream.aclose()
