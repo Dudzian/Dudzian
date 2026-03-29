@@ -679,9 +679,7 @@ def test_controller_does_not_open_reversal_when_close_order_is_not_filled(
             status = self._close_status if request.metadata.get("action") == "close" else "filled"
             return OrderResult(
                 order_id=(
-                    f"close-{status}-1"
-                    if request.metadata.get("action") == "close"
-                    else "open-1"
+                    f"close-{status}-1" if request.metadata.get("action") == "close" else "open-1"
                 ),
                 status=status,
                 filled_quantity=0.0 if not self._is_close_filled else request.quantity,
