@@ -948,29 +948,11 @@ _TRADING_CONTROLLER_IMPORT_ERROR: Exception | None = None
 _TRADING_CONTROLLER_IMPORT_TRACEBACK: str | None = None
 
 _TradingController = None  # type: ignore
-
-try:
-    from bot_core.runtime.controller import DailyTrendController as _DailyTrendController  # type: ignore
-except Exception:
-    _DailyTrendController = None  # type: ignore
-
-try:
-    from bot_core.runtime.realtime import (  # type: ignore
-        DailyTrendRealtimeRunner as _DailyTrendRealtimeRunner,
-    )
-except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć modułu realtime
-    _DailyTrendRealtimeRunner = None  # type: ignore
-
-try:
-    from bot_core.runtime.pipeline import (  # type: ignore
-        DailyTrendPipeline,
-        build_daily_trend_pipeline,
-        create_trading_controller,
-    )
-except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć modułu pipeline
-    DailyTrendPipeline = None  # type: ignore
-    build_daily_trend_pipeline = None  # type: ignore
-    create_trading_controller = None  # type: ignore
+_DailyTrendController = None  # type: ignore
+_DailyTrendRealtimeRunner = None  # type: ignore
+DailyTrendPipeline = None  # type: ignore
+build_daily_trend_pipeline = None  # type: ignore
+create_trading_controller = None  # type: ignore
 
 # --- Publiczny interfejs modułu ---
 __all__ = [
@@ -1038,59 +1020,7 @@ if RiskServer is not None:
 if RiskMetricsExporter is not None:
     __all__.append("RiskMetricsExporter")
 
-# Eksportuj tylko te kontrolery, które są dostępne w danej gałęzi.
-if _TradingController is None:
-    # Defensywny fallback, gdy bezpośredni import się nie powiódł
-    try:  # pragma: no cover
-        _TradingController = getattr(
-            import_module("bot_core.runtime.controller"), "TradingController", None
-        )
-    except Exception:  # pragma: no cover
-        _TradingController = None  # type: ignore
-
-if _TradingController is not None:
-    TradingController = _TradingController  # type: ignore
-    __all__.append("TradingController")
-
-if _DailyTrendController is None:
-    try:  # pragma: no cover
-        _DailyTrendController = getattr(
-            import_module("bot_core.runtime.controller"), "DailyTrendController", None
-        )
-    except Exception:  # pragma: no cover
-        _DailyTrendController = None  # type: ignore
-
-if _DailyTrendController is not None:
-    DailyTrendController = _DailyTrendController  # type: ignore
-    __all__.append("DailyTrendController")
-
-if _DailyTrendRealtimeRunner is None:
-    try:  # pragma: no cover
-        _DailyTrendRealtimeRunner = getattr(
-            import_module("bot_core.runtime.realtime"), "DailyTrendRealtimeRunner", None
-        )
-    except Exception:  # pragma: no cover
-        _DailyTrendRealtimeRunner = None  # type: ignore
-
-if _DailyTrendRealtimeRunner is not None:
-    DailyTrendRealtimeRunner = _DailyTrendRealtimeRunner  # type: ignore
-    __all__.append("DailyTrendRealtimeRunner")
-
-if DailyTrendPipeline is None or build_daily_trend_pipeline is None:
-    try:  # pragma: no cover
-        _pipeline_module = import_module("bot_core.runtime.pipeline")
-        DailyTrendPipeline = getattr(_pipeline_module, "DailyTrendPipeline", None)
-        build_daily_trend_pipeline = getattr(_pipeline_module, "build_daily_trend_pipeline", None)
-        create_trading_controller = getattr(_pipeline_module, "create_trading_controller", None)
-    except Exception:  # pragma: no cover
-        DailyTrendPipeline = None  # type: ignore
-        build_daily_trend_pipeline = None  # type: ignore
-        create_trading_controller = None  # type: ignore
-
-if DailyTrendPipeline is not None and build_daily_trend_pipeline is not None:
-    __all__.extend(["DailyTrendPipeline", "build_daily_trend_pipeline"])
-    if create_trading_controller is not None:
-        __all__.append("create_trading_controller")
+# Kontrolery/pipeline są eksportowane leniwie przez _LAZY_OPTIONAL_EXPORTS i __getattr__.
 
 
 _LAZY_OPTIONAL_EXPORTS: dict[str, tuple[str, str]] = {

@@ -5,11 +5,6 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Any, Dict, Tuple
 
-# Preload the core inference class so consumers importing bot_core.ai directly
-# do not rely on the lazy __getattr__ path (which can mask circular-import
-# issues when bot_core.ai is imported from partially initialised modules).
-from .inference import DecisionModelInference  # noqa: F401
-
 _EXPORTS: Dict[str, Tuple[str, str]] = {
     # inference / repository
     "DecisionModelInference": (".inference", "DecisionModelInference"),
