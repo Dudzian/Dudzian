@@ -39,8 +39,22 @@ from bot_core.config.models import (
     WhatsAppChannelSettings,
 )
 from bot_core.runtime.paths import RuntimePaths
-from bot_core.security import SecretManager, SecretStorageError
-from bot_core.security.guards import get_capability_guard
+
+try:  # pragma: no cover - security może być opcjonalne w runtime light
+    from bot_core.security import SecretManager, SecretStorageError
+except Exception:  # pragma: no cover
+    SecretManager = Any  # type: ignore[assignment]
+
+    class SecretStorageError(Exception):  # type: ignore[override]
+        """Fallback wyjątku sekretów gdy pakiet security jest niedostępny."""
+
+
+try:  # pragma: no cover - guard capability opcjonalny
+    from bot_core.security.guards import get_capability_guard
+except Exception:  # pragma: no cover
+
+    def get_capability_guard() -> Any | None:
+        return None
 
 _LOGGER = logging.getLogger(__name__)
 
