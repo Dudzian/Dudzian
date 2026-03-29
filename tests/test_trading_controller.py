@@ -132,7 +132,9 @@ class StatusExecutionService(ExecutionService):
         return OrderResult(
             order_id="order-status-1",
             status=self.status,
-            filled_quantity=request.quantity if self._filled_quantity is None else self._filled_quantity,
+            filled_quantity=request.quantity
+            if self._filled_quantity is None
+            else self._filled_quantity,
             avg_price=self._avg_price,
             raw_response={"context": context.metadata},
         )
@@ -286,7 +288,9 @@ def test_controller_non_filled_result_not_recorded_as_order_executed() -> None:
     events = [event["event"] for event in journal.export()]
     assert "order_executed" not in events
     assert "order_execution_result" in events
-    execution_message = next(message for message in channel.messages if message.category == "execution")
+    execution_message = next(
+        message for message in channel.messages if message.category == "execution"
+    )
     assert execution_message.severity == "warning"
     assert "zrealizowane" not in execution_message.title.lower()
     assert execution_message.context["status"] == "rejected"
@@ -344,14 +348,20 @@ def test_controller_partial_result_uses_distinct_journal_event() -> None:
     events = [event["event"] for event in journal.export()]
     assert "order_partially_executed" in events
     assert "order_executed" not in events
-    execution_message = next(message for message in channel.messages if message.category == "execution")
+    execution_message = next(
+        message for message in channel.messages if message.category == "execution"
+    )
     assert execution_message.severity == "info"
     assert "częściowo" in execution_message.title.lower()
 
 
-def test_controller_partial_result_without_execution_fill_data_does_not_fallback_to_request() -> None:
+def test_controller_partial_result_without_execution_fill_data_does_not_fallback_to_request() -> (
+    None
+):
     risk_engine = DummyRiskEngine()
-    execution = StatusExecutionService(status="partially_filled", filled_quantity=None, avg_price=None)
+    execution = StatusExecutionService(
+        status="partially_filled", filled_quantity=None, avg_price=None
+    )
     router, _channel, _audit = _router_with_channel()
     journal = CollectingDecisionJournal()
     controller = TradingController(
@@ -688,7 +698,9 @@ def test_controller_records_tco_event_with_reporter() -> None:
 
 def test_controller_skips_tco_for_partial_when_execution_data_missing() -> None:
     risk_engine = DummyRiskEngine()
-    execution = StatusExecutionService(status="partially_filled", filled_quantity=None, avg_price=None)
+    execution = StatusExecutionService(
+        status="partially_filled", filled_quantity=None, avg_price=None
+    )
     router, _, _ = _router_with_channel()
     journal = CollectingDecisionJournal()
     reporter = StubTCOReporter()
