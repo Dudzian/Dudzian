@@ -181,7 +181,9 @@ def test_jsonl_export_is_lenient_but_logs_decode_failures(tmp_path: Path, caplog
 def test_jsonl_export_logs_file_read_errors(tmp_path: Path, monkeypatch, caplog) -> None:
     journal = JsonlTradingDecisionJournal(directory=tmp_path, retention_days=7)
     file_path = tmp_path / "decisions-20240101.jsonl"
-    file_path.write_text('{"event":"ok","timestamp":"2024-01-01T00:00:00+00:00"}\n', encoding="utf-8")
+    file_path.write_text(
+        '{"event":"ok","timestamp":"2024-01-01T00:00:00+00:00"}\n', encoding="utf-8"
+    )
 
     original_open = Path.open
 
