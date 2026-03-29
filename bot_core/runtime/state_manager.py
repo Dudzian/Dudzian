@@ -41,6 +41,11 @@ class RuntimeCheckpoint:
 class RuntimeStateManager:
     """Proste repozytorium checkpointów wykorzystywane przez scenariusze E2E."""
 
+    # Wspierany kontrakt FSM dla checkpointów:
+    # demo -> paper
+    # demo -> live
+    SUPPORTED_TARGET_MODES = frozenset({"paper", "live"})
+
     def __init__(self, root: str | Path = "var/runtime", *, filename: str = "state.json") -> None:
         self._root = Path(root).expanduser()
         self._root.mkdir(parents=True, exist_ok=True)
@@ -148,7 +153,7 @@ class RuntimeStateManager:
         normalized_target_mode = str(target_mode).strip().lower()
         if not normalized_target_mode:
             raise RuntimeStateError("Docelowy tryb checkpointu nie może być pusty.")
-        if normalized_target_mode != "paper":
+        if normalized_target_mode not in self.SUPPORTED_TARGET_MODES:
             raise RuntimeStateError(
                 f"Nieobsługiwane przejście checkpointu do trybu '{target_mode}'."
             )

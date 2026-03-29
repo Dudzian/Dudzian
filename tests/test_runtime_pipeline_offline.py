@@ -6,7 +6,7 @@ import socket
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -331,6 +331,24 @@ class _LoopbackRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "not_found"}, status=404)
 
 
+def _build_recent_loopback_ohlcv() -> dict[str, list[list[float]]]:
+    """Zwraca deterministyczne (w obrębie uruchomienia) świece bliskie 'teraz'.
+
+    Zaokrąglamy czas do pełnej minuty, aby ograniczyć flakiness testów opartych
+    o health-check `clock_sync`.
+    """
+
+    now_utc = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    recent_candle_ms = float(int(now_utc.timestamp() * 1000))
+    previous_candle_ms = float(int((now_utc - timedelta(minutes=1)).timestamp() * 1000))
+    return {
+        "BTCUSDT": [
+            [previous_candle_ms, 10.0, 11.0, 9.5, 10.5, 42.0],
+            [recent_candle_ms, 10.5, 11.5, 10.0, 11.2, 39.0],
+        ]
+    }
+
+
 def _wait_for_loopback(port: int, *, timeout: float = 5.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -347,12 +365,7 @@ def loopback_exchange_server() -> _LoopbackExchangeState:
     state = _LoopbackExchangeState(
         port=0,
         symbols=("BTCUSDT",),
-        ohlcv={
-            "BTCUSDT": [
-                [1_700_000_000_000.0, 10.0, 11.0, 9.5, 10.5, 42.0],
-                [1_700_003_600_000.0, 10.5, 11.5, 10.0, 11.2, 39.0],
-            ]
-        },
+        ohlcv=_build_recent_loopback_ohlcv(),
         account={
             "balances": {"USDT": 50_000.0},
             "total_equity": 50_000.0,
