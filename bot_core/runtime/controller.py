@@ -1116,9 +1116,7 @@ class TradingController:
         metadata: dict[str, object] = {
             "order_id": order_id,
             "filled_quantity": (
-                "null"
-                if execution_filled_qty is None
-                else f"{execution_filled_qty:.8f}"
+                "null" if execution_filled_qty is None else f"{execution_filled_qty:.8f}"
             ),
             "avg_price": "null" if execution_avg_price is None else f"{execution_avg_price:.8f}",
             "status": normalized_status,
@@ -1985,10 +1983,7 @@ class TradingController:
         message = AlertMessage(
             category="execution",
             title=f"Zlecenie {request.side} {request.symbol} nie zostało wykonane",
-            body=(
-                "Egzekucja zwróciła wynik bez pełnego wykonania "
-                f"(status={normalized_status})."
-            ),
+            body=(f"Egzekucja zwróciła wynik bez pełnego wykonania (status={normalized_status})."),
             severity="warning",
             context=context,
         )
