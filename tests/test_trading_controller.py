@@ -313,14 +313,15 @@ def test_controller_reverses_position_before_opening_new_one() -> None:
     close_event = next(
         event for event in journal_events if event["event"] == "order_close_for_reversal"
     )
+    # client_order_id is a generated identifier, while metadata bools are JSON-serialized.
     assert close_event.get("client_order_id")
-    assert close_event.get("order_generated_client_order_id") == "True"
+    assert close_event.get("order_generated_client_order_id") == "true"
     close_risk_event = next(
         event for event in journal_events if event["event"] == "reversal_close_risk_check"
     )
     assert close_risk_event.get("status") == "allowed"
-    assert close_risk_event.get("order_is_reducing") == "True"
-    assert close_risk_event.get("order_reducing_only") == "True"
+    assert close_risk_event.get("order_is_reducing") == "true"
+    assert close_risk_event.get("order_reducing_only") == "true"
 
 
 def test_controller_reversal_is_disabled_by_default() -> None:
@@ -1101,7 +1102,7 @@ def test_controller_generates_client_order_id_when_missing() -> None:
         event for event in journal.export() if event["event"] == "order_submitted"
     )
     assert order_submitted_event.get("client_order_id") == request.client_order_id
-    assert order_submitted_event.get("order_generated_client_order_id") == "True"
+    assert order_submitted_event.get("order_generated_client_order_id") == "true"
 
 
 def test_process_signals_survives_health_dispatch_exception(caplog) -> None:
