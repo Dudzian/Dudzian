@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - brak security stack nie blokuje telemetr
     def get_capability_guard() -> Any | None:
         return None
 
+
 DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
 
 _LOGGER = logging.getLogger(__name__)
