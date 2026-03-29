@@ -781,6 +781,46 @@ def test_controller_scales_quantity_when_risk_suggests_limit() -> None:
     assert "risk_adjusted" in events
 
 
+def test_controller_syncs_metadata_quantity_after_risk_adjustment() -> None:
+    risk_engine = DummyRiskEngine()
+    disallowed = RiskCheckResult(
+        allowed=False,
+        reason="Limit ekspozycji przekroczony",
+        adjustments={"max_quantity": 0.25},
+    )
+    allowed = RiskCheckResult(allowed=True)
+    risk_engine.set_result_sequence([disallowed, allowed])
+
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    controller.process_signals([_signal("BUY", quantity=1.0, price=100.0)])
+
+    assert execution.requests
+    adjusted_request = execution.requests[0]
+    assert adjusted_request.quantity == pytest.approx(0.25)
+    assert float(adjusted_request.metadata["quantity"]) == pytest.approx(adjusted_request.quantity)
+
+    exported = list(journal.export())
+    risk_adjusted = next(event for event in exported if event["event"] == "risk_adjusted")
+    submitted = next(event for event in exported if event["event"] == "order_submitted")
+    for event in (risk_adjusted, submitted):
+        assert float(event["quantity"]) == pytest.approx(0.25)
+        assert float(event["order_quantity"]) == pytest.approx(0.25)
+
+
 def test_controller_records_explainability_metadata() -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
