@@ -1062,7 +1062,11 @@ class TradingController:
         )
 
         try:
-            self._maybe_reverse_position(signal, adjusted_request, metric_labels)
+            should_execute_open_leg = self._maybe_reverse_position(
+                signal,
+                adjusted_request,
+                metric_labels,
+            )
         except Exception as exc:  # noqa: BLE001
             self._emit_execution_error_alert(signal, adjusted_request, exc)
             self._metric_orders_total.inc(
@@ -1076,6 +1080,9 @@ class TradingController:
                 metadata={"error": str(exc)},
             )
             raise
+        if not should_execute_open_leg:
+            self._handle_liquidation_state(risk_result)
+            return None
         try:
             result = self.execution_service.execute(adjusted_request, self._execution_context)
         except Exception as exc:  # noqa: BLE001
@@ -1185,7 +1192,7 @@ class TradingController:
         signal: StrategySignal,
         request: OrderRequest,
         metric_labels: Mapping[str, str],
-    ) -> None:
+    ) -> bool:
         metadata = dict(request.metadata or {})
         reverse_flag = metadata.pop("reverse_position", False)
         if isinstance(reverse_flag, str):
@@ -1196,7 +1203,7 @@ class TradingController:
             reverse_flag = bool(reverse_flag)
         if not reverse_flag:
             self._metric_reversal_skipped_total.inc(labels={**metric_labels, "reason": "disabled"})
-            return
+            return True
 
         qty_raw = metadata.pop("current_position_qty", None)
         side_raw = metadata.pop("current_position_side", None)
@@ -1222,7 +1229,7 @@ class TradingController:
             self._metric_reversal_skipped_total.inc(
                 labels={**metric_labels, "reason": "not_required"}
             )
-            return
+            return True
 
         if untrusted_reason:
             self._metric_reversal_skipped_total.inc(
@@ -1246,7 +1253,7 @@ class TradingController:
                 qty_raw,
                 side_raw,
             )
-            return
+            return True
 
         close_side = "SELL" if current_side == "LONG" else "BUY"
         close_metadata = {
@@ -1299,7 +1306,7 @@ class TradingController:
                 status="rejected",
                 metadata={"reason": close_risk.reason or ""},
             )
-            return
+            return True
 
         self._metric_orders_total.inc(
             labels={**metric_labels, "result": "submitted", "side": close_side},
@@ -1326,16 +1333,20 @@ class TradingController:
             )
             raise
 
+        normalized_close_status = _normalize_execution_status(result.status)
+        close_is_filled = normalized_close_status in _FILLED_EXECUTION_STATUSES
+        close_metric_result = "executed" if close_is_filled else "not_filled"
         self._metric_orders_total.inc(
-            labels={**metric_labels, "result": "executed", "side": close_side},
+            labels={**metric_labels, "result": close_metric_result, "side": close_side},
         )
         self._record_decision_event(
             "order_close_for_reversal",
             signal=signal,
             request=close_request,
-            status=result.status or "filled",
+            status=normalized_close_status,
             metadata={"close_order_id": result.order_id or ""},
         )
+        return close_is_filled
 
     def _maybe_adjust_request(
         self,
