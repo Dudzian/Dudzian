@@ -21,6 +21,35 @@ except Exception:  # pragma: no cover - fallback dla dystrybucji light
 
 
 _LOGGER = logging.getLogger(__name__)
+_SYSTEM_EVENT_FIELDS = frozenset(
+    {
+        "event",
+        "timestamp",
+        "environment",
+        "portfolio",
+        "risk_profile",
+        "symbol",
+        "side",
+        "quantity",
+        "price",
+        "status",
+        "schedule",
+        "strategy",
+        "schedule_run_id",
+        "strategy_instance_id",
+        "signal_id",
+        "primary_exchange",
+        "secondary_exchange",
+        "base_asset",
+        "quote_asset",
+        "instrument_type",
+        "data_feed",
+        "risk_budget_bucket",
+        "confidence",
+        "latency_ms",
+        "telemetry_namespace",
+    }
+)
 
 
 def _ensure_utc(timestamp: datetime) -> datetime:
@@ -33,6 +62,28 @@ def _format_float(value: float | None) -> str | None:
     if value is None:
         return None
     return f"{value:.10f}".rstrip("0").rstrip(".") if value else "0"
+
+
+def _serialize_metadata_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (Mapping, list, tuple)):
+        try:
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
 
 
 @dataclass(slots=True)
@@ -119,7 +170,12 @@ class TradingDecisionEvent:
         if self.telemetry_namespace:
             payload["telemetry_namespace"] = self.telemetry_namespace
         for key, value in self.metadata.items():
-            payload[str(key)] = str(value)
+            target_key = str(key)
+            if target_key in _SYSTEM_EVENT_FIELDS:
+                target_key = f"meta_{target_key}"
+            while target_key in payload:
+                target_key = f"meta_{target_key}"
+            payload[target_key] = _serialize_metadata_value(value)
         return payload
 
 
@@ -158,9 +214,15 @@ class JsonlTradingDecisionJournal(TradingDecisionJournal):
     _lock: threading.Lock = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        pattern = str(self.filename_pattern)
+        separators = {os.sep, "/", "\\"}
+        if os.altsep:
+            separators.add(os.altsep)
+        if any(separator and separator in pattern for separator in separators):
+            raise ValueError("filename_pattern cannot contain directory separators")
         self._path = Path(self.directory)
         self._path.mkdir(parents=True, exist_ok=True)
-        _ensure_utc(datetime.now(timezone.utc)).strftime(self.filename_pattern)
+        _ensure_utc(datetime.now(timezone.utc)).strftime(pattern)
         self._lock = threading.Lock()
 
     def record(self, event: TradingDecisionEvent) -> None:
@@ -181,6 +243,7 @@ class JsonlTradingDecisionJournal(TradingDecisionJournal):
         for file_path in sorted(self._path.glob("*")):
             if not file_path.is_file():
                 continue
+            malformed_lines = 0
             try:
                 with file_path.open("r", encoding=self.encoding) as handle:
                     for line in handle:
@@ -190,9 +253,16 @@ class JsonlTradingDecisionJournal(TradingDecisionJournal):
                         try:
                             events.append(json.loads(line))
                         except json.JSONDecodeError:
-                            continue
+                            malformed_lines += 1
             except OSError:
+                _LOGGER.warning("failed to read decision journal file: %s", file_path.name)
                 continue
+            if malformed_lines:
+                _LOGGER.warning(
+                    "skipped malformed decision journal lines: file=%s count=%d",
+                    file_path.name,
+                    malformed_lines,
+                )
         return tuple(events)
 
     def _target_file(self, timestamp: datetime) -> Path:
@@ -369,7 +439,7 @@ def log_decision_event(
 
     meta: MutableMapping[str, str] = {}
     if metadata:
-        meta.update({str(key): str(value) for key, value in metadata.items()})
+        meta.update({str(key): _serialize_metadata_value(value) for key, value in metadata.items()})
 
     event_obj = TradingDecisionEvent(
         event_type=event,
@@ -440,7 +510,7 @@ def log_model_change_event(
     for key, value in (metadata or {}).items():
         if value is None:
             continue
-        meta[str(key)] = str(value)
+        meta[str(key)] = _serialize_metadata_value(value)
 
     metrics_json: dict[str, dict[str, float]] = {}
 
