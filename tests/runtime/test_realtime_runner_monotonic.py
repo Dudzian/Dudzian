@@ -20,23 +20,26 @@ def test_realtime_runner_sleep_policy_is_stable_when_wall_clock_goes_backwards()
 
     timeline = iter(
         [
-            datetime.fromtimestamp(100, tz=timezone.utc),  # cycle_start (run_forever)
-            datetime.fromtimestamp(101, tz=timezone.utc),  # run_once() domain clock
-            datetime.fromtimestamp(95, tz=timezone.utc),  # rollback in pacing checkpoint
-            datetime.fromtimestamp(102, tz=timezone.utc),  # cycle_start (2nd cycle)
-            datetime.fromtimestamp(103, tz=timezone.utc),  # run_once() (2nd cycle)
+            datetime.fromtimestamp(101, tz=timezone.utc),  # run_once() first cycle
+            datetime.fromtimestamp(95, tz=timezone.utc),  # run_once() second cycle (rollback)
         ]
     )
+    clock_calls = 0
 
     def fake_clock() -> datetime:
+        nonlocal clock_calls
+        clock_calls += 1
         try:
             return next(timeline)
         except StopIteration:
-            return datetime.fromtimestamp(103, tz=timezone.utc)
+            return datetime.fromtimestamp(95, tz=timezone.utc)
 
     monotonic_timeline = iter([10.0, 12.0, 20.0])
+    monotonic_calls = 0
 
     def fake_monotonic() -> float:
+        nonlocal monotonic_calls
+        monotonic_calls += 1
         try:
             return next(monotonic_timeline)
         except StopIteration:
@@ -55,7 +58,9 @@ def test_realtime_runner_sleep_policy_is_stable_when_wall_clock_goes_backwards()
 
     assert len(sleeps) == 1
     assert sleeps[0] == 8.0
-    assert runner.last_cycle_started_at == datetime.fromtimestamp(102, tz=timezone.utc)
+    assert runner.last_cycle_started_at == datetime.fromtimestamp(95, tz=timezone.utc)
+    assert clock_calls == 2
+    assert monotonic_calls == 3
 
 
 def test_realtime_runner_sleep_policy_is_stable_when_wall_clock_jumps_forward() -> None:
@@ -72,23 +77,26 @@ def test_realtime_runner_sleep_policy_is_stable_when_wall_clock_jumps_forward() 
 
     timeline = iter(
         [
-            datetime.fromtimestamp(100, tz=timezone.utc),  # cycle_start (run_forever)
-            datetime.fromtimestamp(101, tz=timezone.utc),  # run_once() domain clock
-            datetime.fromtimestamp(900, tz=timezone.utc),  # large wall-clock jump forward
-            datetime.fromtimestamp(901, tz=timezone.utc),  # cycle_start (2nd cycle)
-            datetime.fromtimestamp(902, tz=timezone.utc),  # run_once() (2nd cycle)
+            datetime.fromtimestamp(101, tz=timezone.utc),  # run_once() first cycle
+            datetime.fromtimestamp(900, tz=timezone.utc),  # run_once() second cycle (forward jump)
         ]
     )
+    clock_calls = 0
 
     def fake_clock() -> datetime:
+        nonlocal clock_calls
+        clock_calls += 1
         try:
             return next(timeline)
         except StopIteration:
-            return datetime.fromtimestamp(902, tz=timezone.utc)
+            return datetime.fromtimestamp(900, tz=timezone.utc)
 
     monotonic_timeline = iter([10.0, 11.0, 20.0])
+    monotonic_calls = 0
 
     def fake_monotonic() -> float:
+        nonlocal monotonic_calls
+        monotonic_calls += 1
         try:
             return next(monotonic_timeline)
         except StopIteration:
@@ -107,4 +115,6 @@ def test_realtime_runner_sleep_policy_is_stable_when_wall_clock_jumps_forward() 
 
     assert len(sleeps) == 1
     assert sleeps[0] == 9.0
-    assert runner.last_cycle_started_at == datetime.fromtimestamp(901, tz=timezone.utc)
+    assert runner.last_cycle_started_at == datetime.fromtimestamp(900, tz=timezone.utc)
+    assert clock_calls == 2
+    assert monotonic_calls == 3
