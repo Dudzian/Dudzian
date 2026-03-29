@@ -55,44 +55,296 @@ from bot_core.exchanges.coinbase import (
     CoinbaseSpotAdapter,
 )
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
-from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
+
+
+def _is_expected_missing_dependency(
+    exc: ModuleNotFoundError, *, allowed_prefixes: tuple[str, ...]
+) -> bool:
+    missing = getattr(exc, "name", None)
+    if not missing:
+        return False
+    return any(missing == prefix or missing.startswith(f"{prefix}.") for prefix in allowed_prefixes)
+
+
+def _raise_optional_dependency_unavailable(
+    symbol: str,
+    *,
+    dependency_chain: str,
+    cause: BaseException | None = None,
+) -> None:
+    message = (
+        f"Niedostępny symbol optional dependency: {symbol}. "
+        f"Wymagany chain: {dependency_chain}."
+    )
+    if cause is not None:
+        raise RuntimeError(message) from cause
+    raise RuntimeError(message)
+
+
+def _make_unavailable_class(
+    symbol: str,
+    *,
+    dependency_chain: str,
+    cause: BaseException,
+) -> type:
+    class _Unavailable:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            _raise_optional_dependency_unavailable(
+                symbol,
+                dependency_chain=dependency_chain,
+                cause=cause,
+            )
+
+    _Unavailable.__name__ = symbol
+    _Unavailable.__qualname__ = symbol
+    return _Unavailable
+
+
+def _make_unavailable_callable(
+    symbol: str,
+    *,
+    dependency_chain: str,
+    cause: BaseException,
+) -> Callable[..., Any]:
+    def _raiser(*_args: Any, **_kwargs: Any) -> Any:
+        _raise_optional_dependency_unavailable(
+            symbol,
+            dependency_chain=dependency_chain,
+            cause=cause,
+        )
+
+    return _raiser
+
+
+try:  # pragma: no cover - opcjonalny adapter z dodatkowymi zależnościami
+    from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
+except ModuleNotFoundError as exc:  # pragma: no cover - brak opcjonalnych zależności adaptera
+    if not _is_expected_missing_dependency(
+        exc,
+        allowed_prefixes=("bot_core.exchanges.nowa_gielda", "httpx"),
+    ):
+        raise
+    _NOWA_GIELDA_IMPORT_ERROR = exc
+
+    NowaGieldaSpotAdapter = _make_unavailable_class(  # type: ignore[assignment]
+        "NowaGieldaSpotAdapter",
+        dependency_chain="bot_core.exchanges.nowa_gielda -> httpx",
+        cause=_NOWA_GIELDA_IMPORT_ERROR,
+    )
 from bot_core.exchanges.deribit import DeribitFuturesAdapter
 from bot_core.exchanges.kucoin import KuCoinSpotAdapter
 from bot_core.exchanges.okx import OKXFuturesAdapter, OKXMarginAdapter, OKXSpotAdapter
-from bot_core.exchanges.testing.loopback import LoopbackExchangeAdapter
+try:  # pragma: no cover - loopback może wymagać opcjonalnego klienta HTTP
+    from bot_core.exchanges.testing.loopback import LoopbackExchangeAdapter
+except ModuleNotFoundError as exc:  # pragma: no cover
+    if not _is_expected_missing_dependency(
+        exc,
+        allowed_prefixes=("bot_core.exchanges.testing.loopback", "httpx"),
+    ):
+        raise
+    _LOOPBACK_IMPORT_ERROR = exc
+
+    LoopbackExchangeAdapter = _make_unavailable_class(  # type: ignore[assignment]
+        "LoopbackExchangeAdapter",
+        dependency_chain="bot_core.exchanges.testing.loopback -> httpx",
+        cause=_LOOPBACK_IMPORT_ERROR,
+    )
 from bot_core.exchanges.health import HealthCheckResult, HealthMonitor, HealthStatus
 from bot_core.exchanges.health_checks import build_standard_health_checks
 from bot_core.exchanges.zonda import ZondaSpotAdapter
-from bot_core.risk.base import RiskRepository
-from bot_core.risk.engine import ThresholdRiskEngine
-from bot_core.risk.settings import RiskManagerSettings, derive_risk_manager_settings
-from bot_core.security.signing import verify_hmac_signature
-from bot_core.risk.events import RiskDecisionLog
-from bot_core.risk.factory import build_risk_profile_from_config
-from bot_core.risk.repository import FileRiskRepository
-from bot_core.security import SecretManager, SecretStorageError, build_service_token_validator
-from bot_core.security.fingerprint import DeviceFingerprintGenerator, FingerprintError
-from bot_core.security.fingerprint_lock import (
-    FingerprintLockError,
-    load_fingerprint_lock,
-    verify_local_hardware,
-)
-from bot_core.security.license import (
-    LicenseValidationError,
-    LicenseValidationResult,
-    validate_license_from_config,
-)
-from bot_core.security.messages import make_warning
-from bot_core.security.license_service import LicenseService, LicenseServiceError
-from bot_core.security.guards import (
-    LicenseCapabilityError,
-    get_capability_guard,
-    install_capability_guard,
-    reset_capability_guard,
-)
-from bot_core.security.runtime_integrity import RuntimeIntegrityError, verify_bundle_integrity
-from bot_core.security.tokens import ServiceTokenValidator
-from bot_core.runtime.tco_reporting import RuntimeTCOReporter
+try:  # pragma: no cover - moduły risk mogą zależeć od opcjonalnych komponentów security
+    from bot_core.risk.base import RiskRepository
+    from bot_core.risk.engine import ThresholdRiskEngine
+    from bot_core.risk.settings import RiskManagerSettings, derive_risk_manager_settings
+    from bot_core.risk.factory import build_risk_profile_from_config
+    from bot_core.risk.repository import FileRiskRepository
+except ModuleNotFoundError as exc:  # pragma: no cover
+    if not _is_expected_missing_dependency(
+        exc,
+        allowed_prefixes=("bot_core.risk", "bot_core.security", "cryptography"),
+    ):
+        raise
+    _RISK_IMPORT_ERROR = exc
+    RiskRepository = Any  # type: ignore[misc,assignment]
+    RiskManagerSettings = Any  # type: ignore[misc,assignment]
+
+    ThresholdRiskEngine = _make_unavailable_class(  # type: ignore[assignment]
+        "ThresholdRiskEngine",
+        dependency_chain="bot_core.risk -> bot_core.security",
+        cause=_RISK_IMPORT_ERROR,
+    )
+
+    derive_risk_manager_settings = _make_unavailable_callable(  # type: ignore[assignment]
+        "derive_risk_manager_settings",
+        dependency_chain="bot_core.risk.settings -> bot_core.security",
+        cause=_RISK_IMPORT_ERROR,
+    )
+
+    build_risk_profile_from_config = _make_unavailable_callable(  # type: ignore[assignment]
+        "build_risk_profile_from_config",
+        dependency_chain="bot_core.risk.factory -> bot_core.security",
+        cause=_RISK_IMPORT_ERROR,
+    )
+
+    FileRiskRepository = _make_unavailable_class(  # type: ignore[assignment]
+        "FileRiskRepository",
+        dependency_chain="bot_core.risk.repository -> bot_core.security",
+        cause=_RISK_IMPORT_ERROR,
+    )
+
+try:  # pragma: no cover - risk events mogą być niedostępne bez modułów security
+    from bot_core.risk.events import RiskDecisionLog
+except ModuleNotFoundError as exc:  # pragma: no cover
+    if not _is_expected_missing_dependency(
+        exc,
+        allowed_prefixes=("bot_core.risk.events", "bot_core.security", "cryptography"),
+    ):
+        raise
+    _RISK_EVENTS_IMPORT_ERROR = exc
+
+    RiskDecisionLog = _make_unavailable_class(  # type: ignore[assignment]
+        "RiskDecisionLog",
+        dependency_chain="bot_core.risk.events -> bot_core.security.signing",
+        cause=_RISK_EVENTS_IMPORT_ERROR,
+    )
+
+try:  # pragma: no cover - security stack opcjonalny w odchudzonych buildach
+    from bot_core.security.signing import verify_hmac_signature
+    from bot_core.security import SecretManager, SecretStorageError, build_service_token_validator
+    from bot_core.security.fingerprint import DeviceFingerprintGenerator, FingerprintError
+    from bot_core.security.fingerprint_lock import (
+        FingerprintLockError,
+        load_fingerprint_lock,
+        verify_local_hardware,
+    )
+    from bot_core.security.license import (
+        LicenseValidationError,
+        LicenseValidationResult,
+        validate_license_from_config,
+    )
+    from bot_core.security.messages import make_warning
+    from bot_core.security.license_service import LicenseService, LicenseServiceError
+    from bot_core.security.guards import (
+        LicenseCapabilityError,
+        get_capability_guard,
+        install_capability_guard,
+        reset_capability_guard,
+    )
+    from bot_core.security.runtime_integrity import RuntimeIntegrityError, verify_bundle_integrity
+    from bot_core.security.tokens import ServiceTokenValidator
+except ModuleNotFoundError as exc:  # pragma: no cover - fallback import-time dla optional deps
+    if not _is_expected_missing_dependency(
+        exc,
+        allowed_prefixes=("bot_core.security", "cryptography", "keyring"),
+    ):
+        raise
+    _SECURITY_IMPORT_ERROR = exc
+    SecretManager = Any  # type: ignore[misc,assignment]
+    ServiceTokenValidator = Any  # type: ignore[misc,assignment]
+    LicenseValidationResult = Any  # type: ignore[misc,assignment]
+
+    class SecretStorageError(Exception):
+        pass
+
+    class FingerprintError(Exception):
+        pass
+
+    class FingerprintLockError(Exception):
+        pass
+
+    class LicenseValidationError(Exception):
+        pass
+
+    class LicenseServiceError(Exception):
+        pass
+
+    class LicenseCapabilityError(Exception):
+        pass
+
+    class RuntimeIntegrityError(Exception):
+        pass
+
+    DeviceFingerprintGenerator = _make_unavailable_class(  # type: ignore[assignment]
+        "DeviceFingerprintGenerator",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+
+    LicenseService = _make_unavailable_class(  # type: ignore[assignment]
+        "LicenseService",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+
+    def verify_bundle_integrity() -> None:
+        return None
+
+    def get_capability_guard() -> Any | None:
+        return None
+
+    def make_warning(*args: Any, **kwargs: Any) -> str:
+        message = kwargs.get("message")
+        if isinstance(message, str) and message:
+            return message
+        if args:
+            return str(args[0])
+        return "security_unavailable"
+
+    verify_hmac_signature = _make_unavailable_callable(  # type: ignore[assignment]
+        "verify_hmac_signature",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+    build_service_token_validator = _make_unavailable_callable(  # type: ignore[assignment]
+        "build_service_token_validator",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+    load_fingerprint_lock = _make_unavailable_callable(  # type: ignore[assignment]
+        "load_fingerprint_lock",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+    verify_local_hardware = _make_unavailable_callable(  # type: ignore[assignment]
+        "verify_local_hardware",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+    validate_license_from_config = _make_unavailable_callable(  # type: ignore[assignment]
+        "validate_license_from_config",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+    install_capability_guard = _make_unavailable_callable(  # type: ignore[assignment]
+        "install_capability_guard",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+    reset_capability_guard = _make_unavailable_callable(  # type: ignore[assignment]
+        "reset_capability_guard",
+        dependency_chain="bot_core.security",
+        cause=_SECURITY_IMPORT_ERROR,
+    )
+try:  # pragma: no cover - TCO reporting może zależeć od opcjonalnych modułów security
+    from bot_core.runtime.tco_reporting import RuntimeTCOReporter
+except ModuleNotFoundError as exc:  # pragma: no cover
+    if not _is_expected_missing_dependency(
+        exc,
+        allowed_prefixes=(
+            "bot_core.runtime.tco_reporting",
+            "bot_core.tco",
+            "bot_core.security",
+            "cryptography",
+        ),
+    ):
+        raise
+    _TCO_IMPORT_ERROR = exc
+
+    RuntimeTCOReporter = _make_unavailable_class(  # type: ignore[assignment]
+        "RuntimeTCOReporter",
+        dependency_chain="bot_core.runtime.tco_reporting -> bot_core.tco -> bot_core.security",
+        cause=_TCO_IMPORT_ERROR,
+    )
 
 try:  # pragma: no cover - ExecutionService może być niedostępny w niektórych dystrybucjach
     from bot_core.execution.base import ExecutionService as CoreExecutionService  # type: ignore[attr-defined]
@@ -203,7 +455,21 @@ from bot_core.runtime.observability import (
     build_ui_alert_audit_metadata,
 )
 from bot_core.observability.metrics import get_global_metrics_registry
-from bot_core.portfolio import PortfolioDecisionLog
+try:  # pragma: no cover - portfolio log może zależeć od opcjonalnego security stacku
+    from bot_core.portfolio import PortfolioDecisionLog
+except ModuleNotFoundError as exc:  # pragma: no cover
+    if not _is_expected_missing_dependency(
+        exc,
+        allowed_prefixes=("bot_core.portfolio", "bot_core.security", "cryptography"),
+    ):
+        raise
+    _PORTFOLIO_IMPORT_ERROR = exc
+
+    PortfolioDecisionLog = _make_unavailable_class(  # type: ignore[assignment]
+        "PortfolioDecisionLog",
+        dependency_chain="bot_core.portfolio -> bot_core.security.signing",
+        cause=_PORTFOLIO_IMPORT_ERROR,
+    )
 
 try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny
     from bot_core.decision import DecisionOrchestrator  # type: ignore

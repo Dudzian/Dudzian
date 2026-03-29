@@ -30,6 +30,30 @@ def _load_module_from_path(module_name: str, path: Path):
     return module
 
 
+def _load_runtime_module_with_blocked_imports(
+    module_name: str,
+    path: Path,
+    *,
+    blocked_prefixes: tuple[str, ...],
+    blocked_exc_factory=None,  # type: ignore[no-untyped-def]
+):
+    import builtins
+
+    real_import = builtins.__import__
+    factory = blocked_exc_factory or (lambda name: ModuleNotFoundError(name=name))
+
+    def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-untyped-def]
+        if any(name.startswith(prefix) for prefix in blocked_prefixes):
+            raise factory(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    builtins.__import__ = blocked_import
+    try:
+        return _load_module_from_path(module_name, path)
+    finally:
+        builtins.__import__ = real_import
+
+
 def test_exchanges_missing_dependency_is_scoped(monkeypatch) -> None:
     real_import = importlib.import_module
 
@@ -71,6 +95,7 @@ def test_exchanges_does_not_mask_non_import_errors(monkeypatch) -> None:
 
 
 def test_bootstrap_import_tolerates_missing_adapter_dependency(monkeypatch) -> None:
+    pytest.importorskip("httpx")
     real_import = importlib.import_module
 
     def fake_import(name: str, *args, **kwargs):
@@ -87,6 +112,105 @@ def test_bootstrap_import_tolerates_missing_adapter_dependency(monkeypatch) -> N
 
 
 @pytest.mark.parametrize(
+    ("module_name", "relative_path"),
+    [
+        ("bot_core.runtime.metrics_alerts_import_probe", "bot_core/runtime/metrics_alerts.py"),
+        ("bot_core.runtime.observability_import_probe", "bot_core/runtime/observability.py"),
+    ],
+)
+def test_runtime_observability_modules_import_without_security_dependency(
+    module_name: str,
+    relative_path: str,
+) -> None:
+    module_path = Path(__file__).resolve().parents[2] / relative_path
+    module = _load_runtime_module_with_blocked_imports(
+        module_name,
+        module_path,
+        blocked_prefixes=("bot_core.security",),
+    )
+    assert module is not None
+
+
+def test_runtime_metadata_import_without_risk_security_chain() -> None:
+    module_path = Path(__file__).resolve().parents[2] / "bot_core" / "runtime" / "metadata.py"
+    module = _load_runtime_module_with_blocked_imports(
+        "bot_core.runtime.metadata_import_probe",
+        module_path,
+        blocked_prefixes=("bot_core.risk.settings", "bot_core.security"),
+    )
+    assert module is not None
+
+
+def test_runtime_bootstrap_import_without_optional_adapter_security_chain() -> None:
+    module_path = Path(__file__).resolve().parents[2] / "bot_core" / "runtime" / "bootstrap.py"
+    module = _load_runtime_module_with_blocked_imports(
+        "bot_core.runtime.bootstrap_import_probe",
+        module_path,
+        blocked_prefixes=(
+            "bot_core.exchanges.nowa_gielda",
+            "bot_core.exchanges.testing.loopback",
+            "bot_core.security",
+        ),
+    )
+    assert module is not None
+
+
+def test_runtime_bootstrap_expected_missing_dependency_matches_nested_prefixes() -> None:
+    module_path = Path(__file__).resolve().parents[2] / "bot_core" / "runtime" / "bootstrap.py"
+    module = _load_module_from_path("bot_core.runtime.bootstrap_dependency_probe", module_path)
+
+    nested = ModuleNotFoundError(name="cryptography.hazmat.primitives")
+    assert module._is_expected_missing_dependency(  # type: ignore[attr-defined]
+        nested,
+        allowed_prefixes=("cryptography",),
+    )
+    assert not module._is_expected_missing_dependency(  # type: ignore[attr-defined]
+        nested,
+        allowed_prefixes=("bot_core.security",),
+    )
+
+
+def test_runtime_bootstrap_fallbacks_raise_diagnostic_runtime_errors() -> None:
+    module_path = Path(__file__).resolve().parents[2] / "bot_core" / "runtime" / "bootstrap.py"
+    module = _load_runtime_module_with_blocked_imports(
+        "bot_core.runtime.bootstrap_fallback_probe",
+        module_path,
+        blocked_prefixes=(
+            "bot_core.exchanges.nowa_gielda",
+            "bot_core.exchanges.testing.loopback",
+            "bot_core.security",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="NowaGieldaSpotAdapter") as nowa_exc:
+        module.NowaGieldaSpotAdapter()
+    message = str(nowa_exc.value)
+    assert "optional dependency" in message
+    assert "bot_core.exchanges.nowa_gielda -> httpx" in message
+
+    with pytest.raises(RuntimeError, match="build_service_token_validator") as validator_exc:
+        module.build_service_token_validator()
+    validator_message = str(validator_exc.value)
+    assert "optional dependency" in validator_message
+    assert "bot_core.security" in validator_message
+
+
+def test_runtime_bootstrap_does_not_mask_non_optional_import_errors() -> None:
+    module_path = Path(__file__).resolve().parents[2] / "bot_core" / "runtime" / "bootstrap.py"
+
+    def _runtime_error(_name: str) -> Exception:
+        return RuntimeError("synthetic import bug")
+
+    with pytest.raises(RuntimeError, match="synthetic import bug"):
+        _load_runtime_module_with_blocked_imports(
+            "bot_core.runtime.bootstrap_non_optional_bug_probe",
+            module_path,
+            blocked_prefixes=("bot_core.exchanges.nowa_gielda",),
+            blocked_exc_factory=_runtime_error,
+        )
+
+
+@pytest.mark.parametrize(
     "module_name",
     [
         "bot_core.runtime.bootstrap",
@@ -95,6 +219,8 @@ def test_bootstrap_import_tolerates_missing_adapter_dependency(monkeypatch) -> N
     ],
 )
 def test_require_yaml_preserves_cause(monkeypatch, module_name: str) -> None:
+    if module_name == "bot_core.runtime.bootstrap":
+        pytest.importorskip("httpx")
     real_import = importlib.import_module
 
     def fake_import(name: str, *args, **kwargs):

@@ -18,7 +18,13 @@ from urllib import error as urllib_error, request as urllib_request
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError
 from bot_core.observability._tag_utils import extract_tag
-from bot_core.security.guards import get_capability_guard
+
+try:  # pragma: no cover - security guard jest opcjonalny w light runtime
+    from bot_core.security.guards import get_capability_guard
+except Exception:  # pragma: no cover - brak security stack nie blokuje telemetry sinka
+
+    def get_capability_guard() -> Any | None:
+        return None
 
 DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
 
@@ -333,6 +339,18 @@ class _CloudAlertChannel(AlertChannel):
             "endpoint": str(getattr(self._selection.client, "address", "")),
             "profile": getattr(self._selection, "profile_name", "remote"),
         }
+
+    def close(self) -> None:
+        """Zamyka zasoby kanału gRPC, jeśli zostały utworzone."""
+
+        with self._lock:
+            channel = self._channel
+            self._stub = None
+            self._channel = None
+
+        close_fn = getattr(channel, "close", None)
+        if callable(close_fn):
+            close_fn()
 
 
 class _FeedWebhookAlertChannel(AlertChannel):
@@ -906,7 +924,6 @@ class UiTelemetryAlertSink:
             return
 
         event = payload.get("event")
-        self._handle_retry_backlog(snapshot, payload)
         if event == "reduce_motion":
             self._update_reduce_motion_incident_state(
                 snapshot, payload, bool(payload.get("active"))
@@ -2534,6 +2551,21 @@ def get_feed_health_alert_sink(
     with _FEED_HEALTH_SINK_LOCK:
         global _FEED_HEALTH_SINK
         if _FEED_HEALTH_SINK is not None:
+            conflicts: list[str] = []
+            if router is not None:
+                current_router = getattr(_FEED_HEALTH_SINK, "_router", None)
+                if current_router is not None and router is not current_router:
+                    conflicts.append("router")
+            if jsonl_path is not None:
+                requested_path = Path(jsonl_path).expanduser()
+                current_path = getattr(_FEED_HEALTH_SINK, "jsonl_path", None)
+                if current_path is not None and Path(current_path).expanduser() != requested_path:
+                    conflicts.append("jsonl_path")
+            if conflicts:
+                _LOGGER.warning(
+                    "Konflikt konfiguracji singletona feed health sink (first call wins): %s",
+                    ", ".join(conflicts),
+                )
             return _FEED_HEALTH_SINK
 
         try:
@@ -2556,7 +2588,25 @@ def reset_feed_health_alert_sink() -> None:
 
     with _FEED_HEALTH_SINK_LOCK:
         global _FEED_HEALTH_SINK
+        sink = _FEED_HEALTH_SINK
         _FEED_HEALTH_SINK = None
+
+    if sink is None:
+        return
+
+    router = getattr(sink, "_router", None)
+    channels = getattr(router, "channels", ()) or ()
+    for channel in channels:
+        close_fn = getattr(channel, "close", None)
+        if not callable(close_fn):
+            continue
+        try:
+            close_fn()
+        except Exception:  # pragma: no cover - teardown defensywny
+            _LOGGER.debug(
+                "Nie udało się zamknąć kanału alertów podczas resetu sinka feedu",
+                exc_info=True,
+            )
 
 
 __all__ = [

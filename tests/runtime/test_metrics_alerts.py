@@ -8,7 +8,11 @@ import pytest
 from bot_core.alerts import AlertChannel, AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.runtime import metrics_alerts
 from bot_core.runtime.metrics_alerts import UiTelemetryAlertSink
-from google.protobuf import json_format
+
+try:
+    from google.protobuf import json_format
+except Exception:  # pragma: no cover - protobuf optional in light env
+    json_format = None
 
 
 class _DummyChannel(AlertChannel):
@@ -74,6 +78,43 @@ def test_emit_feed_health_event_dispatches_and_logs(tmp_path: Path) -> None:
     assert record["context"]["metric"] == "latency"
 
 
+def test_handle_snapshot_processes_retry_backlog_exactly_once(tmp_path: Path) -> None:
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    sink = UiTelemetryAlertSink(
+        router,
+        jsonl_path=tmp_path / "alerts.jsonl",
+        log_reduce_motion_events=False,
+        log_reduce_motion_incident_events=False,
+        log_overlay_events=False,
+        log_jank_events=False,
+        log_retry_backlog_events=False,
+        log_tag_inactivity_events=False,
+        log_performance_events=False,
+    )
+
+    calls: list[dict[str, object]] = []
+    original = sink._handle_retry_backlog  # type: ignore[attr-defined]
+
+    def _wrapped(snapshot, payload):  # type: ignore[no-untyped-def]
+        calls.append(dict(payload))
+        return original(snapshot, payload)
+
+    sink._handle_retry_backlog = _wrapped  # type: ignore[attr-defined]
+
+    snapshot = SimpleNamespace(
+        notes=json.dumps(
+            {
+                "event": "overlay_budget",
+                "retry_backlog_before_send": 8,
+                "retry_backlog_after_flush": 6,
+            }
+        )
+    )
+    sink.handle_snapshot(snapshot)
+
+    assert len(calls) == 1, "Retry backlog should be processed exactly once per snapshot"
+
+
 def test_get_feed_health_alert_sink_uses_provided_router(tmp_path: Path) -> None:
     audit_log = InMemoryAlertAuditLog()
     custom_router = DefaultAlertRouter(audit_log=audit_log)
@@ -86,6 +127,44 @@ def test_get_feed_health_alert_sink_uses_provided_router(tmp_path: Path) -> None
 
     cached = metrics_alerts.get_feed_health_alert_sink()
     assert cached is sink, "Sink powinien być singletonem w module"
+
+
+def test_get_feed_health_alert_sink_logs_conflict_on_different_parameters(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    first_router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    first_sink = metrics_alerts.get_feed_health_alert_sink(
+        router=first_router,
+        jsonl_path=tmp_path / "first.jsonl",
+    )
+    assert first_sink is not None
+
+    second_router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    with caplog.at_level(logging.WARNING, logger=metrics_alerts.__name__):
+        second_sink = metrics_alerts.get_feed_health_alert_sink(
+            router=second_router,
+            jsonl_path=tmp_path / "second.jsonl",
+        )
+
+    assert second_sink is first_sink, "first call wins: singleton instance should be reused"
+    assert any("Konflikt konfiguracji singletona" in message for message in caplog.messages)
+    assert any("router" in message for message in caplog.messages)
+    assert any("jsonl_path" in message for message in caplog.messages)
+
+
+def test_get_feed_health_alert_sink_does_not_log_conflict_for_same_parameters(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    path = tmp_path / "same.jsonl"
+    first_sink = metrics_alerts.get_feed_health_alert_sink(router=router, jsonl_path=path)
+    assert first_sink is not None
+
+    with caplog.at_level(logging.WARNING, logger=metrics_alerts.__name__):
+        second_sink = metrics_alerts.get_feed_health_alert_sink(router=router, jsonl_path=path)
+
+    assert second_sink is first_sink
+    assert not any("Konflikt konfiguracji singletona" in message for message in caplog.messages)
 
 
 def test_get_feed_health_alert_sink_falls_back_to_memory_router(
@@ -104,6 +183,52 @@ def test_get_feed_health_alert_sink_falls_back_to_memory_router(
     assert isinstance(sink._router, DefaultAlertRouter)  # type: ignore[attr-defined]
     assert isinstance(sink._router.audit_log, InMemoryAlertAuditLog)  # type: ignore[attr-defined]
     assert called, "Powinien zostać wykonany bootstrap kanałów HyperCare"
+
+
+def test_reset_feed_health_alert_sink_closes_cloud_channels_once() -> None:
+    class _ClosableChannel:
+        name = "cloud:test"
+
+        def __init__(self) -> None:
+            self.closed = 0
+
+        def close(self) -> None:
+            self.closed += 1
+
+    closable = _ClosableChannel()
+    sink = SimpleNamespace(
+        _router=SimpleNamespace(
+            channels=[
+                closable,
+                SimpleNamespace(name="hypercare-webhook"),
+            ]
+        )
+    )
+    metrics_alerts._FEED_HEALTH_SINK = sink
+
+    metrics_alerts.reset_feed_health_alert_sink()
+
+    assert closable.closed == 1
+    assert metrics_alerts._FEED_HEALTH_SINK is None
+
+    metrics_alerts.reset_feed_health_alert_sink()
+    assert closable.closed == 1, "Close should run exactly once for the same sink instance"
+
+
+def test_reset_feed_health_alert_sink_ignores_channels_without_close() -> None:
+    sink = SimpleNamespace(
+        _router=SimpleNamespace(
+            channels=[
+                SimpleNamespace(name="cloud:no-close"),
+                SimpleNamespace(name="hypercare-webhook"),
+            ]
+        )
+    )
+    metrics_alerts._FEED_HEALTH_SINK = sink
+
+    metrics_alerts.reset_feed_health_alert_sink()
+
+    assert metrics_alerts._FEED_HEALTH_SINK is None
 
 
 def test_env_hypercare_webhook_channel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -148,6 +273,8 @@ def test_env_hypercare_webhook_channel(monkeypatch: pytest.MonkeyPatch, tmp_path
 
 
 def test_cloud_alert_channel_sends_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    if json_format is None:
+        pytest.skip("protobuf json_format not available")
     if metrics_alerts.struct_pb2 is None or metrics_alerts.timestamp_pb2 is None:
         pytest.skip("protobuf structs not available")
 
@@ -200,6 +327,8 @@ def test_cloud_alert_channel_sends_payload(monkeypatch: pytest.MonkeyPatch) -> N
 def test_cloud_alert_channel_works_without_global_grpc_when_factories_injected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if json_format is None:
+        pytest.skip("protobuf json_format not available")
     if metrics_alerts.struct_pb2 is None or metrics_alerts.timestamp_pb2 is None:
         pytest.skip("protobuf structs not available")
 
@@ -426,6 +555,7 @@ def test_build_cloud_alert_channel_registers_remote_profile(
 def test_build_secret_manager_degrades_without_warning_by_default(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    monkeypatch.setattr(metrics_alerts, "SecretManager", lambda *_args, **_kwargs: object())
     monkeypatch.delenv("BOT_CORE_UI_SECRET_PASSPHRASE", raising=False)
     monkeypatch.delenv("BOT_CORE_UI_SECRET_PATH", raising=False)
     monkeypatch.delenv("BOT_CORE_UI_REQUIRE_SECRET_STORE", raising=False)
@@ -445,6 +575,7 @@ def test_build_secret_manager_degrades_without_warning_by_default(
 def test_build_secret_manager_warns_when_secret_store_required(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    monkeypatch.setattr(metrics_alerts, "SecretManager", lambda *_args, **_kwargs: object())
     monkeypatch.setenv("BOT_CORE_UI_REQUIRE_SECRET_STORE", "1")
     monkeypatch.setattr(
         metrics_alerts,
@@ -476,6 +607,7 @@ def test_build_secret_manager_warns_for_explicit_secret_config(
     env_name: str,
     env_value: str,
 ) -> None:
+    monkeypatch.setattr(metrics_alerts, "SecretManager", lambda *_args, **_kwargs: object())
     monkeypatch.setenv(env_name, env_value)
     monkeypatch.delenv("BOT_CORE_UI_REQUIRE_SECRET_STORE", raising=False)
     monkeypatch.setattr(

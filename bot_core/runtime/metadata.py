@@ -8,14 +8,18 @@ import logging
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Iterable, Mapping, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, Tuple
 
 _CANONICAL_MODULE = "bot_core.runtime.metadata"
 if __name__ != _CANONICAL_MODULE:
     sys.modules[_CANONICAL_MODULE] = sys.modules[__name__]
 
-from bot_core.risk.settings import RiskManagerSettings, derive_risk_manager_settings
 from bot_core.runtime.paths import resolve_core_config_path
+
+if TYPE_CHECKING:  # pragma: no cover - tylko dla adnotacji
+    from bot_core.risk.settings import RiskManagerSettings
+else:  # pragma: no cover - fallback dla lekkich środowisk
+    RiskManagerSettings = Any  # type: ignore[misc,assignment]
 
 try:  # pragma: no cover - opcjonalny import w środowiskach bez pełnego runtime
     from bot_core.runtime.bootstrap import resolve_runtime_entrypoint as _resolve_runtime_entrypoint
@@ -40,6 +44,21 @@ def _require_yaml() -> ModuleType:
             "Brak opcjonalnej zależności 'PyYAML'. Zainstaluj pakiet PyYAML, "
             "aby korzystać z konfiguracji YAML."
         ) from exc
+
+
+def _derive_risk_manager_settings_lazy(
+    profile_payload: Any,
+    *,
+    profile_name: str | None,
+    defaults: RiskManagerSettings | Mapping[str, Any] | None,
+) -> RiskManagerSettings:
+    from bot_core.risk.settings import derive_risk_manager_settings
+
+    return derive_risk_manager_settings(
+        profile_payload,
+        profile_name=profile_name,
+        defaults=defaults,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,7 +401,7 @@ def load_risk_manager_settings(
         logger=logger,
     )
     effective_name = resolved_name or profile_name
-    settings = derive_risk_manager_settings(
+    settings = _derive_risk_manager_settings_lazy(
         profile_payload,
         profile_name=effective_name,
         defaults=defaults,
