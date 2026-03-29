@@ -855,6 +855,7 @@ def test_run_pipeline_records_data_quality_checks(tmp_path, monkeypatch):
     assert journal_event["report_type"] == "data_quality"
     assert journal_event["report_path"].endswith(".json")
     assert journal_event["status"] in {"warning", "critical"}
+    assert journal_event["meta_status"] == journal_event["status"]
     assert journal_event["schedule"] == "pipeline:btcusdt:completeness"
     assert journal_event.get("tags") == "completeness,monitoring"
 
@@ -915,5 +916,7 @@ def test_record_data_quality_issues_creates_audit_entry(tmp_path):
     assert journal_entry["symbol"].lower() == "btcusdt"
     assert journal_entry["report_type"] == "data_quality"
     assert journal_entry["issues_count"] == "2"
+    assert journal_entry["status"] == "unknown"
+    assert journal_entry["meta_status"] == journal_entry["status"]
     assert journal_entry["schedule"] == "btc-data-quality"
     assert journal_entry.get("tags") == "ohlcv,monitoring"

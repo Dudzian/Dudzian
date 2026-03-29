@@ -1602,10 +1602,18 @@ class AIManager:
             )
             return None
         self._last_data_quality_report_path = path
+        summary_payload = summary if isinstance(summary, Mapping) else None
+        summary_status: str | None = None
+        if summary_payload is not None:
+            status_value = summary_payload.get("status")
+            if status_value is not None:
+                summary_status = str(status_value)
+        effective_status = summary_status or "unknown"
         metadata: Dict[str, Any] = {
             "report_type": "data_quality",
             "report_path": path,
             "issues_count": len(normalized),
+            "status": effective_status,
         }
         if job_name is not None:
             metadata["job"] = job_name
@@ -1613,11 +1621,6 @@ class AIManager:
             metadata["source"] = source
         if tags:
             metadata["tags"] = list(tags)
-        summary_payload = summary if isinstance(summary, Mapping) else None
-        if summary_payload is not None:
-            status_value = summary_payload.get("status")
-            if status_value is not None:
-                metadata["status"] = status_value
         dataset_symbol: str | None = None
         if dataset is not None and isinstance(dataset.metadata, Mapping):
             symbol_candidate = dataset.metadata.get("symbol")
@@ -1635,6 +1638,7 @@ class AIManager:
                         if dataset_symbol:
                             break
         overrides: Dict[str, Any] = {}
+        overrides["status"] = effective_status
         if dataset_symbol:
             overrides["symbol"] = dataset_symbol
         if job_name is not None:
