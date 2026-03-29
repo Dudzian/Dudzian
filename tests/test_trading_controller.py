@@ -660,6 +660,81 @@ def test_controller_reversal_close_can_be_denied_by_risk() -> None:
     assert denied_counter.value(labels=labels) == 1.0
 
 
+@pytest.mark.parametrize("close_status", ["rejected", "partially_filled", "canceled"])
+def test_controller_does_not_open_reversal_when_close_order_is_not_filled(
+    close_status: str,
+) -> None:
+    class CloseRejectedExecutionService(ExecutionService):
+        def __init__(self, *, close_status: str) -> None:
+            self._close_status = close_status
+            self._is_close_filled = close_status in {"filled", "executed", "complete", "completed"}
+            self.requests: list[OrderRequest] = []
+
+        def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+            self.requests.append(request)
+            status = self._close_status if request.metadata.get("action") == "close" else "filled"
+            return OrderResult(
+                order_id=(
+                    f"close-{status}-1"
+                    if request.metadata.get("action") == "close"
+                    else "open-1"
+                ),
+                status=status,
+                filled_quantity=0.0 if not self._is_close_filled else request.quantity,
+                avg_price=None if not self._is_close_filled else request.price,
+                raw_response={"context": context.metadata},
+            )
+
+        def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+            return None
+
+        def flush(self) -> None:
+            return None
+
+    risk_engine = DummyRiskEngine()
+    execution = CloseRejectedExecutionService(close_status=close_status)
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.9,
+        metadata={
+            "quantity": "2",
+            "price": "101",
+            "order_type": "market",
+            "current_position_qty": "1.5",
+            "current_position_side": "LONG",
+            "reverse_position": "true",
+        },
+    )
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert len(execution.requests) == 1
+    assert execution.requests[0].metadata.get("action") == "close"
+    close_events = [
+        event for event in journal.export() if event["event"] == "order_close_for_reversal"
+    ]
+    assert close_events
+    assert close_events[-1]["status"] == close_status
+    assert "order_submitted" in [event["event"] for event in journal.export()]
+    assert "order_executed" not in [event["event"] for event in journal.export()]
+
+
 def test_controller_alerts_on_risk_rejection_and_limit() -> None:
     risk_engine = DummyRiskEngine()
     risk_engine.set_result(
