@@ -145,6 +145,14 @@ class RuntimeStateManager:
     ) -> RuntimeCheckpoint:
         """Weryfikuje, że istnieje checkpoint umożliwiający przejście do docelowego trybu."""
 
+        normalized_target_mode = str(target_mode).strip().lower()
+        if not normalized_target_mode:
+            raise RuntimeStateError("Docelowy tryb checkpointu nie może być pusty.")
+        if normalized_target_mode != "paper":
+            raise RuntimeStateError(
+                f"Nieobsługiwane przejście checkpointu do trybu '{target_mode}'."
+            )
+
         checkpoint = self.load_checkpoint()
         if checkpoint is None:
             raise RuntimeStateError(

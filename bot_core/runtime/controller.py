@@ -734,7 +734,7 @@ class TradingController:
             if not expanded_signals:
                 continue
             for expanded_signal in expanded_signals:
-                per_leg_labels = dict(metric_labels)
+                per_leg_labels = dict(self._metric_labels)
                 per_leg_labels["symbol"] = expanded_signal.symbol
                 try:
                     result = self._handle_signal(expanded_signal)

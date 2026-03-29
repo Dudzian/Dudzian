@@ -55,3 +55,26 @@ def test_clear_removes_checkpoint(tmp_path: Path) -> None:
     )
     manager.clear()
     assert manager.load_checkpoint() is None
+
+
+def test_require_checkpoint_rejects_unsupported_target_mode(tmp_path: Path) -> None:
+    manager = RuntimeStateManager(tmp_path)
+    manager.record_checkpoint(
+        entrypoint="demo_desktop", mode="demo", config_path="config/runtime.yaml", metadata={}
+    )
+
+    with pytest.raises(RuntimeStateError, match="Nieobsługiwane przejście"):
+        manager.require_checkpoint(target_mode="live", entrypoint="demo_desktop")
+
+
+@pytest.mark.parametrize("target_mode", ["", "   "])
+def test_require_checkpoint_rejects_empty_or_whitespace_target_mode(
+    tmp_path: Path, target_mode: str
+) -> None:
+    manager = RuntimeStateManager(tmp_path)
+    manager.record_checkpoint(
+        entrypoint="demo_desktop", mode="demo", config_path="config/runtime.yaml", metadata={}
+    )
+
+    with pytest.raises(RuntimeStateError, match="Docelowy tryb checkpointu nie może być pusty"):
+        manager.require_checkpoint(target_mode=target_mode, entrypoint="demo_desktop")
