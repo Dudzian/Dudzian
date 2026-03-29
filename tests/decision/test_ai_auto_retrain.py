@@ -150,9 +150,7 @@ def test_auto_retrain_scheduler_flags_quality_failure(tmp_path: Path) -> None:
     assert "quality_failures" in events[-1]
 
 
-def test_auto_retrain_scheduler_marks_registration_failure(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_auto_retrain_scheduler_marks_registration_failure(tmp_path: Path, monkeypatch) -> None:
     manifest_path, _ = _build_manifest(tmp_path)
     manifest = load_training_manifest(manifest_path)
     journal = InMemoryTradingDecisionJournal()
