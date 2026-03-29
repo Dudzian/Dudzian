@@ -1,26 +1,32 @@
+import csv
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pandas as pd
-
 from bot_core.ai.manager import AIManager
 from bot_core.ai.pipeline import QualityThresholds, load_training_manifest
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
+from bot_core.runtime import schedulers as schedulers_module
 from bot_core.runtime.schedulers import AutoRetrainResult, AutoRetrainScheduler
 
 
 def _build_manifest(tmp_path: Path) -> tuple[Path, Path]:
-    frame = pd.DataFrame(
-        {
-            "f1": [0.1, 0.2, 0.05, 0.3, 0.15, 0.22, 0.11, 0.05],
-            "f2": [1.0, 0.9, 1.1, 0.95, 1.05, 0.97, 1.02, 0.93],
-            "target": [0.5, 0.7, 0.2, 0.8, 0.4, 0.6, 0.45, 0.25],
-        }
+    rows = (
+        {"f1": 0.1, "f2": 1.0, "target": 0.5},
+        {"f1": 0.2, "f2": 0.9, "target": 0.7},
+        {"f1": 0.05, "f2": 1.1, "target": 0.2},
+        {"f1": 0.3, "f2": 0.95, "target": 0.8},
+        {"f1": 0.15, "f2": 1.05, "target": 0.4},
+        {"f1": 0.22, "f2": 0.97, "target": 0.6},
+        {"f1": 0.11, "f2": 1.02, "target": 0.45},
+        {"f1": 0.05, "f2": 0.93, "target": 0.25},
     )
     dataset_path = tmp_path / "dataset.csv"
-    frame.to_csv(dataset_path, index=False)
+    with dataset_path.open("w", encoding="utf-8", newline="") as dataset_file:
+        writer = csv.DictWriter(dataset_file, fieldnames=("f1", "f2", "target"))
+        writer.writeheader()
+        writer.writerows(rows)
     manifest_payload = {
         "profiles": {
             "demo": {
@@ -109,6 +115,7 @@ def test_auto_retrain_scheduler_registers_models_and_logs(tmp_path: Path) -> Non
     last_event = events[-1]
     assert last_event["event"] == "ai_auto_retrain_succeeded"
     assert last_event["status"] == "success"
+    assert "meta_status" not in last_event
 
 
 def test_auto_retrain_scheduler_flags_quality_failure(tmp_path: Path) -> None:
@@ -138,4 +145,38 @@ def test_auto_retrain_scheduler_flags_quality_failure(tmp_path: Path) -> None:
     assert results[0].failures
     events = tuple(journal.export())
     assert events and events[-1]["event"] == "ai_auto_retrain_failed"
+    assert events[-1]["status"] == "failed"
+    assert "meta_status" not in events[-1]
     assert "quality_failures" in events[-1]
+
+
+def test_auto_retrain_scheduler_marks_registration_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path, _ = _build_manifest(tmp_path)
+    manifest = load_training_manifest(manifest_path)
+    journal = InMemoryTradingDecisionJournal()
+    manager = _build_manager(tmp_path, journal)
+
+    def _fail_registration(*args, **kwargs) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(schedulers_module, "register_profile_results", _fail_registration)
+    scheduler = AutoRetrainScheduler(
+        manifest,
+        output_dir=tmp_path / "register-fail-artifacts",
+        ai_manager=manager,
+        journal=journal,
+        clock=lambda: datetime(2024, 1, 3, tzinfo=timezone.utc),
+    )
+    scheduler.register_profile("demo")
+    results = scheduler.run_pending()
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "registration_failed" in results[0].failures
+
+    events = tuple(journal.export())
+    assert events and events[-1]["event"] == "ai_auto_retrain_failed"
+    assert events[-1]["status"] == "failed"
+    assert "meta_status" not in events[-1]
+    assert "registration_failed" in events[-1].get("quality_failures", "")
