@@ -400,6 +400,76 @@ def test_controller_multi_leg_runtime_provenance_keys_override_leg_metadata() ->
     assert submitted_events[1]["order_exchange"] == "KRAKEN"
 
 
+def test_controller_multi_leg_isolates_nested_metadata_between_requests() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="arbitrage_entry",
+        confidence=0.92,
+        intent="multi_leg",
+        metadata={
+            "order_type": "market",
+            "routing": {"policy": "parent", "tags": ["alpha", "beta"]},
+        },
+        legs=(
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="BUY",
+                quantity=1.2,
+                metadata={"price": 101.0, "risk": {"bucket": "first", "limits": [1, 2]}},
+            ),
+            SignalLeg(
+                symbol="ETH/USDT",
+                side="SELL",
+                quantity=2.4,
+                metadata={"price": 102.0, "risk": {"bucket": "second", "limits": [3, 4]}},
+            ),
+        ),
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 2
+    assert len(execution.requests) == 2
+    assert [request.side for request in execution.requests] == ["BUY", "SELL"]
+    assert [request.quantity for request in execution.requests] == pytest.approx([1.2, 2.4])
+
+    first_request, second_request = execution.requests
+    assert first_request.metadata["leg_index"] == 0
+    assert first_request.metadata["leg_count"] == 2
+    assert first_request.metadata["signal_intent"] == "multi_leg"
+    assert second_request.metadata["leg_index"] == 1
+    assert second_request.metadata["leg_count"] == 2
+    assert second_request.metadata["signal_intent"] == "multi_leg"
+
+    assert first_request.metadata["routing"] == {"policy": "parent", "tags": ["alpha", "beta"]}
+    assert second_request.metadata["routing"] == {"policy": "parent", "tags": ["alpha", "beta"]}
+    assert first_request.metadata["risk"] == {"bucket": "first", "limits": [1, 2]}
+    assert second_request.metadata["risk"] == {"bucket": "second", "limits": [3, 4]}
+
+    first_request.metadata["routing"]["policy"] = "mutated-first"
+    first_request.metadata["routing"]["tags"].append("mutated")
+    first_request.metadata["risk"]["limits"].append(999)
+
+    assert second_request.metadata["routing"] == {"policy": "parent", "tags": ["alpha", "beta"]}
+    assert second_request.metadata["risk"] == {"bucket": "second", "limits": [3, 4]}
+
+
 def test_controller_non_filled_result_not_recorded_as_order_executed() -> None:
     risk_engine = DummyRiskEngine()
     execution = StatusExecutionService(status="rejected", filled_quantity=0.0)
