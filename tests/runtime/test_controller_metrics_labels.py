@@ -61,6 +61,26 @@ class _ExecutionStub(ExecutionService):
         return None
 
 
+class _ExecutionWithStatusStub(ExecutionService):
+    def __init__(self, status: str) -> None:
+        self._status = status
+
+    def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+        return OrderResult(
+            order_id=f"order-{request.symbol}",
+            status=self._status,
+            filled_quantity=request.quantity if self._status == "filled" else 0.0,
+            avg_price=request.price if self._status == "filled" else None,
+            raw_response={"context": context.metadata},
+        )
+
+    def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+        return None
+
+    def flush(self) -> None:
+        return None
+
+
 def _account_snapshot() -> AccountSnapshot:
     return AccountSnapshot(
         balances={},
@@ -115,3 +135,43 @@ def test_controller_order_metrics_labels_do_not_leak_between_symbols() -> None:
     assert orders_counter.value(labels={**btc, "result": "executed", "side": "BUY"}) == 1.0
     assert orders_counter.value(labels={**eth, "result": "submitted", "side": "SELL"}) == 1.0
     assert orders_counter.value(labels={**eth, "result": "executed", "side": "SELL"}) == 1.0
+
+
+def test_controller_open_leg_non_filled_is_not_counted_as_executed() -> None:
+    registry = MetricsRegistry()
+    controller = TradingController(
+        risk_engine=_RiskEngineStub(),
+        execution_service=_ExecutionWithStatusStub("canceled"),
+        alert_router=_router(),
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(seconds=0),
+        metrics_registry=registry,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.75,
+        metadata={"quantity": "1", "price": "100", "order_type": "market"},
+    )
+
+    controller.process_signals([signal])
+
+    orders_counter = registry.counter(
+        "trading_orders_total",
+        "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
+    )
+    labels = {
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "risk_profile": "balanced",
+        "symbol": "BTC/USDT",
+        "side": "BUY",
+    }
+
+    assert orders_counter.value(labels={**labels, "result": "submitted"}) == 1.0
+    assert orders_counter.value(labels={**labels, "result": "executed"}) == 0.0
+    assert orders_counter.value(labels={**labels, "result": "not_filled"}) == 1.0
