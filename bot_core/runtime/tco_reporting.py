@@ -59,6 +59,22 @@ def _calculate_slippage(
     return max(0.0, diff) * qty
 
 
+def _clone_metadata_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _clone_metadata_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_metadata_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_metadata_value(item) for item in value)
+    return value
+
+
+def _clone_metadata(metadata: Mapping[str, object] | None) -> dict[str, object]:
+    if not metadata:
+        return {}
+    return {str(key): _clone_metadata_value(value) for key, value in metadata.items()}
+
+
 @dataclass(slots=True)
 class RuntimeTCOReporter:
     """Collects trade cost events during runtime and produces signed reports."""
@@ -96,7 +112,7 @@ class RuntimeTCOReporter:
         self._flush_every = (
             self.flush_events if self.flush_events and self.flush_events > 0 else None
         )
-        self._metadata = dict(self.metadata)
+        self._metadata = _clone_metadata(self.metadata)
         self._basename = self.basename
         self._signing_key = self.signing_key
         self._signing_key_id = self.signing_key_id
@@ -145,7 +161,7 @@ class RuntimeTCOReporter:
             ),
             funding=_as_decimal(funding),
             other=_as_decimal(other),
-            metadata=dict(metadata or {}),
+            metadata=_clone_metadata(metadata),
         )
         self._events.append(event)
         if self._flush_every and self._output_dir is not None:
