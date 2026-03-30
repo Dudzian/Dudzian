@@ -443,7 +443,7 @@ class TradingController:
         self._tco_metadata = dict(self.tco_metadata or {})
         self._metric_signals_total = self._metrics.counter(
             "trading_signals_total",
-            "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected).",
+            "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral).",
         )
         self._metric_orders_total = self._metrics.counter(
             "trading_orders_total",
@@ -868,6 +868,9 @@ class TradingController:
                     intent = "single"
 
         if intent in _NEUTRAL_INTENTS or str(signal.side).upper() in _NEUTRAL_SIDES:
+            metric_labels = dict(self._metric_labels)
+            metric_labels["symbol"] = signal.symbol
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "neutral"})
             self._record_decision_event(
                 "signal_neutral",
                 signal=signal,

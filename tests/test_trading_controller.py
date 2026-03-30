@@ -426,6 +426,7 @@ def test_controller_skips_neutral_signal() -> None:
     execution = DummyExecutionService()
     router, channel, audit = _router_with_channel()
     journal = CollectingDecisionJournal()
+    registry = MetricsRegistry()
     controller = TradingController(
         risk_engine=risk_engine,
         execution_service=execution,
@@ -436,6 +437,7 @@ def test_controller_skips_neutral_signal() -> None:
         risk_profile="balanced",
         health_check_interval=timedelta(hours=1),
         decision_journal=journal,
+        metrics_registry=registry,
     )
 
     signal = StrategySignal(
@@ -453,6 +455,27 @@ def test_controller_skips_neutral_signal() -> None:
     assert all(message.category != "execution" for message in channel.messages)
     exported = tuple(audit.export())
     assert exported == ()
+    signals_counter = registry.counter(
+        "trading_signals_total",
+        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral).",
+    )
+    signal_labels = {
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "risk_profile": "balanced",
+        "symbol": "BTC/USDT",
+    }
+    assert signals_counter.value(labels={**signal_labels, "status": "received"}) == 1.0
+    assert signals_counter.value(labels={**signal_labels, "status": "neutral"}) == 1.0
+
+    orders_counter = registry.counter(
+        "trading_orders_total",
+        "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
+    )
+    order_labels = {**signal_labels, "side": "SELL"}
+    assert orders_counter.value(labels={**order_labels, "result": "submitted"}) == 0.0
+    assert orders_counter.value(labels={**order_labels, "result": "executed"}) == 0.0
+    assert orders_counter.value(labels={**order_labels, "result": "not_filled"}) == 0.0
 
 
 def test_controller_reverses_position_before_opening_new_one() -> None:
