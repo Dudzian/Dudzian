@@ -939,6 +939,42 @@ def test_controller_syncs_metadata_quantity_after_risk_adjustment() -> None:
         assert float(event["order_quantity"]) == pytest.approx(0.25)
 
 
+def test_controller_uses_recheck_reason_when_adjusted_order_is_rejected() -> None:
+    risk_engine = DummyRiskEngine()
+    first_reject = RiskCheckResult(
+        allowed=False,
+        reason="A",
+        adjustments={"max_quantity": 0.25},
+    )
+    second_reject = RiskCheckResult(allowed=False, reason="B")
+    risk_engine.set_result_sequence([first_reject, second_reject])
+
+    execution = DummyExecutionService()
+    router, channel, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    results = controller.process_signals([_signal("BUY", quantity=1.0, price=100.0)])
+
+    assert results == []
+    assert execution.requests == []
+    risk_alert = next(message for message in channel.messages if message.category == "risk")
+    assert risk_alert.body == "B"
+    exported = list(journal.export())
+    rejected = next(event for event in exported if event["event"] == "risk_rejected")
+    assert rejected["reason"] == "B"
+
+
 def test_controller_risk_adjust_preserves_existing_client_order_id() -> None:
     risk_engine = DummyRiskEngine()
     disallowed = RiskCheckResult(
