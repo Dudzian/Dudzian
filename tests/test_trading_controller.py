@@ -1338,9 +1338,13 @@ def test_liquidation_critical_alert_is_idempotent_while_state_stays_active() -> 
     critical_risk_alerts = [
         msg
         for msg in channel.messages
-        if msg.category == "risk" and msg.severity == "critical" and msg.title == "Profil w trybie awaryjnym"
+        if msg.category == "risk"
+        and msg.severity == "critical"
+        and msg.title == "Profil w trybie awaryjnym"
     ]
-    warning_risk_alerts = [msg for msg in channel.messages if msg.category == "risk" and msg.severity == "warning"]
+    warning_risk_alerts = [
+        msg for msg in channel.messages if msg.category == "risk" and msg.severity == "warning"
+    ]
     info_strategy_alerts = [
         msg for msg in channel.messages if msg.category == "strategy" and msg.severity == "info"
     ]
