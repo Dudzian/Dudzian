@@ -457,7 +457,7 @@ def test_controller_skips_neutral_signal() -> None:
     assert exported == ()
     signals_counter = registry.counter(
         "trading_signals_total",
-        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral).",
+        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral/skipped).",
     )
     signal_labels = {
         "environment": "paper",
@@ -476,6 +476,141 @@ def test_controller_skips_neutral_signal() -> None:
     assert orders_counter.value(labels={**order_labels, "result": "submitted"}) == 0.0
     assert orders_counter.value(labels={**order_labels, "result": "executed"}) == 0.0
     assert orders_counter.value(labels={**order_labels, "result": "not_filled"}) == 0.0
+
+
+def test_controller_skips_unsupported_side_with_terminal_metric_and_without_side_effects() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    registry = MetricsRegistry()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+        metrics_registry=registry,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="ROTATE",
+        confidence=0.41,
+        metadata={"order_type": "market"},
+    )
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert all(message.category != "execution" for message in channel.messages)
+    assert tuple(audit.export()) == ()
+    skipped_event = next(event for event in journal.export() if event["event"] == "signal_skipped")
+    assert skipped_event["status"] == "skipped"
+    assert skipped_event["reason"] == "unsupported_side"
+
+    signals_counter = registry.counter(
+        "trading_signals_total",
+        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral/skipped).",
+    )
+    signal_labels = {
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "risk_profile": "balanced",
+        "symbol": "BTC/USDT",
+    }
+    assert signals_counter.value(labels={**signal_labels, "status": "received"}) == 1.0
+    assert signals_counter.value(labels={**signal_labels, "status": "skipped"}) == 1.0
+
+    orders_counter = registry.counter(
+        "trading_orders_total",
+        "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
+    )
+    for side in ("BUY", "SELL"):
+        order_labels = {**signal_labels, "side": side}
+        assert orders_counter.value(labels={**order_labels, "result": "submitted"}) == 0.0
+        assert orders_counter.value(labels={**order_labels, "result": "executed"}) == 0.0
+        assert orders_counter.value(labels={**order_labels, "result": "not_filled"}) == 0.0
+
+
+def test_controller_skips_no_valid_legs_with_terminal_metric_and_without_side_effects() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    registry = MetricsRegistry()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+        metrics_registry=registry,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="arbitrage_entry",
+        confidence=0.63,
+        intent="multi_leg",
+        metadata={"order_type": "market"},
+        legs=(
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="HOLD",
+                quantity=1.0,
+                metadata={"price": 100.0},
+            ),
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="BUY",
+                quantity=0.0,
+                metadata={"price": 101.0},
+            ),
+        ),
+    )
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert all(message.category != "execution" for message in channel.messages)
+    assert tuple(audit.export()) == ()
+    skipped_event = next(event for event in journal.export() if event["event"] == "signal_skipped")
+    assert skipped_event["status"] == "skipped"
+    assert skipped_event["reason"] == "no_valid_legs"
+
+    signals_counter = registry.counter(
+        "trading_signals_total",
+        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral/skipped).",
+    )
+    signal_labels = {
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "risk_profile": "balanced",
+        "symbol": "BTC/USDT",
+    }
+    assert signals_counter.value(labels={**signal_labels, "status": "received"}) == 1.0
+    assert signals_counter.value(labels={**signal_labels, "status": "skipped"}) == 1.0
+
+    orders_counter = registry.counter(
+        "trading_orders_total",
+        "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
+    )
+    for side in ("BUY", "SELL"):
+        order_labels = {**signal_labels, "side": side}
+        assert orders_counter.value(labels={**order_labels, "result": "submitted"}) == 0.0
+        assert orders_counter.value(labels={**order_labels, "result": "executed"}) == 0.0
+        assert orders_counter.value(labels={**order_labels, "result": "not_filled"}) == 0.0
 
 
 def test_controller_reverses_position_before_opening_new_one() -> None:
@@ -1251,7 +1386,7 @@ def test_controller_updates_metrics_counters_and_gauge() -> None:
 
     signals_counter = registry.counter(
         "trading_signals_total",
-        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected).",
+        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral/skipped).",
     )
     assert signals_counter.value(labels={**symbol_labels, "status": "received"}) == 1.0
     assert signals_counter.value(labels={**symbol_labels, "status": "accepted"}) == 1.0

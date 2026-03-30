@@ -443,7 +443,7 @@ class TradingController:
         self._tco_metadata = dict(self.tco_metadata or {})
         self._metric_signals_total = self._metrics.counter(
             "trading_signals_total",
-            "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral).",
+            "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral/skipped).",
         )
         self._metric_orders_total = self._metrics.counter(
             "trading_orders_total",
@@ -936,6 +936,9 @@ class TradingController:
                     )
                 )
             if not expanded:
+                metric_labels = dict(self._metric_labels)
+                metric_labels["symbol"] = signal.symbol
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
                 self._record_decision_event(
                     "signal_skipped",
                     signal=signal,
@@ -947,6 +950,9 @@ class TradingController:
         normalized_side = _normalize_trade_side(signal.side)
         if normalized_side is None:
             if intent not in _NEUTRAL_INTENTS:
+                metric_labels = dict(self._metric_labels)
+                metric_labels["symbol"] = signal.symbol
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
                 self._record_decision_event(
                     "signal_skipped",
                     signal=signal,

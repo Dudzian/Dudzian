@@ -204,7 +204,7 @@ def test_controller_neutral_signal_has_terminal_metric_without_order_side_effect
 
     signals_counter = registry.counter(
         "trading_signals_total",
-        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral).",
+        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral/skipped).",
     )
     signal_labels = {
         "environment": "paper",
