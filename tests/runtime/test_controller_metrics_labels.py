@@ -175,3 +175,53 @@ def test_controller_open_leg_non_filled_is_not_counted_as_executed() -> None:
     assert orders_counter.value(labels={**labels, "result": "submitted"}) == 1.0
     assert orders_counter.value(labels={**labels, "result": "executed"}) == 0.0
     assert orders_counter.value(labels={**labels, "result": "not_filled"}) == 1.0
+
+
+def test_controller_neutral_signal_has_terminal_metric_without_order_side_effects() -> None:
+    registry = MetricsRegistry()
+    controller = TradingController(
+        risk_engine=_RiskEngineStub(),
+        execution_service=_ExecutionStub(),
+        alert_router=_router(),
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(seconds=0),
+        metrics_registry=registry,
+    )
+
+    neutral_signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="rebalance_delta",
+        confidence=0.42,
+        intent="neutral",
+        metadata={"target_ratio": 0.1},
+    )
+
+    result = controller.process_signals([neutral_signal])
+    assert result == []
+
+    signals_counter = registry.counter(
+        "trading_signals_total",
+        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected/adjusted/neutral).",
+    )
+    signal_labels = {
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "risk_profile": "balanced",
+        "symbol": "BTC/USDT",
+    }
+    assert signals_counter.value(labels={**signal_labels, "status": "received"}) == 1.0
+    assert signals_counter.value(labels={**signal_labels, "status": "neutral"}) == 1.0
+    assert signals_counter.value(labels={**signal_labels, "status": "accepted"}) == 0.0
+    assert signals_counter.value(labels={**signal_labels, "status": "rejected"}) == 0.0
+
+    orders_counter = registry.counter(
+        "trading_orders_total",
+        "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
+    )
+    order_labels = {**signal_labels, "side": "BUY"}
+    assert orders_counter.value(labels={**order_labels, "result": "submitted"}) == 0.0
+    assert orders_counter.value(labels={**order_labels, "result": "executed"}) == 0.0
+    assert orders_counter.value(labels={**order_labels, "result": "not_filled"}) == 0.0
