@@ -1001,16 +1001,20 @@ class TradingController:
         )
 
         adjusted_request = request
-        rejection_reason = risk_result.reason
         if not risk_result.allowed:
-            adjusted = self._maybe_adjust_request(signal, request, risk_result, account)
+            adjusted, effective_risk_result = self._maybe_adjust_request(
+                signal,
+                request,
+                risk_result,
+                account,
+            )
             if adjusted is None:
-                self._emit_order_rejected_alert(signal, request, risk_result)
-                self._handle_liquidation_state(risk_result)
+                self._emit_order_rejected_alert(signal, request, effective_risk_result)
+                self._handle_liquidation_state(effective_risk_result)
                 self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
-                adjustments = risk_result.adjustments or {}
+                adjustments = effective_risk_result.adjustments or {}
                 metadata = {
-                    "reason": rejection_reason or "",
+                    "reason": effective_risk_result.reason or "",
                     "available_margin": f"{account.available_margin:.8f}",
                     "total_equity": f"{account.total_equity:.8f}",
                     "maintenance_margin": f"{account.maintenance_margin:.8f}",
@@ -1024,7 +1028,7 @@ class TradingController:
                     metadata=metadata,
                 )
                 return None
-            adjusted_request, new_result = adjusted
+            adjusted_request = adjusted
             self._record_decision_event(
                 "risk_adjusted",
                 signal=signal,
@@ -1033,10 +1037,10 @@ class TradingController:
                 metadata={
                     "original_quantity": f"{request.quantity:.8f}",
                     "adjusted_quantity": f"{adjusted_request.quantity:.8f}",
-                    "reason": rejection_reason or "",
+                    "reason": risk_result.reason or "",
                 },
             )
-            risk_result = new_result
+            risk_result = effective_risk_result
             self._metric_signals_total.inc(labels={**metric_labels, "status": "adjusted"})
 
         adjusted_request = self._ensure_client_order_id(adjusted_request)
@@ -1356,10 +1360,10 @@ class TradingController:
         request: OrderRequest,
         risk_result: RiskCheckResult,
         account: AccountSnapshot,
-    ) -> tuple[OrderRequest, RiskCheckResult] | None:
+    ) -> tuple[OrderRequest | None, RiskCheckResult]:
         quantity = _extract_adjusted_quantity(request.quantity, risk_result.adjustments)
         if quantity is None:
-            return None
+            return None, risk_result
 
         adjusted_request = OrderRequest(
             symbol=request.symbol,
@@ -1379,7 +1383,7 @@ class TradingController:
             profile_name=self.risk_profile,
         )
         if not new_result.allowed:
-            return None
+            return None, new_result
 
         _LOGGER.info(
             "Dostosowuję sygnał %s %s: qty %.8f -> %.8f po rekomendacji risk engine.",
