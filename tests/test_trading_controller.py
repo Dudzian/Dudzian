@@ -386,9 +386,7 @@ def test_controller_multi_leg_runtime_provenance_keys_override_leg_metadata() ->
     assert second_request.metadata["signal_intent"] == "multi_leg"
     assert second_request.metadata["exchange"] == "KRAKEN"
 
-    submitted_events = [
-        event for event in journal.export() if event["event"] == "order_submitted"
-    ]
+    submitted_events = [event for event in journal.export() if event["event"] == "order_submitted"]
     assert len(submitted_events) == 2
     assert submitted_events[0]["order_leg_index"] == "0"
     assert submitted_events[0]["order_leg_count"] == "2"
