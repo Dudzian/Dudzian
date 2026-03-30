@@ -1257,6 +1257,100 @@ def test_liquidation_metric_reflects_force_state() -> None:
     assert any(msg.severity == "critical" for msg in channel.messages)
 
 
+def test_liquidation_state_transition_events_are_emitted_once_per_state_change() -> None:
+    registry = MetricsRegistry()
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        metrics_registry=registry,
+        decision_journal=journal,
+    )
+
+    base_labels = {"environment": "paper", "portfolio": "paper-1", "risk_profile": "balanced"}
+    liquidation_gauge = registry.gauge(
+        "trading_liquidation_state",
+        "Stan trybu awaryjnego profilu ryzyka (1=liquidation, 0=normal).",
+    )
+
+    controller.process_signals([_signal("BUY")])
+    transition_events = [e for e in journal.events if e.event_type == "liquidation_state_changed"]
+    assert transition_events == []
+    assert liquidation_gauge.value(labels=base_labels) == 0.0
+
+    risk_engine.set_result(
+        RiskCheckResult(allowed=False, reason="Przekroczono dzienny limit straty."),
+        liquidate=True,
+    )
+    controller.process_signals([_signal("SELL")])
+    transition_events = [e for e in journal.events if e.event_type == "liquidation_state_changed"]
+    assert len(transition_events) == 1
+    assert transition_events[0].status == "entered"
+    assert transition_events[0].metadata["in_liquidation"] is True
+    assert liquidation_gauge.value(labels=base_labels) == 1.0
+
+    controller.process_signals([_signal("SELL")])
+    transition_events = [e for e in journal.events if e.event_type == "liquidation_state_changed"]
+    assert len(transition_events) == 1
+
+    risk_engine.set_result(RiskCheckResult(allowed=True), liquidate=False)
+    controller.process_signals([_signal("BUY")])
+    transition_events = [e for e in journal.events if e.event_type == "liquidation_state_changed"]
+    assert len(transition_events) == 2
+    assert transition_events[1].status == "exited"
+    assert transition_events[1].metadata["in_liquidation"] is False
+    assert liquidation_gauge.value(labels=base_labels) == 0.0
+
+
+def test_liquidation_critical_alert_is_idempotent_while_state_stays_active() -> None:
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result(
+        RiskCheckResult(allowed=False, reason="Przekroczono dzienny limit straty."),
+        liquidate=True,
+    )
+    execution = DummyExecutionService()
+    router, channel, _ = _router_with_channel()
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+    )
+
+    controller.process_signals([_signal("SELL")])
+    controller.process_signals([_signal("SELL")])
+
+    critical_risk_alerts = [
+        msg
+        for msg in channel.messages
+        if msg.category == "risk" and msg.severity == "critical" and msg.title == "Profil w trybie awaryjnym"
+    ]
+    warning_risk_alerts = [msg for msg in channel.messages if msg.category == "risk" and msg.severity == "warning"]
+    info_strategy_alerts = [
+        msg for msg in channel.messages if msg.category == "strategy" and msg.severity == "info"
+    ]
+
+    assert len(critical_risk_alerts) == 1
+    assert len(warning_risk_alerts) == 2
+    assert len(info_strategy_alerts) == 2
+    assert len(channel.messages) == 5
+
+
 class FailingExecutionService(ExecutionService):
     def __init__(self) -> None:
         self.requests: list[OrderRequest] = []
