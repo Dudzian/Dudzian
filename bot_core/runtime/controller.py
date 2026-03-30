@@ -914,14 +914,14 @@ class TradingController:
                 metadata = self._clone_metadata(getattr(leg, "metadata", None))
                 combined_metadata: dict[str, object] = {**base_metadata}
                 combined_metadata.update(metadata)
-                combined_metadata.setdefault("signal_intent", intent or "multi_leg")
-                combined_metadata.setdefault("leg_index", index)
-                combined_metadata.setdefault("leg_count", leg_count)
+                combined_metadata["signal_intent"] = intent or "multi_leg"
+                combined_metadata["leg_index"] = index
+                combined_metadata["leg_count"] = leg_count
                 if leg_quantity is not None:
                     combined_metadata["quantity"] = leg_quantity
                 exchange = getattr(leg, "exchange", None)
                 if exchange:
-                    combined_metadata.setdefault("exchange", exchange)
+                    combined_metadata["exchange"] = exchange
                 leg_confidence = getattr(leg, "confidence", None)
                 expanded.append(
                     StrategySignal(
