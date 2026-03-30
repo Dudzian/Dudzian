@@ -269,6 +269,54 @@ def test_controller_handles_multi_leg_signal() -> None:
     assert any(event["event"] == "order_executed" for event in journal.export())
 
 
+def test_controller_multi_leg_uses_per_leg_quantity_when_parent_quantity_is_set() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="arbitrage_entry",
+        confidence=0.91,
+        intent="multi_leg",
+        quantity=10.0,
+        metadata={"order_type": "market"},
+        legs=(
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="BUY",
+                quantity=1.25,
+                metadata={"price": 101.0},
+            ),
+            SignalLeg(
+                symbol="ETH/USDT",
+                side="SELL",
+                quantity=2.75,
+                metadata={"price": 102.0},
+            ),
+        ),
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 2
+    assert [request.side for request in execution.requests] == ["BUY", "SELL"]
+    assert [request.symbol for request in execution.requests] == ["BTC/USDT", "ETH/USDT"]
+    assert [request.quantity for request in execution.requests] == pytest.approx([1.25, 2.75])
+
+
 def test_controller_non_filled_result_not_recorded_as_order_executed() -> None:
     risk_engine = DummyRiskEngine()
     execution = StatusExecutionService(status="rejected", filled_quantity=0.0)
