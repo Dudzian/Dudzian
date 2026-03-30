@@ -1413,12 +1413,10 @@ class TradingController:
         self, signal: StrategySignal, *, extra_metadata: Mapping[str, object] | None = None
     ) -> OrderRequest:
         # Metadane z sygnału + domyślne z kontrolera
-        metadata_source: dict[str, object] = dict(self._order_defaults)
-        for k, v in signal.metadata.items():
-            metadata_source[str(k)] = v
+        metadata_source = self._clone_metadata(self._order_defaults)
+        metadata_source.update(self._clone_metadata(signal.metadata))
         if extra_metadata:
-            for k, v in extra_metadata.items():
-                metadata_source[str(k)] = v
+            metadata_source.update(self._clone_metadata(extra_metadata))
 
         self._inject_explainability_metadata(metadata_source)
 
@@ -1496,15 +1494,24 @@ class TradingController:
         return DecisionCandidate is not None and self._decision_orchestrator is not None
 
     def _clone_metadata(self, metadata: Mapping[str, object] | None) -> dict[str, object]:
+        def _clone_value(value: object) -> object:
+            if isinstance(value, Mapping):
+                return {str(key): _clone_value(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [_clone_value(item) for item in value]
+            if isinstance(value, tuple):
+                return tuple(_clone_value(item) for item in value)
+            return value
+
         if isinstance(metadata, Mapping):
-            return {str(k): v for k, v in metadata.items()}
+            return {str(k): _clone_value(v) for k, v in metadata.items()}
         if metadata is None:
             return {}
         try:
             candidate = dict(metadata)  # type: ignore[arg-type]
         except Exception:
             return {}
-        return {str(k): v for k, v in candidate.items()}
+        return {str(k): _clone_value(v) for k, v in candidate.items()}
 
     def _collect_explainability_payloads(self, metadata: Mapping[str, object]) -> list[object]:
         candidates: list[object] = []
