@@ -126,3 +126,47 @@ def test_build_report_returns_mapping(fixed_clock) -> None:
 
     report_obj = reporter.build_report(as_dict=False)
     assert hasattr(report_obj, "strategies")
+
+
+def test_record_execution_snapshots_nested_metadata_by_value(fixed_clock) -> None:
+    reporter = RuntimeTCOReporter(clock=fixed_clock)
+    nested_metadata = {
+        "scheduler": "cron.daily",
+        "details": {"labels": ["initial"], "threshold": 1},
+    }
+
+    reporter.record_execution(
+        strategy="alpha",
+        risk_profile="balanced",
+        instrument="BTC_USDT",
+        exchange="binance",
+        side="buy",
+        quantity=1.0,
+        executed_price=10000.0,
+        reference_price=10000.0,
+        metadata=nested_metadata,
+    )
+    nested_metadata["details"]["labels"].append("mutated")
+    nested_metadata["details"]["threshold"] = 99
+
+    report = reporter.build_report()
+    scheduler = report["schedulers"]["cron.daily"]
+    strategy_summary = scheduler["strategies"]["alpha"]
+
+    assert strategy_summary["trade_count"] == 1
+    stored_event = reporter.events()[0]
+    assert stored_event.metadata["details"] == {"labels": ["initial"], "threshold": 1}
+
+
+def test_init_metadata_is_snapshotted_by_value_for_report(fixed_clock) -> None:
+    init_metadata = {
+        "audit": {"labels": ["before"], "context": {"team": "runtime"}},
+    }
+    reporter = RuntimeTCOReporter(clock=fixed_clock, metadata=init_metadata)
+    _record_sample_fill(reporter)
+
+    init_metadata["audit"]["labels"].append("after")
+    init_metadata["audit"]["context"]["team"] = "mutated"
+
+    report = reporter.build_report()
+    assert report["metadata"]["audit"] == {"labels": ["before"], "context": {"team": "runtime"}}
