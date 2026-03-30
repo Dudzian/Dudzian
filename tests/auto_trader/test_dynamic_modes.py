@@ -104,9 +104,9 @@ def test_dynamic_mode_prefers_scalping_profile(trader: AutoTrader) -> None:
     assert trader._active_decision_mode == "scalping"
 
     trader._log_decision_event("cycle_started", symbol="BTCUSDT", status="pending")
-    events = trader._decision_journal._events  # type: ignore[attr-defined]
+    events = list(trader._decision_journal.export())
     assert events, "journal should contain events"
-    assert events[-1].metadata.get("decision_mode") == "scalping"
+    assert events[-1].get("decision_mode") == "scalping"
 
 
 def test_guardrail_penalty_switches_to_hedge(trader: AutoTrader) -> None:
