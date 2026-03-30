@@ -384,6 +384,7 @@ class TradingController:
     _order_defaults: dict[str, str] = field(init=False, repr=False)
     _last_health_report: datetime = field(init=False, repr=False)
     _liquidation_alerted: bool = field(init=False, repr=False)
+    _liquidation_active: bool = field(init=False, repr=False)
     _metrics: MetricsRegistry = field(init=False, repr=False)
     _metric_labels: Mapping[str, str] = field(init=False, repr=False)
     _metric_signals_total: Any = field(init=False, repr=False)
@@ -426,6 +427,7 @@ class TradingController:
         self._order_defaults = dict(self.order_metadata_defaults or {})
         self._last_health_report = self._clock()
         self._liquidation_alerted = False
+        self._liquidation_active = False
         self._metrics = self.metrics_registry or get_global_metrics_registry()
         self._decision_journal = self.decision_journal
         self._metric_labels = {
@@ -1887,6 +1889,17 @@ class TradingController:
         self._metric_liquidation_state.set(
             1.0 if in_liquidation else 0.0, labels=self._metric_labels
         )
+        if in_liquidation != self._liquidation_active:
+            transition_status = "entered" if in_liquidation else "exited"
+            transition_metadata: dict[str, object] = {"in_liquidation": in_liquidation}
+            if risk_result.reason:
+                transition_metadata["reason"] = risk_result.reason
+            self._record_decision_event(
+                "liquidation_state_changed",
+                status=transition_status,
+                metadata=transition_metadata,
+            )
+            self._liquidation_active = in_liquidation
         if not in_liquidation:
             if self._liquidation_alerted:
                 _LOGGER.info("Profil %s wyszedł z trybu awaryjnego", self.risk_profile)
