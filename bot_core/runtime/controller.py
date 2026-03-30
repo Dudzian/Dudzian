@@ -918,7 +918,7 @@ class TradingController:
                 combined_metadata.setdefault("leg_index", index)
                 combined_metadata.setdefault("leg_count", leg_count)
                 if leg_quantity is not None:
-                    combined_metadata.setdefault("quantity", leg_quantity)
+                    combined_metadata["quantity"] = leg_quantity
                 exchange = getattr(leg, "exchange", None)
                 if exchange:
                     combined_metadata.setdefault("exchange", exchange)
