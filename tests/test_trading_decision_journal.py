@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from bot_core.runtime.journal import JsonlTradingDecisionJournal, TradingDecisionEvent
+from bot_core.runtime.journal import (
+    InMemoryTradingDecisionJournal,
+    JsonlTradingDecisionJournal,
+    TradingDecisionEvent,
+)
 
 
 def _event(timestamp: datetime) -> TradingDecisionEvent:
@@ -205,3 +209,37 @@ def test_jsonl_export_logs_file_read_errors(tmp_path: Path, monkeypatch, caplog)
 def test_jsonl_journal_rejects_filename_pattern_with_directory_separator(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="filename_pattern"):
         JsonlTradingDecisionJournal(directory=tmp_path, filename_pattern="%Y/%m/decisions-%d.jsonl")
+
+
+def test_in_memory_journal_records_immutable_snapshot_of_event_and_metadata() -> None:
+    journal = InMemoryTradingDecisionJournal()
+    metadata = {
+        "top_level": "before",
+        "nested_dict": {"a": 1, "b": {"c": 2}},
+        "nested_list": [1, 2],
+    }
+    event = TradingDecisionEvent(
+        event_type="order_submitted",
+        timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+        environment="paper",
+        portfolio="paper-1",
+        risk_profile="balanced",
+        status="submitted",
+        metadata=metadata,
+    )
+
+    journal.record(event)
+
+    event.status = "mutated-status"
+    metadata["top_level"] = "after"
+    metadata["nested_dict"]["b"]["c"] = 999
+    metadata["nested_list"].append(3)
+
+    exported = list(journal.export())
+    assert len(exported) == 1
+    payload = exported[0]
+
+    assert payload["status"] == "submitted"
+    assert payload["top_level"] == "before"
+    assert payload["nested_dict"] == '{"a":1,"b":{"c":2}}'
+    assert payload["nested_list"] == "[1,2]"

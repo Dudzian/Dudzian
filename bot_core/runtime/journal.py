@@ -191,13 +191,13 @@ class TradingDecisionJournal(Protocol):
 class InMemoryTradingDecisionJournal(TradingDecisionJournal):
     """Lekki dziennik wykorzystywany w testach i dev."""
 
-    _events: list[TradingDecisionEvent] = field(default_factory=list)
+    _events: list[Mapping[str, str]] = field(default_factory=list)
 
     def record(self, event: TradingDecisionEvent) -> None:
-        self._events.append(event)
+        self._events.append(dict(event.as_dict()))
 
     def export(self) -> Iterable[Mapping[str, str]]:
-        return tuple(event.as_dict() for event in self._events)
+        return tuple(dict(event) for event in self._events)
 
 
 @dataclass(slots=True)
