@@ -782,10 +782,16 @@ class TradingController:
                     raise
                 if result is not None:
                     results.append(result)
+                    normalized_status = _normalize_execution_status(result.status)
+                    metric_result = (
+                        "executed"
+                        if normalized_status in _FILLED_EXECUTION_STATUSES
+                        else "not_filled"
+                    )
                     self._metric_orders_total.inc(
                         labels={
                             **per_leg_labels,
-                            "result": "executed",
+                            "result": metric_result,
                             "side": expanded_signal.side.upper(),
                         },
                     )
