@@ -243,3 +243,35 @@ def test_in_memory_journal_records_immutable_snapshot_of_event_and_metadata() ->
     assert payload["top_level"] == "before"
     assert payload["nested_dict"] == '{"a":1,"b":{"c":2}}'
     assert payload["nested_list"] == "[1,2]"
+
+
+def test_in_memory_journal_export_returns_defensive_copy_snapshot() -> None:
+    journal = InMemoryTradingDecisionJournal()
+    journal.record(
+        TradingDecisionEvent(
+            event_type="order_submitted",
+            timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="paper-1",
+            risk_profile="balanced",
+            status="submitted",
+            metadata={"order_id": "abc-1"},
+        )
+    )
+
+    first_export = list(journal.export())
+    assert len(first_export) == 1
+    first_payload = first_export[0]
+    assert first_payload["status"] == "submitted"
+    assert first_payload["order_id"] == "abc-1"
+
+    first_payload["status"] = "mutated"
+    first_payload["order_id"] = "tampered"
+
+    second_export = list(journal.export())
+    assert len(second_export) == 1
+    second_payload = second_export[0]
+
+    assert second_payload["status"] == "submitted"
+    assert second_payload["order_id"] == "abc-1"
+    assert second_payload is not first_payload
