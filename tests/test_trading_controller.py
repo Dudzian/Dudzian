@@ -2200,6 +2200,84 @@ def test_controller_generates_client_order_id_when_missing() -> None:
     assert order_submitted_event.get("order_generated_client_order_id") == "true"
 
 
+def test_controller_normalizes_trimmed_client_order_id_and_time_in_force() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+    )
+
+    signal = _signal("BUY", quantity=1.0, price=100.0)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "client_order_id": " abc ",
+        "time_in_force": " GTC ",
+    }
+
+    controller.process_signals([signal])
+
+    assert len(execution.requests) == 1
+    request = execution.requests[0]
+    assert request.client_order_id == "abc"
+    assert request.time_in_force == "GTC"
+
+    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    assert submitted_event.get("client_order_id") == "abc"
+    assert submitted_event.get("time_in_force") == "GTC"
+
+
+def test_controller_treats_whitespace_string_fields_as_missing() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+    )
+
+    signal = _signal("BUY", quantity=1.0, price=100.0)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "client_order_id": "   ",
+        "time_in_force": "   ",
+    }
+
+    controller.process_signals([signal])
+
+    assert len(execution.requests) == 1
+    request = execution.requests[0]
+    assert request.client_order_id
+    assert request.client_order_id.startswith("tc-")
+    assert request.time_in_force is None
+    assert request.metadata is not None
+    assert request.metadata.get("generated_client_order_id") is True
+
+    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    assert submitted_event.get("client_order_id") == request.client_order_id
+    assert submitted_event.get("order_generated_client_order_id") == "true"
+    assert "time_in_force" not in submitted_event
+
+
 def test_process_signals_survives_health_dispatch_exception(caplog) -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
