@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterable, Mapping, MutableMapping, Optional, Protocol, Sequence
 
 import pytest
@@ -801,3 +802,258 @@ def test_build_account_loader_converts_additional_cash_assets() -> None:
     assert snapshot.available_margin == pytest.approx(expected_margin, rel=1e-6)
     expected_equity = expected_margin
     assert snapshot.total_equity == pytest.approx(expected_equity, rel=1e-6)
+
+
+def _patch_pipeline_contract_build_path(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    bootstrap: SimpleNamespace,
+    execution_mode: str,
+    capture: dict[str, object] | None = None,
+) -> dict[str, bool]:
+    contract_flags = {"live_builder_called": False}
+    strategy_cfg = SimpleNamespace(
+        fast_ma=3,
+        slow_ma=5,
+        breakout_lookback=4,
+        momentum_window=3,
+        atr_window=3,
+        atr_multiplier=1.5,
+        min_trend_strength=0.0,
+        min_momentum=0.0,
+    )
+
+    class _Strategy:
+        def __init__(self, _settings) -> None:
+            pass
+
+    class _Controller:
+        def __init__(self, **kwargs) -> None:
+            if capture is not None:
+                capture["risk_engine"] = kwargs["risk_engine"]
+            self.execution_context = kwargs["execution_context"]
+            self.account_loader = kwargs["account_loader"]
+            self.symbols = kwargs["symbols"]
+
+    def _build_live_service(**_kwargs):
+        contract_flags["live_builder_called"] = True
+        return object()
+
+    monkeypatch.setattr("bot_core.runtime.pipeline.bootstrap_environment", lambda *args, **kwargs: bootstrap)
+    monkeypatch.setattr("bot_core.runtime.pipeline._resolve_strategy", lambda *_args, **_kwargs: strategy_cfg)
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._resolve_runtime",
+        lambda *_args, **_kwargs: SimpleNamespace(interval="1d"),
+    )
+    monkeypatch.setattr("bot_core.runtime.pipeline._resolve_universe", lambda *_args, **_kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._normalize_paper_settings",
+        lambda *_args, **_kwargs: {
+            "allowed_quotes": {"USDT"},
+            "default_leverage": 1.0,
+            "portfolio_id": "paper_portfolio",
+            "valuation_asset": "USDT",
+            "position_size": 0.1,
+            "initial_balances": {"USDT": 1_000.0},
+            "default_market": {},
+            "market_overrides": {},
+            "maker_fee": 0.0,
+            "taker_fee": 0.0,
+            "slippage_bps": 0.0,
+            "ledger_directory": None,
+            "ledger_filename_pattern": "ledger-%Y%m%d.jsonl",
+            "ledger_retention_days": 30,
+            "ledger_fsync": False,
+        },
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._derive_live_settings",
+        lambda *_args, **_kwargs: {
+            "allowed_quotes": {"USDT"},
+            "default_leverage": 1.0,
+            "portfolio_id": "live_portfolio",
+            "valuation_asset": "USDT",
+            "position_size": 0.0,
+            "initial_balances": {},
+            "default_market": {},
+            "market_overrides": {},
+            "maker_fee": 0.0,
+            "taker_fee": 0.0,
+            "slippage_bps": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._build_markets",
+        lambda *_args, **_kwargs: {"BTCUSDT": MarketMetadata(base_asset="BTC", quote_asset="USDT")},
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._create_cached_source",
+        lambda *_args, **_kwargs: SimpleNamespace(storage=object()),
+    )
+    monkeypatch.setattr("bot_core.runtime.pipeline.OHLCVBackfillService", lambda _source: object())
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._ensure_local_market_data_availability",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._build_price_resolver", lambda *_args, **_kwargs: lambda _symbol: 1.0
+    )
+    monkeypatch.setattr("bot_core.runtime.pipeline.resolve_execution_mode", lambda *_args, **_kwargs: execution_mode)
+    monkeypatch.setattr("bot_core.runtime.pipeline.build_live_execution_service", _build_live_service)
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._build_account_loader",
+        lambda **_kwargs: lambda: AccountSnapshot(
+            balances={"USDT": 1_000.0},
+            total_equity=1_000.0,
+            available_margin=1_000.0,
+            maintenance_margin=0.0,
+        ),
+    )
+    monkeypatch.setattr("bot_core.runtime.pipeline.DailyTrendMomentumSettings", lambda **_kwargs: SimpleNamespace(**_kwargs))
+    monkeypatch.setattr("bot_core.runtime.pipeline.DailyTrendMomentumStrategy", _Strategy)
+    monkeypatch.setattr("bot_core.runtime.pipeline.DailyTrendController", _Controller)
+    return contract_flags
+
+
+def test_build_daily_trend_pipeline_failfast_when_environment_lacks_default_strategy(monkeypatch) -> None:
+    bootstrap = SimpleNamespace(
+        core_config=object(),
+        environment=SimpleNamespace(
+            name="paper_env",
+            environment=Environment.PAPER,
+            default_strategy=None,
+            default_controller="controller_a",
+        ),
+        risk_profile_name="balanced",
+    )
+    monkeypatch.setattr("bot_core.runtime.pipeline.bootstrap_environment", lambda *args, **kwargs: bootstrap)
+
+    with pytest.raises(ValueError) as exc_info:
+        build_daily_trend_pipeline(
+            environment_name="paper_env",
+            strategy_name=None,
+            controller_name="controller_a",
+            config_path="ignored.yaml",
+            secret_manager=SecretManager(_InMemorySecretStorage()),
+        )
+    message = str(exc_info.value)
+    assert "paper_env" in message
+    assert "strategy_name" in message
+
+
+def test_build_daily_trend_pipeline_live_failfast_without_exchange_adapter(monkeypatch) -> None:
+    bootstrap = SimpleNamespace(
+        core_config=object(),
+        environment=SimpleNamespace(
+            name="live_env",
+            exchange="fake_exchange",
+            environment=Environment.LIVE,
+            default_strategy="s1",
+            default_controller="c1",
+        ),
+        risk_profile_name="balanced",
+        adapter=object(),
+        risk_engine=object(),
+        tco_reporter=None,
+        execution_service=SimpleNamespace(),  # nie jest ExecutionService, więc brak cichego fallbacku do paper
+    )
+    flags = _patch_pipeline_contract_build_path(monkeypatch, bootstrap=bootstrap, execution_mode="live")
+
+    with pytest.raises(RuntimeError, match="Tryb live wymaga aktywnego adaptera giełdowego"):
+        build_daily_trend_pipeline(
+            environment_name="live_env",
+            strategy_name="s1",
+            controller_name="c1",
+            config_path="ignored.yaml",
+            secret_manager=SecretManager(_InMemorySecretStorage()),
+        )
+    assert flags["live_builder_called"] is True
+
+
+def test_build_daily_trend_pipeline_reuses_bootstrap_paper_execution_service(monkeypatch) -> None:
+    bootstrap_execution = PaperTradingExecutionService(
+        {"BTCUSDT": MarketMetadata(base_asset="BTC", quote_asset="USDT")},
+        initial_balances={"USDT": 1_000.0},
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_bps=0.0,
+    )
+    captured: dict[str, object] = {}
+    bootstrap = SimpleNamespace(
+        core_config=object(),
+        environment=SimpleNamespace(
+            name="paper_env",
+            exchange="fake_exchange",
+            environment=Environment.PAPER,
+            default_strategy="s1",
+            default_controller="c1",
+        ),
+        risk_profile_name="balanced",
+        adapter=object(),
+        risk_engine=object(),
+        tco_reporter=None,
+        execution_service=bootstrap_execution,
+    )
+    _patch_pipeline_contract_build_path(
+        monkeypatch,
+        bootstrap=bootstrap,
+        execution_mode="paper",
+        capture=captured,
+    )
+
+    pipeline = build_daily_trend_pipeline(
+        environment_name="paper_env",
+        strategy_name="s1",
+        controller_name="c1",
+        config_path="ignored.yaml",
+        secret_manager=SecretManager(_InMemorySecretStorage()),
+    )
+
+    assert pipeline.execution_service is bootstrap_execution
+    assert captured["risk_engine"] is bootstrap.risk_engine
+
+
+def test_build_daily_trend_pipeline_failfast_when_strategy_module_missing(monkeypatch) -> None:
+    bootstrap = SimpleNamespace(
+        core_config=object(),
+        environment=SimpleNamespace(
+            name="paper_env",
+            exchange="fake_exchange",
+            environment=Environment.PAPER,
+            default_strategy="s1",
+            default_controller="c1",
+        ),
+        risk_profile_name="balanced",
+        adapter=object(),
+        risk_engine=object(),
+        tco_reporter=None,
+        execution_service=None,
+    )
+    _patch_pipeline_contract_build_path(monkeypatch, bootstrap=bootstrap, execution_mode="paper")
+    monkeypatch.setattr("bot_core.runtime.pipeline.DailyTrendMomentumSettings", None)
+    monkeypatch.setattr("bot_core.runtime.pipeline.DailyTrendMomentumStrategy", None)
+
+    with pytest.raises(RuntimeError, match="nie jest dostępny"):
+        build_daily_trend_pipeline(
+            environment_name="paper_env",
+            strategy_name="s1",
+            controller_name="c1",
+            config_path="ignored.yaml",
+            secret_manager=SecretManager(_InMemorySecretStorage()),
+        )
+
+
+def test_create_trading_controller_failfast_when_optional_dependency_missing(monkeypatch) -> None:
+    monkeypatch.setattr("bot_core.runtime.pipeline.TradingController", None)
+    pipeline = SimpleNamespace(
+        controller=SimpleNamespace(execution_context=SimpleNamespace(portfolio_id="p1", metadata={})),
+        bootstrap=SimpleNamespace(environment=SimpleNamespace(environment=Environment.PAPER, exchange="fake")),
+        execution_service=object(),
+        risk_profile_name="balanced",
+        strategy_name="s1",
+        controller_name="c1",
+        tco_reporter=None,
+    )
+
+    with pytest.raises(RuntimeError, match="nie jest dostępny"):
+        create_trading_controller(pipeline, alert_router=SimpleNamespace())
