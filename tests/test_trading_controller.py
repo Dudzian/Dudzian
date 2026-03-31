@@ -2095,6 +2095,79 @@ def test_controller_attaches_decision_metadata_for_execution() -> None:
     assert any(event.status == "accepted" for event in decision_events)
 
 
+def test_controller_extra_metadata_does_not_override_request_precedence_keys() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+
+    class _AcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                cost_bps=12.0,
+                net_edge_bps=8.0,
+                model_name="gbm_v2",
+                model_expected_return_bps=14.0,
+                model_success_probability=0.72,
+            )
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_orchestrator=_AcceptingOrchestrator(),
+        decision_min_probability=0.4,
+        decision_journal=journal,
+    )
+
+    def _colliding_decision_metadata(_evaluation) -> Mapping[str, object]:
+        return {
+            "order_type": "limit",
+            "time_in_force": "IOC",
+            "client_order_id": "extra-cid-override",
+            "exchange": "EXTRA-EXCHANGE",
+            "decision_engine": {"accepted": True, "model": "gbm_v2"},
+        }
+
+    controller._serialize_decision_evaluation = _colliding_decision_metadata  # type: ignore[method-assign]
+
+    signal = _signal("BUY", quantity=1.0, price=100.0, confidence=0.8)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "time_in_force": "GTC",
+        "client_order_id": "signal-cid-123",
+        "exchange": "BINANCE",
+        "expected_probability": 0.8,
+        "expected_return_bps": 15.0,
+    }
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    request = execution.requests[0]
+    assert request.order_type == "MARKET"
+    assert request.time_in_force == "GTC"
+    assert request.client_order_id == "signal-cid-123"
+    assert request.metadata["exchange"] == "BINANCE"
+    assert request.metadata["decision_engine"]["model"] == "gbm_v2"
+
+    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    assert submitted_event.get("order_type") == "MARKET"
+    assert submitted_event.get("time_in_force") == "GTC"
+    assert submitted_event.get("client_order_id") == "signal-cid-123"
+    assert submitted_event.get("order_exchange") == "BINANCE"
+
+
 def test_controller_generates_client_order_id_when_missing() -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()

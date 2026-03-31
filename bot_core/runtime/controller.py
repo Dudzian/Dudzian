@@ -1455,7 +1455,11 @@ class TradingController:
         metadata_source = self._clone_metadata(self._order_defaults)
         metadata_source.update(self._clone_metadata(signal.metadata))
         if extra_metadata:
-            metadata_source.update(self._clone_metadata(extra_metadata))
+            extra_payload = self._clone_metadata(extra_metadata)
+            for protected_key in ("client_order_id", "order_type", "time_in_force", "exchange"):
+                if protected_key in metadata_source and protected_key in extra_payload:
+                    extra_payload.pop(protected_key, None)
+            metadata_source.update(extra_payload)
 
         self._inject_explainability_metadata(metadata_source)
 
