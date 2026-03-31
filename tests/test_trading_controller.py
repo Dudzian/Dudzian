@@ -468,6 +468,140 @@ def test_controller_multi_leg_isolates_nested_metadata_between_requests() -> Non
     assert second_request.metadata["risk"] == {"bucket": "second", "limits": [3, 4]}
 
 
+
+def test_controller_multi_leg_enforces_unique_client_order_id_from_parent_anchor() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="arbitrage_entry",
+        confidence=0.93,
+        intent="multi_leg",
+        metadata={
+            "order_type": "market",
+            "client_order_id": "parent-anchor-123",
+        },
+        legs=(
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="BUY",
+                quantity=1.0,
+                metadata={"price": 101.0},
+            ),
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="SELL",
+                quantity=1.0,
+                metadata={"price": 102.0},
+            ),
+        ),
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 2
+    assert len(execution.requests) == 2
+
+    first_request, second_request = execution.requests
+    assert first_request.client_order_id == "parent-anchor-123-L1"
+    assert second_request.client_order_id == "parent-anchor-123-L2"
+    assert first_request.client_order_id != second_request.client_order_id
+
+    assert first_request.metadata["parent_client_order_id"] == "parent-anchor-123"
+    assert second_request.metadata["parent_client_order_id"] == "parent-anchor-123"
+    assert first_request.metadata["client_order_id"] == first_request.client_order_id
+    assert second_request.metadata["client_order_id"] == second_request.client_order_id
+
+    submitted_events = [event for event in journal.export() if event["event"] == "order_submitted"]
+    assert len(submitted_events) == 2
+    assert [event["client_order_id"] for event in submitted_events] == [
+        "parent-anchor-123-L1",
+        "parent-anchor-123-L2",
+    ]
+    assert [event["order_client_order_id"] for event in submitted_events] == [
+        "parent-anchor-123-L1",
+        "parent-anchor-123-L2",
+    ]
+    assert [event["order_parent_client_order_id"] for event in submitted_events] == [
+        "parent-anchor-123",
+        "parent-anchor-123",
+    ]
+
+
+def test_controller_multi_leg_enforces_unique_client_order_id_for_duplicate_leg_ids_without_parent_anchor() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="arbitrage_entry",
+        confidence=0.93,
+        intent="multi_leg",
+        metadata={"order_type": "market"},
+        legs=(
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="BUY",
+                quantity=1.0,
+                metadata={"price": 101.0, "client_order_id": "dup-leg-id"},
+            ),
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="SELL",
+                quantity=1.0,
+                metadata={"price": 102.0, "client_order_id": "dup-leg-id"},
+            ),
+        ),
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 2
+    assert len(execution.requests) == 2
+
+    first_request, second_request = execution.requests
+    assert first_request.client_order_id == "dup-leg-id"
+    assert second_request.client_order_id == "dup-leg-id-L2"
+    assert first_request.client_order_id != second_request.client_order_id
+
+    submitted_events = [event for event in journal.export() if event["event"] == "order_submitted"]
+    assert len(submitted_events) == 2
+    assert [event["client_order_id"] for event in submitted_events] == [
+        "dup-leg-id",
+        "dup-leg-id-L2",
+    ]
+    assert [event["order_client_order_id"] for event in submitted_events] == [
+        "dup-leg-id",
+        "dup-leg-id-L2",
+    ]
+
 def test_controller_non_filled_result_not_recorded_as_order_executed() -> None:
     risk_engine = DummyRiskEngine()
     execution = StatusExecutionService(status="rejected", filled_quantity=0.0)
