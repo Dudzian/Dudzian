@@ -334,6 +334,13 @@ def _normalize_modes(values: Sequence[object] | None, *, default: Sequence[str])
     return tuple(normalized)
 
 
+def _normalize_optional_request_string(value: object | None) -> str | None:
+    if value is None:
+        return None
+    candidate = str(value).strip()
+    return candidate or None
+
+
 @dataclass(slots=True)
 class ControllerSignal:
     """Zbiera sygnał strategii wraz ze snapshotem rynku."""
@@ -1479,6 +1486,16 @@ class TradingController:
         order_type = str(metadata_source.get("order_type") or "market").upper()
         time_in_force_raw = metadata_source.get("time_in_force")
         client_order_id_raw = metadata_source.get("client_order_id")
+        time_in_force = _normalize_optional_request_string(time_in_force_raw)
+        client_order_id = _normalize_optional_request_string(client_order_id_raw)
+        if time_in_force is None:
+            metadata_source.pop("time_in_force", None)
+        else:
+            metadata_source["time_in_force"] = time_in_force
+        if client_order_id is None:
+            metadata_source.pop("client_order_id", None)
+        else:
+            metadata_source["client_order_id"] = client_order_id
 
         # Opcjonalne rozszerzenia
         stop_price_raw = metadata_source.get("stop_price")
@@ -1504,8 +1521,8 @@ class TradingController:
             quantity=quantity,
             order_type=order_type,
             price=price,
-            time_in_force=str(time_in_force_raw) if time_in_force_raw is not None else None,
-            client_order_id=str(client_order_id_raw) if client_order_id_raw is not None else None,
+            time_in_force=time_in_force,
+            client_order_id=client_order_id,
             stop_price=stop_price,
             atr=atr,
             metadata=metadata_source,
