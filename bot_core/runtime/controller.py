@@ -341,6 +341,22 @@ def _normalize_optional_request_string(value: object | None) -> str | None:
     return candidate or None
 
 
+def _normalize_optional_request_float(value: object | None, *, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        value = candidate
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{field_name} w metadanych musi być liczbą zmiennoprzecinkową"
+        ) from exc
+
+
 @dataclass(slots=True)
 class ControllerSignal:
     """Zbiera sygnał strategii wraz ze snapshotem rynku."""
@@ -1480,8 +1496,11 @@ class TradingController:
         if quantity <= 0:
             raise ValueError("Wielkość zlecenia musi być dodatnia")
 
-        price_value = metadata_source.get("price")
-        price = float(price_value) if price_value is not None else None
+        price = _normalize_optional_request_float(metadata_source.get("price"), field_name="price")
+        if price is None:
+            metadata_source.pop("price", None)
+        else:
+            metadata_source["price"] = price
 
         order_type = str(metadata_source.get("order_type") or "market").upper()
         time_in_force_raw = metadata_source.get("time_in_force")
@@ -1498,22 +1517,22 @@ class TradingController:
             metadata_source["client_order_id"] = client_order_id
 
         # Opcjonalne rozszerzenia
-        stop_price_raw = metadata_source.get("stop_price")
-        atr_raw = metadata_source.get("atr")
-        stop_price = None
-        atr = None
-        if stop_price_raw is not None:
-            try:
-                stop_price = float(stop_price_raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "stop_price w metadanych musi być liczbą zmiennoprzecinkową"
-                ) from exc
-        if atr_raw is not None:
-            try:
-                atr = float(atr_raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("atr w metadanych musi być liczbą zmiennoprzecinkową") from exc
+        stop_price = _normalize_optional_request_float(
+            metadata_source.get("stop_price"),
+            field_name="stop_price",
+        )
+        atr = _normalize_optional_request_float(
+            metadata_source.get("atr"),
+            field_name="atr",
+        )
+        if stop_price is None:
+            metadata_source.pop("stop_price", None)
+        else:
+            metadata_source["stop_price"] = stop_price
+        if atr is None:
+            metadata_source.pop("atr", None)
+        else:
+            metadata_source["atr"] = atr
 
         return OrderRequest(
             symbol=signal.symbol,

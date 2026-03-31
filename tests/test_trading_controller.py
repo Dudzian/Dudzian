@@ -2278,6 +2278,152 @@ def test_controller_treats_whitespace_string_fields_as_missing() -> None:
     assert "time_in_force" not in submitted_event
 
 
+def test_controller_normalizes_optional_numeric_fields_and_journal_payload() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+    )
+
+    signal = _signal("BUY", quantity=1.0, price=100.0)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "   ",
+        "stop_price": "",
+        "atr": "   ",
+        "order_type": "market",
+    }
+
+    controller.process_signals([signal])
+
+    assert len(execution.requests) == 1
+    request = execution.requests[0]
+    assert request.price is None
+    assert request.stop_price is None
+    assert request.atr is None
+
+    assert request.metadata is not None
+    assert "price" not in request.metadata
+    assert "stop_price" not in request.metadata
+    assert "atr" not in request.metadata
+
+    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    assert "price" not in submitted_event
+    assert "order_price" not in submitted_event
+    assert "order_stop_price" not in submitted_event
+    assert "order_atr" not in submitted_event
+
+
+def test_controller_parses_optional_numeric_fields_to_float() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+    )
+
+    signal = _signal("BUY", quantity=1.0, price=100.0)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "101.25",
+        "stop_price": 99.5,
+        "atr": "1.75",
+        "order_type": "limit",
+    }
+
+    controller.process_signals([signal])
+
+    assert len(execution.requests) == 1
+    request = execution.requests[0]
+    assert request.price == pytest.approx(101.25)
+    assert request.stop_price == pytest.approx(99.5)
+    assert request.atr == pytest.approx(1.75)
+
+    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    assert submitted_event.get("price") == "101.25"
+    assert submitted_event.get("order_price") == "101.25"
+    assert submitted_event.get("order_stop_price") == "99.5"
+    assert submitted_event.get("order_atr") == "1.75"
+
+
+def test_controller_rejects_invalid_optional_numeric_field_value() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+    )
+
+    signal = _signal("BUY", quantity=1.0, price=100.0)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "not-a-number",
+        "order_type": "market",
+    }
+
+    with pytest.raises(ValueError, match="price w metadanych musi być liczbą zmiennoprzecinkową"):
+        controller.process_signals([signal])
+
+
+@pytest.mark.parametrize(
+    ("field_name", "expected_message"),
+    [
+        ("stop_price", "stop_price w metadanych musi być liczbą zmiennoprzecinkową"),
+        ("atr", "atr w metadanych musi być liczbą zmiennoprzecinkową"),
+    ],
+)
+def test_controller_rejects_invalid_stop_price_and_atr_values(
+    field_name: str,
+    expected_message: str,
+) -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+    )
+
+    signal = _signal("BUY", quantity=1.0, price=100.0)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        field_name: "invalid-value",
+    }
+
+    with pytest.raises(ValueError, match=expected_message):
+        controller.process_signals([signal])
+
+
 def test_process_signals_survives_health_dispatch_exception(caplog) -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
