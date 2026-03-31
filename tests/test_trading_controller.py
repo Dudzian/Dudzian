@@ -2095,7 +2095,9 @@ def test_controller_attaches_decision_metadata_for_execution() -> None:
     assert any(event.status == "accepted" for event in decision_events)
 
 
-def test_controller_extra_metadata_does_not_override_request_precedence_keys() -> None:
+def test_controller_extra_metadata_does_not_override_request_precedence_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     router, _channel, _audit = _router_with_channel()
@@ -2127,7 +2129,9 @@ def test_controller_extra_metadata_does_not_override_request_precedence_keys() -
         decision_journal=journal,
     )
 
-    def _colliding_decision_metadata(_evaluation) -> Mapping[str, object]:
+    def _colliding_decision_metadata(
+        _self, _evaluation
+    ) -> Mapping[str, object]:
         return {
             "order_type": "limit",
             "time_in_force": "IOC",
@@ -2136,7 +2140,11 @@ def test_controller_extra_metadata_does_not_override_request_precedence_keys() -
             "decision_engine": {"accepted": True, "model": "gbm_v2"},
         }
 
-    controller._serialize_decision_evaluation = _colliding_decision_metadata  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        TradingController,
+        "_serialize_decision_evaluation",
+        _colliding_decision_metadata,
+    )
 
     signal = _signal("BUY", quantity=1.0, price=100.0, confidence=0.8)
     signal.metadata = {
