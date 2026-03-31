@@ -883,6 +883,13 @@ class TradingController:
         if legs:
             expanded: list[StrategySignal] = []
             leg_count = len(legs)
+            parent_client_order_id_raw = base_metadata.get("client_order_id")
+            parent_client_order_id = (
+                str(parent_client_order_id_raw).strip()
+                if parent_client_order_id_raw is not None
+                else ""
+            )
+            seen_client_order_ids: set[str] = set()
             for index, leg in enumerate(legs):
                 leg_side = getattr(leg, "side", None)
                 normalized_side = _normalize_trade_side(leg_side)
@@ -917,6 +924,38 @@ class TradingController:
                 combined_metadata["signal_intent"] = intent or "multi_leg"
                 combined_metadata["leg_index"] = index
                 combined_metadata["leg_count"] = leg_count
+
+                client_order_id_raw = combined_metadata.get("client_order_id")
+                client_order_id = (
+                    str(client_order_id_raw).strip() if client_order_id_raw is not None else ""
+                )
+                has_duplicate = bool(client_order_id and client_order_id in seen_client_order_ids)
+                should_force_per_leg = bool(
+                    leg_count > 1
+                    and parent_client_order_id
+                    and (
+                        not client_order_id
+                        or client_order_id == parent_client_order_id
+                        or has_duplicate
+                    )
+                )
+                if should_force_per_leg:
+                    per_leg_client_order_id = f"{parent_client_order_id}-L{index + 1}"
+                    while per_leg_client_order_id in seen_client_order_ids:
+                        per_leg_client_order_id = f"{per_leg_client_order_id}-dup"
+                    combined_metadata["parent_client_order_id"] = parent_client_order_id
+                    combined_metadata["client_order_id"] = per_leg_client_order_id
+                    client_order_id = per_leg_client_order_id
+                elif has_duplicate and client_order_id:
+                    per_leg_client_order_id = f"{client_order_id}-L{index + 1}"
+                    while per_leg_client_order_id in seen_client_order_ids:
+                        per_leg_client_order_id = f"{per_leg_client_order_id}-dup"
+                    combined_metadata["client_order_id"] = per_leg_client_order_id
+                    client_order_id = per_leg_client_order_id
+
+                if client_order_id:
+                    seen_client_order_ids.add(client_order_id)
+
                 if leg_quantity is not None:
                     combined_metadata["quantity"] = leg_quantity
                 exchange = getattr(leg, "exchange", None)
