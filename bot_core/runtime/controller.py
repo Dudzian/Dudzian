@@ -352,9 +352,7 @@ def _normalize_optional_request_float(value: object | None, *, field_name: str) 
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"{field_name} w metadanych musi być liczbą zmiennoprzecinkową"
-        ) from exc
+        raise ValueError(f"{field_name} w metadanych musi być liczbą zmiennoprzecinkową") from exc
 
 
 @dataclass(slots=True)

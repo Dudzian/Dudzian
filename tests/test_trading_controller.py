@@ -468,7 +468,6 @@ def test_controller_multi_leg_isolates_nested_metadata_between_requests() -> Non
     assert second_request.metadata["risk"] == {"bucket": "second", "limits": [3, 4]}
 
 
-
 def test_controller_multi_leg_enforces_unique_client_order_id_from_parent_anchor() -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -542,7 +541,9 @@ def test_controller_multi_leg_enforces_unique_client_order_id_from_parent_anchor
     ]
 
 
-def test_controller_multi_leg_enforces_unique_client_order_id_for_duplicate_leg_ids_without_parent_anchor() -> None:
+def test_controller_multi_leg_enforces_unique_client_order_id_for_duplicate_leg_ids_without_parent_anchor() -> (
+    None
+):
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     router, _channel, _audit = _router_with_channel()
@@ -601,6 +602,7 @@ def test_controller_multi_leg_enforces_unique_client_order_id_for_duplicate_leg_
         "dup-leg-id",
         "dup-leg-id-L2",
     ]
+
 
 def test_controller_non_filled_result_not_recorded_as_order_executed() -> None:
     risk_engine = DummyRiskEngine()
@@ -2129,9 +2131,7 @@ def test_controller_extra_metadata_does_not_override_request_precedence_keys(
         decision_journal=journal,
     )
 
-    def _colliding_decision_metadata(
-        _self, _evaluation
-    ) -> Mapping[str, object]:
+    def _colliding_decision_metadata(_self, _evaluation) -> Mapping[str, object]:
         return {
             "order_type": "limit",
             "time_in_force": "IOC",
@@ -2169,7 +2169,9 @@ def test_controller_extra_metadata_does_not_override_request_precedence_keys(
     assert request.metadata["exchange"] == "BINANCE"
     assert request.metadata["decision_engine"]["model"] == "gbm_v2"
 
-    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    submitted_event = next(
+        event for event in journal.export() if event["event"] == "order_submitted"
+    )
     assert submitted_event.get("order_type") == "MARKET"
     assert submitted_event.get("time_in_force") == "GTC"
     assert submitted_event.get("client_order_id") == "signal-cid-123"
@@ -2240,7 +2242,9 @@ def test_controller_normalizes_trimmed_client_order_id_and_time_in_force() -> No
     assert request.client_order_id == "abc"
     assert request.time_in_force == "GTC"
 
-    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    submitted_event = next(
+        event for event in journal.export() if event["event"] == "order_submitted"
+    )
     assert submitted_event.get("client_order_id") == "abc"
     assert submitted_event.get("time_in_force") == "GTC"
 
@@ -2280,7 +2284,9 @@ def test_controller_treats_whitespace_string_fields_as_missing() -> None:
     assert request.metadata is not None
     assert request.metadata.get("generated_client_order_id") is True
 
-    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    submitted_event = next(
+        event for event in journal.export() if event["event"] == "order_submitted"
+    )
     assert submitted_event.get("client_order_id") == request.client_order_id
     assert submitted_event.get("order_generated_client_order_id") == "true"
     assert "time_in_force" not in submitted_event
@@ -2324,7 +2330,9 @@ def test_controller_normalizes_optional_numeric_fields_and_journal_payload() -> 
     assert "stop_price" not in request.metadata
     assert "atr" not in request.metadata
 
-    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    submitted_event = next(
+        event for event in journal.export() if event["event"] == "order_submitted"
+    )
     assert "price" not in submitted_event
     assert "order_price" not in submitted_event
     assert "order_stop_price" not in submitted_event
@@ -2364,7 +2372,9 @@ def test_controller_parses_optional_numeric_fields_to_float() -> None:
     assert request.stop_price == pytest.approx(99.5)
     assert request.atr == pytest.approx(1.75)
 
-    submitted_event = next(event for event in journal.export() if event["event"] == "order_submitted")
+    submitted_event = next(
+        event for event in journal.export() if event["event"] == "order_submitted"
+    )
     assert submitted_event.get("price") == "101.25"
     assert submitted_event.get("order_price") == "101.25"
     assert submitted_event.get("order_stop_price") == "99.5"
