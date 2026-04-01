@@ -278,3 +278,80 @@ def test_live_router_can_be_tested_with_chaos_adapter_partial_fill_then_cancel(
     assert cancel is not None
     assert cancel.status == "cancelled"
     assert result.order_id in adapter.cancelled
+
+
+@pytest.mark.integration
+def test_live_router_timeout_uncertain_retry_reconciles_without_double_execution(
+    execution_context: ExecutionContext,
+) -> None:
+    adapter = ChaosExchangeAdapter(
+        ExchangeCredentials(key_id="chaos-primary"),
+        place_steps=(
+            ChaosOrderStep(
+                action="timeout_unknown",
+                order_id="chaos-retry-1",
+                status="filled",
+                filled_quantity=1.0,
+                avg_price=100.0,
+                release_after_ticks=1,
+                events=(
+                    ChaosEvent(
+                        event_type="fill",
+                        order_id="chaos-retry-1",
+                        status="filled",
+                        filled_quantity=1.0,
+                        avg_price=100.0,
+                    ),
+                ),
+            ),
+            ChaosOrderStep(
+                action="ack",
+                order_id="chaos-retry-1",
+                status="filled",
+                filled_quantity=1.0,
+                avg_price=100.0,
+            ),
+        ),
+    )
+    router = LiveExecutionRouter(
+        adapters={"primary": adapter},
+        routes=[
+            RouteDefinition(
+                name="default",
+                exchanges=("primary",),
+                max_retries_per_exchange=2,
+            )
+        ],
+        default_route="default",
+    )
+    request = OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="market",
+        client_order_id="chaos-cid-timeout-retry-1",
+    )
+
+    try:
+        result = router.execute(request, execution_context)
+        adapter.advance()
+        first_effect = adapter.next_private_event()
+        second_effect = adapter.next_private_event()
+        reconciled = adapter.fetch_order_by_client_id(request.client_order_id, symbol=request.symbol)
+    finally:
+        router.close()
+
+    assert len(adapter.placed) == 2
+    assert [placed.client_order_id for placed in adapter.placed] == [
+        "chaos-cid-timeout-retry-1",
+        "chaos-cid-timeout-retry-1",
+    ]
+    assert result.order_id == "chaos-retry-1"
+    assert result.status == "filled"
+    assert first_effect is not None
+    assert first_effect.order_id == "chaos-retry-1"
+    assert first_effect.status == "filled"
+    assert second_effect is None
+    assert reconciled is not None
+    assert reconciled.order_id == "chaos-retry-1"
+    assert router.binding_for_order("chaos-retry-1") == "primary"
