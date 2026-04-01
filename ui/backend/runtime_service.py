@@ -61,6 +61,7 @@ from .decision_payload_normalizer import (
 )
 from .decision_source_selector import DecisionSourceFallbackCoordinator
 from .feed_health_tracker import FeedHealthTracker
+from .operator_action_service import OperatorActionService
 from .grpc_decision_stream_client import GrpcDecisionStreamClient
 from .qml_bridge import to_plain_dict, to_plain_list, to_plain_text, to_plain_value
 
@@ -1128,6 +1129,7 @@ class RuntimeService(QObject):
         self._risk_timeline: list[dict[str, object]] = []
         self._cycle_metrics: dict[str, float] = {}
         self._last_operator_action: dict[str, object] | None = None
+        self._operator_action_service = OperatorActionService(logger=_LOGGER)
         self._ai_runner_factory = ai_runner_factory
         self._ai_runner: AutoTraderAIGovernorRunner | None = ai_runner
         self._execution_mode: str = "manual"
@@ -3373,88 +3375,9 @@ class RuntimeService(QObject):
         except Exception:
             pass
 
-    @staticmethod
-    def _unwrap_operator_entry_mapping(payload: Mapping[str, object]) -> Mapping[str, object]:
-        payload_dict = dict(payload)
-        nested_record = payload_dict.get("record")
-        if isinstance(nested_record, Mapping):
-            return dict(nested_record)
-        return payload_dict
-
-    def _normalize_operator_entry(self, entry: object | None) -> Mapping[str, object]:
-        if entry is None:
-            return {}
-        if isinstance(entry, Mapping):
-            return self._unwrap_operator_entry_mapping(entry)
-        plain = to_plain_value(entry)
-        if isinstance(plain, Mapping):
-            return self._unwrap_operator_entry_mapping(plain)
-        variant = None
-        if hasattr(entry, "toVariant"):
-            try:
-                variant = entry.toVariant()
-            except Exception:
-                variant = None
-        if variant is None and hasattr(entry, "toPyObject"):
-            try:
-                variant = entry.toPyObject()
-            except Exception:
-                variant = None
-        if variant is not None:
-            variant_plain = to_plain_value(variant)
-            if isinstance(variant_plain, Mapping):
-                return self._unwrap_operator_entry_mapping(variant_plain)
-        return {}
-
-    @staticmethod
-    def _normalize_operator_action(action: object) -> str:
-        raw = str(action or "").strip()
-        mapping = {
-            "requestFreeze": "freeze",
-            "requestUnfreeze": "unfreeze",
-            "requestUnblock": "unblock",
-            "freeze": "freeze",
-            "unfreeze": "unfreeze",
-            "unblock": "unblock",
-        }
-        return mapping.get(raw, raw)
-
     def _record_operator_action(self, action: object, entry: object | None) -> bool:
-        try:
-            plain_action = to_plain_value(action)
-        except Exception:
-            plain_action = ""
-        if isinstance(plain_action, str):
-            action_str = plain_action.strip()
-        else:
-            action_str = str(plain_action or "")
-        normalized_action = self._normalize_operator_action(action_str)
-        try:
-            normalized_entry = self._normalize_operator_entry(entry)
-            sanitized = to_plain_dict(normalized_entry)
-        except Exception:
-            sanitized = {}
-        timestamp_value: object | None = None
-        for key in ("timestamp", "time", "ts"):
-            if key in sanitized and sanitized[key] is not None:
-                timestamp_value = sanitized[key]
-                break
-        if timestamp_value is None:
-            timestamp_value = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-        self._last_operator_action = {
-            "action": normalized_action,
-            "timestamp": str(timestamp_value),
-            "entry": sanitized,
-        }
+        self._last_operator_action = self._operator_action_service.record_action(action, entry)
         self.operatorActionChanged.emit()
-        if sanitized:
-            reference = sanitized.get("event") or sanitized.get("timestamp") or sanitized.get("id")
-        else:
-            reference = None
-        if reference:
-            _LOGGER.info("Operator action '%s' triggered for %s", normalized_action, reference)
-        else:
-            _LOGGER.info("Operator action '%s' triggered", normalized_action)
         return True
 
     def _load_core_config(self):
