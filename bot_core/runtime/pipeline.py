@@ -54,7 +54,6 @@ from bot_core.data.backfill_scheduler import BackfillScheduler
 from bot_core.data.ohlcv import OHLCVBackfillService
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
-from core.monitoring import AsyncIOGuardrails
 from bot_core.execution import resolve_execution_mode
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -81,7 +80,7 @@ from bot_core.portfolio import (
     StrategyPortfolioGovernor,
     load_market_intel_report,
 )
-from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
+from bot_core.runtime.bootstrap import BootstrapContext
 from bot_core.risk import StressOverrideRecommendation
 from bot_core.security.guards import (
     LicenseCapabilityError,
@@ -120,6 +119,7 @@ from bot_core.runtime.controller import DailyTrendController
 from bot_core.runtime.pipeline_config_loader import PipelineConfigLoader
 from bot_core.runtime.strategy_bootstrapper import StrategyBootstrapper
 from bot_core.runtime.execution_bootstrapper import ExecutionBootstrapper
+from bot_core.runtime.risk_bootstrapper import RiskBootstrapper
 from bot_core.security import SecretManager
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
 from bot_core.strategies.catalog import (
@@ -166,6 +166,7 @@ _PIPELINE_THREAD_NAME = "PipelineStream"
 _PIPELINE_CONFIG_LOADER = PipelineConfigLoader()
 _STRATEGY_BOOTSTRAPPER = StrategyBootstrapper()
 _EXECUTION_BOOTSTRAPPER = ExecutionBootstrapper()
+_RISK_BOOTSTRAPPER = RiskBootstrapper()
 
 
 def _is_test_mode_enabled() -> bool:
@@ -448,8 +449,8 @@ def build_daily_trend_pipeline(
     runtime_config: RuntimeAppConfig | None = None,
 ) -> DailyTrendPipeline:
     """Tworzy kompletny pipeline strategii trend-following D1 dla środowiska paper/testnet."""
-    bootstrap_ctx = bootstrap_environment(
-        environment_name,
+    bootstrap_ctx = _RISK_BOOTSTRAPPER.bootstrap_context(
+        environment_name=environment_name,
         config_path=config_path,
         secret_manager=secret_manager,
         adapter_factories=adapter_factories,
@@ -3606,8 +3607,8 @@ def build_multi_strategy_runtime(
     stream_async: bool = False,
     async_loop: asyncio.AbstractEventLoop | None = None,
 ) -> MultiStrategyRuntime:
-    bootstrap_ctx = bootstrap_environment(
-        environment_name,
+    bootstrap_ctx = _RISK_BOOTSTRAPPER.bootstrap_context(
+        environment_name=environment_name,
         config_path=config_path,
         secret_manager=secret_manager,
         adapter_factories=adapter_factories,
@@ -3725,44 +3726,11 @@ def build_multi_strategy_runtime(
     if allocation_interval is None and policy_interval is not None:
         allocation_interval = policy_interval
 
-    io_dispatcher: AsyncIOTaskQueue | None = None
-    io_guardrails: AsyncIOGuardrails | None = None
-    if runtime_config and runtime_config.io_queue is not None:
-        io_config = runtime_config.io_queue
-        log_directory = io_config.log_directory
-        if not log_directory:
-            log_directory = "logs/guardrails"
-        ui_alerts_path = getattr(bootstrap_ctx, "metrics_ui_alerts_path", None)
-        ui_alerts_path = Path(ui_alerts_path) if ui_alerts_path else None
-        io_guardrails = AsyncIOGuardrails(
-            environment=environment_name,
-            log_directory=Path(log_directory).expanduser(),
-            rate_limit_warning_threshold=io_config.rate_limit_warning_seconds,
-            timeout_warning_threshold=io_config.timeout_warning_seconds,
-            ui_alerts_path=ui_alerts_path,
-        )
-        io_dispatcher = AsyncIOTaskQueue(
-            default_max_concurrency=io_config.max_concurrency,
-            default_burst=io_config.burst,
-            event_listener=io_guardrails,
-        )
-        for name, limits in io_config.exchanges.items():
-            io_dispatcher.configure_exchange(
-                name,
-                max_concurrency=limits.max_concurrency,
-                burst=limits.burst,
-            )
-        try:
-            bootstrap_ctx.io_dispatcher = io_dispatcher
-        except Exception:  # pragma: no cover - kontekst może blokować zapisy
-            _LOGGER.debug(
-                "Nie udało się zarejestrować io_dispatcher w BootstrapContext", exc_info=True
-            )
-    else:
-        try:
-            bootstrap_ctx.io_dispatcher = None
-        except Exception:
-            pass
+    io_dispatcher, io_guardrails = _RISK_BOOTSTRAPPER.bootstrap_io_guardrails(
+        runtime_config=runtime_config,
+        bootstrap_ctx=bootstrap_ctx,
+        environment_name=environment_name,
+    )
 
     scheduler = MultiStrategyScheduler(
         environment=environment_name,
@@ -3776,8 +3744,7 @@ def build_multi_strategy_runtime(
     )
 
     signal_limits = getattr(scheduler_cfg, "signal_limits", None)
-    if signal_limits:
-        scheduler.configure_signal_limits(signal_limits)
+    _RISK_BOOTSTRAPPER.bind_scheduler_limits(scheduler, signal_limits=signal_limits)
 
     portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
     governor_name = getattr(scheduler_cfg, "portfolio_governor", None)
