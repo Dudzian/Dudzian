@@ -57,7 +57,9 @@ signing_key_id = "key-1"
     assert profile.briefcase is not None
     assert profile.briefcase.project_path == (tmp_path / "ui" / "briefcase").resolve()
     assert profile.bundle.output_dir == (tmp_path / "dist" / "installers").resolve()
-    assert profile.bundle.metadata_path == (tmp_path / "dist" / "installers" / "meta.json").resolve()
+    assert (
+        profile.bundle.metadata_path == (tmp_path / "dist" / "installers" / "meta.json").resolve()
+    )
 
 
 def test_read_profile_returns_none_for_optional_sections(tmp_path: Path) -> None:
@@ -98,7 +100,6 @@ metadata_path = "dist/installers/meta.json"
         read_profile(profile_path)
 
 
-
 def test_read_profile_requires_bundle_metadata_path(tmp_path: Path) -> None:
     profile_path = tmp_path / "missing_metadata.toml"
     profile_path.write_text(
@@ -132,7 +133,6 @@ metadata_path = "dist/installers/meta.json"
 
     with pytest.raises(SystemExit, match="output_dir"):
         read_profile(profile_path)
-
 
 
 def test_read_profile_requires_bundle_work_dir(tmp_path: Path) -> None:
