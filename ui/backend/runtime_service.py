@@ -2247,7 +2247,9 @@ class RuntimeService(QObject):
             self._finalize_grpc_activation(profile=self._active_profile, target=target)
 
     def _finalize_grpc_activation(self, *, profile: str | None, target: str) -> None:
-        self._activate_source_state(self._source_selector.activate_grpc(profile=profile, target=target))
+        self._activate_source_state(
+            self._source_selector.activate_grpc(profile=profile, target=target)
+        )
         self._error_message = ""
         self.errorMessageChanged.emit()
         self.liveSourceChanged.emit()

@@ -109,7 +109,9 @@ def test_collect_definitions_handles_config_and_legacy_fallbacks() -> None:
     assert legacy_mean.parameters["lookback"] == 20
 
 
-def test_instantiate_maps_definition_to_catalog_create_and_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_instantiate_maps_definition_to_catalog_create_and_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     catalog = _CatalogStub()
     bootstrapper = StrategyBootstrapper(catalog=catalog)
     definitions = bootstrapper.collect_definitions(_core_config_fixture())
@@ -171,7 +173,9 @@ def test_validate_schedule_strategies_keeps_contract_message() -> None:
     assert "Strategia missing nie została zarejestrowana w konfiguracji" in str(exc.value)
 
 
-def test_bootstrap_returns_consistent_definitions_and_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstrap_returns_consistent_definitions_and_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     catalog = _CatalogStub()
     bootstrapper = StrategyBootstrapper(catalog=catalog)
     monkeypatch.setattr(

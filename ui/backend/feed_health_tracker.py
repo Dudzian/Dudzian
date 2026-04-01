@@ -161,7 +161,9 @@ class FeedHealthTracker:
         else:
             payload.pop("p95LatencyMs", None)
             payload.pop("p50LatencyMs", None)
-        payload["channelStates"] = {channel: dict(state) for channel, state in channel_status.items()}
+        payload["channelStates"] = {
+            channel: dict(state) for channel, state in channel_status.items()
+        }
         self._update_transport_breakdown(
             transport_key,
             payload,
@@ -255,7 +257,9 @@ class FeedHealthTracker:
                 }
             )
         else:
-            stats_payload.update({"min_ms": 0.0, "max_ms": 0.0, "avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0})
+            stats_payload.update(
+                {"min_ms": 0.0, "max_ms": 0.0, "avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0}
+            )
         if "lastLatencyMs" in health:
             stats_payload["last_latency_ms"] = float(health["lastLatencyMs"])
             stats_payload["lastLatencyMs"] = float(health["lastLatencyMs"])
@@ -310,7 +314,9 @@ class FeedHealthTracker:
         return self._feed_sla_report
 
     @staticmethod
-    def classify_threshold(value: float | None, *, warning: float | None, critical: float | None) -> str:
+    def classify_threshold(
+        value: float | None, *, warning: float | None, critical: float | None
+    ) -> str:
         if value is None or not math.isfinite(value):
             return "ok"
         if critical is not None and value >= critical:

@@ -40,7 +40,9 @@ def test_finalize_grpc_activation_contract_order() -> None:
             if target == "_activate_source_state":
                 ops.append("activate_source_state")
             elif target == "emit":
-                owner = _attr_name(call.func.value) if isinstance(call.func, ast.Attribute) else None
+                owner = (
+                    _attr_name(call.func.value) if isinstance(call.func, ast.Attribute) else None
+                )
                 if owner == "errorMessageChanged":
                     ops.append("error_message_emit")
                 elif owner == "liveSourceChanged":
@@ -76,13 +78,11 @@ def test_grpc_paths_delegate_to_finalize_activation() -> None:
     auto_connect = _method_node(runtime_service, "_auto_connect_grpc")
 
     attach_calls_finalize = any(
-        isinstance(node, ast.Call)
-        and _attr_name(node.func) == "_finalize_grpc_activation"
+        isinstance(node, ast.Call) and _attr_name(node.func) == "_finalize_grpc_activation"
         for node in ast.walk(attach)
     )
     auto_connect_calls_finalize = any(
-        isinstance(node, ast.Call)
-        and _attr_name(node.func) == "_finalize_grpc_activation"
+        isinstance(node, ast.Call) and _attr_name(node.func) == "_finalize_grpc_activation"
         for node in ast.walk(auto_connect)
     )
 

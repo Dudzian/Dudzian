@@ -37,7 +37,9 @@ class _Update:
 
 
 class _StreamController:
-    def __init__(self, updates: list[_Update], *, fail: Exception | None = None, block: bool = False):
+    def __init__(
+        self, updates: list[_Update], *, fail: Exception | None = None, block: bool = False
+    ):
         self._updates = list(updates)
         self._fail = fail
         self._block = block
@@ -109,9 +111,7 @@ class _Grpc:
         return _Channel()
 
     def secure_channel(self, target, credentials, options=None):
-        self.secure_calls.append(
-            {"target": target, "credentials": credentials, "options": options}
-        )
+        self.secure_calls.append({"target": target, "credentials": credentials, "options": options})
         return _Channel()
 
     def channel_ready_future(self, channel):

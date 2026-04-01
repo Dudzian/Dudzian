@@ -52,7 +52,9 @@ def test_parse_runtime_decision_entry_prefers_decision_specific_over_global_fiel
     assert decision["latencyMs"] == 25.5
 
 
-def test_parse_runtime_decision_entry_prefers_decision_prefixed_fields_over_nested_aliases() -> None:
+def test_parse_runtime_decision_entry_prefers_decision_prefixed_fields_over_nested_aliases() -> (
+    None
+):
     entry = parse_runtime_decision_entry(
         {
             "decision_confidence": "0.81",
@@ -87,7 +89,9 @@ def test_parse_runtime_decision_entry_prefers_prefixed_should_trade_over_nested_
     assert entry["decision"]["state"] == "trade"
 
 
-def test_parse_runtime_decision_entry_metadata_flattening_prefers_top_level_extras_on_conflict() -> None:
+def test_parse_runtime_decision_entry_metadata_flattening_prefers_top_level_extras_on_conflict() -> (
+    None
+):
     entry = parse_runtime_decision_entry(
         {
             "source": "grpc",

@@ -53,7 +53,9 @@ def test_execution_bootstrapper_reuses_paper_service(tmp_path) -> None:
     assert resolved is existing
 
 
-def test_execution_bootstrapper_builds_new_paper_service_when_context_is_not_reusable(tmp_path) -> None:
+def test_execution_bootstrapper_builds_new_paper_service_when_context_is_not_reusable(
+    tmp_path,
+) -> None:
     bootstrapper = ExecutionBootstrapper()
     context = SimpleNamespace(execution_service=object())
 
@@ -79,7 +81,9 @@ def test_execution_bootstrapper_builds_and_persists_live_service(tmp_path, monke
         assert isinstance(runtime_settings, RuntimeExecutionSettings)
         return built
 
-    monkeypatch.setattr("bot_core.runtime.execution_bootstrapper.build_live_execution_service", _build_live)
+    monkeypatch.setattr(
+        "bot_core.runtime.execution_bootstrapper.build_live_execution_service", _build_live
+    )
 
     context = SimpleNamespace(execution_service=None, environment=SimpleNamespace())
     resolved = bootstrapper.bootstrap_execution_service(
@@ -116,7 +120,9 @@ def test_execution_bootstrapper_swallow_persist_errors(tmp_path, monkeypatch, ca
     def _build_live(*, bootstrap_ctx, environment, runtime_settings):
         return built
 
-    monkeypatch.setattr("bot_core.runtime.execution_bootstrapper.build_live_execution_service", _build_live)
+    monkeypatch.setattr(
+        "bot_core.runtime.execution_bootstrapper.build_live_execution_service", _build_live
+    )
 
     with caplog.at_level("DEBUG", logger="bot_core.runtime.execution_bootstrapper"):
         resolved = bootstrapper.bootstrap_execution_service(

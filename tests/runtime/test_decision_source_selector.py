@@ -38,15 +38,21 @@ def test_decision_source_selector_current_feed_adapter_label_contract() -> None:
     coordinator = DecisionSourceFallbackCoordinator()
 
     coordinator.activate_grpc(profile="paper", target="localhost:50051")
-    assert coordinator.current_feed_adapter_label(status="connected", loader_is_demo=False) == "grpc"
+    assert (
+        coordinator.current_feed_adapter_label(status="connected", loader_is_demo=False) == "grpc"
+    )
 
     coordinator.activate_jsonl(profile="paper", log_path=Path("/tmp/decision-log.jsonl"))
-    assert coordinator.current_feed_adapter_label(status="connected", loader_is_demo=False) == "jsonl"
+    assert (
+        coordinator.current_feed_adapter_label(status="connected", loader_is_demo=False) == "jsonl"
+    )
 
     coordinator.activate_demo(profile="paper")
     assert coordinator.current_feed_adapter_label(status="connected", loader_is_demo=True) == "demo"
 
-    assert coordinator.current_feed_adapter_label(status="fallback", loader_is_demo=True) == "fallback"
+    assert (
+        coordinator.current_feed_adapter_label(status="fallback", loader_is_demo=True) == "fallback"
+    )
 
 
 def test_decision_source_selector_current_transport_key_contract() -> None:

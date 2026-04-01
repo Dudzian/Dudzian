@@ -76,6 +76,7 @@ def test_bootstrap_context_uses_bootstrap_fn_hook() -> None:
     assert captured["environment_name"] == "paper"
     assert captured["config_path"] == "/tmp/config.yaml"
 
+
 def test_bootstrap_context_logs_and_reraises_without_changing_exception(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

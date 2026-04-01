@@ -44,7 +44,9 @@ class StrategyBootstrapper:
 
         def _resolve_metadata(
             engine: str,
-        ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
+        ) -> tuple[
+            str, tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None
+        ]:
             try:
                 spec = self._catalog.get(engine)
             except KeyError:
@@ -232,7 +234,9 @@ class StrategyBootstrapper:
 
         return definitions
 
-    def instantiate(self, definitions: Mapping[str, StrategyDefinition]) -> dict[str, StrategyEngine]:
+    def instantiate(
+        self, definitions: Mapping[str, StrategyDefinition]
+    ) -> dict[str, StrategyEngine]:
         registry: dict[str, StrategyEngine] = {}
         guard = get_capability_guard()
         for name, definition in definitions.items():
@@ -241,9 +245,7 @@ class StrategyBootstrapper:
                 if guard is not None and spec.capability:
                     guard.require_strategy(
                         spec.capability,
-                        message=(
-                            f"Strategia '{name}' wymaga aktywnej licencji {spec.capability}."
-                        ),
+                        message=(f"Strategia '{name}' wymaga aktywnej licencji {spec.capability}."),
                     )
                 registry[name] = self._catalog.create(definition)
             except Exception:
