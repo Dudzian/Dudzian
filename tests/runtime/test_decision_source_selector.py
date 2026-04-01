@@ -76,3 +76,28 @@ def test_decision_source_selector_fallback_rule_prefers_jsonl_then_demo() -> Non
 
     assert coordinator.fallback_source(jsonl_available=True) == "jsonl"
     assert coordinator.fallback_source(jsonl_available=False) == "demo"
+
+
+def test_decision_source_selector_runtime_mode_controls_fallback() -> None:
+    demo = DecisionSourceFallbackCoordinator(runtime_mode="demo")
+    test = DecisionSourceFallbackCoordinator(runtime_mode="test")
+    prod = DecisionSourceFallbackCoordinator(runtime_mode="prod")
+
+    assert demo.runtime_mode == "demo"
+    assert demo.fallback_source(jsonl_available=True) == "demo"
+    assert demo.fallback_source(jsonl_available=False) == "demo"
+
+    assert test.runtime_mode == "test"
+    assert test.fallback_source(jsonl_available=True) == "jsonl"
+    assert test.fallback_source(jsonl_available=False) == "demo"
+
+    assert prod.runtime_mode == "prod"
+    assert prod.fallback_source(jsonl_available=True) == "jsonl"
+
+
+def test_decision_source_selector_normalizes_runtime_mode_aliases() -> None:
+    assert DecisionSourceFallbackCoordinator.normalize_runtime_mode("production") == "prod"
+    assert DecisionSourceFallbackCoordinator.normalize_runtime_mode("live") == "prod"
+    assert DecisionSourceFallbackCoordinator.normalize_runtime_mode("paper") == "demo"
+    assert DecisionSourceFallbackCoordinator.normalize_runtime_mode("testing") == "test"
+    assert DecisionSourceFallbackCoordinator.normalize_runtime_mode("unknown-value") == "prod"

@@ -193,3 +193,54 @@ def test_runtime_service_degrades_to_demo_when_grpc_dependency_missing(
     assert service.feedHealth["status"] == "fallback"
     assert service.feedTransportSnapshot["mode"] == "demo"
     assert service.errorMessage
+
+
+def test_runtime_service_demo_mode_forces_demo_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setenv("BOT_CORE_UI_GRPC_ENDPOINT", "localhost:50051")
+
+    service = RuntimeService(decision_loader=lambda limit: [], decision_runtime_mode="demo")
+    start_calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        service,
+        "_start_grpc_stream",
+        lambda target, limit: start_calls.append((target, limit)),
+    )
+    monkeypatch.setattr(
+        service,
+        "_build_live_loader",
+        lambda profile: (_ for _ in ()).throw(AssertionError("jsonl should not be used in demo")),
+    )
+
+    assert service.attachToLiveDecisionLog("prod") is True
+    assert start_calls == []
+    assert service.activeDecisionLogPath == "offline-demo"
+    assert service.feedTransportSnapshot["mode"] == "demo"
+
+
+def test_runtime_service_test_mode_skips_grpc_and_uses_jsonl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("BOT_CORE_UI_GRPC_ENDPOINT", "localhost:50051")
+    service = RuntimeService(decision_loader=lambda limit: [], decision_runtime_mode="test")
+
+    jsonl_entry = {
+        "event": "decision_made",
+        "timestamp": "2025-01-02T09:15:00+00:00",
+        "decision": {"state": "trade", "shouldTrade": True},
+    }
+
+    def _loader(limit: int):
+        return [jsonl_entry]
+
+    jsonl_path = tmp_path / "decision-log.jsonl"
+    monkeypatch.setattr(service, "_build_live_loader", lambda profile: (_loader, jsonl_path))
+    monkeypatch.setattr(
+        service,
+        "_start_grpc_stream",
+        lambda target, limit: (_ for _ in ()).throw(AssertionError("grpc should be skipped")),
+    )
+
+    assert service.attachToLiveDecisionLog("paper") is True
+    assert Path(service.activeDecisionLogPath) == jsonl_path
+    assert service.feedTransportSnapshot["mode"] == "file"

@@ -4,20 +4,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
+RuntimeDecisionMode = Literal["prod", "demo", "test"]
 
 @dataclass(frozen=True)
 class DecisionSourceState:
     profile: str | None = None
     log_path: Path | None = None
     stream_label: str | None = None
+    runtime_mode: RuntimeDecisionMode = "prod"
 
 
 class DecisionSourceFallbackCoordinator:
     """Enkapsuluje wybór aktywnego źródła i reguły fallbacku."""
 
-    def __init__(self) -> None:
-        self._state = DecisionSourceState()
+    def __init__(self, *, runtime_mode: RuntimeDecisionMode = "prod") -> None:
+        self._runtime_mode: RuntimeDecisionMode = self.normalize_runtime_mode(runtime_mode)
+        self._state = DecisionSourceState(runtime_mode=self._runtime_mode)
 
     @property
     def state(self) -> DecisionSourceState:
@@ -34,8 +38,24 @@ class DecisionSourceFallbackCoordinator:
             profile=profile,
             log_path=log_path,
             stream_label=stream_label,
+            runtime_mode=self._runtime_mode,
         )
         return self._state
+
+    @property
+    def runtime_mode(self) -> RuntimeDecisionMode:
+        return self._runtime_mode
+
+    @classmethod
+    def normalize_runtime_mode(cls, value: str | None) -> RuntimeDecisionMode:
+        normalized = (value or "").strip().lower()
+        if normalized in {"prod", "production", "live"}:
+            return "prod"
+        if normalized in {"demo", "paper"}:
+            return "demo"
+        if normalized in {"test", "testing"}:
+            return "test"
+        return "prod"
 
     def activate_grpc(self, *, profile: str | None, target: str) -> DecisionSourceState:
         return self.set_state(profile=profile, log_path=None, stream_label=f"grpc://{target}")
@@ -96,6 +116,7 @@ class DecisionSourceFallbackCoordinator:
             return "grpc"
         return "fallback"
 
-    @staticmethod
-    def fallback_source(*, jsonl_available: bool) -> str:
+    def fallback_source(self, *, jsonl_available: bool) -> str:
+        if self._runtime_mode == "demo":
+            return "demo"
         return "jsonl" if jsonl_available else "demo"

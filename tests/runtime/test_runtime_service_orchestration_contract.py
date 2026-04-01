@@ -88,3 +88,43 @@ def test_grpc_paths_delegate_to_finalize_activation() -> None:
 
     assert attach_calls_finalize is True
     assert auto_connect_calls_finalize is True
+
+
+def test_attach_test_mode_falls_back_to_demo_when_jsonl_unavailable() -> None:
+    runtime_service = _runtime_service_class()
+    attach = _method_node(runtime_service, "attachToLiveDecisionLog")
+
+    found_test_fallback = False
+    for node in ast.walk(attach):
+        if not isinstance(node, ast.If):
+            continue
+        condition = node.test
+        if not isinstance(condition, ast.Compare):
+            continue
+        if len(condition.ops) != 1 or not isinstance(condition.ops[0], ast.Eq):
+            continue
+        if _attr_name(condition.left) != "_decision_runtime_mode":
+            continue
+        if len(condition.comparators) != 1:
+            continue
+        comparator = condition.comparators[0]
+        if not (isinstance(comparator, ast.Constant) and comparator.value == "test"):
+            continue
+
+        has_demo_loader_call = any(
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Call)
+            and _attr_name(stmt.value.func) == "_use_demo_loader"
+            for stmt in node.body
+        )
+        has_true_return = any(
+            isinstance(stmt, ast.Return)
+            and isinstance(stmt.value, ast.Constant)
+            and stmt.value.value is True
+            for stmt in node.body
+        )
+        if has_demo_loader_call and has_true_return:
+            found_test_fallback = True
+            break
+
+    assert found_test_fallback is True
