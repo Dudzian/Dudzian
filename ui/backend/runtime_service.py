@@ -52,6 +52,7 @@ from bot_core.runtime.cloud_client import (
 from bot_core.runtime.journal import TradingDecisionJournal
 from .ai_governor_demo import build_demo_ai_governor_snapshot
 from .demo_data import load_demo_decisions
+from .decision_log_repository import DecisionLogRepository
 from .decision_payload_normalizer import (
     DecisionRecord,
     RuntimeDecisionEntry,
@@ -1072,6 +1073,7 @@ class RuntimeService(QObject):
         cloud_client_config_path: str | os.PathLike[str] | None = None,
         ai_runner_factory: Callable[[], AutoTraderAIGovernorRunner] | None = None,
         ai_runner: AutoTraderAIGovernorRunner | None = None,
+        decision_log_repository: DecisionLogRepository | None = None,
     ) -> None:
         super().__init__(parent)
         if decision_loader is not None:
@@ -1111,6 +1113,7 @@ class RuntimeService(QObject):
             "handshake": {},
         }
         self._ai_governor_loader = ai_governor_loader or build_demo_ai_governor_snapshot
+        self._decision_log_repository = decision_log_repository or DecisionLogRepository()
         self._ai_governor_snapshot: dict[str, object] = {}
         self._retrain_next_run: str = ""
         self._adaptive_summary: str = ""
@@ -2528,34 +2531,7 @@ class RuntimeService(QObject):
 
     def _build_jsonl_loader(self, log_path: Path) -> DecisionLoader:
         def _loader(limit: int) -> Iterable[DecisionRecord]:
-            entries: list[DecisionRecord] = []
-            try:
-                with log_path.open("r", encoding="utf-8") as handle:
-                    for line in handle:
-                        payload = line.strip()
-                        if not payload:
-                            continue
-                        try:
-                            data = json.loads(payload)
-                        except json.JSONDecodeError:
-                            _LOGGER.warning(
-                                "Pominięto uszkodzony wpis decision logu %s",
-                                log_path,
-                                exc_info=True,
-                            )
-                            continue
-                        if isinstance(data, Mapping):
-                            entries.append(data)
-            except FileNotFoundError:
-                raise
-            except OSError as exc:
-                raise RuntimeError(
-                    f"Nie udało się odczytać decision logu '{log_path}': {exc}"
-                ) from exc
-
-            if limit > 0:
-                entries = entries[-limit:]
-            return entries
+            return self._decision_log_repository.load_jsonl_entries(log_path, limit)
 
         return _loader
 
