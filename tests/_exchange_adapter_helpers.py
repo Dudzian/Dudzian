@@ -203,7 +203,9 @@ class ChaosExchangeAdapter(ExchangeAdapter):
 
     def place_order(self, request: OrderRequest) -> OrderResult:
         self.placed.append(request)
-        step = self._place_steps.popleft() if self._place_steps else ChaosOrderStep("ack", "order-1")
+        step = (
+            self._place_steps.popleft() if self._place_steps else ChaosOrderStep("ack", "order-1")
+        )
         result = OrderResult(
             order_id=step.order_id,
             status=step.status,
@@ -211,7 +213,9 @@ class ChaosExchangeAdapter(ExchangeAdapter):
             avg_price=step.avg_price,
             raw_response={"action": step.action},
         )
-        self._register_effects(step.events, result, request.client_order_id, step.release_after_ticks)
+        self._register_effects(
+            step.events, result, request.client_order_id, step.release_after_ticks
+        )
         if step.action == "ack":
             return result
         if step.action == "timeout_unknown":
@@ -287,7 +291,9 @@ class ChaosExchangeAdapter(ExchangeAdapter):
             self._client_order_id_by_order_id[result.order_id] = client_order_id
         release_tick = self._current_tick + max(0, release_after_ticks)
         for event in events:
-            client_for_event = self._client_order_id_by_order_id.get(event.order_id, client_order_id)
+            client_for_event = self._client_order_id_by_order_id.get(
+                event.order_id, client_order_id
+            )
             if client_for_event is not None:
                 event_result = OrderResult(
                     order_id=event.order_id,
@@ -322,7 +328,9 @@ class ChaosExchangeAdapter(ExchangeAdapter):
 
     def _release_due_items(self) -> None:
         ready_events = [item for item in self._delayed_events if item[0] <= self._current_tick]
-        self._delayed_events = [item for item in self._delayed_events if item[0] > self._current_tick]
+        self._delayed_events = [
+            item for item in self._delayed_events if item[0] > self._current_tick
+        ]
         for _, event in ready_events:
             self._released_events.append(event)
 
