@@ -1893,6 +1893,9 @@ class LiveExecutionRouter(ExecutionService):
             avg_price=reconciled.avg_price,
             raw_response=metadata,
         )
+        exchange_name = str(common_labels.get("exchange", "")).strip()
+        if exchange_name and result.order_id:
+            self._remember_binding(result.order_id, exchange_name, request)
         self._m_orders_reconciled.inc(labels=common_labels)
         self._m_success.inc(labels=common_labels)
         self._m_attempts.inc(labels={**labels, "result": "reconciled"})
