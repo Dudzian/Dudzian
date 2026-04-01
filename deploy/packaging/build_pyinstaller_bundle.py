@@ -24,7 +24,10 @@ from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
 
-import tomllib
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - środowiska <3.11
+    import tomli as tomllib  # type: ignore[no-redef]
 
 try:  # pragma: no cover - optional dependency
     import yaml

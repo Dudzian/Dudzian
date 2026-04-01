@@ -16,7 +16,7 @@ def _write_linux_profile(tmp_path: Path, repo_root: Path) -> Path:
     profiles_dir = tmp_path / "profiles"
     profiles_dir.mkdir(parents=True)
 
-    samples = repo_root / "deploy" / "packaging" / "samples"
+    samples = repo_root / "deploy" / "packaging" / "assets" / "demo"
     output_dir = tmp_path / "dist"
     work_dir = tmp_path / "build"
     metadata_path = tmp_path / "metadata" / "linux.json"
@@ -152,3 +152,15 @@ def test_validate_hook_executes_hwid_check(tmp_path: Path) -> None:
     assert log_path.exists(), "Hook powinien wygenerować log walidacji"
     log_text = log_path.read_text(encoding="utf-8")
     assert fingerprint in log_text
+
+
+def test_prod_profile_fails_fast_when_assets_are_placeholders(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    builder = DesktopInstallerBuilder(
+        version="9.9.9",
+        profiles_dir=repo_root / "deploy" / "packaging" / "profiles",
+        hwid_hook_source=repo_root / "probe_keyring.py",
+    )
+
+    with pytest.raises(SystemExit, match="nieprovisionowany katalog"):
+        builder.build("linux")

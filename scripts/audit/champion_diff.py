@@ -216,7 +216,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--lhs",
         type=Path,
-        default=Path("deploy/packaging/samples/var/models/quality"),
+        default=Path("deploy/packaging/assets/demo/var/models/quality"),
         help="Katalog bazowy championów referencyjnych (domyślnie próbki dystrybucyjne).",
     )
     parser.add_argument(

@@ -58,7 +58,7 @@ else:
 BUNDLE_NAME = "core-oem"
 SUPPORTED_PLATFORMS = {"linux", "macos", "windows"}
 _DEFAULT_DRY_RUN_VERSION = "0.0.0-dry-run"
-_SAMPLES_ROOT = Path(__file__).with_name("samples")
+_SAMPLES_ROOT = Path(__file__).with_name("assets") / "demo"
 _DRY_RUN_SAMPLE_DAEMON = _SAMPLES_ROOT / "daemon"
 _DRY_RUN_SAMPLE_UI = _SAMPLES_ROOT / "ui"
 _DRY_RUN_SAMPLE_CONFIG = _SAMPLES_ROOT / "config" / "core.yaml"
@@ -1075,7 +1075,7 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate inputs without creating bundle archives. When other arguments are omitted, sample artifacts from deploy/packaging/samples/ are used",
+        help="Validate inputs without creating bundle archives. When other arguments are omitted, sample artifacts from deploy/packaging/assets/demo/ are used",
     )
     parser.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
