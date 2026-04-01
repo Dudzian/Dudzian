@@ -58,6 +58,7 @@ from .decision_payload_normalizer import (
     RuntimeDecisionEntry,
     parse_runtime_decision_entry,
 )
+from .feed_health_tracker import FeedHealthTracker
 from .qml_bridge import to_plain_dict, to_plain_list, to_plain_text, to_plain_value
 
 try:  # pragma: no cover - moduł może nie być dostępny w wersjach light
@@ -1189,10 +1190,6 @@ class RuntimeService(QObject):
         except (TypeError, ValueError):
             configured_limit = _AI_HISTORY_LIMIT
         self._ai_history_limit = max(_AI_HISTORY_LIMIT, configured_limit)
-        self._feed_reconnects = 0
-        self._feed_downtime_started: float | None = None
-        self._feed_downtime_total = 0.0
-        self._feed_last_error = ""
         metrics_path_env = os.environ.get("BOT_CORE_UI_FEED_LATENCY_PATH")
         if metrics_path_env:
             self._feed_metrics_path = Path(metrics_path_env).expanduser()
@@ -1203,45 +1200,13 @@ class RuntimeService(QObject):
             channel: {"status": "initializing", "lastError": ""} for channel in self._feed_channels
         }
         buffer_size = 1024
-        self._latency_buffer_size = buffer_size
-        self._transport_latency_samples: dict[str, deque[float]] = {
-            "grpc": deque(maxlen=buffer_size),
-            "fallback": deque(maxlen=buffer_size),
-        }
-        self._feed_transport_stats: dict[str, dict[str, object]] = {
-            "grpc": {
-                "status": "initializing",
-                "p50_ms": None,
-                "p95_ms": None,
-                "reconnects": 0,
-                "downtimeMs": 0.0,
-                "lastError": "",
-                "updatedAt": 0.0,
-            },
-            "fallback": {
-                "status": "offline",
-                "p50_ms": None,
-                "p95_ms": None,
-                "reconnects": 0,
-                "downtimeMs": 0.0,
-                "lastError": "",
-                "updatedAt": 0.0,
-            },
-        }
-        self._feed_health: dict[str, object] = {
-            "status": "initializing",
-            "reconnects": 0,
-            "downtimeMs": 0.0,
-            "lastError": "",
-            "channels": list(self._feed_channels),
-            "channelStates": {
-                channel: dict(state) for channel, state in self._feed_channel_status.items()
-            },
-            "transports": {key: dict(value) for key, value in self._feed_transport_stats.items()},
-        }
-        self._feed_sla_report: dict[str, object] = {}
-        self._consecutive_degraded_periods: int = 0
-        self._consecutive_healthy_periods: int = 0
+        self._feed_health_tracker = FeedHealthTracker(
+            feed_channels=self._feed_channels,
+            latency_buffer_size=buffer_size,
+            percentile_fn=self._percentile,
+        )
+        self._feed_health = self._feed_health_tracker.feed_health
+        self._feed_sla_report: dict[str, object] = self._feed_health_tracker.feed_sla_report
         self._feed_transport_snapshot: dict[str, object] = {
             "status": "initializing",
             "mode": "demo",
@@ -1379,6 +1344,38 @@ class RuntimeService(QObject):
     def feedTransportSnapshot(self) -> dict[str, object]:  # type: ignore[override]
         return to_plain_dict(self._feed_transport_snapshot)
 
+    @property
+    def _feed_reconnects(self) -> int:
+        return self._feed_health_tracker.reconnects
+
+    @_feed_reconnects.setter
+    def _feed_reconnects(self, value: int) -> None:
+        self._feed_health_tracker.reconnects = value
+
+    @property
+    def _feed_downtime_started(self) -> float | None:
+        return self._feed_health_tracker.downtime_started
+
+    @_feed_downtime_started.setter
+    def _feed_downtime_started(self, value: float | None) -> None:
+        self._feed_health_tracker.downtime_started = value
+
+    @property
+    def _feed_downtime_total(self) -> float:
+        return self._feed_health_tracker.downtime_total
+
+    @_feed_downtime_total.setter
+    def _feed_downtime_total(self, value: float) -> None:
+        self._feed_health_tracker.downtime_total = value
+
+    @property
+    def _feed_last_error(self) -> str:
+        return self._feed_health_tracker.last_error
+
+    @_feed_last_error.setter
+    def _feed_last_error(self, value: str) -> None:
+        self._feed_health_tracker.last_error = value
+
     @Property("QVariantMap", notify=aiGovernorSnapshotChanged)
     def aiGovernorSnapshot(self) -> dict[str, object]:  # type: ignore[override]
         snapshot = _clone_variant(self._ai_governor_snapshot)
@@ -1461,49 +1458,17 @@ class RuntimeService(QObject):
         next_retry: float | None = None,
         latest_latency: float | None = None,
     ) -> None:
-        previous_status = self._feed_health.get("status")
-        previous_reconnects = int(self._feed_health.get("reconnects", 0))
-        payload = dict(self._feed_health)
-        if status is not None:
-            payload["status"] = status
-        if reconnects is not None:
-            payload["reconnects"] = max(0, int(reconnects))
-        if last_error is not None:
-            payload["lastError"] = last_error
-        if latest_latency is not None:
-            payload["lastLatencyMs"] = max(0.0, float(latest_latency))
-        downtime_ms = self._feed_downtime_total * 1000.0
-        if self._feed_downtime_started is not None:
-            downtime_ms += max(0.0, (time.monotonic() - self._feed_downtime_started) * 1000.0)
-        payload["downtimeMs"] = max(0.0, float(downtime_ms))
-        payload["channels"] = list(self._feed_channels)
-        if next_retry is not None:
-            payload["nextRetrySeconds"] = max(0.0, float(next_retry))
-        else:
-            payload.pop("nextRetrySeconds", None)
         transport_key = self._current_transport_key()
-        latencies = list(self._latency_samples_for(transport_key))
-        latency_p95: float | None = None
-        latency_p50: float | None = None
-        if latencies:
-            latency_p95 = float(self._percentile(latencies, 95.0))
-            payload["p95LatencyMs"] = latency_p95
-            latency_p50 = float(statistics.median(latencies))
-            payload["p50LatencyMs"] = latency_p50
-        else:
-            payload.pop("p95LatencyMs", None)
-            payload.pop("p50LatencyMs", None)
-        self._feed_health = payload
-        payload["channelStates"] = {
-            channel: dict(state) for channel, state in self._feed_channel_status.items()
-        }
-        self._update_transport_breakdown(
-            transport_key,
-            payload,
-            latency_p50=latency_p50,
-            latency_p95=latency_p95,
+        payload, latency_p95, latency_p50 = self._feed_health_tracker.update_feed_health(
+            status=status,
+            reconnects=reconnects,
+            last_error=last_error,
+            next_retry=next_retry,
+            latest_latency=latest_latency,
+            transport_key=transport_key,
+            channel_status=self._feed_channel_status,
         )
-        payload["transports"] = self._serialize_transport_stats()
+        self._feed_health = payload
         self._export_feed_transport_metrics(payload["transports"])
         self.feedHealthChanged.emit()
         self._refresh_feed_transport_snapshot(payload, latency_p95)
@@ -1724,12 +1689,7 @@ class RuntimeService(QObject):
         return "fallback"
 
     def _latency_samples_for(self, key: str | None) -> deque[float]:
-        transport = key or "grpc"
-        samples = self._transport_latency_samples.get(transport)
-        if samples is None:
-            samples = deque(maxlen=self._latency_buffer_size)
-            self._transport_latency_samples[transport] = samples
-        return samples
+        return self._feed_health_tracker.latency_samples_for(key)
 
     def _update_transport_breakdown(
         self,
@@ -1739,43 +1699,15 @@ class RuntimeService(QObject):
         latency_p50: float | None,
         latency_p95: float | None,
     ) -> None:
-        stats = self._feed_transport_stats.setdefault(
+        self._feed_health_tracker._update_transport_breakdown(
             key,
-            {
-                "status": "unknown",
-                "p50_ms": None,
-                "p95_ms": None,
-                "reconnects": 0,
-                "downtimeMs": 0.0,
-                "lastError": "",
-                "updatedAt": 0.0,
-            },
-        )
-        stats.update(
-            {
-                "status": str(payload.get("status", stats.get("status", "unknown"))),
-                "p50_ms": latency_p50,
-                "p95_ms": latency_p95,
-                "reconnects": int(payload.get("reconnects", stats.get("reconnects", 0)) or 0),
-                "downtimeMs": float(payload.get("downtimeMs", stats.get("downtimeMs", 0.0)) or 0.0),
-                "lastError": str(payload.get("lastError", stats.get("lastError", "")) or ""),
-                "updatedAt": time.time(),
-            }
+            payload,
+            latency_p50=latency_p50,
+            latency_p95=latency_p95,
         )
 
     def _serialize_transport_stats(self) -> dict[str, dict[str, object]]:
-        snapshot: dict[str, dict[str, object]] = {}
-        for key, stats in self._feed_transport_stats.items():
-            snapshot[key] = {
-                "status": stats.get("status"),
-                "p50_ms": stats.get("p50_ms"),
-                "p95_ms": stats.get("p95_ms"),
-                "reconnects": stats.get("reconnects", 0),
-                "downtimeMs": stats.get("downtimeMs", 0.0),
-                "lastError": stats.get("lastError", ""),
-                "updatedAt": stats.get("updatedAt", 0.0),
-            }
-        return snapshot
+        return self._feed_health_tracker.serialize_transport_stats()
 
     def _export_feed_transport_metrics(
         self, transports: Mapping[str, Mapping[str, object]]
@@ -1813,22 +1745,11 @@ class RuntimeService(QObject):
         warning: float | None,
         critical: float | None,
     ) -> str:
-        if value is None:
-            return "ok"
-        if critical is not None and value >= critical:
-            return "critical"
-        if warning is not None and value >= warning:
-            return "warning"
-        return "ok"
+        return FeedHealthTracker.classify_threshold(value, warning=warning, critical=critical)
 
     @staticmethod
     def _aggregate_sla_state(states: Iterable[str]) -> str:
-        bucket = {state for state in states if state}
-        if "critical" in bucket:
-            return "critical"
-        if "warning" in bucket:
-            return "warning"
-        return "ok"
+        return FeedHealthTracker.aggregate_sla_state(states)
 
     def _maybe_emit_feed_alert(
         self,
@@ -2225,15 +2146,12 @@ class RuntimeService(QObject):
             self.feedAlertChannelsChanged.emit()
 
     def _mark_feed_disconnected(self) -> None:
-        if self._feed_downtime_started is None:
-            self._feed_downtime_started = time.monotonic()
+        self._feed_health_tracker.mark_feed_disconnected()
         self._set_channel_status("decision_journal", "degraded", last_error=self._feed_last_error)
         self._update_feed_health(status="degraded", reconnects=self._feed_reconnects)
 
     def _mark_feed_connected(self) -> None:
-        if self._feed_downtime_started is not None:
-            self._feed_downtime_total += max(0.0, time.monotonic() - self._feed_downtime_started)
-            self._feed_downtime_started = None
+        self._feed_health_tracker.mark_feed_connected()
         self._grpc_retry_attempts = 0
         self._cancel_grpc_reconnect()
         self._set_channel_status("decision_journal", "connected", last_error="")
@@ -3521,101 +3439,15 @@ class RuntimeService(QObject):
         )
 
     def _write_feed_metrics(self, *, force: bool = False) -> None:
-        source_key = "grpc"
-        latencies = list(self._latency_samples_for(source_key))
-        if not latencies:
-            source_key = self._current_transport_key()
-            latencies = list(self._latency_samples_for(source_key))
-        downtime_value = float(self._feed_health.get("downtimeMs", 0.0))
-        next_retry_value = self._feed_health.get("nextRetrySeconds")
-        status_value = self._feed_health.get("status", "unknown")
-        last_error_value = self._feed_health.get("lastError", "")
-        stats_payload = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "count": len(latencies),
-            "reconnects": self._feed_reconnects,
-            "downtime_ms": downtime_value,
-            "downtimeMs": downtime_value,
-            "status": status_value,
-            "last_error": last_error_value,
-            "lastError": last_error_value,
-            "next_retry_seconds": float(next_retry_value) if next_retry_value is not None else None,
-            "nextRetrySeconds": float(next_retry_value) if next_retry_value is not None else None,
-            "channels": list(self._feed_channels),
-        }
-        if latencies:
-            stats_payload.update(
-                {
-                    "min_ms": min(latencies),
-                    "max_ms": max(latencies),
-                    "avg_ms": sum(latencies) / len(latencies),
-                    "p50_ms": statistics.median(latencies),
-                    "p95_ms": self._percentile(latencies, 95.0),
-                }
-            )
-        else:
-            stats_payload.update(
-                {
-                    "min_ms": 0.0,
-                    "max_ms": 0.0,
-                    "avg_ms": 0.0,
-                    "p50_ms": 0.0,
-                    "p95_ms": 0.0,
-                }
-            )
-        if "lastLatencyMs" in self._feed_health:
-            stats_payload["last_latency_ms"] = float(self._feed_health["lastLatencyMs"])
-            stats_payload["lastLatencyMs"] = float(self._feed_health["lastLatencyMs"])
-        latency_p95 = stats_payload.get("p95_ms", 0.0)
-        stats_payload["latency_p95_ms"] = latency_p95
-        stats_payload["p95_seconds"] = float(latency_p95) / 1000.0
-        stats_payload["p95"] = float(latency_p95) / 1000.0
-        thresholds = self._feed_thresholds
-        reconnects_state = self._classify_threshold(
-            float(self._feed_reconnects),
-            warning=thresholds["reconnects_warning"],
-            critical=thresholds["reconnects_critical"],
+        source_key = self._current_transport_key()
+        stats_payload = self._feed_health_tracker.build_sla_report(
+            transport_source=source_key,
+            thresholds=self._feed_thresholds,
         )
-        latency_state = self._classify_threshold(
-            latency_p95,
-            warning=thresholds["latency_warning_ms"],
-            critical=thresholds["latency_critical_ms"],
-        )
-        downtime_seconds = max(0.0, float(downtime_value) / 1000.0)
-        downtime_state = self._classify_threshold(
-            downtime_seconds,
-            warning=thresholds["downtime_warning_seconds"],
-            critical=thresholds["downtime_critical_seconds"],
-        )
-        sla_state = self._aggregate_sla_state((latency_state, reconnects_state, downtime_state))
-        if sla_state in {"warning", "critical"}:
-            self._consecutive_degraded_periods += 1
-            self._consecutive_healthy_periods = 0
-        else:
-            self._consecutive_healthy_periods += 1
-            self._consecutive_degraded_periods = 0
-        stats_payload.update(
-            {
-                "latency_state": latency_state,
-                "reconnects_state": reconnects_state,
-                "downtime_state": downtime_state,
-                "latency_warning_ms": thresholds["latency_warning_ms"],
-                "latency_critical_ms": thresholds["latency_critical_ms"],
-                "reconnects_warning": thresholds["reconnects_warning"],
-                "reconnects_critical": thresholds["reconnects_critical"],
-                "downtime_warning_seconds": thresholds["downtime_warning_seconds"],
-                "downtime_critical_seconds": thresholds["downtime_critical_seconds"],
-                "downtime_seconds": downtime_seconds,
-                "sla_state": sla_state,
-                "consecutive_degraded_periods": self._consecutive_degraded_periods,
-                "consecutive_healthy_periods": self._consecutive_healthy_periods,
-            }
-        )
-        stats_payload["transport_source"] = source_key
-        stats_payload["transports"] = self._serialize_transport_stats()
         self._feed_sla_report = stats_payload
         self.feedSlaReportChanged.emit()
         now = time.monotonic()
+        status_value = self._feed_health.get("status", "unknown")
         reconnects_value = self._feed_reconnects
         status_changed = status_value != self._metrics_last_status
         reconnects_changed = reconnects_value != self._metrics_last_reconnects
