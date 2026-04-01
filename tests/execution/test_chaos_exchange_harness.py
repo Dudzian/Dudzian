@@ -102,6 +102,10 @@ def test_harness_partial_fill_then_cancel_ack() -> None:
     assert cancel_event is not None
     assert cancel_event.status == "cancelled"
     assert cancel_event.filled_quantity == pytest.approx(0.4)
+    reconciled = adapter.fetch_order_by_client_id("cid-3", symbol="BTCUSDT")
+    assert reconciled is not None
+    assert reconciled.status == "cancelled"
+    assert reconciled.filled_quantity == pytest.approx(0.4)
 
 
 def test_harness_out_of_order_events_are_preserved() -> None:
