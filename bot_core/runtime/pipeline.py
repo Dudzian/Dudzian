@@ -48,9 +48,8 @@ from bot_core.config.models import (
     StrategyOptimizationTaskConfig,
 )
 from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
-from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
+from bot_core.data import CachedOHLCVSource
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
-from bot_core.data.backfill_scheduler import BackfillScheduler
 from bot_core.data.ohlcv import OHLCVBackfillService
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
@@ -80,7 +79,7 @@ from bot_core.portfolio import (
     StrategyPortfolioGovernor,
     load_market_intel_report,
 )
-from bot_core.runtime.bootstrap import BootstrapContext
+from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
 from bot_core.risk import StressOverrideRecommendation
 from bot_core.security.guards import (
     LicenseCapabilityError,
@@ -120,6 +119,7 @@ from bot_core.runtime.pipeline_config_loader import PipelineConfigLoader
 from bot_core.runtime.strategy_bootstrapper import StrategyBootstrapper
 from bot_core.runtime.execution_bootstrapper import ExecutionBootstrapper
 from bot_core.runtime.risk_bootstrapper import RiskBootstrapper
+from bot_core.runtime.data_source_bootstrapper import DataSourceBootstrapper
 from bot_core.security import SecretManager
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
 from bot_core.strategies.catalog import (
@@ -152,14 +152,6 @@ except Exception:  # pragma: no cover
     summarize_evaluation_payloads = None  # type: ignore
 
 _DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
-_DEFAULT_OHLCV_COLUMNS: tuple[str, ...] = (
-    "open_time",
-    "open",
-    "high",
-    "low",
-    "close",
-    "volume",
-)
 _LOGGER = logging.getLogger(__name__)
 _TEST_MODE_ENV = "DUDZIAN_TEST_MODE"
 _PIPELINE_THREAD_NAME = "PipelineStream"
@@ -167,6 +159,7 @@ _PIPELINE_CONFIG_LOADER = PipelineConfigLoader()
 _STRATEGY_BOOTSTRAPPER = StrategyBootstrapper()
 _EXECUTION_BOOTSTRAPPER = ExecutionBootstrapper()
 _RISK_BOOTSTRAPPER = RiskBootstrapper()
+_DATA_SOURCE_BOOTSTRAPPER = DataSourceBootstrapper()
 
 
 def _is_test_mode_enabled() -> bool:
@@ -308,16 +301,13 @@ def _ensure_local_market_data_availability(
     adapter: ExchangeAdapter | None = None,
 ) -> None:
     """Zapewnia minimalny zestaw danych OHLCV wymaganych do startu runtime."""
-    scheduler = BackfillScheduler(
-        data_source,
+    _DATA_SOURCE_BOOTSTRAPPER.ensure_local_market_data_availability(
+        environment=environment,
+        data_source=data_source,
+        markets=markets,
+        interval=interval,
         backfill_service=backfill_service,
         adapter=adapter,
-        default_columns=_DEFAULT_OHLCV_COLUMNS,
-    )
-    scheduler.ensure_ohlcv_availability(
-        symbols=markets.keys(),
-        interval=interval,
-        environment=environment,
     )
 
 
@@ -387,25 +377,7 @@ def _create_cached_source(
 ) -> CachedOHLCVSource:
     """Buduje źródło OHLCV korzystające z lokalnego cache i snapshotów REST."""
 
-    cache_root = Path(environment.data_cache_path)
-    data_source_cfg = getattr(environment, "data_source", None)
-    enable_snapshots = True
-    namespace = resolve_cache_namespace(environment)
-    offline_mode = bool(getattr(environment, "offline_mode", False))
-    allow_network_upstream = not offline_mode
-    if data_source_cfg is not None:
-        enable_snapshots = bool(getattr(data_source_cfg, "enable_snapshots", True))
-    if offline_mode:
-        enable_snapshots = False
-
-    return create_cached_ohlcv_source(
-        adapter,
-        cache_directory=cache_root / "ohlcv_parquet",
-        manifest_path=cache_root / "ohlcv_manifest.sqlite",
-        enable_snapshots=enable_snapshots,
-        allow_network_upstream=allow_network_upstream,
-        namespace=namespace,
-    )
+    return _DATA_SOURCE_BOOTSTRAPPER.create_cached_source(adapter=adapter, environment=environment)
 
 
 # Opcjonalny kontroler handlu – może nie istnieć w starszych gałęziach.
@@ -456,6 +428,7 @@ def build_daily_trend_pipeline(
         adapter_factories=adapter_factories,
         risk_profile_name=risk_profile_name,
         core_config=core_config,
+        bootstrap_fn=bootstrap_environment,
     )
     core_config = bootstrap_ctx.core_config
     environment = bootstrap_ctx.environment
@@ -1841,18 +1814,7 @@ def _resolve_adapter_metrics_registry(
 ) -> MetricsRegistry | None:
     """Wyszukuje rejestr metryk powiązany z adapterem giełdowym."""
 
-    if adapter is None:
-        return None
-
-    candidate = getattr(adapter, "metrics_registry", None)
-    if isinstance(candidate, MetricsRegistry):
-        return candidate
-
-    private_candidate = getattr(adapter, "_metrics", None)
-    if isinstance(private_candidate, MetricsRegistry):
-        return private_candidate
-
-    return None
+    return _DATA_SOURCE_BOOTSTRAPPER.resolve_adapter_metrics_registry(adapter)
 
 
 def _build_streaming_feed(
@@ -3612,6 +3574,7 @@ def build_multi_strategy_runtime(
         config_path=config_path,
         secret_manager=secret_manager,
         adapter_factories=adapter_factories,
+        bootstrap_fn=bootstrap_environment,
     )
     guard = getattr(bootstrap_ctx, "capability_guard", None) or get_capability_guard()
     if guard is not None:
@@ -3668,7 +3631,8 @@ def build_multi_strategy_runtime(
     base_feed = OHLCVStrategyFeed(cached_source, symbols_map=symbols_map, interval_map=interval_map)
     adapter_settings = getattr(environment, "adapter_settings", None)
     adapter_metrics = _resolve_adapter_metrics_registry(getattr(bootstrap_ctx, "adapter", None))
-    stream_feed = _build_streaming_feed(
+    stream_feed = _DATA_SOURCE_BOOTSTRAPPER.build_streaming_feed(
+        stream_factory=_build_streaming_feed,
         stream_config=getattr(environment, "stream", None),
         stream_settings=(
             adapter_settings.get("stream") if isinstance(adapter_settings, Mapping) else None
