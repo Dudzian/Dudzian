@@ -108,7 +108,7 @@ def test_harness_partial_fill_then_cancel_ack() -> None:
     assert reconciled.filled_quantity == pytest.approx(0.4)
 
 
-def test_harness_out_of_order_events_are_preserved() -> None:
+def test_harness_out_of_order_events_do_not_rollback_reconcile_state() -> None:
     adapter = _build_adapter(
         place_steps=(
             ChaosOrderStep(
@@ -123,11 +123,19 @@ def test_harness_out_of_order_events_are_preserved() -> None:
     )
 
     adapter.place_order(_request(client_order_id="cid-4"))
+    reconciled = adapter.fetch_order_by_client_id("cid-4", symbol="BTCUSDT")
+    assert reconciled is not None
+    assert reconciled.status == "filled"
+    assert reconciled.filled_quantity == pytest.approx(1.0)
+
     first = adapter.next_private_event()
     second = adapter.next_private_event()
     assert first is not None and second is not None
     assert first.status == "filled"
     assert second.status == "partially_filled"
+    assert adapter.fetch_order_by_client_id("cid-4", symbol="BTCUSDT") == reconciled
+    assert adapter.cancelled == []
+    assert adapter.placed[0].client_order_id == "cid-4"
 
 
 def test_harness_rate_limit_and_temp_network_failure_paths() -> None:

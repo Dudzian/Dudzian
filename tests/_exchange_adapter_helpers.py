@@ -176,6 +176,16 @@ class ChaosExchangeAdapter(ExchangeAdapter):
         self._reconcile_by_client_order_id: dict[str, OrderResult] = {}
         self._client_order_id_by_order_id: dict[str, str] = {}
         self._delayed_reconcile: list[tuple[str, _DelayedReconcile]] = []
+        self._status_rank = {
+            "accepted": 0,
+            "open": 0,
+            "new": 0,
+            "partially_filled": 1,
+            "filled": 2,
+            "cancelled": 2,
+            "canceled": 2,
+            "rejected": 2,
+        }
 
     def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # noqa: D401, ARG002
         return None
@@ -297,7 +307,7 @@ class ChaosExchangeAdapter(ExchangeAdapter):
                     raw_response={"event_type": event.event_type, "source": event.source},
                 )
                 if release_tick <= self._current_tick:
-                    self._reconcile_by_client_order_id[client_for_event] = event_result
+                    self._merge_reconcile_result(client_for_event, event_result)
                 else:
                     self._delayed_reconcile.append(
                         (
@@ -314,7 +324,7 @@ class ChaosExchangeAdapter(ExchangeAdapter):
         if events:
             return
         if release_tick <= self._current_tick:
-            self._reconcile_by_client_order_id[client_order_id] = result
+            self._merge_reconcile_result(client_order_id, result)
         else:
             self._delayed_reconcile.append(
                 (client_order_id, _DelayedReconcile(release_tick=release_tick, result=result))
@@ -333,4 +343,23 @@ class ChaosExchangeAdapter(ExchangeAdapter):
             item for item in self._delayed_reconcile if item[1].release_tick > self._current_tick
         ]
         for client_order_id, delayed in ready_reconcile:
-            self._reconcile_by_client_order_id[client_order_id] = delayed.result
+            self._merge_reconcile_result(client_order_id, delayed.result)
+
+    def _merge_reconcile_result(self, client_order_id: str, candidate: OrderResult) -> None:
+        current = self._reconcile_by_client_order_id.get(client_order_id)
+        if current is None:
+            self._reconcile_by_client_order_id[client_order_id] = candidate
+            return
+        if self._should_replace(current, candidate):
+            self._reconcile_by_client_order_id[client_order_id] = candidate
+
+    def _should_replace(self, current: OrderResult, candidate: OrderResult) -> bool:
+        current_rank = self._status_rank.get(str(current.status).lower(), -1)
+        candidate_rank = self._status_rank.get(str(candidate.status).lower(), -1)
+        if candidate_rank > current_rank:
+            return True
+        if candidate_rank < current_rank:
+            return False
+        if candidate.filled_quantity > current.filled_quantity:
+            return True
+        return False
