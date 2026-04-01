@@ -1857,6 +1857,8 @@ environments:
         public_path: /deribit/futures/public
         private_path: /deribit/futures/private
         poll_interval: 0.5
+        public_params:
+          symbol: BTC-PERPETUAL
     decision_journal:
       backend: file
       directory: audit/decisions
@@ -2038,6 +2040,8 @@ environments:
         public_path: /bitmex/futures/public
         private_path: /bitmex/futures/private
         poll_interval: 0.35
+        public_params:
+          symbol: XBTUSD
     decision_journal:
       backend: file
       directory: audit/decisions

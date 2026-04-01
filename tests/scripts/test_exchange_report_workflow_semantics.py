@@ -11,6 +11,12 @@ def test_exchange_report_schedule_is_strict_and_fetches_real_snapshots() -> None
     assert "if: github.event_name == 'schedule'" in workflow
     assert "python scripts/check_required_adapter_factories.py" in workflow
     assert "python scripts/fetch_long_poll_snapshots.py" in workflow
+    assert "cleanup_gateway()" in workflow
+    assert 'trap \'cleanup_gateway "$gateway_pid"\'' in workflow
+    assert "kill -TERM" in workflow
+    assert "kill -KILL" in workflow
+    assert "wait \"${pid}\"" in workflow
+    assert "timeout 90s python scripts/fetch_long_poll_snapshots.py" in workflow
     assert "--skip-freshness" in workflow
 
 
