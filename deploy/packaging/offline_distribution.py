@@ -11,7 +11,7 @@ from typing import Any, Mapping
 
 from bot_core.security.rotation import RotationRegistry
 from core.update.offline_updater import OfflinePackageManifest, verify_offline_package
-from scripts.package_update import build_offline_package
+from .offline_package import build_offline_package
 
 
 def _manifest_to_dict(manifest: OfflinePackageManifest) -> dict[str, Any]:
