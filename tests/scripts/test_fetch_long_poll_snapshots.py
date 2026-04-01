@@ -23,7 +23,9 @@ def _fake_snapshot(adapter: str, environment: str) -> dict[str, object]:
     }
 
 
-def test_fetch_snapshots_writes_all_required_profiles(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_snapshots_writes_all_required_profiles(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def _stub_collect_single_snapshot(**kwargs):
         return _fake_snapshot(kwargs["adapter"], kwargs["environment"])
 
@@ -131,7 +133,9 @@ def test_collect_single_snapshot_uses_stream_gateway_path_and_environment(
     assert snapshot["labels"]["environment"] == "paper"
 
 
-def test_resolve_public_stream_params_prefers_public_params_for_ticker(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_public_stream_params_prefers_public_params_for_ticker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _raise_if_called(*_args):
         raise AssertionError("fallback should not be used")
 
@@ -169,7 +173,9 @@ def test_resolve_public_stream_params_falls_back_to_health_check_symbol(
     assert calls == ["bitmex_futures_live"]
 
 
-def test_resolve_public_stream_params_ticker_requires_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_public_stream_params_ticker_requires_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(fetcher, "_load_health_check_public_symbol", lambda *_args: None)
     with pytest.raises(RuntimeError, match="Brak konfiguracji symbolu.*bitmex_futures_paper"):
         fetcher._resolve_public_stream_params(
@@ -252,20 +258,26 @@ def test_fetch_snapshots_fails_fast_for_ticker_without_symbol(
             )
 
 
-def test_resolve_public_stream_params_keeps_extra_public_params(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_public_stream_params_keeps_extra_public_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(fetcher, "_load_health_check_public_symbol", lambda *_args: "IGNORED")
     params = fetcher._resolve_public_stream_params(
         config_path=Path("config/core.yaml"),
         environment_name="deribit_futures_paper",
         environment_config=fetcher.SnapshotEnvironmentConfig(
-            adapter_settings={"stream": {"public_params": {"symbol": "BTC-PERPETUAL", "depth": 100}}},
+            adapter_settings={
+                "stream": {"public_params": {"symbol": "BTC-PERPETUAL", "depth": 100}}
+            },
         ),
         channels=("ticker",),
     )
     assert params == {"symbol": "BTC-PERPETUAL", "depth": 100}
 
 
-def test_resolve_public_stream_params_accepts_symbols_field(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_public_stream_params_accepts_symbols_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(fetcher, "_load_health_check_public_symbol", lambda *_args: "IGNORED")
     params = fetcher._resolve_public_stream_params(
         config_path=Path("config/core.yaml"),
@@ -291,7 +303,9 @@ def test_resolve_public_stream_params_detects_ticker_case_insensitive(
     assert params == {"symbol": "XBTUSD"}
 
 
-def test_resolve_public_stream_params_detects_tickers_plural(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_public_stream_params_detects_tickers_plural(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(fetcher, "_load_health_check_public_symbol", lambda *_args: "XBTUSD")
     params = fetcher._resolve_public_stream_params(
         config_path=Path("config/core.yaml"),

@@ -8,6 +8,7 @@ from typing import Literal
 
 RuntimeDecisionMode = Literal["prod", "demo", "test"]
 
+
 @dataclass(frozen=True)
 class DecisionSourceState:
     profile: str | None = None
