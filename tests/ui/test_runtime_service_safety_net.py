@@ -148,6 +148,28 @@ def test_runtime_service_parses_decision_alias_payloads_from_loader() -> None:
     assert payload["signals"] == ["momentum", "breakout"]
 
 
+def test_runtime_service_parses_lowercase_decision_and_flattens_metadata() -> None:
+    service = RuntimeService(
+        decision_loader=lambda limit: [
+            {
+                "event": "decision_made",
+                "decision": {"state": "trade", "signal": "long", "should_trade": "yes"},
+                "signals": ["momentum", "", None, "breakout"],
+                "metadata": {"source": "jsonl", "profile": "paper"},
+            }
+        ]
+    )
+
+    payload = service.loadRecentDecisions(1)[0]
+    assert payload["decision"]["state"] == "trade"
+    assert payload["decision"]["signal"] == "long"
+    assert payload["decision"]["shouldTrade"] is True
+    assert payload["signals"] == ["momentum", "breakout"]
+    assert payload["metadata"]["source"] == "jsonl"
+    assert payload["metadata"]["profile"] == "paper"
+    assert "metadata" not in payload["metadata"]
+
+
 def test_runtime_service_degrades_to_demo_when_grpc_dependency_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
