@@ -72,6 +72,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          cleanup_gateway() {
+            local pid="${1:-}"
+            if [ -z "${pid}" ] || ! kill -0 "${pid}" >/dev/null 2>&1; then
+              return 0
+            fi
+            kill -TERM "${pid}" >/dev/null 2>&1 || true
+            for _ in $(seq 1 10); do
+              if ! kill -0 "${pid}" >/dev/null 2>&1; then
+                break
+              fi
+              sleep 0.2
+            done
+            if kill -0 "${pid}" >/dev/null 2>&1; then
+              kill -KILL "${pid}" >/dev/null 2>&1 || true
+            fi
+            wait "${pid}" >/dev/null 2>&1 || true
+          }
+
           python scripts/run_stream_gateway.py \
             --config config/core.yaml \
             --environment deribit_futures_paper \
@@ -82,7 +100,7 @@ jobs:
             --port 8765 \
             --log-level INFO &
           gateway_pid=$!
-          trap 'kill "$gateway_pid" >/dev/null 2>&1 || true; wait "$gateway_pid" >/dev/null 2>&1 || true' EXIT
+          trap 'cleanup_gateway "$gateway_pid"' EXIT
 
           for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:8765/stream/status" >/dev/null 2>&1; then
@@ -91,7 +109,8 @@ jobs:
             sleep 1
           done
 
-          python scripts/fetch_long_poll_snapshots.py \
+          timeout 90s python scripts/fetch_long_poll_snapshots.py \
+            --config config/core.yaml \
             --base-url http://127.0.0.1:8765 \
             --output var/metrics/long_poll_snapshots.json \
             --channels ticker \
