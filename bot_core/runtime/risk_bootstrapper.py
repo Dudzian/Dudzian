@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from core.monitoring import AsyncIOGuardrails
 
 from bot_core.config.models import CoreConfig, RuntimeAppConfig
 from bot_core.exchanges.base import ExchangeAdapterFactory
+
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
 from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler
 from bot_core.runtime.scheduler import AsyncIOTaskQueue
@@ -30,9 +31,11 @@ class RiskBootstrapper:
         adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
         risk_profile_name: str | None = None,
         core_config: CoreConfig | None = None,
+        bootstrap_fn: Callable[..., BootstrapContext] | None = None,
     ) -> BootstrapContext:
+        resolver = bootstrap_environment if bootstrap_fn is None else bootstrap_fn
         try:
-            return bootstrap_environment(
+            return resolver(
                 environment_name,
                 config_path=config_path,
                 secret_manager=secret_manager,

@@ -57,6 +57,25 @@ def test_bootstrap_context_delegates_arguments(monkeypatch: pytest.MonkeyPatch) 
     }
 
 
+def test_bootstrap_context_uses_bootstrap_fn_hook() -> None:
+    captured: dict[str, object] = {}
+
+    def _custom_bootstrap(environment_name: str, **kwargs: object) -> object:
+        captured["environment_name"] = environment_name
+        captured.update(kwargs)
+        return "custom"
+
+    result = RiskBootstrapper().bootstrap_context(
+        environment_name="paper",
+        config_path="/tmp/config.yaml",
+        secret_manager=object(),  # type: ignore[arg-type]
+        bootstrap_fn=_custom_bootstrap,
+    )
+
+    assert result == "custom"
+    assert captured["environment_name"] == "paper"
+    assert captured["config_path"] == "/tmp/config.yaml"
+
 def test_bootstrap_context_logs_and_reraises_without_changing_exception(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
