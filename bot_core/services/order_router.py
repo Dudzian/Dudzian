@@ -40,6 +40,7 @@ class PaperBroker:
         self._last_pnl_publish = 0.0
         self._oid_seq = 0
         self._paused = False
+        self._processed_order_ids: set[str] = set()
 
         self.bus.subscribe(EventType.MARKET_TICK, self._on_tick)
         self.bus.subscribe(EventType.ORDER_REQUEST, self._on_order_req)
@@ -162,6 +163,10 @@ class PaperBroker:
                 if symbol != self.cfg.symbol:
                     continue
 
+                oid = str(p.get("client_order_id") or p.get("order_id") or "").strip()
+                if oid and oid in self._processed_order_ids:
+                    continue
+
                 side_in = p.get("side", "SELL")
                 sign = self._side_sign(side_in)
                 qty = float(p.get("qty", 0.0))
@@ -215,7 +220,8 @@ class PaperBroker:
                 self.position_qty = new_pos
                 self.realized_pnl += realized
 
-                oid = p.get("client_order_id") or f"PB-{int(time.time() * 1000)}"
+                oid = oid or f"PB-{int(time.time() * 1000)}"
+                self._processed_order_ids.add(oid)
                 ts = time.time()
                 status = {
                     "order_id": oid,
