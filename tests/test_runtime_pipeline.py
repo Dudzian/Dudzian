@@ -899,7 +899,7 @@ def _patch_pipeline_contract_build_path(
         "bot_core.runtime.pipeline._build_price_resolver", lambda *_args, **_kwargs: lambda _symbol: 1.0
     )
     monkeypatch.setattr("bot_core.runtime.pipeline.resolve_execution_mode", lambda *_args, **_kwargs: execution_mode)
-    monkeypatch.setattr("bot_core.runtime.pipeline.build_live_execution_service", _build_live_service)
+    monkeypatch.setattr("bot_core.runtime.execution_bootstrapper.build_live_execution_service", _build_live_service)
     monkeypatch.setattr(
         "bot_core.runtime.pipeline._build_account_loader",
         lambda **_kwargs: lambda: AccountSnapshot(
