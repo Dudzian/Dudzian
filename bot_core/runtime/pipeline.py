@@ -118,6 +118,7 @@ from bot_core.runtime.portfolio_inputs import (
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 from bot_core.runtime.controller import DailyTrendController
 from bot_core.runtime.pipeline_config_loader import PipelineConfigLoader
+from bot_core.runtime.strategy_bootstrapper import StrategyBootstrapper
 from bot_core.security import SecretManager
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
 from bot_core.strategies.catalog import (
@@ -162,6 +163,7 @@ _LOGGER = logging.getLogger(__name__)
 _TEST_MODE_ENV = "DUDZIAN_TEST_MODE"
 _PIPELINE_THREAD_NAME = "PipelineStream"
 _PIPELINE_CONFIG_LOADER = PipelineConfigLoader()
+_STRATEGY_BOOTSTRAPPER = StrategyBootstrapper()
 
 
 def _is_test_mode_enabled() -> bool:
@@ -3686,7 +3688,8 @@ def build_multi_strategy_runtime(
     storage = cached_source.storage
     market_intel = MarketIntelAggregator(storage)
 
-    strategies = _instantiate_strategies(core_config)
+    strategy_bootstrap = _STRATEGY_BOOTSTRAPPER.bootstrap(core_config)
+    strategies = dict(strategy_bootstrap.strategies)
     interval_map: dict[str, str] = {}
     symbols_map: dict[str, Sequence[str]] = {}
     all_symbols = tuple(markets.keys())
@@ -4022,12 +4025,13 @@ def build_multi_strategy_runtime(
                     consumer=consumer,
                 )
 
+    _STRATEGY_BOOTSTRAPPER.validate_schedule_strategies(
+        schedules=scheduler_cfg.schedules,
+        strategies=strategies,
+    )
+
     for schedule in scheduler_cfg.schedules:
-        strategy = strategies.get(schedule.strategy)
-        if strategy is None:
-            raise KeyError(
-                f"Strategia {schedule.strategy} nie została zarejestrowana w konfiguracji"
-            )
+        strategy = strategies[schedule.strategy]
         scheduler.register_schedule(
             name=schedule.name,
             strategy_name=schedule.strategy,
@@ -4099,220 +4103,15 @@ def build_multi_strategy_runtime(
 
 
 def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, StrategyDefinition]:
-    """Zbiera definicje strategii z konfiguracji core."""
-
-    definitions: dict[str, StrategyDefinition] = {}
-
-    def _resolve_metadata(
-        engine: str,
-    ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
-        try:
-            spec = DEFAULT_STRATEGY_CATALOG.get(engine)
-        except KeyError:
-            return (
-                "unspecified",
-                ("unspecified",),
-                ("unspecified",),
-                (),
-                (),
-                None,
-            )
-        return (
-            spec.license_tier,
-            spec.risk_classes,
-            spec.required_data,
-            spec.risk_hooks,
-            spec.default_tags,
-            spec.capability,
-        )
-
-    for name, cfg in getattr(core_config, "strategy_definitions", {}).items():
-        (
-            license_tier,
-            risk_classes,
-            required_data,
-            risk_hooks,
-            default_tags,
-            capability,
-        ) = _resolve_metadata(cfg.engine)
-        metadata = dict(cfg.metadata)
-        resolved_capability = getattr(cfg, "capability", None) or capability
-        if resolved_capability and "capability" not in metadata:
-            metadata["capability"] = resolved_capability
-        merged_tags = tuple(dict.fromkeys((*default_tags, *tuple(cfg.tags))))
-        if merged_tags and "tags" not in metadata:
-            metadata["tags"] = merged_tags
-        definitions[name] = StrategyDefinition(
-            name=cfg.name,
-            engine=cfg.engine,
-            license_tier=cfg.license_tier or license_tier,
-            risk_classes=tuple(cfg.risk_classes) or risk_classes,
-            required_data=tuple(cfg.required_data) or required_data,
-            risk_hooks=tuple(getattr(cfg, "risk_hooks", ())) or risk_hooks,
-            parameters=dict(cfg.parameters),
-            risk_profile=cfg.risk_profile,
-            tags=merged_tags,
-            metadata=metadata,
-        )
-
-    def _fallback(name: str, engine: str, params: Mapping[str, Any]) -> None:
-        if name in definitions:
-            return
-        (
-            license_tier,
-            risk_classes,
-            required_data,
-            risk_hooks,
-            default_tags,
-            capability,
-        ) = _resolve_metadata(engine)
-        metadata: dict[str, Any] = {}
-        if capability:
-            metadata["capability"] = capability
-        if default_tags:
-            metadata["tags"] = default_tags
-        definitions[name] = StrategyDefinition(
-            name=name,
-            engine=engine,
-            license_tier=license_tier,
-            risk_classes=risk_classes,
-            required_data=required_data,
-            risk_hooks=risk_hooks,
-            parameters=dict(params),
-            tags=default_tags,
-            metadata=metadata,
-        )
-
-    for name, cfg in getattr(core_config, "strategies", {}).items():
-        _fallback(
-            name,
-            "daily_trend_momentum",
-            {
-                "fast_ma": cfg.fast_ma,
-                "slow_ma": cfg.slow_ma,
-                "breakout_lookback": cfg.breakout_lookback,
-                "momentum_window": cfg.momentum_window,
-                "atr_window": cfg.atr_window,
-                "atr_multiplier": cfg.atr_multiplier,
-                "min_trend_strength": cfg.min_trend_strength,
-                "min_momentum": cfg.min_momentum,
-            },
-        )
-    for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
-        _fallback(
-            name,
-            "mean_reversion",
-            {
-                "lookback": cfg.lookback,
-                "entry_zscore": cfg.entry_zscore,
-                "exit_zscore": cfg.exit_zscore,
-                "max_holding_period": cfg.max_holding_period,
-                "volatility_cap": cfg.volatility_cap,
-                "min_volume_usd": cfg.min_volume_usd,
-            },
-        )
-    for name, cfg in getattr(core_config, "volatility_target_strategies", {}).items():
-        _fallback(
-            name,
-            "volatility_target",
-            {
-                "target_volatility": cfg.target_volatility,
-                "lookback": cfg.lookback,
-                "rebalance_threshold": cfg.rebalance_threshold,
-                "min_allocation": cfg.min_allocation,
-                "max_allocation": cfg.max_allocation,
-                "floor_volatility": cfg.floor_volatility,
-            },
-        )
-    for name, cfg in getattr(core_config, "cross_exchange_arbitrage_strategies", {}).items():
-        _fallback(
-            name,
-            "cross_exchange_arbitrage",
-            {
-                "primary_exchange": cfg.primary_exchange,
-                "secondary_exchange": cfg.secondary_exchange,
-                "spread_entry": cfg.spread_entry,
-                "spread_exit": cfg.spread_exit,
-                "max_notional": cfg.max_notional,
-                "max_open_seconds": cfg.max_open_seconds,
-            },
-        )
-
-    for name, cfg in getattr(core_config, "scalping_strategies", {}).items():
-        _fallback(
-            name,
-            "scalping",
-            {
-                "min_price_change": cfg.min_price_change,
-                "take_profit": cfg.take_profit,
-                "stop_loss": cfg.stop_loss,
-                "max_hold_bars": cfg.max_hold_bars,
-            },
-        )
-
-    for name, cfg in getattr(core_config, "options_income_strategies", {}).items():
-        _fallback(
-            name,
-            "options_income",
-            {
-                "min_iv": cfg.min_iv,
-                "max_delta": cfg.max_delta,
-                "min_days_to_expiry": cfg.min_days_to_expiry,
-                "roll_threshold_iv": cfg.roll_threshold_iv,
-            },
-        )
-
-    for name, cfg in getattr(core_config, "statistical_arbitrage_strategies", {}).items():
-        _fallback(
-            name,
-            "statistical_arbitrage",
-            {
-                "lookback": cfg.lookback,
-                "spread_entry_z": cfg.spread_entry_z,
-                "spread_exit_z": cfg.spread_exit_z,
-                "max_notional": cfg.max_notional,
-            },
-        )
-
-    for name, cfg in getattr(core_config, "day_trading_strategies", {}).items():
-        _fallback(
-            name,
-            "day_trading",
-            {
-                "momentum_window": cfg.momentum_window,
-                "volatility_window": cfg.volatility_window,
-                "entry_threshold": cfg.entry_threshold,
-                "exit_threshold": cfg.exit_threshold,
-                "take_profit_atr": cfg.take_profit_atr,
-                "stop_loss_atr": cfg.stop_loss_atr,
-                "max_holding_bars": cfg.max_holding_bars,
-                "atr_floor": cfg.atr_floor,
-                "bias_strength": cfg.bias_strength,
-            },
-        )
-
-    return definitions
+    return _STRATEGY_BOOTSTRAPPER.collect_definitions(core_config)
 
 
 def _instantiate_strategies(
     core_config: CoreConfig, *, catalog: StrategyCatalog | None = None
 ) -> dict[str, StrategyEngine]:
-    catalog = catalog or DEFAULT_STRATEGY_CATALOG
-    registry: dict[str, StrategyEngine] = {}
-    guard = get_capability_guard()
-
-    definitions = _collect_strategy_definitions(core_config)
-
-    for name, definition in definitions.items():
-        spec = catalog.get(definition.engine)
-        if guard is not None and spec.capability:
-            guard.require_strategy(
-                spec.capability,
-                message=(f"Strategia '{name}' wymaga aktywnej licencji {spec.capability}."),
-            )
-        registry[name] = catalog.create(definition)
-
-    return registry
+    definitions = _STRATEGY_BOOTSTRAPPER.collect_definitions(core_config)
+    bootstrapper = _STRATEGY_BOOTSTRAPPER if catalog is None else StrategyBootstrapper(catalog=catalog)
+    return bootstrapper.instantiate(definitions)
 
 
 def describe_strategy_definitions(
