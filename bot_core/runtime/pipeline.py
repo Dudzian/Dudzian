@@ -55,7 +55,7 @@ from bot_core.data.ohlcv import OHLCVBackfillService
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from core.monitoring import AsyncIOGuardrails
-from bot_core.execution import build_live_execution_service, resolve_execution_mode
+from bot_core.execution import resolve_execution_mode
 from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
@@ -119,6 +119,7 @@ from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 from bot_core.runtime.controller import DailyTrendController
 from bot_core.runtime.pipeline_config_loader import PipelineConfigLoader
 from bot_core.runtime.strategy_bootstrapper import StrategyBootstrapper
+from bot_core.runtime.execution_bootstrapper import ExecutionBootstrapper
 from bot_core.security import SecretManager
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
 from bot_core.strategies.catalog import (
@@ -164,6 +165,7 @@ _TEST_MODE_ENV = "DUDZIAN_TEST_MODE"
 _PIPELINE_THREAD_NAME = "PipelineStream"
 _PIPELINE_CONFIG_LOADER = PipelineConfigLoader()
 _STRATEGY_BOOTSTRAPPER = StrategyBootstrapper()
+_EXECUTION_BOOTSTRAPPER = ExecutionBootstrapper()
 
 
 def _is_test_mode_enabled() -> bool:
@@ -1033,16 +1035,9 @@ def _build_execution_service(
     *,
     price_resolver: PriceResolver | None = None,
 ) -> PaperTradingExecutionService:
-    return PaperTradingExecutionService(
+    return _EXECUTION_BOOTSTRAPPER.build_paper_execution_service(
         markets,
-        initial_balances=paper_settings["initial_balances"],  # type: ignore[arg-type]
-        maker_fee=float(paper_settings["maker_fee"]),
-        taker_fee=float(paper_settings["taker_fee"]),
-        slippage_bps=float(paper_settings["slippage_bps"]),
-        ledger_directory=paper_settings["ledger_directory"],
-        ledger_filename_pattern=str(paper_settings["ledger_filename_pattern"]),
-        ledger_retention_days=paper_settings["ledger_retention_days"],  # type: ignore[arg-type]
-        ledger_fsync=bool(paper_settings["ledger_fsync"]),
+        paper_settings,
         price_resolver=price_resolver,
     )
 
@@ -1058,43 +1053,14 @@ def _select_execution_service(
 ) -> ExecutionService:
     """Zwraca usługę egzekucyjną preferując instancję z bootstrapu."""
 
-    context_service = getattr(bootstrap_ctx, "execution_service", None)
-
-    if execution_mode == "live":
-        if isinstance(context_service, ExecutionService) and not isinstance(
-            context_service, PaperTradingExecutionService
-        ):
-            return context_service
-        settings = runtime_settings or RuntimeExecutionSettings()
-        service = build_live_execution_service(
-            bootstrap_ctx=bootstrap_ctx,
-            environment=bootstrap_ctx.environment,
-            runtime_settings=settings,
-        )
-        try:
-            bootstrap_ctx.execution_service = service
-        except Exception:  # pragma: no cover - kontekst może być typu tylko-do-odczytu
-            _LOGGER.debug(
-                "Nie udało się zapisać LiveExecutionRouter w BootstrapContext",
-                exc_info=True,
-            )
-        return service
-
-    if isinstance(context_service, PaperTradingExecutionService):
-        return context_service
-
-    service = _build_execution_service(
-        markets,
-        paper_settings,
+    return _EXECUTION_BOOTSTRAPPER.bootstrap_execution_service(
+        bootstrap_ctx=bootstrap_ctx,
+        markets=markets,
+        paper_settings=paper_settings,
+        runtime_settings=runtime_settings,
+        execution_mode=execution_mode,
         price_resolver=price_resolver,
     )
-    try:
-        bootstrap_ctx.execution_service = service
-    except Exception:  # pragma: no cover - kontekst może być typu tylko-do-odczytu
-        _LOGGER.debug(
-            "Nie udało się zapisać PaperTradingExecutionService w BootstrapContext", exc_info=True
-        )
-    return service
 
 
 def _build_price_resolver(data_source: CachedOHLCVSource, interval: str) -> PriceResolver:
