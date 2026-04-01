@@ -839,13 +839,19 @@ def _patch_pipeline_contract_build_path(
         contract_flags["live_builder_called"] = True
         return object()
 
-    monkeypatch.setattr("bot_core.runtime.pipeline.bootstrap_environment", lambda *args, **kwargs: bootstrap)
-    monkeypatch.setattr("bot_core.runtime.pipeline._resolve_strategy", lambda *_args, **_kwargs: strategy_cfg)
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline.bootstrap_environment", lambda *args, **kwargs: bootstrap
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._resolve_strategy", lambda *_args, **_kwargs: strategy_cfg
+    )
     monkeypatch.setattr(
         "bot_core.runtime.pipeline._resolve_runtime",
         lambda *_args, **_kwargs: SimpleNamespace(interval="1d"),
     )
-    monkeypatch.setattr("bot_core.runtime.pipeline._resolve_universe", lambda *_args, **_kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline._resolve_universe", lambda *_args, **_kwargs: SimpleNamespace()
+    )
     monkeypatch.setattr(
         "bot_core.runtime.pipeline._normalize_paper_settings",
         lambda *_args, **_kwargs: {
@@ -896,10 +902,15 @@ def _patch_pipeline_contract_build_path(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "bot_core.runtime.pipeline._build_price_resolver", lambda *_args, **_kwargs: lambda _symbol: 1.0
+        "bot_core.runtime.pipeline._build_price_resolver",
+        lambda *_args, **_kwargs: lambda _symbol: 1.0,
     )
-    monkeypatch.setattr("bot_core.runtime.pipeline.resolve_execution_mode", lambda *_args, **_kwargs: execution_mode)
-    monkeypatch.setattr("bot_core.runtime.execution_bootstrapper.build_live_execution_service", _build_live_service)
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline.resolve_execution_mode", lambda *_args, **_kwargs: execution_mode
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.execution_bootstrapper.build_live_execution_service", _build_live_service
+    )
     monkeypatch.setattr(
         "bot_core.runtime.pipeline._build_account_loader",
         lambda **_kwargs: lambda: AccountSnapshot(
@@ -909,13 +920,18 @@ def _patch_pipeline_contract_build_path(
             maintenance_margin=0.0,
         ),
     )
-    monkeypatch.setattr("bot_core.runtime.pipeline.DailyTrendMomentumSettings", lambda **_kwargs: SimpleNamespace(**_kwargs))
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline.DailyTrendMomentumSettings",
+        lambda **_kwargs: SimpleNamespace(**_kwargs),
+    )
     monkeypatch.setattr("bot_core.runtime.pipeline.DailyTrendMomentumStrategy", _Strategy)
     monkeypatch.setattr("bot_core.runtime.pipeline.DailyTrendController", _Controller)
     return contract_flags
 
 
-def test_build_daily_trend_pipeline_failfast_when_environment_lacks_default_strategy(monkeypatch) -> None:
+def test_build_daily_trend_pipeline_failfast_when_environment_lacks_default_strategy(
+    monkeypatch,
+) -> None:
     bootstrap = SimpleNamespace(
         core_config=object(),
         environment=SimpleNamespace(
@@ -926,7 +942,9 @@ def test_build_daily_trend_pipeline_failfast_when_environment_lacks_default_stra
         ),
         risk_profile_name="balanced",
     )
-    monkeypatch.setattr("bot_core.runtime.pipeline.bootstrap_environment", lambda *args, **kwargs: bootstrap)
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline.bootstrap_environment", lambda *args, **kwargs: bootstrap
+    )
 
     with pytest.raises(ValueError) as exc_info:
         build_daily_trend_pipeline(
@@ -957,7 +975,9 @@ def test_build_daily_trend_pipeline_live_failfast_without_exchange_adapter(monke
         tco_reporter=None,
         execution_service=SimpleNamespace(),  # nie jest ExecutionService, więc brak cichego fallbacku do paper
     )
-    flags = _patch_pipeline_contract_build_path(monkeypatch, bootstrap=bootstrap, execution_mode="live")
+    flags = _patch_pipeline_contract_build_path(
+        monkeypatch, bootstrap=bootstrap, execution_mode="live"
+    )
 
     with pytest.raises(RuntimeError, match="Tryb live wymaga aktywnego adaptera giełdowego"):
         build_daily_trend_pipeline(
@@ -1046,8 +1066,12 @@ def test_build_daily_trend_pipeline_failfast_when_strategy_module_missing(monkey
 def test_create_trading_controller_failfast_when_optional_dependency_missing(monkeypatch) -> None:
     monkeypatch.setattr("bot_core.runtime.pipeline.TradingController", None)
     pipeline = SimpleNamespace(
-        controller=SimpleNamespace(execution_context=SimpleNamespace(portfolio_id="p1", metadata={})),
-        bootstrap=SimpleNamespace(environment=SimpleNamespace(environment=Environment.PAPER, exchange="fake")),
+        controller=SimpleNamespace(
+            execution_context=SimpleNamespace(portfolio_id="p1", metadata={})
+        ),
+        bootstrap=SimpleNamespace(
+            environment=SimpleNamespace(environment=Environment.PAPER, exchange="fake")
+        ),
         execution_service=object(),
         risk_profile_name="balanced",
         strategy_name="s1",

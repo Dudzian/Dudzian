@@ -38,9 +38,7 @@ class DecisionLogRepository:
         except FileNotFoundError:
             raise
         except OSError as exc:
-            raise RuntimeError(
-                f"Nie udało się odczytać decision logu '{log_path}': {exc}"
-            ) from exc
+            raise RuntimeError(f"Nie udało się odczytać decision logu '{log_path}': {exc}") from exc
 
     def load_jsonl_entries(self, log_path: Path, limit: int) -> list[DecisionRecord]:
         entries = list(self.iter_jsonl_entries(log_path))

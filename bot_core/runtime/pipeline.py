@@ -4026,7 +4026,9 @@ def _instantiate_strategies(
     core_config: CoreConfig, *, catalog: StrategyCatalog | None = None
 ) -> dict[str, StrategyEngine]:
     definitions = _STRATEGY_BOOTSTRAPPER.collect_definitions(core_config)
-    bootstrapper = _STRATEGY_BOOTSTRAPPER if catalog is None else StrategyBootstrapper(catalog=catalog)
+    bootstrapper = (
+        _STRATEGY_BOOTSTRAPPER if catalog is None else StrategyBootstrapper(catalog=catalog)
+    )
     return bootstrapper.instantiate(definitions)
 
 

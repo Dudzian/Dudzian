@@ -100,7 +100,9 @@ def test_create_cached_source_missing_data_modules_raises_runtime_error(
         )
 
 
-def test_create_cached_source_logs_and_reraises(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_create_cached_source_logs_and_reraises(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     monkeypatch.setattr(
         "bot_core.runtime.data_source_bootstrapper.resolve_cache_namespace",
         lambda _environment: "ns",
@@ -121,10 +123,7 @@ def test_create_cached_source_logs_and_reraises(monkeypatch: pytest.MonkeyPatch,
             environment=SimpleNamespace(data_cache_path="/tmp/cache", offline_mode=False),  # type: ignore[arg-type]
         )
 
-    assert any(
-        "cached source creation" in record.getMessage()
-        for record in caplog.records
-    )
+    assert any("cached source creation" in record.getMessage() for record in caplog.records)
 
 
 def test_ensure_local_market_data_availability_builds_scheduler_with_default_columns(
@@ -140,7 +139,9 @@ def test_ensure_local_market_data_availability_builds_scheduler_with_default_col
         def ensure_ohlcv_availability(self, **kwargs: object) -> None:
             captured["ensure_kwargs"] = kwargs
 
-    monkeypatch.setattr("bot_core.runtime.data_source_bootstrapper.BackfillScheduler", _FakeScheduler)
+    monkeypatch.setattr(
+        "bot_core.runtime.data_source_bootstrapper.BackfillScheduler", _FakeScheduler
+    )
 
     bootstrapper = DataSourceBootstrapper()
     environment = SimpleNamespace(name="paper")
@@ -208,10 +209,7 @@ def test_ensure_local_market_data_availability_logs_and_reraises(
             interval="1h",
         )
 
-    assert any(
-        "OHLCV availability check" in record.getMessage()
-        for record in caplog.records
-    )
+    assert any("OHLCV availability check" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.parametrize(
@@ -273,7 +271,4 @@ def test_build_streaming_feed_logs_and_reraises(caplog: pytest.LogCaptureFixture
             environment_name="paper",
         )
 
-    assert any(
-        "streaming feed wiring" in record.getMessage()
-        for record in caplog.records
-    )
+    assert any("streaming feed wiring" in record.getMessage() for record in caplog.records)

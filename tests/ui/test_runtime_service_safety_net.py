@@ -100,10 +100,14 @@ def test_runtime_service_feed_alerts_deduplicate_same_severity_and_recovery() ->
     history = service.feedAlertHistory
     assert len(history) == 2
     degraded = [
-        entry for entry in history if entry.get("metric") == "latency" and entry.get("state") == "degraded"
+        entry
+        for entry in history
+        if entry.get("metric") == "latency" and entry.get("state") == "degraded"
     ]
     recovered = [
-        entry for entry in history if entry.get("metric") == "latency" and entry.get("state") == "recovered"
+        entry
+        for entry in history
+        if entry.get("metric") == "latency" and entry.get("state") == "recovered"
     ]
     assert len(degraded) == 1
     assert len(recovered) == 1

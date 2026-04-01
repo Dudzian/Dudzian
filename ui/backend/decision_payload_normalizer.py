@@ -171,7 +171,9 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
             signals_payload = _normalize_signal_labels(value)
             continue
         if key == "metadata" and isinstance(value, Mapping):
-            metadata_payload.update({str(meta_key): meta_value for meta_key, meta_value in value.items()})
+            metadata_payload.update(
+                {str(meta_key): meta_value for meta_key, meta_value in value.items()}
+            )
             continue
         mapped = _BASE_FIELD_MAP.get(key)
         if mapped is not None:

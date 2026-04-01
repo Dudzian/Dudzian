@@ -210,7 +210,9 @@ class GrpcDecisionStreamClient:
                         _enqueue(
                             "snapshot",
                             {
-                                "records": [dict(entry.fields) for entry in update.snapshot.records],
+                                "records": [
+                                    dict(entry.fields) for entry in update.snapshot.records
+                                ],
                                 "metrics": metrics_payload,
                             },
                             drop_if_full=True,

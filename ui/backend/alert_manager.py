@@ -346,7 +346,9 @@ class AlertManager:
         incomplete_samples_count = int(
             normalized_diagnostics.get("incompleteSamplesCount", len(samples)) or 0
         )
-        risk_flag_counts = self._mapping_normalizer(normalized_diagnostics.get("riskFlagCounts", {}))
+        risk_flag_counts = self._mapping_normalizer(
+            normalized_diagnostics.get("riskFlagCounts", {})
+        )
         severity = "warning" if incomplete_entries else "ok"
         previous = self._risk_journal_alert_state
         if severity == previous:
@@ -431,13 +433,17 @@ class AlertManager:
             if feed_sla is not None:
                 defaults.update(
                     {
-                        "latency_warning_ms": _normalize(getattr(feed_sla, "latency_warning_ms", None))
+                        "latency_warning_ms": _normalize(
+                            getattr(feed_sla, "latency_warning_ms", None)
+                        )
                         or defaults["latency_warning_ms"],
                         "latency_critical_ms": _normalize(
                             getattr(feed_sla, "latency_critical_ms", None)
                         )
                         or defaults["latency_critical_ms"],
-                        "reconnects_warning": _normalize(getattr(feed_sla, "reconnects_warning", None))
+                        "reconnects_warning": _normalize(
+                            getattr(feed_sla, "reconnects_warning", None)
+                        )
                         or defaults["reconnects_warning"],
                         "reconnects_critical": _normalize(
                             getattr(feed_sla, "reconnects_critical", None)

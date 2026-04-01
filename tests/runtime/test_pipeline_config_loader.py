@@ -14,7 +14,9 @@ def _core_with_schedulers(payload):
 def test_resolve_multi_strategy_scheduler_missing_section() -> None:
     loader = PipelineConfigLoader()
     with pytest.raises(ValueError, match="Brak zdefiniowanych schedulerów"):
-        loader.resolve_multi_strategy_scheduler(core_config=_core_with_schedulers({}), scheduler_name=None)
+        loader.resolve_multi_strategy_scheduler(
+            core_config=_core_with_schedulers({}), scheduler_name=None
+        )
 
 
 def test_resolve_multi_strategy_scheduler_default_selection() -> None:
