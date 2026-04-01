@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, MutableMapping
+from typing import Iterable, Mapping, MutableMapping
 
 
 DecisionRecord = Mapping[str, object]
@@ -27,6 +27,7 @@ class RuntimeDecisionEntry:
     price: str | None
     market_regime: Mapping[str, object]
     decision: Mapping[str, object]
+    signals: tuple[str, ...]
     ai: Mapping[str, object]
     extras: Mapping[str, object]
 
@@ -46,6 +47,7 @@ class RuntimeDecisionEntry:
             "price": self.price,
             "marketRegime": dict(self.market_regime),
             "decision": dict(self.decision),
+            "signals": list(self.signals),
             "ai": dict(self.ai),
             "metadata": dict(self.extras),
         }
@@ -90,6 +92,41 @@ def _camelize(prefix: str, key: str) -> str:
     return head + "".join(segment.capitalize() for segment in tail)
 
 
+def _normalize_signal_labels(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        parts = [segment.strip() for segment in value.replace(";", ",").split(",")]
+        return tuple(segment for segment in parts if segment)
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes, Mapping)):
+        labels: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            text = str(item).strip()
+            if text:
+                labels.append(text)
+        return tuple(labels)
+    return ()
+
+
+def _merge_decision_payload(
+    destination: MutableMapping[str, object], source: Mapping[str, object]
+) -> None:
+    for key, value in source.items():
+        normalized_key = str(key)
+        if normalized_key == "should_trade":
+            normalized_key = "shouldTrade"
+        payload_value: object = value
+        if normalized_key == "shouldTrade":
+            payload_value = _normalize_bool(value)
+        elif normalized_key in {"confidence", "latencyMs", "latency_ms"}:
+            payload_value = _normalize_number(value)
+            if normalized_key == "latency_ms":
+                normalized_key = "latencyMs"
+        destination.setdefault(normalized_key, payload_value)
+
+
 _BASE_FIELD_MAP: Mapping[str, str] = {
     "event": "event",
     "timestamp": "timestamp",
@@ -111,8 +148,10 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
 
     base: MutableMapping[str, object | None] = {key: None for key in _BASE_FIELD_MAP.values()}
     decision_payload: MutableMapping[str, object] = {}
+    signals_payload: tuple[str, ...] = ()
     ai_payload: MutableMapping[str, object] = {}
     regime_payload: MutableMapping[str, object] = {}
+    metadata_payload: MutableMapping[str, object] = {}
     extras: MutableMapping[str, object] = {}
 
     confidence = record.get("confidence")
@@ -124,6 +163,15 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
 
     for key, value in record.items():
         if key in {"confidence", "latency_ms"}:
+            continue
+        if key in {"decision", "Decision"} and isinstance(value, Mapping):
+            _merge_decision_payload(decision_payload, value)
+            continue
+        if key == "signals":
+            signals_payload = _normalize_signal_labels(value)
+            continue
+        if key == "metadata" and isinstance(value, Mapping):
+            metadata_payload.update({str(meta_key): meta_value for meta_key, meta_value in value.items()})
             continue
         mapped = _BASE_FIELD_MAP.get(key)
         if mapped is not None:
@@ -162,6 +210,9 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
             continue
         extras[key] = value
 
+    for meta_key, meta_value in metadata_payload.items():
+        extras.setdefault(meta_key, meta_value)
+
     return RuntimeDecisionEntry(
         event=str(base["event"] or ""),
         timestamp=str(base["timestamp"] or ""),
@@ -177,6 +228,7 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
         price=base.get("price"),
         market_regime=regime_payload,
         decision=decision_payload,
+        signals=signals_payload,
         ai=ai_payload,
         extras=extras,
     )

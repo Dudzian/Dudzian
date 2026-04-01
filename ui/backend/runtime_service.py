@@ -1491,6 +1491,7 @@ class RuntimeService(QObject):
         self._sync_source_selector_from_runtime_state()
         label = self._source_selector.current_feed_label()
         mode = self._source_selector.current_feed_mode()
+        adapter = self._snapshot_feed_adapter_label(mode)
         latency_value = latency_p95
         if latency_value is None:
             candidate = payload.get("p95_ms")
@@ -1501,6 +1502,7 @@ class RuntimeService(QObject):
         snapshot: dict[str, object] = {
             "status": str(payload.get("status", self._feed_health.get("status", "unknown"))),
             "mode": mode,
+            "adapter": adapter,
             "label": label,
             "reconnects": int(payload.get("reconnects", self._feed_reconnects)),
             "nextRetrySeconds": payload.get("nextRetrySeconds"),
@@ -1530,6 +1532,16 @@ class RuntimeService(QObject):
         if snapshot != self._feed_transport_snapshot:
             self._feed_transport_snapshot = snapshot
             self.feedTransportSnapshotChanged.emit()
+
+    @staticmethod
+    def _snapshot_feed_adapter_label(mode: str) -> str:
+        if mode == "grpc":
+            return "grpc"
+        if mode == "file":
+            return "jsonl"
+        if mode == "demo":
+            return "demo"
+        return "unknown"
 
     def _set_channel_status(
         self,
