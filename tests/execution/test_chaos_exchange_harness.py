@@ -88,7 +88,9 @@ def test_harness_partial_fill_then_cancel_ack() -> None:
     partial = ChaosEvent("fill", "ord-3", "partially_filled", filled_quantity=0.4, avg_price=102.0)
     cancelled = ChaosEvent("cancel", "ord-3", "cancelled", filled_quantity=0.4, avg_price=102.0)
     adapter = _build_adapter(
-        place_steps=(ChaosOrderStep(action="ack", order_id="ord-3", status="accepted", events=(partial,)),),
+        place_steps=(
+            ChaosOrderStep(action="ack", order_id="ord-3", status="accepted", events=(partial,)),
+        ),
         cancel_steps=(ChaosCancelStep(action="ack", events=(cancelled,)),),
     )
 

@@ -40,7 +40,13 @@ def test_paper_broker_duplicate_order_callback_is_idempotent(paper_broker: Paper
     bus.subscribe(EventType.ORDER_STATUS, lambda event: _capture_payloads(event, statuses))
 
     bus.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "price": 100.0})
-    payload = {"symbol": "BTCUSDT", "side": "BUY", "qty": 1.0, "price": 100.0, "client_order_id": "dup-1"}
+    payload = {
+        "symbol": "BTCUSDT",
+        "side": "BUY",
+        "qty": 1.0,
+        "price": 100.0,
+        "client_order_id": "dup-1",
+    }
     bus.publish(EventType.ORDER_REQUEST, payload)
     bus.publish(EventType.ORDER_REQUEST, payload)
 

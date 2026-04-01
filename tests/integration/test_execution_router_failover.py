@@ -21,7 +21,12 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.observability.metrics import MetricsRegistry
-from tests._exchange_adapter_helpers import ChaosCancelStep, ChaosEvent, ChaosExchangeAdapter, ChaosOrderStep
+from tests._exchange_adapter_helpers import (
+    ChaosCancelStep,
+    ChaosEvent,
+    ChaosExchangeAdapter,
+    ChaosOrderStep,
+)
 
 
 class DummyStream:
@@ -337,7 +342,9 @@ def test_live_router_timeout_uncertain_retry_reconciles_without_double_execution
         adapter.advance()
         first_effect = adapter.next_private_event()
         second_effect = adapter.next_private_event()
-        reconciled = adapter.fetch_order_by_client_id(request.client_order_id, symbol=request.symbol)
+        reconciled = adapter.fetch_order_by_client_id(
+            request.client_order_id, symbol=request.symbol
+        )
     finally:
         router.close()
 
