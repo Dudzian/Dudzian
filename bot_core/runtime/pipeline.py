@@ -69,9 +69,7 @@ from bot_core.optimization import (
     StrategyOptimizer,
 )
 from bot_core.portfolio import (
-    CopyTradingFollowerConfig,
     MultiPortfolioScheduler,
-    PortfolioBinding,
     PortfolioDecision,
     PortfolioDecisionLog,
     PortfolioGovernor,
@@ -3556,6 +3554,227 @@ def _response_to_snapshots(symbol: str, response: object) -> list[MarketSnapshot
     return snapshots
 
 
+def _bootstrap_portfolio_coordinator(
+    *,
+    scheduler: MultiStrategyScheduler,
+    scheduler_cfg: MultiStrategySchedulerConfig,
+    bootstrap_ctx: BootstrapContext,
+    core_config: CoreConfig,
+    signal_sink: StrategySignalSink,
+    market_intel: MarketIntelAggregator,
+    environment: EnvironmentConfig,
+    environment_name: str,
+    resolved_scheduler_name: str,
+) -> PortfolioRuntimeCoordinator | None:
+    governor_name = getattr(scheduler_cfg, "portfolio_governor", None)
+    if not governor_name:
+        return None
+
+    governor_cfg = core_config.portfolio_governors.get(governor_name)
+    if governor_cfg is None:
+        raise KeyError(
+            f"Scheduler {resolved_scheduler_name} wskazuje PortfolioGovernora '{governor_name}', którego nie ma w konfiguracji"
+        )
+
+    decision_log = (
+        bootstrap_ctx.portfolio_decision_log
+        if getattr(bootstrap_ctx, "portfolio_decision_log", None) is not None
+        else PortfolioDecisionLog()
+    )
+    governor = PortfolioGovernor(governor_cfg, decision_log=decision_log)
+
+    asset_symbols = [asset.symbol for asset in governor_cfg.assets]
+    interval = governor_cfg.market_intel_interval or "1h"
+    lookback = int(getattr(governor_cfg, "market_intel_lookback_bars", 168) or 168)
+    inputs_cfg = getattr(scheduler_cfg, "portfolio_inputs", None)
+    data_cache_root = Path(environment.data_cache_path).expanduser()
+    fallback_candidates: tuple[Path | None, ...] = (data_cache_root, data_cache_root.parent)
+    market_intel_cfg = getattr(core_config, "market_intel", None)
+    stress_lab_cfg = getattr(core_config, "stress_lab", None)
+    stage6_dirs: list[Path | None] = []
+    if market_intel_cfg is not None:
+        stage6_dirs.append(_to_path(getattr(market_intel_cfg, "output_directory", None)))
+    if stress_lab_cfg is not None:
+        stage6_dirs.append(_to_path(getattr(stress_lab_cfg, "report_directory", None)))
+    fallback_directories = _unique_paths((*fallback_candidates, *stage6_dirs))
+
+    slo_provider = None
+    stress_provider = None
+    stress_age: timedelta | None = _minutes_to_timedelta(None, default_minutes=240.0)
+    if inputs_cfg is not None:
+        slo_age = _minutes_to_timedelta(
+            getattr(inputs_cfg, "slo_max_age_minutes", None),
+            default_minutes=120.0,
+        )
+        stress_age = _minutes_to_timedelta(
+            getattr(inputs_cfg, "stress_max_age_minutes", None),
+            default_minutes=240.0,
+        )
+        slo_path = getattr(inputs_cfg, "slo_report_path", None)
+        if slo_path:
+            slo_provider = build_slo_status_provider(
+                slo_path,
+                fallback_directories=fallback_directories,
+                max_age=slo_age,
+            )
+        stress_path = getattr(inputs_cfg, "stress_lab_report_path", None)
+        if stress_path:
+            stress_provider = build_stress_override_provider(
+                stress_path,
+                fallback_directories=fallback_directories,
+                max_age=stress_age,
+            )
+    if stress_provider is None:
+        overrides = _load_stress_overrides_from_reports(
+            governor_name,
+            fallback_directories,
+            max_age=stress_age,
+        )
+        if overrides:
+            cached_overrides = tuple(overrides)
+
+            def _fallback_stress_provider() -> Sequence[StressOverrideRecommendation]:
+                return cached_overrides
+
+            stress_provider = _fallback_stress_provider
+
+    def _market_data_provider() -> Mapping[str, MarketIntelSnapshot]:
+        if not asset_symbols:
+            return {}
+        queries = [
+            MarketIntelQuery(symbol=symbol, interval=interval, lookback_bars=lookback)
+            for symbol in asset_symbols
+        ]
+        snapshots: dict[str, MarketIntelSnapshot] = {}
+        fallback_snapshots: Mapping[str, MarketIntelSnapshot] | None = None
+        try:
+            snapshots.update(market_intel.build_many(queries))
+        except Exception:  # pragma: no cover - diagnostyka danych
+            _LOGGER.exception("PortfolioGovernor: błąd budowania metryk Market Intel")
+        missing_symbols = [query.symbol for query in queries if query.symbol not in snapshots]
+        if missing_symbols and market_intel_cfg is not None:
+            fallback_snapshots = _load_market_intel_snapshots_from_reports(
+                governor_name,
+                market_intel_cfg,
+                fallback_directories,
+            )
+            for symbol in missing_symbols:
+                if fallback_snapshots and symbol in fallback_snapshots:
+                    snapshots[symbol] = fallback_snapshots[symbol]
+        if len(snapshots) < len(queries):
+            for query in queries:
+                if query.symbol in snapshots:
+                    continue
+                try:
+                    snapshots[query.symbol] = market_intel.build_snapshot(query)
+                    continue
+                except Exception:
+                    _LOGGER.debug("Brak metryk Market Intel dla %s", query.symbol, exc_info=True)
+                if fallback_snapshots is None and market_intel_cfg is not None:
+                    fallback_snapshots = _load_market_intel_snapshots_from_reports(
+                        governor_name,
+                        market_intel_cfg,
+                        fallback_directories,
+                    )
+                if fallback_snapshots and query.symbol in fallback_snapshots:
+                    snapshots[query.symbol] = fallback_snapshots[query.symbol]
+        if snapshots:
+            return snapshots
+        if market_intel_cfg is not None:
+            fallback_snapshots = _load_market_intel_snapshots_from_reports(
+                governor_name,
+                market_intel_cfg,
+                fallback_directories,
+            )
+            if fallback_snapshots:
+                return fallback_snapshots
+        return {}
+
+    def _allocation_provider() -> tuple[float, Mapping[str, float]]:
+        latest: dict[str, float] = {symbol: 0.0 for symbol in asset_symbols}
+        for _, signals in signal_sink.export():
+            for signal in signals:
+                if signal.symbol not in latest:
+                    continue
+                weight = signal.metadata.get("current_allocation")
+                if weight is None:
+                    continue
+                try:
+                    latest[signal.symbol] = float(weight)
+                except (TypeError, ValueError):  # pragma: no cover - diagnostyka metadanych
+                    _LOGGER.debug(
+                        "Niepoprawna wartość current_allocation=%s dla %s",
+                        weight,
+                        signal.symbol,
+                        exc_info=True,
+                    )
+                    continue
+        return 1.0, latest
+
+    def _metadata_provider() -> Mapping[str, object]:
+        return {
+            "environment": environment_name,
+            "scheduler": resolved_scheduler_name,
+            "governor": governor_name,
+        }
+
+    portfolio_coordinator = PortfolioRuntimeCoordinator(
+        governor,
+        allocation_provider=_allocation_provider,
+        market_data_provider=_market_data_provider,
+        stress_override_provider=stress_provider,
+        slo_status_provider=slo_provider,
+        metadata_provider=_metadata_provider,
+    )
+    scheduler.attach_portfolio_coordinator(portfolio_coordinator)
+
+    dynamic_policy_cfg = getattr(scheduler_cfg, "dynamic_capital_policy", None)
+    if dynamic_policy_cfg and isinstance(governor, StrategyPortfolioGovernor):
+        label = None
+        if isinstance(dynamic_policy_cfg, Mapping):
+            label = dynamic_policy_cfg.get("label")
+        elif hasattr(dynamic_policy_cfg, "label"):
+            label = getattr(dynamic_policy_cfg, "label")
+        label_text = str(label or "governor_dynamic")
+
+        def _sync_capital_policy(_decision: PortfolioDecision) -> None:
+            if hasattr(governor, "current_weights_snapshot"):
+                weights = governor.current_weights_snapshot()
+            else:
+                attr = getattr(governor, "current_weights", None)
+                if callable(attr):
+                    weights = dict(attr())
+                elif isinstance(attr, Mapping):
+                    weights = dict(attr)
+                else:
+                    weights = {}
+            if not weights:
+                return
+            policy = FixedWeightAllocation(dict(weights), label=label_text)
+            snapshot_builder = getattr(governor, "dynamic_policy_snapshot", None)
+            if callable(snapshot_builder):
+                try:
+                    policy.metadata = snapshot_builder()
+                except Exception:  # pragma: no cover - diagnostyka metadanych
+                    _LOGGER.debug(
+                        "PortfolioGovernor: nie udało się zbudować migawki dynamicznej polityki",
+                        exc_info=True,
+                    )
+            scheduler.set_capital_policy(policy)
+
+        portfolio_coordinator.set_capital_policy_listener(_sync_capital_policy)
+
+    if bootstrap_ctx.tco_reporter is not None:
+        reporter = bootstrap_ctx.tco_reporter
+        consumer = getattr(governor, "update_costs_from_report", None)
+        if callable(consumer):
+            portfolio_coordinator.set_tco_report_hooks(
+                provider=lambda: reporter.build_report(),
+                consumer=consumer,
+            )
+    return portfolio_coordinator
+
+
 def build_multi_strategy_runtime(
     *,
     environment_name: str,
@@ -3710,217 +3929,17 @@ def build_multi_strategy_runtime(
     signal_limits = getattr(scheduler_cfg, "signal_limits", None)
     _RISK_BOOTSTRAPPER.bind_scheduler_limits(scheduler, signal_limits=signal_limits)
 
-    portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
-    governor_name = getattr(scheduler_cfg, "portfolio_governor", None)
-    if governor_name:
-        governor_cfg = core_config.portfolio_governors.get(governor_name)
-        if governor_cfg is None:
-            raise KeyError(
-                f"Scheduler {resolved_scheduler_name} wskazuje PortfolioGovernora '{governor_name}', którego nie ma w konfiguracji"
-            )
-
-        decision_log = (
-            bootstrap_ctx.portfolio_decision_log
-            if getattr(bootstrap_ctx, "portfolio_decision_log", None) is not None
-            else PortfolioDecisionLog()
-        )
-        governor = PortfolioGovernor(governor_cfg, decision_log=decision_log)
-
-        asset_symbols = [asset.symbol for asset in governor_cfg.assets]
-        interval = governor_cfg.market_intel_interval or "1h"
-        lookback = int(getattr(governor_cfg, "market_intel_lookback_bars", 168) or 168)
-        inputs_cfg = getattr(scheduler_cfg, "portfolio_inputs", None)
-        data_cache_root = Path(environment.data_cache_path).expanduser()
-        fallback_candidates: tuple[Path | None, ...] = (
-            data_cache_root,
-            data_cache_root.parent,
-        )
-        market_intel_cfg = getattr(core_config, "market_intel", None)
-        stress_lab_cfg = getattr(core_config, "stress_lab", None)
-        stage6_dirs: list[Path | None] = []
-        if market_intel_cfg is not None:
-            stage6_dirs.append(_to_path(getattr(market_intel_cfg, "output_directory", None)))
-        if stress_lab_cfg is not None:
-            stage6_dirs.append(_to_path(getattr(stress_lab_cfg, "report_directory", None)))
-        fallback_directories = _unique_paths((*fallback_candidates, *stage6_dirs))
-
-        slo_provider = None
-        stress_provider = None
-        slo_age: timedelta | None = None
-        stress_age: timedelta | None = _minutes_to_timedelta(None, default_minutes=240.0)
-        if inputs_cfg is not None:
-            slo_age = _minutes_to_timedelta(
-                getattr(inputs_cfg, "slo_max_age_minutes", None),
-                default_minutes=120.0,
-            )
-            stress_age = _minutes_to_timedelta(
-                getattr(inputs_cfg, "stress_max_age_minutes", None),
-                default_minutes=240.0,
-            )
-            slo_path = getattr(inputs_cfg, "slo_report_path", None)
-            if slo_path:
-                slo_provider = build_slo_status_provider(
-                    slo_path,
-                    fallback_directories=fallback_directories,
-                    max_age=slo_age,
-                )
-            stress_path = getattr(inputs_cfg, "stress_lab_report_path", None)
-            if stress_path:
-                stress_provider = build_stress_override_provider(
-                    stress_path,
-                    fallback_directories=fallback_directories,
-                    max_age=stress_age,
-                )
-        if stress_provider is None:
-            overrides = _load_stress_overrides_from_reports(
-                governor_name,
-                fallback_directories,
-                max_age=stress_age,
-            )
-            if overrides:
-                cached_overrides = tuple(overrides)
-
-                def _fallback_stress_provider() -> Sequence[StressOverrideRecommendation]:
-                    return cached_overrides
-
-                stress_provider = _fallback_stress_provider
-
-        def _market_data_provider() -> Mapping[str, MarketIntelSnapshot]:
-            if not asset_symbols:
-                return {}
-            queries = [
-                MarketIntelQuery(symbol=symbol, interval=interval, lookback_bars=lookback)
-                for symbol in asset_symbols
-            ]
-            snapshots: dict[str, MarketIntelSnapshot] = {}
-            fallback_snapshots: Mapping[str, MarketIntelSnapshot] | None = None
-            try:
-                snapshots.update(market_intel.build_many(queries))
-            except Exception:  # pragma: no cover - diagnostyka danych
-                _LOGGER.exception("PortfolioGovernor: błąd budowania metryk Market Intel")
-            missing_symbols = [query.symbol for query in queries if query.symbol not in snapshots]
-            if missing_symbols and market_intel_cfg is not None:
-                fallback_snapshots = _load_market_intel_snapshots_from_reports(
-                    governor_name,
-                    market_intel_cfg,
-                    fallback_directories,
-                )
-                for symbol in missing_symbols:
-                    if fallback_snapshots and symbol in fallback_snapshots:
-                        snapshots[symbol] = fallback_snapshots[symbol]
-            if len(snapshots) < len(queries):
-                for query in queries:
-                    if query.symbol in snapshots:
-                        continue
-                    try:
-                        snapshots[query.symbol] = market_intel.build_snapshot(query)
-                        continue
-                    except Exception:
-                        _LOGGER.debug(
-                            "Brak metryk Market Intel dla %s", query.symbol, exc_info=True
-                        )
-                    if fallback_snapshots is None and market_intel_cfg is not None:
-                        fallback_snapshots = _load_market_intel_snapshots_from_reports(
-                            governor_name,
-                            market_intel_cfg,
-                            fallback_directories,
-                        )
-                    if fallback_snapshots and query.symbol in fallback_snapshots:
-                        snapshots[query.symbol] = fallback_snapshots[query.symbol]
-            if snapshots:
-                return snapshots
-            if market_intel_cfg is not None:
-                fallback_snapshots = _load_market_intel_snapshots_from_reports(
-                    governor_name,
-                    market_intel_cfg,
-                    fallback_directories,
-                )
-                if fallback_snapshots:
-                    return fallback_snapshots
-            return {}
-
-        def _allocation_provider() -> tuple[float, Mapping[str, float]]:
-            latest: dict[str, float] = {symbol: 0.0 for symbol in asset_symbols}
-            for _, signals in signal_sink.export():
-                for signal in signals:
-                    if signal.symbol not in latest:
-                        continue
-                    weight = signal.metadata.get("current_allocation")
-                    if weight is None:
-                        continue
-                    try:
-                        latest[signal.symbol] = float(weight)
-                    except (TypeError, ValueError):  # pragma: no cover - diagnostyka metadanych
-                        _LOGGER.debug(
-                            "Niepoprawna wartość current_allocation=%s dla %s",
-                            weight,
-                            signal.symbol,
-                            exc_info=True,
-                        )
-                        continue
-            return 1.0, latest
-
-        def _metadata_provider() -> Mapping[str, object]:
-            return {
-                "environment": environment_name,
-                "scheduler": resolved_scheduler_name,
-                "governor": governor_name,
-            }
-
-        portfolio_coordinator = PortfolioRuntimeCoordinator(
-            governor,
-            allocation_provider=_allocation_provider,
-            market_data_provider=_market_data_provider,
-            stress_override_provider=stress_provider,
-            slo_status_provider=slo_provider,
-            metadata_provider=_metadata_provider,
-        )
-        scheduler.attach_portfolio_coordinator(portfolio_coordinator)
-
-        dynamic_policy_cfg = getattr(scheduler_cfg, "dynamic_capital_policy", None)
-        if dynamic_policy_cfg and isinstance(governor, StrategyPortfolioGovernor):
-            label = None
-            if isinstance(dynamic_policy_cfg, Mapping):
-                label = dynamic_policy_cfg.get("label")
-            elif hasattr(dynamic_policy_cfg, "label"):
-                label = getattr(dynamic_policy_cfg, "label")
-            label_text = str(label or "governor_dynamic")
-
-            def _sync_capital_policy(_decision: PortfolioDecision) -> None:
-                if hasattr(governor, "current_weights_snapshot"):
-                    weights = governor.current_weights_snapshot()
-                else:
-                    attr = getattr(governor, "current_weights", None)
-                    if callable(attr):
-                        weights = dict(attr())
-                    elif isinstance(attr, Mapping):
-                        weights = dict(attr)
-                    else:
-                        weights = {}
-                if not weights:
-                    return
-                policy = FixedWeightAllocation(dict(weights), label=label_text)
-                snapshot_builder = getattr(governor, "dynamic_policy_snapshot", None)
-                if callable(snapshot_builder):
-                    try:
-                        policy.metadata = snapshot_builder()
-                    except Exception:  # pragma: no cover - diagnostyka metadanych
-                        _LOGGER.debug(
-                            "PortfolioGovernor: nie udało się zbudować migawki dynamicznej polityki",
-                            exc_info=True,
-                        )
-                scheduler.set_capital_policy(policy)
-
-            portfolio_coordinator.set_capital_policy_listener(_sync_capital_policy)
-
-        if portfolio_coordinator is not None and bootstrap_ctx.tco_reporter is not None:
-            reporter = bootstrap_ctx.tco_reporter
-            consumer = getattr(governor, "update_costs_from_report", None)
-            if callable(consumer):
-                portfolio_coordinator.set_tco_report_hooks(
-                    provider=lambda: reporter.build_report(),
-                    consumer=consumer,
-                )
+    portfolio_coordinator = _bootstrap_portfolio_coordinator(
+        scheduler=scheduler,
+        scheduler_cfg=scheduler_cfg,
+        bootstrap_ctx=bootstrap_ctx,
+        core_config=core_config,
+        signal_sink=signal_sink,
+        market_intel=market_intel,
+        environment=environment,
+        environment_name=environment_name,
+        resolved_scheduler_name=resolved_scheduler_name,
+    )
 
     _STRATEGY_BOOTSTRAPPER.validate_schedule_strategies(
         schedules=scheduler_cfg.schedules,
@@ -4431,22 +4450,6 @@ def build_live_multi_strategy_runtime(
         prefer_offline=False,
         environment_name=environment_name,
     )
-
-
-def _iter_portfolio_entries(definition: object) -> Sequence[Mapping[str, object]]:
-    return _PIPELINE_CONFIG_LOADER.resolve_multi_portfolio_entries(definition)
-
-
-def _build_follower_configs(raw_followers: object) -> tuple[CopyTradingFollowerConfig, ...]:
-    return _PIPELINE_CONFIG_LOADER.build_follower_configs(raw_followers)
-
-
-def _normalize_fallbacks(raw_fallbacks: object) -> tuple[str, ...]:
-    return _PIPELINE_CONFIG_LOADER.normalize_fallbacks(raw_fallbacks)
-
-
-def _build_portfolio_binding(entry: Mapping[str, object]) -> PortfolioBinding:
-    return _PIPELINE_CONFIG_LOADER.build_portfolio_binding(entry)
 
 
 def build_multi_portfolio_scheduler_from_config(
