@@ -21,6 +21,7 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.observability.metrics import MetricsRegistry
+from tests._exchange_adapter_helpers import ChaosCancelStep, ChaosEvent, ChaosExchangeAdapter, ChaosOrderStep
 
 
 class DummyStream:
@@ -212,3 +213,68 @@ def test_paper_service_respects_market_constraints(execution_context: ExecutionC
 
     ledger_entries = list(paper.ledger())
     assert ledger_entries, "Paper router should record ledger entries for executed trades"
+
+
+@pytest.mark.integration
+def test_live_router_can_be_tested_with_chaos_adapter_partial_fill_then_cancel(
+    execution_context: ExecutionContext,
+) -> None:
+    adapter = ChaosExchangeAdapter(
+        ExchangeCredentials(key_id="chaos-primary"),
+        place_steps=(
+            ChaosOrderStep(
+                action="ack",
+                order_id="chaos-1",
+                status="accepted",
+                events=(
+                    ChaosEvent(
+                        event_type="fill",
+                        order_id="chaos-1",
+                        status="partially_filled",
+                        filled_quantity=0.25,
+                        avg_price=100.0,
+                    ),
+                ),
+            ),
+        ),
+        cancel_steps=(
+            ChaosCancelStep(
+                action="ack",
+                events=(
+                    ChaosEvent(
+                        event_type="cancel",
+                        order_id="chaos-1",
+                        status="cancelled",
+                        filled_quantity=0.25,
+                        avg_price=100.0,
+                    ),
+                ),
+            ),
+        ),
+    )
+    router = LiveExecutionRouter(
+        adapters={"primary": adapter},
+        routes=[RouteDefinition(name="default", exchanges=("primary",))],
+        default_route="default",
+    )
+    request = OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="market",
+        client_order_id="chaos-cid-1",
+    )
+
+    try:
+        result = router.execute(request, execution_context)
+        partial = adapter.next_private_event()
+        router.cancel(result.order_id, execution_context)
+        cancel = adapter.next_private_event()
+    finally:
+        router.close()
+
+    assert partial is not None
+    assert partial.status == "partially_filled"
+    assert cancel is not None
+    assert cancel.status == "cancelled"
+    assert result.order_id in adapter.cancelled
