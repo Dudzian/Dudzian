@@ -31,6 +31,25 @@ def test_paper_broker_executes_and_tracks_state(paper_broker: PaperBroker) -> No
     assert pnls, "Powinien zostać opublikowany przynajmniej jeden update PnL"
 
 
+def test_paper_broker_duplicate_order_callback_is_idempotent(paper_broker: PaperBroker) -> None:
+    bus = paper_broker.bus
+    fills: List[Dict[str, Any]] = []
+    statuses: List[Dict[str, Any]] = []
+
+    bus.subscribe(EventType.TRADE_EXECUTED, lambda event: _capture_payloads(event, fills))
+    bus.subscribe(EventType.ORDER_STATUS, lambda event: _capture_payloads(event, statuses))
+
+    bus.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "price": 100.0})
+    payload = {"symbol": "BTCUSDT", "side": "BUY", "qty": 1.0, "price": 100.0, "client_order_id": "dup-1"}
+    bus.publish(EventType.ORDER_REQUEST, payload)
+    bus.publish(EventType.ORDER_REQUEST, payload)
+
+    assert paper_broker.position_qty == pytest.approx(1.0)
+    assert len(fills) == 1
+    assert len(statuses) == 1
+    assert statuses[0]["order_id"] == "dup-1"
+
+
 def _capture_payloads(
     event: Event | Iterable[Event] | None, container: List[Dict[str, Any]]
 ) -> None:
