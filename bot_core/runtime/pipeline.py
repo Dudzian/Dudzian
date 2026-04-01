@@ -47,7 +47,6 @@ from bot_core.config.models import (
     RuntimeOptimizationSettings,
     StrategyOptimizationTaskConfig,
 )
-from bot_core.config.loader import load_core_config
 from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
@@ -118,6 +117,7 @@ from bot_core.runtime.portfolio_inputs import (
 )
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 from bot_core.runtime.controller import DailyTrendController
+from bot_core.runtime.pipeline_config_loader import PipelineConfigLoader
 from bot_core.security import SecretManager
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
 from bot_core.strategies.catalog import (
@@ -161,6 +161,7 @@ _DEFAULT_OHLCV_COLUMNS: tuple[str, ...] = (
 _LOGGER = logging.getLogger(__name__)
 _TEST_MODE_ENV = "DUDZIAN_TEST_MODE"
 _PIPELINE_THREAD_NAME = "PipelineStream"
+_PIPELINE_CONFIG_LOADER = PipelineConfigLoader()
 
 
 def _is_test_mode_enabled() -> bool:
@@ -3665,13 +3666,12 @@ def build_multi_strategy_runtime(
             raise RuntimeError(str(exc)) from exc
     core_config = bootstrap_ctx.core_config
     environment = bootstrap_ctx.environment
-    scheduler_configs = getattr(core_config, "multi_strategy_schedulers", {})
-    if not scheduler_configs:
-        raise ValueError("Brak zdefiniowanych schedulerów multi-strategy w konfiguracji")
-    resolved_scheduler_name = scheduler_name or next(iter(scheduler_configs))
-    scheduler_cfg = scheduler_configs.get(resolved_scheduler_name)
-    if scheduler_cfg is None:
-        raise KeyError(f"Nie znaleziono scheduler-a {resolved_scheduler_name}")
+    resolved_scheduler = _PIPELINE_CONFIG_LOADER.resolve_multi_strategy_scheduler(
+        core_config=core_config,
+        scheduler_name=scheduler_name,
+    )
+    resolved_scheduler_name = resolved_scheduler.scheduler_name
+    scheduler_cfg = resolved_scheduler.scheduler_config
 
     paper_settings = _normalize_paper_settings(environment)
     allowed_quotes = paper_settings["allowed_quotes"]
@@ -4339,7 +4339,7 @@ def describe_multi_strategy_configuration(
     """Opisuje konfigurację scheduler-a multi-strategy bez uruchamiania runtime."""
 
     resolved_catalog = catalog or DEFAULT_STRATEGY_CATALOG
-    core_config = load_core_config(config_path)
+    core_config = _PIPELINE_CONFIG_LOADER.load_core_config(config_path)
     scheduler_configs = getattr(core_config, "multi_strategy_schedulers", {})
     if not scheduler_configs:
         raise ValueError("Konfiguracja nie zawiera sekcji multi_strategy_schedulers.")
@@ -4647,7 +4647,7 @@ def _build_mode_runtime(
     prefer_offline: bool | None,
     environment_name: str | None,
 ) -> MultiStrategyRuntime:
-    core_config = load_core_config(config_path)
+    core_config = _PIPELINE_CONFIG_LOADER.load_core_config(config_path)
     resolved_env = environment_name or _resolve_environment_name_for_mode(
         core_config,
         aliases=environment_aliases,
@@ -4738,102 +4738,19 @@ def build_live_multi_strategy_runtime(
 
 
 def _iter_portfolio_entries(definition: object) -> Sequence[Mapping[str, object]]:
-    if definition is None:
-        return ()
-    if isinstance(definition, Mapping):
-        if "portfolios" in definition:
-            payload = definition["portfolios"]
-            if isinstance(payload, Mapping):
-                return [dict(value) for value in payload.values() if isinstance(value, Mapping)]
-            if isinstance(payload, Sequence):
-                return [dict(entry) for entry in payload if isinstance(entry, Mapping)]
-        return [dict(definition)]
-    if isinstance(definition, Sequence):
-        entries: list[Mapping[str, object]] = []
-        for item in definition:
-            if isinstance(item, Mapping):
-                entries.append(dict(item))
-        return entries
-    if hasattr(definition, "portfolios"):
-        payload = getattr(definition, "portfolios")
-        return _iter_portfolio_entries(payload)
-    raise TypeError("Unsupported portfolio definition structure")
+    return _PIPELINE_CONFIG_LOADER.resolve_multi_portfolio_entries(definition)
 
 
 def _build_follower_configs(raw_followers: object) -> tuple[CopyTradingFollowerConfig, ...]:
-    if raw_followers in (None, ""):
-        return ()
-    if isinstance(raw_followers, Mapping):
-        raw_sequence = [raw_followers]
-    elif isinstance(raw_followers, Sequence) and not isinstance(raw_followers, (str, bytes)):
-        raw_sequence = list(raw_followers)
-    else:
-        raise TypeError("Followers must be a mapping or a sequence of mappings")
-
-    followers: list[CopyTradingFollowerConfig] = []
-    for entry in raw_sequence:
-        if not isinstance(entry, Mapping):
-            continue
-        portfolio_id = str(entry.get("portfolio_id") or entry.get("id") or "").strip()
-        if not portfolio_id:
-            continue
-        scaling = float(entry.get("scaling", 1.0))
-        risk_multiplier = float(entry.get("risk_multiplier", entry.get("risk", 1.0)))
-        enabled = bool(entry.get("enabled", True))
-        allow_partial = bool(entry.get("allow_partial", True))
-        max_position_value = entry.get("max_position_value")
-        follower = CopyTradingFollowerConfig(
-            portfolio_id=portfolio_id,
-            scaling=scaling,
-            risk_multiplier=risk_multiplier,
-            enabled=enabled,
-            max_position_value=float(max_position_value)
-            if max_position_value not in (None, "")
-            else None,
-            allow_partial=allow_partial,
-        )
-        followers.append(follower)
-    return tuple(followers)
+    return _PIPELINE_CONFIG_LOADER.build_follower_configs(raw_followers)
 
 
 def _normalize_fallbacks(raw_fallbacks: object) -> tuple[str, ...]:
-    if raw_fallbacks in (None, ""):
-        return ()
-    if isinstance(raw_fallbacks, str):
-        entries = [raw_fallbacks]
-    elif isinstance(raw_fallbacks, Sequence):
-        entries = list(raw_fallbacks)
-    else:
-        raise TypeError("Fallback presets must be a string or sequence of strings")
-    normalized: list[str] = []
-    for item in entries:
-        text = str(item).strip()
-        if text and text not in normalized:
-            normalized.append(text)
-    return tuple(normalized)
+    return _PIPELINE_CONFIG_LOADER.normalize_fallbacks(raw_fallbacks)
 
 
 def _build_portfolio_binding(entry: Mapping[str, object]) -> PortfolioBinding:
-    portfolio_id = str(entry.get("portfolio_id") or entry.get("id") or "").strip()
-    if not portfolio_id:
-        raise ValueError("Portfolio binding must define 'portfolio_id'")
-    primary = str(entry.get("primary_preset") or entry.get("preset") or "").strip()
-    if not primary:
-        raise ValueError(f"Portfolio {portfolio_id} missing primary preset")
-    fallback = _normalize_fallbacks(entry.get("fallback_presets") or entry.get("fallback"))
-    followers = _build_follower_configs(entry.get("followers"))
-    cooldown_value = entry.get("rebalance_cooldown_seconds")
-    if cooldown_value in (None, ""):
-        cooldown = timedelta(minutes=5)
-    else:
-        cooldown = timedelta(seconds=float(cooldown_value))
-    return PortfolioBinding(
-        portfolio_id=portfolio_id,
-        primary_preset=primary,
-        fallback_presets=fallback,
-        followers=followers,
-        rebalance_cooldown=cooldown,
-    )
+    return _PIPELINE_CONFIG_LOADER.build_portfolio_binding(entry)
 
 
 def build_multi_portfolio_scheduler_from_config(
@@ -4854,9 +4771,9 @@ def build_multi_portfolio_scheduler_from_config(
         health_monitor=health_monitor,
         clock=clock,
     )
-    entries = _iter_portfolio_entries(definitions)
+    entries = _PIPELINE_CONFIG_LOADER.resolve_multi_portfolio_entries(definitions)
     for entry in entries:
-        binding = _build_portfolio_binding(entry)
+        binding = _PIPELINE_CONFIG_LOADER.build_portfolio_binding(entry)
         scheduler.register_portfolio(binding)
     return scheduler
 
