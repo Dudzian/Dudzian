@@ -14,10 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-try:  # Python 3.11+
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - środowiska <3.11
-    import tomli as tomllib  # type: ignore[no-redef]
+from deploy.packaging._toml_compat import tomllib
 import zipfile
 
 

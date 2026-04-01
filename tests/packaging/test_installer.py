@@ -176,14 +176,14 @@ def test_prod_profile_rejects_demo_assets_path(tmp_path: Path) -> None:
 platform = "linux"
 
 [bundle]
-output_dir = "{(tmp_path / 'out').as_posix()}"
-work_dir = "{(tmp_path / 'work').as_posix()}"
-qt_dist = "{(demo_assets / 'ui').as_posix()}"
+output_dir = "{(tmp_path / "out").as_posix()}"
+work_dir = "{(tmp_path / "work").as_posix()}"
+qt_dist = "{(demo_assets / "ui").as_posix()}"
 include = [
-  "config={(demo_assets / 'config').as_posix()}",
+  "config={(demo_assets / "config").as_posix()}",
 ]
 wheels_extra = []
-metadata_path = "{(tmp_path / 'metadata.json').as_posix()}"
+metadata_path = "{(tmp_path / "metadata.json").as_posix()}"
 """
     (profiles_dir / "linux.toml").write_text(profile.strip() + "\n", encoding="utf-8")
 
@@ -209,16 +209,16 @@ def test_prod_profile_rejects_demo_wheels_extra(tmp_path: Path) -> None:
 platform = "linux"
 
 [bundle]
-output_dir = "{(tmp_path / 'out').as_posix()}"
-work_dir = "{(tmp_path / 'work').as_posix()}"
+output_dir = "{(tmp_path / "out").as_posix()}"
+work_dir = "{(tmp_path / "work").as_posix()}"
 qt_dist = "{external_assets.as_posix()}"
 include = [
   "config={external_assets.as_posix()}",
 ]
 wheels_extra = [
-  "{(demo_assets / 'wheels' / 'ccxt-4.0.0-py3-none-any.whl').as_posix()}",
+  "{(demo_assets / "wheels" / "ccxt-4.0.0-py3-none-any.whl").as_posix()}",
 ]
-metadata_path = "{(tmp_path / 'metadata.json').as_posix()}"
+metadata_path = "{(tmp_path / "metadata.json").as_posix()}"
 """
     (profiles_dir / "linux.toml").write_text(profile.strip() + "\n", encoding="utf-8")
 
@@ -250,8 +250,8 @@ def test_non_demo_profile_allows_assets_outside_demo_and_prod(tmp_path: Path) ->
 platform = "linux"
 
 [bundle]
-output_dir = "{(tmp_path / 'out').as_posix()}"
-work_dir = "{(tmp_path / 'work').as_posix()}"
+output_dir = "{(tmp_path / "out").as_posix()}"
+work_dir = "{(tmp_path / "work").as_posix()}"
 qt_dist = "{qt_dir.as_posix()}"
 include = [
   "config={config_dir.as_posix()}",
@@ -259,7 +259,7 @@ include = [
 wheels_extra = [
   "{wheel_path.as_posix()}",
 ]
-metadata_path = "{(tmp_path / 'metadata.json').as_posix()}"
+metadata_path = "{(tmp_path / "metadata.json").as_posix()}"
 """
     (profiles_dir / "linux.toml").write_text(profile.strip() + "\n", encoding="utf-8")
 

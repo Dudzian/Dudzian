@@ -16,6 +16,7 @@ from bot_core.config import load_core_config
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry
 
+
 # Scope jest pobierany z rzeczywistego runtime streamu przez gateway (`/stream/<adapter>/<scope>`).
 # W strict path nie odtwarzamy historycznego kształtu fixture (np. deribit=private),
 # tylko zapisujemy metryki zgodne z bieżącym źródłem danych runtime.
@@ -82,11 +83,15 @@ def _load_health_check_public_symbol(config_path: Path, environment_name: str) -
     return None
 
 
-def _load_snapshot_environment_configs(config_path: Path) -> Mapping[str, SnapshotEnvironmentConfig]:
+def _load_snapshot_environment_configs(
+    config_path: Path,
+) -> Mapping[str, SnapshotEnvironmentConfig]:
     try:
         core_config = load_core_config(config_path)
     except Exception as exc:
-        raise SnapshotFetchError(f"Nie udało się wczytać konfiguracji z {config_path}: {exc}") from exc
+        raise SnapshotFetchError(
+            f"Nie udało się wczytać konfiguracji z {config_path}: {exc}"
+        ) from exc
 
     environments: dict[str, SnapshotEnvironmentConfig] = {}
     for name, environment in core_config.environments.items():

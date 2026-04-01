@@ -19,6 +19,15 @@ def _load_installer_module(repo_root: Path, monkeypatch):
     packaging_module.build_pyinstaller_bundle = object()
     deploy_module.packaging = packaging_module
 
+    installer_profile_spec = importlib.util.spec_from_file_location(
+        "deploy.packaging.installer_profile",
+        repo_root / "deploy" / "packaging" / "installer_profile.py",
+    )
+    assert installer_profile_spec is not None and installer_profile_spec.loader is not None
+    installer_profile_module = importlib.util.module_from_spec(installer_profile_spec)
+    monkeypatch.setitem(sys.modules, "deploy.packaging.installer_profile", installer_profile_module)
+    installer_profile_spec.loader.exec_module(installer_profile_module)
+
     scripts_module = types.ModuleType("scripts")
     scripts_module.oem_provision_license = object()
 
