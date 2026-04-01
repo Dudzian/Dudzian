@@ -151,3 +151,69 @@ metadata_path = "dist/installers/meta.json"
 
     with pytest.raises(SystemExit, match="work_dir"):
         read_profile(profile_path)
+
+
+def test_read_profile_requires_pyinstaller_entrypoint_when_section_present(tmp_path: Path) -> None:
+    profile_path = tmp_path / "missing_pyinstaller_entrypoint.toml"
+    profile_path.write_text(
+        """
+platform = "linux"
+
+[pyinstaller]
+runtime_name = "bot_core_runtime"
+
+[bundle]
+output_dir = "dist/installers"
+work_dir = "build/installers"
+metadata_path = "dist/installers/meta.json"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="entrypoint"):
+        read_profile(profile_path)
+
+
+def test_read_profile_requires_briefcase_project_when_section_present(tmp_path: Path) -> None:
+    profile_path = tmp_path / "missing_briefcase_project.toml"
+    profile_path.write_text(
+        """
+platform = "linux"
+
+[briefcase]
+app = "Dudzian"
+
+[bundle]
+output_dir = "dist/installers"
+work_dir = "build/installers"
+metadata_path = "dist/installers/meta.json"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="project"):
+        read_profile(profile_path)
+
+
+def test_read_profile_requires_briefcase_app_when_section_present(tmp_path: Path) -> None:
+    profile_path = tmp_path / "missing_briefcase_app.toml"
+    profile_path.write_text(
+        """
+platform = "linux"
+
+[briefcase]
+project = "ui/briefcase"
+
+[bundle]
+output_dir = "dist/installers"
+work_dir = "build/installers"
+metadata_path = "dist/installers/meta.json"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="app"):
+        read_profile(profile_path)
