@@ -3057,6 +3057,7 @@ class RuntimeService(QObject):
         self._active_profile = state.profile
         self._active_log_path = state.log_path
         self._active_stream_label = state.stream_label
+        self._refresh_feed_transport_snapshot(self._feed_health, None)
 
     def _sync_source_selector_from_runtime_state(self) -> None:
         self._source_selector.set_state(
