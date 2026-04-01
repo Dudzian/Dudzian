@@ -279,6 +279,7 @@ class DesktopInstallerBuilder:
         if profile_path.parent.name == "demo":
             return
 
+        demo_root = (Path(__file__).resolve().parent / "assets" / "demo").resolve()
         prod_root = (Path(__file__).resolve().parent / "assets" / "prod").resolve()
         candidates: list[tuple[str, Path]] = []
         if qt_path is not None:
@@ -288,6 +289,11 @@ class DesktopInstallerBuilder:
 
         for label, candidate in candidates:
             resolved = candidate.resolve()
+            if resolved.is_relative_to(demo_root):
+                raise SystemExit(
+                    f"Profil prod nie może wskazywać na demo assets ({label}: {resolved}). "
+                    "Użyj jawnego profilu demo albo zasobów assets/prod."
+                )
             if not resolved.is_relative_to(prod_root):
                 continue
             if not resolved.exists():
