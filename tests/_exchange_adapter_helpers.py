@@ -174,6 +174,7 @@ class ChaosExchangeAdapter(ExchangeAdapter):
         self._released_events: Deque[ChaosEvent] = deque()
         self._delayed_events: list[tuple[int, ChaosEvent]] = []
         self._reconcile_by_client_order_id: dict[str, OrderResult] = {}
+        self._client_order_id_by_order_id: dict[str, str] = {}
         self._delayed_reconcile: list[tuple[str, _DelayedReconcile]] = []
 
     def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # noqa: D401, ARG002
@@ -280,13 +281,37 @@ class ChaosExchangeAdapter(ExchangeAdapter):
         client_order_id: str | None,
         release_after_ticks: int,
     ) -> None:
+        if client_order_id is None:
+            client_order_id = self._client_order_id_by_order_id.get(result.order_id)
+        else:
+            self._client_order_id_by_order_id[result.order_id] = client_order_id
         release_tick = self._current_tick + max(0, release_after_ticks)
         for event in events:
+            client_for_event = self._client_order_id_by_order_id.get(event.order_id, client_order_id)
+            if client_for_event is not None:
+                event_result = OrderResult(
+                    order_id=event.order_id,
+                    status=event.status,
+                    filled_quantity=event.filled_quantity,
+                    avg_price=event.avg_price,
+                    raw_response={"event_type": event.event_type, "source": event.source},
+                )
+                if release_tick <= self._current_tick:
+                    self._reconcile_by_client_order_id[client_for_event] = event_result
+                else:
+                    self._delayed_reconcile.append(
+                        (
+                            client_for_event,
+                            _DelayedReconcile(release_tick=release_tick, result=event_result),
+                        )
+                    )
             if release_tick <= self._current_tick:
                 self._released_events.append(event)
             else:
                 self._delayed_events.append((release_tick, event))
         if client_order_id is None:
+            return
+        if events:
             return
         if release_tick <= self._current_tick:
             self._reconcile_by_client_order_id[client_order_id] = result
