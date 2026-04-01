@@ -60,6 +60,7 @@ from .decision_payload_normalizer import (
     parse_runtime_decision_entry,
 )
 from .feed_health_tracker import FeedHealthTracker
+from .grpc_decision_stream_client import GrpcDecisionStreamClient
 from .qml_bridge import to_plain_dict, to_plain_list, to_plain_text, to_plain_value
 
 try:  # pragma: no cover - moduł może nie być dostępny w wersjach light
@@ -1143,6 +1144,7 @@ class RuntimeService(QObject):
         self._strategy_configs: list[dict[str, object]] = self._load_strategy_configs()
         self._risk_controls: dict[str, object] = self._load_risk_controls()
         self._grpc_thread: threading.Thread | None = None
+        self._grpc_client: GrpcDecisionStreamClient | None = None
         self._grpc_stop_event: threading.Event | None = None
         self._grpc_queue: "queue.Queue[tuple[str, object]] | None" = None
         self._grpc_timer: QTimer | None = None
@@ -2350,221 +2352,42 @@ class RuntimeService(QObject):
     def _start_grpc_stream(self, target: str, limit: int) -> None:
         if grpc is None:
             raise RuntimeError("Pakiet grpcio jest wymagany do połączenia z RuntimeService.")
-        try:
-            from bot_core.generated import trading_pb2, trading_pb2_grpc
-        except ImportError as exc:  # pragma: no cover - brak stubów
-            raise RuntimeError(
-                "Brak wygenerowanych stubów trading_pb2*_grpc – uruchom scripts/generate_trading_stubs.py"
-            ) from exc
 
-        self._grpc_stop_event = threading.Event()
-        self._grpc_queue = queue.Queue(maxsize=64)
+        def _load_grpc_stubs() -> tuple[object, object]:
+            try:
+                from bot_core.generated import trading_pb2, trading_pb2_grpc
+            except ImportError as exc:  # pragma: no cover - brak stubów
+                raise RuntimeError(
+                    "Brak wygenerowanych stubów trading_pb2*_grpc – uruchom scripts/generate_trading_stubs.py"
+                ) from exc
+            return trading_pb2, trading_pb2_grpc
+
+        self._grpc_limit = max(1, int(limit))
         self._grpc_target = target
         self._grpc_stream_active = True
-        self._grpc_limit = max(1, int(limit))
         self._decisions = []
         self._update_cycle_metrics({})
+        client = GrpcDecisionStreamClient(
+            target=target,
+            metadata=tuple(self._active_grpc_metadata),
+            ssl_credentials=self._grpc_ssl_credentials,
+            authority_override=self._grpc_authority_override,
+            limit=self._grpc_limit,
+            ready_timeout=self._grpc_ready_timeout,
+            retry_base=self._grpc_retry_base,
+            retry_multiplier=self._grpc_retry_multiplier,
+            retry_max=self._grpc_retry_max,
+            cycle_metrics_serializer=self._serialize_cycle_metrics,
+            grpc_module=grpc,
+            stubs_loader=_load_grpc_stubs,
+        )
+        self._grpc_client = client
+        self._grpc_queue = client.events_queue
+        self._grpc_stop_event = client.stop_event
         self._ensure_grpc_timer()
-        worker = threading.Thread(
-            target=self._grpc_worker,
-            args=(
-                target,
-                trading_pb2,
-                trading_pb2_grpc,
-                self._grpc_limit,
-                self._grpc_ready_timeout,
-                self._grpc_retry_base,
-                self._grpc_retry_multiplier,
-                self._grpc_retry_max,
-            ),
-            name="RuntimeServiceGrpc",
-            daemon=True,
-        )
-        self._grpc_thread = worker
-        worker.start()
+        client.start()
+        self._grpc_thread = client.thread
         self._start_ai_governor_stream()
-
-    def _grpc_worker(
-        self,
-        target: str,
-        trading_pb2,
-        trading_pb2_grpc,
-        limit: int,
-        ready_timeout: float,
-        retry_base: float,
-        retry_multiplier: float,
-        retry_max: float,
-    ) -> None:
-        queue_obj = self._grpc_queue
-        if queue_obj is None:
-            return
-        stop_event = self._grpc_stop_event
-        warn_rate_limit_seconds = 5.0
-        default_dropped_update_log_every = 100
-        default_dropped_requeue_log_every = 25
-        dropped_update_log_every = max(1, default_dropped_update_log_every)
-        dropped_requeue_log_every = max(1, default_dropped_requeue_log_every)
-        dropped_updates = 0
-        dropped_requeue_events = 0
-        last_deadline_warning = 0.0
-        last_requeue_warning = 0.0
-
-        def _is_data_event(event_kind: object) -> bool:
-            return str(event_kind) in {"snapshot", "increment"}
-
-        def _track_dropped_update() -> None:
-            nonlocal dropped_updates
-            dropped_updates += 1
-            if dropped_updates == 1 or dropped_updates % dropped_update_log_every == 0:
-                _LOGGER.debug(
-                    "Pominięto %s aktualizacji danych gRPC z powodu pełnej kolejki.",
-                    dropped_updates,
-                )
-
-        def _track_dropped_requeue_event() -> None:
-            nonlocal dropped_requeue_events
-            dropped_requeue_events += 1
-            if (
-                dropped_requeue_events == 1
-                or dropped_requeue_events % dropped_requeue_log_every == 0
-            ):
-                _LOGGER.debug(
-                    "Utracono %s zdarzeń sterujących gRPC podczas ponownego kolejkowania.",
-                    dropped_requeue_events,
-                )
-
-        def _enqueue(
-            kind: str,
-            payload: Mapping[str, object] | None,
-            *,
-            drop_if_full: bool = False,
-            deadline_seconds: float | None = 3.0,
-        ) -> bool:
-            nonlocal last_deadline_warning, last_requeue_warning
-            deadline = None
-            if deadline_seconds is not None:
-                deadline = time.monotonic() + max(0.1, float(deadline_seconds))
-            while stop_event is None or not stop_event.is_set():
-                try:
-                    queue_obj.put((kind, payload), timeout=0.1)
-                    return True
-                except queue.Full:
-                    if drop_if_full:
-                        _track_dropped_update()
-                        return False
-                    try:
-                        queued_kind, queued_payload = queue_obj.get_nowait()
-                    except queue.Empty:
-                        pass
-                    else:
-                        if _is_data_event(queued_kind):
-                            queue_obj.task_done()
-                            _track_dropped_update()
-                            continue
-                        try:
-                            queue_obj.put_nowait((queued_kind, queued_payload))
-                        except queue.Full:
-                            queue_obj.task_done()
-                            _track_dropped_requeue_event()
-                            now = time.monotonic()
-                            if now - last_requeue_warning >= warn_rate_limit_seconds:
-                                _LOGGER.warning(
-                                    "Nie udało się odtworzyć zdarzenia gRPC %s po próbie priorytetyzacji; zdarzenie utracone.",
-                                    queued_kind,
-                                )
-                                last_requeue_warning = now
-                        else:
-                            queue_obj.task_done()
-                    if deadline is not None and time.monotonic() >= deadline:
-                        now = time.monotonic()
-                        if now - last_deadline_warning >= warn_rate_limit_seconds:
-                            _LOGGER.warning(
-                                "Przekroczono deadline publikacji zdarzenia gRPC %s; pomijam event.",
-                                kind,
-                            )
-                            last_deadline_warning = now
-                        return False
-                    continue
-            return False
-
-        metadata = tuple(self._active_grpc_metadata)
-        ssl_credentials = self._grpc_ssl_credentials
-        authority_override = self._grpc_authority_override
-        request = trading_pb2.StreamDecisionsRequest(
-            limit=max(0, int(limit)),
-            skip_snapshot=False,
-            poll_interval_seconds=1.0,
-        )
-        base_backoff = max(0.1, float(retry_base))
-        backoff = base_backoff
-        max_backoff = max(base_backoff, float(retry_max))
-        multiplier = max(1.0, float(retry_multiplier))
-        attempt = 0
-        while stop_event is None or not stop_event.is_set():
-            attempt += 1
-            channel = None
-            try:
-                if ssl_credentials is not None:
-                    options = []
-                    if authority_override:
-                        options.append(("grpc.ssl_target_name_override", authority_override))
-                    channel = grpc.secure_channel(target, ssl_credentials, options=options or None)
-                else:
-                    channel = grpc.insecure_channel(target)
-                ready_future = grpc.channel_ready_future(channel)
-                ready_future.result(timeout=max(1.0, float(ready_timeout)))
-                stub = trading_pb2_grpc.RuntimeServiceStub(channel)
-                if metadata:
-                    stream = stub.StreamDecisions(request, metadata=metadata)
-                else:
-                    stream = stub.StreamDecisions(request)
-                _enqueue("connected", {"attempt": attempt})
-                backoff = base_backoff
-                terminated_normally = True
-                for update in stream:
-                    if stop_event is not None and stop_event.is_set():
-                        terminated_normally = False
-                        break
-                    metrics_payload = RuntimeService._serialize_cycle_metrics(
-                        getattr(update, "cycle_metrics", None)
-                    )
-                    if update.HasField("snapshot"):
-                        payload = {
-                            "records": [dict(entry.fields) for entry in update.snapshot.records],
-                            "metrics": metrics_payload,
-                        }
-                        _enqueue("snapshot", payload, drop_if_full=True, deadline_seconds=None)
-                    elif update.HasField("increment"):
-                        _enqueue(
-                            "increment",
-                            {
-                                "record": dict(update.increment.record.fields),
-                                "metrics": metrics_payload,
-                            },
-                            drop_if_full=True,
-                            deadline_seconds=None,
-                        )
-                if terminated_normally and (stop_event is None or not stop_event.is_set()):
-                    _enqueue("stream-ended", {"attempt": attempt})
-            except Exception as exc:  # pragma: no cover - diagnostyka
-                _enqueue("connection-error", {"attempt": attempt, "message": str(exc)})
-            finally:
-                if channel is not None:
-                    try:
-                        channel.close()
-                    except Exception:
-                        pass
-            if stop_event is not None and stop_event.is_set():
-                break
-            sleep_seconds = min(max_backoff, backoff)
-            _enqueue("retrying", {"attempt": attempt, "sleep": float(sleep_seconds)})
-            deadline = time.monotonic() + sleep_seconds
-            while time.monotonic() < deadline:
-                if stop_event is not None and stop_event.is_set():
-                    break
-                time.sleep(0.1)
-            backoff = min(max_backoff, backoff * multiplier)
-        _enqueue("done", None)
 
     def _start_ai_governor_stream(self) -> None:
         if self._ai_feed_stream_active:
@@ -3208,10 +3031,13 @@ class RuntimeService(QObject):
 
     def _stop_grpc_stream(self) -> None:
         self._stop_ai_governor_stream()
-        if self._grpc_stop_event is not None:
+        if self._grpc_client is not None:
+            self._grpc_client.stop()
+        elif self._grpc_stop_event is not None:
             self._grpc_stop_event.set()
         if self._grpc_thread is not None and self._grpc_thread.is_alive():
             self._grpc_thread.join(timeout=1.5)
+        self._grpc_client = None
         self._grpc_thread = None
         self._grpc_stop_event = None
         self._grpc_queue = None
