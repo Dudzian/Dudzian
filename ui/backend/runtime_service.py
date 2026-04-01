@@ -59,7 +59,7 @@ from .decision_payload_normalizer import (
     RuntimeDecisionEntry,
     parse_runtime_decision_entry,
 )
-from .decision_source_selector import DecisionSourceFallbackCoordinator
+from .decision_source_selector import DecisionSourceFallbackCoordinator, RuntimeDecisionMode
 from .feed_health_tracker import FeedHealthTracker
 from .operator_action_service import OperatorActionService
 from .grpc_decision_stream_client import GrpcDecisionStreamClient
@@ -1079,6 +1079,7 @@ class RuntimeService(QObject):
         ai_runner_factory: Callable[[], AutoTraderAIGovernorRunner] | None = None,
         ai_runner: AutoTraderAIGovernorRunner | None = None,
         decision_log_repository: DecisionLogRepository | None = None,
+        decision_runtime_mode: str | None = None,
     ) -> None:
         super().__init__(parent)
         if decision_loader is not None:
@@ -1092,7 +1093,15 @@ class RuntimeService(QObject):
         self._error_message = ""
         self._core_config_path = Path(core_config_path).expanduser() if core_config_path else None
         self._cached_core_config = None
-        self._source_selector = DecisionSourceFallbackCoordinator()
+        configured_runtime_mode = decision_runtime_mode or os.environ.get(
+            "BOT_CORE_UI_DECISION_RUNTIME_MODE"
+        )
+        self._decision_runtime_mode: RuntimeDecisionMode = (
+            DecisionSourceFallbackCoordinator.normalize_runtime_mode(configured_runtime_mode)
+        )
+        self._source_selector = DecisionSourceFallbackCoordinator(
+            runtime_mode=self._decision_runtime_mode
+        )
         self._active_profile: str | None = None
         self._active_log_path: Path | None = None
         self._active_stream_label: str | None = None
@@ -1984,8 +1993,11 @@ class RuntimeService(QObject):
         self._stop_grpc_stream()
         sanitized_profile = profile.strip()
         profile_value = sanitized_profile or None
+        if self._decision_runtime_mode == "demo":
+            self._use_demo_loader(message=None, profile=profile_value, silent=False)
+            return True
         target = self._resolve_grpc_target(profile_value)
-        if target:
+        if target and self._decision_runtime_mode == "prod":
             try:
                 self._start_grpc_stream(target, self._default_limit)
             except Exception as exc:  # pragma: no cover - diagnostyka
@@ -1998,6 +2010,9 @@ class RuntimeService(QObject):
                 return True
 
         if self._activate_jsonl_loader(profile_value, silent=False):
+            return True
+        if self._decision_runtime_mode == "test":
+            self._use_demo_loader(message=None, profile=profile_value, silent=False)
             return True
         return False
 
@@ -2233,6 +2248,8 @@ class RuntimeService(QObject):
         return metadata
 
     def _auto_connect_grpc(self) -> None:
+        if self._decision_runtime_mode in {"demo", "test"}:
+            return
         endpoint = self._prepare_grpc_connection(self._active_profile)
         if not endpoint:
             return
