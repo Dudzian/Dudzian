@@ -7,6 +7,11 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - py<3.11
+    import tomli as tomllib  # type: ignore[no-redef]
+
 
 def _load_installer_module(repo_root: Path, monkeypatch):
     deploy_module = types.ModuleType("deploy")
@@ -71,6 +76,10 @@ def test_read_profile_windows_paths_resolve_to_repo_root(monkeypatch):
     assert _normalized(profile.bundle.metadata_path) == (
         repo_root / "var" / "dist" / "installers" / "windows" / "installer_metadata.json"
     )
+    assert any("assets/prod/config" in entry.replace("\\", "/") for entry in profile.bundle.include)
+    assert not any("/samples/" in entry.replace("\\", "/") for entry in profile.bundle.include)
+    document = tomllib.loads(profile_path.read_text(encoding="utf-8"))
+    assert document["bundle"]["wheels_extra"] == []
 
 
 def test_build_pyinstaller_uses_runtime_name_for_expected_artifact(monkeypatch, tmp_path):

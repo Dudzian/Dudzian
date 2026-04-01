@@ -19,13 +19,17 @@ output_dir = "../../../var/dist/briefcase/macos"
 [bundle]
 output_dir = "../../../var/dist/installers/macos"
 work_dir = "../../../var/build/installers/macos"
-qt_dist = "../assets/prod/ui"
+qt_dist = "../assets/demo/ui"
 include = [
-  "config=../assets/prod/config",
-  "daemon=../assets/prod/daemon",
-  "resources=../assets/prod/resources",
-  "reports=../assets/prod/reports",
-  "var=../assets/prod/var",
+  "config=../assets/demo/config",
+  "daemon=../assets/demo/daemon",
+  "resources=../assets/demo/resources",
+  "reports=../assets/demo/reports",
+  "var=../assets/demo/var",
 ]
-wheels_extra = []
+wheels_extra = [
+  "../assets/demo/wheels/ccxt-4.0.0-py3-none-any.whl",
+  "../assets/demo/wheels/aiohttp-3.9.5-cp311-cp311-manylinux.whl",
+  "../assets/demo/wheels/lightgbm-4.6.0-cp311-cp311-manylinux.whl",
+]
 metadata_path = "../../../var/dist/installers/macos/installer_metadata.json"

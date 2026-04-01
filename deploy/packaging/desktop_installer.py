@@ -14,7 +14,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-import tomllib
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - środowiska <3.11
+    import tomli as tomllib  # type: ignore[no-redef]
 import zipfile
 
 
@@ -36,6 +39,15 @@ def _coerce_path(value: object, base_dir: Path, *, default: str | None = None) -
     if not isinstance(value, str):
         raise SystemExit(f"Oczekiwano ścieżki jako string, otrzymano {type(value).__name__}")
     return _normalize_path(value, base_dir)
+
+
+def _directory_has_non_placeholder_content(path: Path) -> bool:
+    if not path.exists() or not path.is_dir():
+        return False
+    for candidate in path.rglob("*"):
+        if candidate.is_file() and candidate.name != ".gitkeep":
+            return True
+    return False
 
 
 @dataclass(slots=True, frozen=True)
@@ -238,6 +250,13 @@ class DesktopInstallerBuilder:
             bundle_section.get("metadata_path"), base_dir, default="installer_metadata.json"
         )
 
+        self._validate_prod_assets_contract(
+            profile_path=profile_path,
+            qt_path=qt_path,
+            include_specs=tuple(include_specs),
+            wheels=tuple(wheels),
+        )
+
         return BundleConfig(
             platform=raw.get("platform", platform),
             output_dir=output_dir,
@@ -248,6 +267,39 @@ class DesktopInstallerBuilder:
             metadata_path=metadata_path,
             raw_profile=raw,
         )
+
+    def _validate_prod_assets_contract(
+        self,
+        *,
+        profile_path: Path,
+        qt_path: Path | None,
+        include_specs: tuple[IncludeSpec, ...],
+        wheels: tuple[Path, ...],
+    ) -> None:
+        if profile_path.parent.name == "demo":
+            return
+
+        prod_root = (Path(__file__).resolve().parent / "assets" / "prod").resolve()
+        candidates: list[tuple[str, Path]] = []
+        if qt_path is not None:
+            candidates.append(("qt_dist", qt_path))
+        candidates.extend((f"include:{spec.name}", spec.source) for spec in include_specs)
+        candidates.extend(("wheels_extra", wheel) for wheel in wheels)
+
+        for label, candidate in candidates:
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(prod_root):
+                continue
+            if not resolved.exists():
+                raise SystemExit(
+                    f"Profil prod wskazuje na nieistniejący zasób {label}: {resolved}. "
+                    "Provision assets/prod przed buildem."
+                )
+            if resolved.is_dir() and not _directory_has_non_placeholder_content(resolved):
+                raise SystemExit(
+                    f"Profil prod wskazuje na nieprovisionowany katalog {label}: {resolved}. "
+                    "Katalog zawiera wyłącznie placeholdery (.gitkeep) lub jest pusty."
+                )
 
     # ------------------------------------------------------------------
     def _write_validate_hook(self, hooks_dir: Path) -> None:
