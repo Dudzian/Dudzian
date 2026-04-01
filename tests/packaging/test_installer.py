@@ -13,7 +13,7 @@ from deploy.packaging.desktop_installer import DesktopInstallerBuilder
 
 
 def _write_linux_profile(tmp_path: Path, repo_root: Path) -> Path:
-    profiles_dir = tmp_path / "profiles"
+    profiles_dir = tmp_path / "profiles" / "demo"
     profiles_dir.mkdir(parents=True)
 
     samples = repo_root / "deploy" / "packaging" / "assets" / "demo"
@@ -164,3 +164,161 @@ def test_prod_profile_fails_fast_when_assets_are_placeholders(tmp_path: Path) ->
 
     with pytest.raises(SystemExit, match="nieprovisionowany katalog"):
         builder.build("linux")
+
+
+def test_prod_profile_rejects_demo_assets_path(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir(parents=True)
+    demo_assets = repo_root / "deploy" / "packaging" / "assets" / "demo"
+
+    profile = f"""
+platform = "linux"
+
+[bundle]
+output_dir = "{(tmp_path / 'out').as_posix()}"
+work_dir = "{(tmp_path / 'work').as_posix()}"
+qt_dist = "{(demo_assets / 'ui').as_posix()}"
+include = [
+  "config={(demo_assets / 'config').as_posix()}",
+]
+wheels_extra = []
+metadata_path = "{(tmp_path / 'metadata.json').as_posix()}"
+"""
+    (profiles_dir / "linux.toml").write_text(profile.strip() + "\n", encoding="utf-8")
+
+    builder = DesktopInstallerBuilder(
+        version="1.0.0",
+        profiles_dir=profiles_dir,
+        hwid_hook_source=repo_root / "probe_keyring.py",
+    )
+
+    with pytest.raises(SystemExit, match="demo"):
+        builder._load_profile("linux")
+
+
+def test_prod_profile_rejects_demo_wheels_extra(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir(parents=True)
+    demo_assets = repo_root / "deploy" / "packaging" / "assets" / "demo"
+    external_assets = tmp_path / "external"
+    external_assets.mkdir(parents=True)
+
+    profile = f"""
+platform = "linux"
+
+[bundle]
+output_dir = "{(tmp_path / 'out').as_posix()}"
+work_dir = "{(tmp_path / 'work').as_posix()}"
+qt_dist = "{external_assets.as_posix()}"
+include = [
+  "config={external_assets.as_posix()}",
+]
+wheels_extra = [
+  "{(demo_assets / 'wheels' / 'ccxt-4.0.0-py3-none-any.whl').as_posix()}",
+]
+metadata_path = "{(tmp_path / 'metadata.json').as_posix()}"
+"""
+    (profiles_dir / "linux.toml").write_text(profile.strip() + "\n", encoding="utf-8")
+
+    builder = DesktopInstallerBuilder(
+        version="1.0.0",
+        profiles_dir=profiles_dir,
+        hwid_hook_source=repo_root / "probe_keyring.py",
+    )
+
+    with pytest.raises(SystemExit, match="demo"):
+        builder._load_profile("linux")
+
+
+def test_non_demo_profile_allows_assets_outside_demo_and_prod(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir(parents=True)
+
+    external_root = tmp_path / "external_assets"
+    qt_dir = external_root / "ui"
+    config_dir = external_root / "config"
+    wheel_path = external_root / "wheels" / "external-1.0.0-py3-none-any.whl"
+    qt_dir.mkdir(parents=True)
+    config_dir.mkdir(parents=True)
+    wheel_path.parent.mkdir(parents=True, exist_ok=True)
+    wheel_path.write_text("wheel", encoding="utf-8")
+
+    profile = f"""
+platform = "linux"
+
+[bundle]
+output_dir = "{(tmp_path / 'out').as_posix()}"
+work_dir = "{(tmp_path / 'work').as_posix()}"
+qt_dist = "{qt_dir.as_posix()}"
+include = [
+  "config={config_dir.as_posix()}",
+]
+wheels_extra = [
+  "{wheel_path.as_posix()}",
+]
+metadata_path = "{(tmp_path / 'metadata.json').as_posix()}"
+"""
+    (profiles_dir / "linux.toml").write_text(profile.strip() + "\n", encoding="utf-8")
+
+    builder = DesktopInstallerBuilder(
+        version="1.0.0",
+        profiles_dir=profiles_dir,
+        hwid_hook_source=repo_root / "probe_keyring.py",
+    )
+
+    config = builder._load_profile("linux")
+
+    assert config.qt_dist == qt_dir.resolve()
+    assert config.includes[0].source == config_dir.resolve()
+    assert config.wheels == (wheel_path.resolve(),)
+
+
+def test_demo_profile_keeps_demo_assets_explicit(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    builder = DesktopInstallerBuilder(
+        version="1.0.0",
+        profiles_dir=repo_root / "deploy" / "packaging" / "profiles" / "demo",
+        hwid_hook_source=repo_root / "probe_keyring.py",
+    )
+
+    config = builder._load_profile("linux")
+
+    assert config.qt_dist is not None
+    assert "/assets/demo/" in config.qt_dist.as_posix().replace("\\", "/")
+    assert all(
+        "/assets/demo/" in spec.source.as_posix().replace("\\", "/") for spec in config.includes
+    )
+
+
+def test_invalid_profile_does_not_fallback_to_demo_defaults(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "linux.toml").write_text(
+        """
+platform = "linux"
+
+[bundle]
+output_dir = "var/dist/installers"
+work_dir = "var/build/installers"
+qt_dist = "../assets/demo/ui"
+include = [
+  "broken-entry-without-separator"
+]
+metadata_path = "var/dist/installers/installer_metadata.json"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    builder = DesktopInstallerBuilder(
+        version="1.0.0",
+        profiles_dir=profiles_dir,
+        hwid_hook_source=repo_root / "probe_keyring.py",
+    )
+
+    with pytest.raises(SystemExit, match="include"):
+        builder._load_profile("linux")
