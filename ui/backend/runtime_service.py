@@ -51,6 +51,7 @@ from bot_core.runtime.cloud_client import (
 )
 from bot_core.runtime.journal import TradingDecisionJournal
 from .ai_governor_demo import build_demo_ai_governor_snapshot
+from .alert_manager import AlertManager
 from .demo_data import load_demo_decisions
 from .decision_log_repository import DecisionLogRepository
 from .decision_payload_normalizer import (
@@ -1228,15 +1229,17 @@ class RuntimeService(QObject):
         self._set_feed_alert_sink(
             feed_alert_sink if feed_alert_sink is not None else get_feed_health_alert_sink()
         )
-        self._feed_alert_history: deque[dict[str, object]] = deque(maxlen=12)
-        self._feed_alert_channels: list[dict[str, str]] = []
-        self._feed_thresholds = self._load_feed_thresholds()
-        self._feed_alert_state: dict[str, str] = {
-            "latency": "ok",
-            "reconnects": "ok",
-            "downtime": "ok",
-        }
-        self._risk_journal_alert_state: str = "ok"
+        self._alert_manager = AlertManager(
+            runtime_config_loader=self._load_runtime_config,
+            active_profile_loader=lambda: self._active_profile or "default",
+            sink_loader=self._effective_feed_alert_sink,
+            risk_diagnostics_normalizer=_normalize_risk_journal_diagnostics,
+            mapping_normalizer=_to_mapping,
+            history_changed=self.feedAlertHistoryChanged.emit,
+            channels_changed=self.feedAlertChannelsChanged.emit,
+        )
+        self._feed_thresholds = self._alert_manager.feed_thresholds
+        self._feed_alert_state = self._alert_manager.feed_alert_state
         self._metrics_last_write = 0.0
         self._metrics_next_write = 0.0
         self._metrics_last_status = ""
@@ -1334,11 +1337,11 @@ class RuntimeService(QObject):
 
     @Property("QVariantList", notify=feedAlertHistoryChanged)
     def feedAlertHistory(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return to_plain_list(self._feed_alert_history)
+        return to_plain_list(self._alert_manager.feed_alert_history)
 
     @Property("QVariantList", notify=feedAlertChannelsChanged)
     def feedAlertChannels(self) -> list[dict[str, object]]:  # type: ignore[override]
-        return to_plain_list(self._feed_alert_channels)
+        return to_plain_list(self._alert_manager.feed_alert_channels)
 
     @Property("QVariantMap", notify=feedTransportSnapshotChanged)
     def feedTransportSnapshot(self) -> dict[str, object]:  # type: ignore[override]
@@ -1584,82 +1587,13 @@ class RuntimeService(QObject):
         payload: Mapping[str, object],
         latency_p95: float | None,
     ) -> None:
-        thresholds = self._feed_thresholds
         status = str(payload.get("status", "unknown"))
         adapter = self._current_feed_adapter_label(status)
-        reconnects_raw = payload.get("reconnects", 0)
-        downtime_raw = payload.get("downtimeMs", 0.0)
         last_error = str(payload.get("lastError", self._feed_last_error))
-        try:
-            reconnects_value = int(reconnects_raw)
-        except (TypeError, ValueError):
-            reconnects_value = 0
-        try:
-            downtime_ms = float(downtime_raw)
-        except (TypeError, ValueError):
-            downtime_ms = 0.0
-        downtime_seconds = max(0.0, downtime_ms / 1000.0)
-
-        latency_state = self._classify_threshold(
-            latency_p95,
-            warning=thresholds["latency_warning_ms"],
-            critical=thresholds["latency_critical_ms"],
-        )
-        self._maybe_emit_feed_alert(
-            "latency",
-            latency_state,
-            metric_label="Latencja p95 decision feedu",
-            unit="ms",
-            value=latency_p95,
-            warning=thresholds["latency_warning_ms"],
-            critical=thresholds["latency_critical_ms"],
-            status=status,
-            adapter=adapter,
-            reconnects=reconnects_value,
-            downtime_seconds=downtime_seconds,
+        self._alert_manager.evaluate_feed_health_alerts(
+            payload=payload,
             latency_p95=latency_p95,
-            last_error=last_error,
-        )
-
-        reconnect_state = self._classify_threshold(
-            float(reconnects_value),
-            warning=thresholds["reconnects_warning"],
-            critical=thresholds["reconnects_critical"],
-        )
-        self._maybe_emit_feed_alert(
-            "reconnects",
-            reconnect_state,
-            metric_label="Liczba reconnectów decision feedu",
-            unit="",
-            value=float(reconnects_value),
-            warning=thresholds["reconnects_warning"],
-            critical=thresholds["reconnects_critical"],
-            status=status,
             adapter=adapter,
-            reconnects=reconnects_value,
-            downtime_seconds=downtime_seconds,
-            latency_p95=latency_p95,
-            last_error=last_error,
-        )
-
-        downtime_state = self._classify_threshold(
-            downtime_seconds,
-            warning=thresholds["downtime_warning_seconds"],
-            critical=thresholds["downtime_critical_seconds"],
-        )
-        self._maybe_emit_feed_alert(
-            "downtime",
-            downtime_state,
-            metric_label="Łączny downtime decision feedu",
-            unit="s",
-            value=downtime_seconds,
-            warning=thresholds["downtime_warning_seconds"],
-            critical=thresholds["downtime_critical_seconds"],
-            status=status,
-            adapter=adapter,
-            reconnects=reconnects_value,
-            downtime_seconds=downtime_seconds,
-            latency_p95=latency_p95,
             last_error=last_error,
         )
 
@@ -1769,318 +1703,39 @@ class RuntimeService(QObject):
         latency_p95: float | None,
         last_error: str,
     ) -> None:
-        previous = self._feed_alert_state.get(key, "ok")
-        if severity == previous:
-            return
-        self._feed_alert_state[key] = severity
-        sink = self._effective_feed_alert_sink()
-        emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
-        if not callable(emit):
-            sink = None
-            emit = None
-        router = None
-        if sink is not None:
-            try:
-                router = getattr(sink, "router", None)
-            except Exception:
-                router = None
-            if router is None:
-                try:
-                    router = getattr(sink, "_router", None)
-                except Exception:
-                    router = None
-
-        severity_label = severity
-        state = severity
-        if severity == "ok":
-            severity_label = "info"
-            state = "recovered"
-        else:
-            state = "degraded"
-
-        threshold_value: float | None = None
-        if severity == "critical" and critical is not None:
-            threshold_value = critical
-        elif severity == "warning" and warning is not None:
-            threshold_value = warning
-        elif previous in {"critical", "warning"}:
-            threshold_value = (
-                critical if previous == "critical" and critical is not None else warning
-            )
-
-        body_parts: list[str] = []
-        metric_value_text = self._format_feed_metric(value, unit)
-        threshold_text = (
-            self._format_feed_metric(threshold_value, unit) if threshold_value is not None else None
-        )
-        if severity == "ok":
-            title = f"{metric_label} w normie"
-            body_parts.append(f"{metric_label} powróciła do normy ({metric_value_text}).")
-            if threshold_text:
-                body_parts.append(f"Poprzedni próg odniesienia: {threshold_text}.")
-        else:
-            title = f"{metric_label} przekroczyła próg"
-            if severity == "critical":
-                title = f"Krytyczne odchylenie – {metric_label}"
-            if threshold_text:
-                body_parts.append(
-                    f"{metric_label} wynosi {metric_value_text} (próg {threshold_text})."
-                )
-            else:
-                body_parts.append(f"{metric_label} wynosi {metric_value_text}.")
-        if last_error:
-            body_parts.append(f"Ostatni błąd: {last_error}.")
-        body = " ".join(body_parts)
-
-        context: dict[str, str] = {
-            "adapter": adapter,
-            "status": status,
-            "metric": key,
-            "metric_label": metric_label,
-            "metric_unit": unit,
-            "state": state,
-            "reconnects": str(reconnects),
-            "downtime_seconds": f"{downtime_seconds:.3f}",
-            "channel": channel,
-        }
-        if value is not None:
-            context["metric_value"] = (
-                f"{value:.3f}" if unit in {"ms", "s"} else str(int(round(value)))
-            )
-        if warning is not None:
-            context["warning_threshold"] = (
-                f"{warning:.3f}" if unit in {"ms", "s"} else str(int(round(warning)))
-            )
-        if critical is not None:
-            context["critical_threshold"] = (
-                f"{critical:.3f}" if unit in {"ms", "s"} else str(int(round(critical)))
-            )
-        if latency_p95 is not None:
-            context["latency_p95_ms"] = f"{latency_p95:.3f}"
-        if last_error:
-            context["last_error"] = last_error
-
-        payload: dict[str, object] = {
-            "metric": key,
-            "metric_label": metric_label,
-            "metric_unit": unit,
-            "metric_value": value,
-            "warning_threshold": warning,
-            "critical_threshold": critical,
-            "status": status,
-            "adapter": adapter,
-            "reconnects": reconnects,
-            "downtime_seconds": downtime_seconds,
-            "latency_p95_ms": latency_p95,
-            "state": state,
-            "channel": channel,
-        }
-        if last_error:
-            payload["last_error"] = last_error
-
-        if callable(emit):
-            emit(
-                severity=severity_label,
-                title=title,
-                body=body,
-                context=context,
-                payload=payload,
-            )
-
-        self._record_feed_alert(
-            severity=severity_label,
-            state=state,
-            metric=key,
-            label=metric_label,
+        self._alert_manager.maybe_emit_feed_alert(
+            key,
+            severity,
+            channel=channel,
+            metric_label=metric_label,
             unit=unit,
             value=value,
             warning=warning,
             critical=critical,
-            adapter=adapter,
             status=status,
+            adapter=adapter,
             reconnects=reconnects,
             downtime_seconds=downtime_seconds,
             latency_p95=latency_p95,
             last_error=last_error,
-            router=router,
         )
 
     @staticmethod
     def _format_feed_metric(value: float | None, unit: str) -> str:
-        if value is None:
-            return "brak danych"
-        if unit == "ms":
-            return f"{value:.1f} ms"
-        if unit == "s":
-            return f"{value:.1f} s"
-        return f"{int(round(value))}"
+        return AlertManager.format_feed_metric(value, unit)
 
     def _maybe_emit_risk_journal_alert(self, diagnostics: Mapping[str, object]) -> None:
-        normalized_diagnostics = _normalize_risk_journal_diagnostics(diagnostics)
-        incomplete_entries = int(normalized_diagnostics.get("incompleteEntries", 0))
-        samples = normalized_diagnostics.get("incompleteSamples", [])
-        incomplete_samples_count = int(
-            normalized_diagnostics.get("incompleteSamplesCount", len(samples)) or 0
-        )
-        risk_flag_counts = _to_mapping(normalized_diagnostics.get("riskFlagCounts", {}))
-        severity = "warning" if incomplete_entries else "ok"
-        previous = self._risk_journal_alert_state
-        if severity == previous:
-            return
-        self._risk_journal_alert_state = severity
-
-        environment = self._active_profile or "default"
-
-        body = (
-            "wykryto niekompletne wpisy Risk Journal wymagające pól risk_flags/stress_overrides lub risk_action"
-            if incomplete_entries
-            else "wpisy Risk Journal zawierają wymagane pola"
-        )
-        if incomplete_entries and samples:
-            body = f"{body} (przykłady: {json.dumps(samples, ensure_ascii=False)})"
-        log_fn = _LOGGER.warning if incomplete_entries else _LOGGER.info
-        log_fn("%s", body)
-
-        self._risk_journal_metrics_exporter.record(
-            state=severity,
-            incomplete_entries=incomplete_entries,
-            incomplete_samples=incomplete_samples_count,
-            risk_flag_counts=risk_flag_counts,
-            labels={"environment": environment},
-        )
-
-        sink = self._effective_feed_alert_sink()
-        emit = getattr(sink, "emit_feed_health_event", None) if sink is not None else None
-        if not callable(emit):
-            return
-
-        emit(
-            severity="warning" if incomplete_entries else "info",
-            title="Risk Journal completeness",
-            body=body,
-            context={
-                "channel": "risk_journal",
-                "environment": environment,
-                "state": severity,
-            },
-            payload={
-                "channel": "risk_journal",
-                "environment": environment,
-                "state": severity,
-                "incomplete_entries": incomplete_entries,
-                "incompleteEntries": incomplete_entries,
-                "incomplete_samples": incomplete_samples_count,
-                "incompleteSamples": incomplete_samples_count,
-                "riskFlagCounts": dict(risk_flag_counts),
-                "samples": samples,
-            },
+        self._alert_manager.maybe_emit_risk_journal_alert(
+            diagnostics=diagnostics,
+            logger_warning=lambda body: _LOGGER.warning("%s", body),
+            logger_info=lambda body: _LOGGER.info("%s", body),
+            metrics_record=self._risk_journal_metrics_exporter.record,
         )
 
     def _load_feed_thresholds(self) -> dict[str, float | None]:
-        defaults: dict[str, float | None] = {
-            "latency_warning_ms": 2500.0,
-            "latency_critical_ms": 5000.0,
-            "reconnects_warning": 3.0,
-            "reconnects_critical": 6.0,
-            "downtime_warning_seconds": 30.0,
-            "downtime_critical_seconds": 120.0,
-        }
-
-        def _normalize(value: float | int | None) -> float | None:
-            if value is None:
-                return None
-            number = float(value)
-            if number <= 0:
-                return None
-            return number
-
-        if load_runtime_app_config is not None:
-            try:
-                runtime_config = self._load_runtime_config()
-            except Exception:
-                runtime_config = None
-            if runtime_config is not None:
-                observability = getattr(runtime_config, "observability", None)
-                feed_sla = getattr(observability, "feed_sla", None) if observability else None
-                if feed_sla is not None:
-                    defaults.update(
-                        {
-                            "latency_warning_ms": _normalize(
-                                getattr(feed_sla, "latency_warning_ms", None)
-                            )
-                            or defaults["latency_warning_ms"],
-                            "latency_critical_ms": _normalize(
-                                getattr(feed_sla, "latency_critical_ms", None)
-                            )
-                            or defaults["latency_critical_ms"],
-                            "reconnects_warning": _normalize(
-                                getattr(feed_sla, "reconnects_warning", None)
-                            )
-                            or defaults["reconnects_warning"],
-                            "reconnects_critical": _normalize(
-                                getattr(feed_sla, "reconnects_critical", None)
-                            )
-                            or defaults["reconnects_critical"],
-                            "downtime_warning_seconds": _normalize(
-                                getattr(feed_sla, "downtime_warning_seconds", None)
-                            )
-                            or defaults["downtime_warning_seconds"],
-                            "downtime_critical_seconds": _normalize(
-                                getattr(feed_sla, "downtime_critical_seconds", None)
-                            )
-                            or defaults["downtime_critical_seconds"],
-                        }
-                    )
-
-        def _env_float(name: str, current: float | None) -> float | None:
-            raw = os.environ.get(name)
-            if raw is None or str(raw).strip() == "":
-                return current
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                return current
-            if value <= 0:
-                return None
-            return value
-
-        def _env_int(name: str, current: float | None) -> float | None:
-            raw = os.environ.get(name)
-            if raw is None or str(raw).strip() == "":
-                return current
-            try:
-                value = int(float(raw))
-            except (TypeError, ValueError):
-                return current
-            if value <= 0:
-                return None
-            return float(value)
-
-        defaults["latency_warning_ms"] = _env_float(
-            "BOT_CORE_UI_FEED_LATENCY_P95_WARNING_MS",
-            defaults["latency_warning_ms"],
-        )
-        defaults["latency_critical_ms"] = _env_float(
-            "BOT_CORE_UI_FEED_LATENCY_P95_CRITICAL_MS",
-            defaults["latency_critical_ms"],
-        )
-        defaults["reconnects_warning"] = _env_int(
-            "BOT_CORE_UI_FEED_RECONNECT_WARNING",
-            defaults["reconnects_warning"],
-        )
-        defaults["reconnects_critical"] = _env_int(
-            "BOT_CORE_UI_FEED_RECONNECT_CRITICAL",
-            defaults["reconnects_critical"],
-        )
-        defaults["downtime_warning_seconds"] = _env_float(
-            "BOT_CORE_UI_FEED_DOWNTIME_WARNING_SECONDS",
-            defaults["downtime_warning_seconds"],
-        )
-        defaults["downtime_critical_seconds"] = _env_float(
-            "BOT_CORE_UI_FEED_DOWNTIME_CRITICAL_SECONDS",
-            defaults["downtime_critical_seconds"],
-        )
-        return defaults
+        refreshed = self._alert_manager.reload_feed_thresholds()
+        self._feed_thresholds = refreshed
+        return refreshed
 
     def _record_feed_alert(
         self,
@@ -2101,49 +1756,26 @@ class RuntimeService(QObject):
         last_error: str,
         router: object | None,
     ) -> None:
-        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        entry: dict[str, object] = {
-            "id": f"{metric}:{int(time.time() * 1000)}",
-            "timestamp": timestamp,
-            "severity": severity,
-            "state": state,
-            "metric": metric,
-            "label": label,
-            "unit": unit,
-            "value": value,
-            "formattedValue": self._format_feed_metric(value, unit),
-            "warning": warning,
-            "critical": critical,
-            "adapter": adapter,
-            "status": status,
-            "reconnects": reconnects,
-            "downtimeSeconds": downtime_seconds,
-            "latencyP95": latency_p95,
-        }
-        if last_error:
-            entry["lastError"] = last_error
-        self._feed_alert_history.appendleft(entry)
-        self.feedAlertHistoryChanged.emit()
-        self._refresh_alert_channels(router)
+        self._alert_manager.record_feed_alert(
+            severity=severity,
+            state=state,
+            metric=metric,
+            label=label,
+            unit=unit,
+            value=value,
+            warning=warning,
+            critical=critical,
+            adapter=adapter,
+            status=status,
+            reconnects=reconnects,
+            downtime_seconds=downtime_seconds,
+            latency_p95=latency_p95,
+            last_error=last_error,
+            router=router,
+        )
 
     def _refresh_alert_channels(self, router: object | None) -> None:
-        channels: list[dict[str, object]] = []
-        try:
-            health_snapshot = (
-                router.health_snapshot() if router and hasattr(router, "health_snapshot") else {}
-            )
-        except Exception:
-            health_snapshot = {}
-        if isinstance(health_snapshot, Mapping):
-            for name, payload in health_snapshot.items():
-                record = {"name": str(name)}
-                if isinstance(payload, Mapping):
-                    for key, value in payload.items():
-                        record[str(key)] = value
-                channels.append(record)
-        if channels != self._feed_alert_channels:
-            self._feed_alert_channels = channels
-            self.feedAlertChannelsChanged.emit()
+        self._alert_manager.refresh_alert_channels(router)
 
     def _mark_feed_disconnected(self) -> None:
         self._feed_health_tracker.mark_feed_disconnected()
