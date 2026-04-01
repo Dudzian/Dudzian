@@ -1618,21 +1618,6 @@ class RuntimeService(QObject):
     def _latency_samples_for(self, key: str | None) -> deque[float]:
         return self._feed_health_tracker.latency_samples_for(key)
 
-    def _update_transport_breakdown(
-        self,
-        key: str,
-        payload: Mapping[str, object],
-        *,
-        latency_p50: float | None,
-        latency_p95: float | None,
-    ) -> None:
-        self._feed_health_tracker._update_transport_breakdown(
-            key,
-            payload,
-            latency_p50=latency_p50,
-            latency_p95=latency_p95,
-        )
-
     def _serialize_transport_stats(self) -> dict[str, dict[str, object]]:
         return self._feed_health_tracker.serialize_transport_stats()
 
@@ -1997,16 +1982,7 @@ class RuntimeService(QObject):
                 return self._handle_grpc_error(str(exc), profile=profile_value, silent=False)
             else:
                 self._loader = lambda limit: []
-                self._activate_source_state(
-                    self._source_selector.activate_grpc(profile=profile_value, target=target)
-                )
-                self._error_message = ""
-                self.errorMessageChanged.emit()
-                self.liveSourceChanged.emit()
-                self._feed_reconnects = 0
-                self._feed_last_error = ""
-                self._mark_feed_disconnected()
-                self._update_feed_health(status="connecting", reconnects=0, last_error="")
+                self._finalize_grpc_activation(profile=profile_value, target=target)
                 return True
 
         if self._activate_jsonl_loader(profile_value, silent=False):
@@ -2076,7 +2052,7 @@ class RuntimeService(QObject):
         return _loader
 
     # ------------------------------------------------------------------ risk aggregation helpers --
-    def _resolve_env_grpc_target(self, profile: str | None) -> str | None:
+    def _resolve_env_grpc_target(self) -> str | None:
         candidates = (
             os.environ.get("BOT_CORE_UI_GRPC_ENDPOINT"),
             os.environ.get("BOT_CORE_TRADING_GRPC_ADDRESS"),
@@ -2099,7 +2075,7 @@ class RuntimeService(QObject):
     def _prepare_grpc_connection(
         self, profile: str | None
     ) -> tuple[str, list[tuple[str, str]]] | None:
-        target = self._resolve_env_grpc_target(profile)
+        target = self._resolve_env_grpc_target()
         if target:
             self._grpc_ssl_credentials = None
             self._grpc_authority_override = None
@@ -2256,16 +2232,17 @@ class RuntimeService(QObject):
             _LOGGER.debug("Auto gRPC bootstrap failed", exc_info=True)
             self._handle_grpc_error(str(exc), profile=self._active_profile, silent=True)
         else:
-            self._activate_source_state(
-                self._source_selector.activate_grpc(profile=self._active_profile, target=target)
-            )
-            self._error_message = ""
-            self.errorMessageChanged.emit()
-            self.liveSourceChanged.emit()
-            self._feed_reconnects = 0
-            self._feed_last_error = ""
-            self._mark_feed_disconnected()
-            self._update_feed_health(status="connecting", reconnects=0, last_error="")
+            self._finalize_grpc_activation(profile=self._active_profile, target=target)
+
+    def _finalize_grpc_activation(self, *, profile: str | None, target: str) -> None:
+        self._activate_source_state(self._source_selector.activate_grpc(profile=profile, target=target))
+        self._error_message = ""
+        self.errorMessageChanged.emit()
+        self.liveSourceChanged.emit()
+        self._feed_reconnects = 0
+        self._feed_last_error = ""
+        self._mark_feed_disconnected()
+        self._update_feed_health(status="connecting", reconnects=0, last_error="")
 
     def _activate_jsonl_loader(self, profile: str | None, *, silent: bool) -> bool:
         self._stop_ai_governor_stream()
