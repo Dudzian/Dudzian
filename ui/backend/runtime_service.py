@@ -59,6 +59,7 @@ from .decision_payload_normalizer import (
     RuntimeDecisionEntry,
     parse_runtime_decision_entry,
 )
+from .decision_source_selector import DecisionSourceFallbackCoordinator
 from .feed_health_tracker import FeedHealthTracker
 from .grpc_decision_stream_client import GrpcDecisionStreamClient
 from .qml_bridge import to_plain_dict, to_plain_list, to_plain_text, to_plain_value
@@ -1090,6 +1091,7 @@ class RuntimeService(QObject):
         self._error_message = ""
         self._core_config_path = Path(core_config_path).expanduser() if core_config_path else None
         self._cached_core_config = None
+        self._source_selector = DecisionSourceFallbackCoordinator()
         self._active_profile: str | None = None
         self._active_log_path: Path | None = None
         self._active_stream_label: str | None = None
@@ -1484,10 +1486,9 @@ class RuntimeService(QObject):
     def _refresh_feed_transport_snapshot(
         self, payload: Mapping[str, object], latency_p95: float | None
     ) -> None:
-        label = self._active_stream_label or ""
-        if not label and self._active_log_path is not None:
-            label = str(self._active_log_path)
-        mode = "grpc" if label.startswith("grpc://") else ("file" if label else "demo")
+        self._sync_source_selector_from_runtime_state()
+        label = self._source_selector.current_feed_label()
+        mode = self._source_selector.current_feed_mode()
         latency_value = latency_p95
         if latency_value is None:
             candidate = payload.get("p95_ms")
@@ -1600,29 +1601,17 @@ class RuntimeService(QObject):
         )
 
     def _current_feed_adapter_label(self, status: str) -> str:
-        if status == "fallback":
-            return "fallback"
-        label = self._active_stream_label or ""
-        if label.startswith("grpc://"):
-            return "grpc"
-        if label == "offline-demo":
-            return "demo"
-        if label:
-            prefix, _, _ = label.partition("://")
-            if prefix:
-                return prefix
-            return label
-        if self._active_log_path is not None:
-            return "jsonl"
-        if self._loader is _default_loader:
-            return "demo"
-        return "unknown"
+        self._sync_source_selector_from_runtime_state()
+        return self._source_selector.current_feed_adapter_label(
+            status=status,
+            loader_is_demo=self._loader is _default_loader,
+        )
 
     def _current_transport_key(self) -> str:
-        label = self._active_stream_label or ""
-        if label.startswith("grpc://") or self._grpc_stream_active:
-            return "grpc"
-        return "fallback"
+        self._sync_source_selector_from_runtime_state()
+        return self._source_selector.current_transport_key(
+            grpc_stream_active=self._grpc_stream_active
+        )
 
     def _latency_samples_for(self, key: str | None) -> deque[float]:
         return self._feed_health_tracker.latency_samples_for(key)
@@ -1986,11 +1975,8 @@ class RuntimeService(QObject):
     # ------------------------------------------------------------------
     @Property(str, notify=liveSourceChanged)
     def activeDecisionLogPath(self) -> str:  # type: ignore[override]
-        if self._active_stream_label:
-            return to_plain_text(self._active_stream_label)
-        if self._active_log_path is None:
-            return ""
-        return str(self._active_log_path)
+        self._sync_source_selector_from_runtime_state()
+        return to_plain_text(self._source_selector.active_decision_log_path())
 
     @Slot(str, result=bool)
     def attachToLiveDecisionLog(self, profile: str = "") -> bool:  # type: ignore[override]
@@ -2009,9 +1995,9 @@ class RuntimeService(QObject):
                 return self._handle_grpc_error(str(exc), profile=profile_value, silent=False)
             else:
                 self._loader = lambda limit: []
-                self._active_profile = profile_value
-                self._active_log_path = None
-                self._active_stream_label = f"grpc://{target}"
+                self._activate_source_state(
+                    self._source_selector.activate_grpc(profile=profile_value, target=target)
+                )
                 self._error_message = ""
                 self.errorMessageChanged.emit()
                 self.liveSourceChanged.emit()
@@ -2268,8 +2254,9 @@ class RuntimeService(QObject):
             _LOGGER.debug("Auto gRPC bootstrap failed", exc_info=True)
             self._handle_grpc_error(str(exc), profile=self._active_profile, silent=True)
         else:
-            self._active_log_path = None
-            self._active_stream_label = f"grpc://{target}"
+            self._activate_source_state(
+                self._source_selector.activate_grpc(profile=self._active_profile, target=target)
+            )
             self._error_message = ""
             self.errorMessageChanged.emit()
             self.liveSourceChanged.emit()
@@ -2289,9 +2276,9 @@ class RuntimeService(QObject):
             return False
 
         self._loader = loader
-        self._active_profile = profile
-        self._active_log_path = log_path
-        self._active_stream_label = None
+        self._activate_source_state(
+            self._source_selector.activate_jsonl(profile=profile, log_path=log_path)
+        )
         self._grpc_stream_active = False
         self._update_cycle_metrics({})
         self.liveSourceChanged.emit()
@@ -2304,9 +2291,7 @@ class RuntimeService(QObject):
     def _use_demo_loader(self, message: str | None, *, profile: str | None, silent: bool) -> None:
         self._stop_ai_governor_stream()
         self._loader = _default_loader
-        self._active_profile = profile
-        self._active_log_path = None
-        self._active_stream_label = "offline-demo"
+        self._activate_source_state(self._source_selector.activate_demo(profile=profile))
         self._grpc_stream_active = False
         self._update_cycle_metrics({})
         self.liveSourceChanged.emit()
@@ -2319,7 +2304,9 @@ class RuntimeService(QObject):
         self._feed_last_error = message
         self._stop_grpc_stream()
         self._grpc_retry_attempts = 0
-        if self._activate_jsonl_loader(profile, silent=True):
+        jsonl_activated = self._activate_jsonl_loader(profile, silent=True)
+        fallback_source = self._source_selector.fallback_source(jsonl_available=jsonl_activated)
+        if fallback_source == "jsonl":
             if not silent:
                 self._error_message = message
                 self.errorMessageChanged.emit()
@@ -3046,8 +3033,27 @@ class RuntimeService(QObject):
             self._grpc_timer.deleteLater()
             self._grpc_timer = None
         self._grpc_stream_active = False
-        self._active_stream_label = None
+        if self._active_stream_label and self._active_stream_label.startswith("grpc://"):
+            self._activate_source_state(
+                self._source_selector.set_state(
+                    profile=self._active_profile,
+                    log_path=self._active_log_path,
+                    stream_label=None,
+                )
+            )
         self._cancel_grpc_reconnect()
+
+    def _activate_source_state(self, state) -> None:
+        self._active_profile = state.profile
+        self._active_log_path = state.log_path
+        self._active_stream_label = state.stream_label
+
+    def _sync_source_selector_from_runtime_state(self) -> None:
+        self._source_selector.set_state(
+            profile=self._active_profile,
+            log_path=self._active_log_path,
+            stream_label=self._active_stream_label,
+        )
 
     def _apply_risk_context(self, entries: Iterable[Mapping[str, object]]) -> None:
         metrics, timeline, diagnostics = _build_risk_context(entries)
