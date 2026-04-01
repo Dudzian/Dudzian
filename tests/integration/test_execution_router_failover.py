@@ -362,3 +362,48 @@ def test_live_router_timeout_uncertain_retry_reconciles_without_double_execution
     assert reconciled is not None
     assert reconciled.order_id == "chaos-retry-1"
     assert router.binding_for_order("chaos-retry-1") == "primary"
+
+
+@pytest.mark.integration
+def test_live_router_timeout_uncertain_reconcile_remembers_binding_without_retry(
+    execution_context: ExecutionContext,
+) -> None:
+    adapter = ChaosExchangeAdapter(
+        ExchangeCredentials(key_id="chaos-primary"),
+        place_steps=(
+            ChaosOrderStep(
+                action="timeout_unknown",
+                order_id="chaos-reconcile-bind-1",
+                status="filled",
+                filled_quantity=1.0,
+                avg_price=100.0,
+            ),
+        ),
+    )
+    router = LiveExecutionRouter(
+        adapters={"primary": adapter},
+        routes=[
+            RouteDefinition(
+                name="default",
+                exchanges=("primary",),
+                max_retries_per_exchange=1,
+            )
+        ],
+        default_route="default",
+    )
+    request = OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="market",
+        client_order_id="chaos-cid-reconcile-bind-1",
+    )
+
+    try:
+        result = router.execute(request, execution_context)
+    finally:
+        router.close()
+
+    assert result.order_id == "chaos-reconcile-bind-1"
+    assert result.status == "filled"
+    assert router.binding_for_order("chaos-reconcile-bind-1") == "primary"
