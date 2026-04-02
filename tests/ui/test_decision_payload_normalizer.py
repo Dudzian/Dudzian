@@ -102,3 +102,63 @@ def test_parse_runtime_decision_entry_metadata_flattening_prefers_top_level_extr
     metadata = entry["metadata"]
     assert metadata["source"] == "grpc"
     assert metadata["profile"] == "paper"
+
+
+def test_parse_runtime_decision_entry_accepts_both_decision_object_aliases_and_first_wins() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "decision": {"state": "trade", "latency_ms": "6"},
+            "Decision": {"state": "hold", "latencyMs": "9", "should_trade": "yes"},
+        }
+    ).to_payload()
+
+    # _merge_decision_payload uses setdefault, so first alias encountered wins for duplicate keys.
+    assert entry["decision"]["state"] == "trade"
+    assert entry["decision"]["latencyMs"] == 6
+    assert entry["decision"]["shouldTrade"] is True
+
+
+def test_parse_runtime_decision_entry_documents_prefix_heuristics_and_camelization() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "decision": {"source_model": "nested"},
+            "decision_source_model": "prefixed",
+            "decision__": "ignored",
+            "ai_probability_score": "0.88",
+            "ai__": "ignored",
+            "market_regime_risk_score": "7",
+            "market_regime_label": "trend",
+            "market_regime__": "ignored",
+        }
+    ).to_payload()
+
+    assert entry["decision"]["sourceModel"] == "prefixed"
+    assert "" not in entry["decision"]
+    assert entry["ai"] == {"probabilityScore": "0.88"}
+    assert entry["marketRegime"]["riskScore"] == 7
+    assert entry["marketRegime"]["label"] == "trend"
+
+
+def test_parse_runtime_decision_entry_documents_incomplete_record_fallback_shape() -> None:
+    entry = parse_runtime_decision_entry({"signals": "alpha; beta", "quantity": 1.5}).to_payload()
+
+    # Base contract fallback when source payload is incomplete.
+    assert entry["event"] == ""
+    assert entry["timestamp"] == ""
+    assert entry["environment"] == ""
+    assert entry["portfolio"] == ""
+    assert entry["riskProfile"] == ""
+    assert entry["quantity"] == 1.5
+    assert entry["signals"] == ["alpha", "beta"]
+
+
+def test_parse_runtime_decision_entry_routes_unknown_fields_to_metadata() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "custom_field": "value",
+            "metadata": {"custom_field": "metadata-value", "meta_only": 123},
+        }
+    ).to_payload()
+
+    assert entry["metadata"]["custom_field"] == "value"
+    assert entry["metadata"]["meta_only"] == 123
