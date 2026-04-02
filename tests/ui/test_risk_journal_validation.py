@@ -173,7 +173,9 @@ def test_risk_journal_schema_guard_ignores_nested_decision_schema_aliases() -> N
     assert timeline[0]["schemaVersion"] == "1"
 
 
-def test_risk_journal_schema_guard_risk_specific_keys_take_precedence_over_generic_aliases() -> None:
+def test_risk_journal_schema_guard_risk_specific_keys_take_precedence_over_generic_aliases() -> (
+    None
+):
     _metrics, timeline, diagnostics = runtime_service_module._build_risk_context(
         [
             {
