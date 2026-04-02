@@ -1,5 +1,6 @@
 from bot_core.auto_trader.ai_governor import AIGovernorDecision
 from bot_core.auto_trader.lifecycle import LifecycleBootstrapSnapshot
+import pytest
 
 
 def test_ai_governor_decision_casts_and_normalizes_fields() -> None:
@@ -23,6 +24,7 @@ def test_ai_governor_decision_casts_and_normalizes_fields() -> None:
     assert decision.risk_metrics == {"risk_score": 0.6, "guardrail_active": 1.0}
     assert decision.cycle_metrics == {"cycle_latency_p95_ms": 1200.0}
     assert decision.to_mapping()["mode"] == "grid"
+    assert decision.decision_source == "policy"
 
 
 def test_lifecycle_bootstrap_snapshot_normalizes_text() -> None:
@@ -42,3 +44,37 @@ def test_lifecycle_bootstrap_snapshot_normalizes_text() -> None:
 
     snapshot.decision_state = "resume"
     assert snapshot.decision_state == "resume"
+
+
+def test_ai_governor_decision_supports_model_assisted_contract_fields() -> None:
+    decision = AIGovernorDecision(
+        mode="hedge",
+        reason="model override",
+        confidence=0.9,
+        regime="trend",
+        risk_score=0.2,
+        transaction_cost_bps=9.0,
+        decision_source="model",
+        inference_model="decision_model",
+        inference_model_version="2026.04.02",
+    )
+
+    payload = decision.to_mapping()
+    assert payload["decision_source"] == "model"
+    assert payload["inference_model"] == "decision_model"
+    assert payload["inference_model_version"] == "2026.04.02"
+
+
+def test_ai_governor_decision_rejects_model_path_without_metadata() -> None:
+    with pytest.raises(ValueError, match="decision_source=model/hybrid"):
+        AIGovernorDecision(
+            mode="hedge",
+            reason="model override",
+            confidence=0.9,
+            regime="trend",
+            risk_score=0.2,
+            transaction_cost_bps=9.0,
+            decision_source="model",
+            inference_model="decision_model",
+            inference_model_version=None,
+        )

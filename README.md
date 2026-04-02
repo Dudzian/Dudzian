@@ -23,7 +23,7 @@ Repozytorium zawiera kompletny stack aplikacji desktopowej do automatycznego han
 `AutoTraderAIGovernorRunner` udostępnia oficjalne metody `run_cycle()` (manualny krok decyzji)
 i `run_until()` (tryb launch-and-forget). `scripts/run_local_bot.py` po zbudowaniu pipeline
 wykonuje kilka cykli runnera na rzeczywistym `DecisionOrchestratorze` i publikuje snapshot
-AI Governora w komunikacie `ready`, więc UI natychmiast otrzymuje historię trybów
+decision-governora (legacy nazwa API: `ai_governor`) w komunikacie `ready`, więc UI natychmiast otrzymuje historię trybów
 scalping/hedge/grid nawet przed nawiązaniem feedu gRPC.
 
 Szczegółowe instrukcje znajdują się w dokumentacji:

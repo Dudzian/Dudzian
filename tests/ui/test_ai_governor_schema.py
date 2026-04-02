@@ -53,6 +53,22 @@ def test_normalize_ai_governor_record_adds_signals_and_decision_state() -> None:
     assert normalized["telemetry"]["cycleLatency"]["p95Ms"] == 42.0
 
 
+def test_normalize_ai_governor_record_maps_decision_source_contract() -> None:
+    record = {
+        "mode": "hedge",
+        "timestamp": "2024-01-01T00:00:00Z",
+        "decision_source": "model",
+        "inference_model": "decision_model",
+        "inference_model_version": "2026.04.02",
+    }
+
+    normalized = runtime_service_module._normalize_ai_governor_record(record)
+    assert normalized is not None
+    assert normalized["decision"]["source"] == "model"
+    assert normalized["decision"]["model"] == "decision_model"
+    assert normalized["decision"]["modelVersion"] == "2026.04.02"
+
+
 def test_ai_schema_violation_emits_alert_and_skips_history(monkeypatch) -> None:
     sink = _StubSink()
     service = RuntimeService(
