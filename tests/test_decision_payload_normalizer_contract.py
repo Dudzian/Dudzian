@@ -4,7 +4,10 @@ Intentionally duplicates key parser-contract scenarios from UI suite so they exe
 without PySide/QML harness requirements.
 """
 
-from ui.backend.decision_payload_normalizer import parse_runtime_decision_entry
+from ui.backend.decision_payload_normalizer import (
+    _interpret_schema_version,
+    parse_runtime_decision_entry,
+)
 
 
 def test_contract_accepts_both_decision_object_aliases_and_first_wins() -> None:
@@ -165,3 +168,128 @@ def test_contract_precedence_mixed_sources_reverse_alias_order() -> None:
     assert decision["confidence"] == 0.66
     assert decision["latencyMs"] == 18.5
     assert decision["signal"] == "from-Decision"
+
+
+def test_contract_schema_version_legacy_payload_defaults_and_does_not_leak_to_metadata() -> None:
+    legacy_entry = parse_runtime_decision_entry({"event": "decision_made"}).to_payload()
+
+    assert legacy_entry["schema_version"] == "1"
+    assert "schema_version" not in legacy_entry["metadata"]
+
+
+def test_contract_schema_version_explicit_payload_does_not_leak_to_metadata() -> None:
+    versioned_entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "schema_version": 1}
+    ).to_payload()
+
+    assert versioned_entry["schema_version"] == "1"
+    assert "schema_version" not in versioned_entry["metadata"]
+
+
+def test_contract_schema_version_blank_payload_defaults_and_does_not_leak_to_metadata() -> None:
+    blank_version_entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "schema_version": ""}
+    ).to_payload()
+
+    assert blank_version_entry["schema_version"] == "1"
+    assert "schema_version" not in blank_version_entry["metadata"]
+
+
+def test_contract_schema_version_metadata_only_does_not_leak_and_defaults_top_level() -> None:
+    entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "metadata": {"schema_version": "9", "source": "jsonl"}}
+    ).to_payload()
+
+    assert entry["schema_version"] == "1"
+    assert entry["metadata"]["source"] == "jsonl"
+    assert "schema_version" not in entry["metadata"]
+
+
+def test_contract_schema_version_top_level_conflict_with_metadata_keeps_top_level() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "decision_made",
+            "schema_version": 2,
+            "metadata": {"schema_version": "9", "source": "jsonl"},
+        }
+    ).to_payload()
+
+    assert entry["schema_version"] == "2"
+    assert entry["metadata"]["source"] == "jsonl"
+    assert "schema_version" not in entry["metadata"]
+
+
+def test_contract_schema_version_camelcase_top_level_maps_to_schema_version() -> None:
+    entry = parse_runtime_decision_entry({"event": "decision_made", "schemaVersion": 1}).to_payload()
+
+    assert entry["schema_version"] == "1"
+    assert "schema_version" not in entry["metadata"]
+    assert "schemaVersion" not in entry["metadata"]
+
+
+def test_contract_schema_version_camelcase_metadata_only_does_not_leak() -> None:
+    entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "metadata": {"schemaVersion": "9", "source": "jsonl"}}
+    ).to_payload()
+
+    assert entry["schema_version"] == "1"
+    assert entry["metadata"]["source"] == "jsonl"
+    assert "schema_version" not in entry["metadata"]
+    assert "schemaVersion" not in entry["metadata"]
+
+
+def test_contract_schema_version_snake_case_wins_over_camel_case_top_level() -> None:
+    entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "schema_version": "7", "schemaVersion": "9"}
+    ).to_payload()
+
+    assert entry["schema_version"] == "7"
+    assert "schema_version" not in entry["metadata"]
+    assert "schemaVersion" not in entry["metadata"]
+
+
+def test_contract_schema_version_snake_case_wins_over_metadata_camel_case() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "decision_made",
+            "schema_version": "7",
+            "metadata": {"schemaVersion": "9", "source": "jsonl"},
+        }
+    ).to_payload()
+
+    assert entry["schema_version"] == "7"
+    assert entry["metadata"]["source"] == "jsonl"
+    assert "schema_version" not in entry["metadata"]
+    assert "schemaVersion" not in entry["metadata"]
+
+
+def test_contract_schema_version_blank_camel_case_defaults_and_does_not_leak() -> None:
+    entry = parse_runtime_decision_entry({"event": "decision_made", "schemaVersion": ""}).to_payload()
+
+    assert entry["schema_version"] == "1"
+    assert "schema_version" not in entry["metadata"]
+    assert "schemaVersion" not in entry["metadata"]
+
+
+def test_contract_schema_version_blank_snake_case_wins_over_explicit_camel_case() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "decision_made",
+            "schema_version": "",
+            "schemaVersion": "9",
+            "metadata": {"source": "jsonl"},
+        }
+    ).to_payload()
+
+    assert entry["schema_version"] == "1"
+    assert entry["metadata"]["source"] == "jsonl"
+    assert "schema_version" not in entry["metadata"]
+    assert "schemaVersion" not in entry["metadata"]
+
+
+def test_contract_interpret_schema_version_precedence_and_fallback_matrix() -> None:
+    assert _interpret_schema_version({}) == "1"
+    assert _interpret_schema_version({"schema_version": "7"}) == "7"
+    assert _interpret_schema_version({"schemaVersion": "9"}) == "9"
+    assert _interpret_schema_version({"schema_version": "", "schemaVersion": "9"}) == "1"
+    assert _interpret_schema_version({"schema_version": "7", "schemaVersion": "9"}) == "7"

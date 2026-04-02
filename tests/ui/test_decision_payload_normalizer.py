@@ -162,3 +162,20 @@ def test_parse_runtime_decision_entry_routes_unknown_fields_to_metadata() -> Non
 
     assert entry["metadata"]["custom_field"] == "value"
     assert entry["metadata"]["meta_only"] == 123
+
+
+def test_parse_runtime_decision_entry_schema_version_backwards_compatible() -> None:
+    legacy_entry = parse_runtime_decision_entry({"event": "decision_made"}).to_payload()
+    versioned_entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "schema_version": "1"}
+    ).to_payload()
+    blank_version_entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "schema_version": ""}
+    ).to_payload()
+
+    assert legacy_entry["schema_version"] == "1"
+    assert versioned_entry["schema_version"] == "1"
+    assert blank_version_entry["schema_version"] == "1"
+    assert "schema_version" not in legacy_entry["metadata"]
+    assert "schema_version" not in versioned_entry["metadata"]
+    assert "schema_version" not in blank_version_entry["metadata"]

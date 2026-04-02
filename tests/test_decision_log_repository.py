@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ui.backend.decision_log_repository import DecisionLogRepository
+from ui.backend.decision_payload_normalizer import parse_runtime_decision_entry
 
 
 def test_decision_log_repository_loads_jsonl_and_skips_invalid_entries(
@@ -96,3 +97,29 @@ def test_decision_log_repository_wraps_io_errors(tmp_path: Path) -> None:
             match=r"Nie udało się odczytać decision logu '.*decision\.jsonl': disk failure",
         ):
             list(repository.load_jsonl_entries(log_path, limit=0))
+
+
+def test_decision_flow_preserves_schema_version_contract_without_metadata_leak(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "decision.jsonl"
+    log_path.write_text(
+        "\n".join(
+            [
+                '{"event":"legacy","metadata":{"source":"jsonl"}}',
+                '{"event":"versioned","schema_version":"7","metadata":{"source":"grpc"}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    repository = DecisionLogRepository()
+
+    loaded_entries = list(repository.load_jsonl_entries(log_path, limit=0))
+    normalized = [parse_runtime_decision_entry(entry).to_payload() for entry in loaded_entries]
+
+    assert normalized[0]["schema_version"] == "1"
+    assert normalized[1]["schema_version"] == "7"
+    assert normalized[0]["metadata"]["source"] == "jsonl"
+    assert normalized[1]["metadata"]["source"] == "grpc"
+    assert "schema_version" not in normalized[0]["metadata"]
+    assert "schema_version" not in normalized[1]["metadata"]
