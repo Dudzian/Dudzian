@@ -174,6 +174,21 @@ def test_runtime_service_parses_lowercase_decision_and_flattens_metadata() -> No
     assert "metadata" not in payload["metadata"]
 
 
+def test_runtime_service_supports_legacy_and_versioned_decision_payload_schema() -> None:
+    service = RuntimeService(
+        decision_loader=lambda limit: [
+            {"event": "decision_made", "decision": {"state": "trade"}},
+            {"event": "decision_made", "decision": {"state": "hold"}, "schema_version": "1"},
+        ]
+    )
+
+    payload = service.loadRecentDecisions(2)
+    assert payload[0]["schema_version"] == "1"
+    assert payload[1]["schema_version"] == "1"
+    assert "schema_version" not in payload[0]["metadata"]
+    assert "schema_version" not in payload[1]["metadata"]
+
+
 def test_runtime_service_degrades_to_demo_when_grpc_dependency_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

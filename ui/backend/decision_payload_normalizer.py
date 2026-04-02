@@ -7,6 +7,9 @@ from typing import Iterable, Mapping, MutableMapping
 
 
 DecisionRecord = Mapping[str, object]
+DEFAULT_DECISION_PAYLOAD_SCHEMA_VERSION = "1"
+SCHEMA_VERSION_KEY_PRIORITY: tuple[str, ...] = ("schema_version", "schemaVersion")
+SCHEMA_VERSION_KEYS: frozenset[str] = frozenset(SCHEMA_VERSION_KEY_PRIORITY)
 
 
 @dataclass(slots=True)
@@ -30,6 +33,7 @@ class RuntimeDecisionEntry:
     signals: tuple[str, ...]
     ai: Mapping[str, object]
     extras: Mapping[str, object]
+    schema_version: str
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -50,6 +54,7 @@ class RuntimeDecisionEntry:
             "signals": list(self.signals),
             "ai": dict(self.ai),
             "metadata": dict(self.extras),
+            "schema_version": self.schema_version,
         }
 
 
@@ -127,6 +132,23 @@ def _merge_decision_payload(
         destination.setdefault(normalized_key, payload_value)
 
 
+def _interpret_schema_version(record: DecisionRecord) -> str:
+    raw: object | None = None
+    for key in SCHEMA_VERSION_KEY_PRIORITY:
+        candidate = record.get(key)
+        if candidate is not None:
+            raw = candidate
+            break
+    if raw is None:
+        return DEFAULT_DECISION_PAYLOAD_SCHEMA_VERSION
+    if isinstance(raw, str):
+        normalized = raw.strip()
+        if normalized:
+            return normalized
+        return DEFAULT_DECISION_PAYLOAD_SCHEMA_VERSION
+    return str(raw)
+
+
 _BASE_FIELD_MAP: Mapping[str, str] = {
     "event": "event",
     "timestamp": "timestamp",
@@ -162,7 +184,7 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
         decision_payload["latencyMs"] = _normalize_number(latency)
 
     for key, value in record.items():
-        if key in {"confidence", "latency_ms"}:
+        if key in {"confidence", "latency_ms"} | SCHEMA_VERSION_KEYS:
             continue
         if key in {"decision", "Decision"} and isinstance(value, Mapping):
             _merge_decision_payload(decision_payload, value)
@@ -172,7 +194,11 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
             continue
         if key == "metadata" and isinstance(value, Mapping):
             metadata_payload.update(
-                {str(meta_key): meta_value for meta_key, meta_value in value.items()}
+                {
+                    str(meta_key): meta_value
+                    for meta_key, meta_value in value.items()
+                    if str(meta_key) not in SCHEMA_VERSION_KEYS
+                }
             )
             continue
         mapped = _BASE_FIELD_MAP.get(key)
@@ -233,4 +259,5 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
         signals=signals_payload,
         ai=ai_payload,
         extras=extras,
+        schema_version=_interpret_schema_version(record),
     )
