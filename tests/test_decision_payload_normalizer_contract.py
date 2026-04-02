@@ -90,7 +90,6 @@ def test_contract_routes_unknown_fields_to_metadata() -> None:
     assert entry["metadata"]["meta_only"] == 123
 
 
-
 def test_contract_prefers_decision_prefixed_fields_over_nested_aliases() -> None:
     entry = parse_runtime_decision_entry(
         {
@@ -139,7 +138,6 @@ def test_contract_metadata_flattening_prefers_top_level_extras_on_conflict() -> 
     assert metadata["profile"] == "paper"
 
 
-
 def test_contract_precedence_mixed_decision_sources_single_payload() -> None:
     entry = parse_runtime_decision_entry(
         {
@@ -157,7 +155,6 @@ def test_contract_precedence_mixed_decision_sources_single_payload() -> None:
     assert decision["state"] == "monitor"
     assert decision["confidence"] == 0.77
     assert decision["latencyMs"] == 17.5
-
 
 
 def test_contract_nested_decision_key_does_not_leak_to_metadata() -> None:
@@ -337,7 +334,9 @@ def test_contract_schema_version_top_level_conflict_with_metadata_keeps_top_leve
 
 
 def test_contract_schema_version_camelcase_top_level_maps_to_schema_version() -> None:
-    entry = parse_runtime_decision_entry({"event": "decision_made", "schemaVersion": 1}).to_payload()
+    entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "schemaVersion": 1}
+    ).to_payload()
 
     assert entry["schema_version"] == "1"
     assert "schema_version" not in entry["metadata"]
@@ -381,7 +380,9 @@ def test_contract_schema_version_snake_case_wins_over_metadata_camel_case() -> N
 
 
 def test_contract_schema_version_blank_camel_case_defaults_and_does_not_leak() -> None:
-    entry = parse_runtime_decision_entry({"event": "decision_made", "schemaVersion": ""}).to_payload()
+    entry = parse_runtime_decision_entry(
+        {"event": "decision_made", "schemaVersion": ""}
+    ).to_payload()
 
     assert entry["schema_version"] == "1"
     assert "schema_version" not in entry["metadata"]
