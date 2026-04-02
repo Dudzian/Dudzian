@@ -988,7 +988,9 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
     ).strip()
     if decision_source not in {"policy", "model", "hybrid"}:
         decision_source = ""
-    inference_model = str(record.get("inference_model") or record.get("inferenceModel") or "").strip()
+    inference_model = str(
+        record.get("inference_model") or record.get("inferenceModel") or ""
+    ).strip()
     inference_model_version = str(
         record.get("inference_model_version") or record.get("inferenceModelVersion") or ""
     ).strip()
