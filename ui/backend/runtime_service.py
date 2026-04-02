@@ -983,6 +983,15 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
         or record.get("transactionCostBps")
         or record.get("cost_bps")
     )
+    decision_source = str(
+        record.get("decision_source") or record.get("decisionSource") or ""
+    ).strip()
+    if decision_source not in {"policy", "model", "hybrid"}:
+        decision_source = ""
+    inference_model = str(record.get("inference_model") or record.get("inferenceModel") or "").strip()
+    inference_model_version = str(
+        record.get("inference_model_version") or record.get("inferenceModelVersion") or ""
+    ).strip()
     recommended_modes = _coerce_mode_sequence(
         record.get("recommendedModes") or record.get("recommended_modes") or record.get("modes")
     )
@@ -1060,6 +1069,12 @@ def _normalize_ai_governor_record(payload: Mapping[str, object] | None) -> dict[
         decision_meta["signal"] = str(decision_signal_label)
     if decision_should_trade is not None:
         decision_meta["shouldTrade"] = decision_should_trade
+    if decision_source:
+        decision_meta["source"] = decision_source
+    if inference_model:
+        decision_meta["model"] = inference_model
+    if inference_model_version:
+        decision_meta["modelVersion"] = inference_model_version
     if decision_meta:
         normalized["decision"] = decision_meta
     if decision_signals:

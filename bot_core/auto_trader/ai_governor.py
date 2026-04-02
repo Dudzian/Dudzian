@@ -1,15 +1,15 @@
-"""AI Governor odpowiedzialny za dobór trybu AutoTradera."""
+"""Decision Governor (legacy: AI Governor) odpowiedzialny za dobór trybu AutoTradera."""
 
 from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Deque, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Deque, Iterable, Literal, Mapping, Protocol, Sequence
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.decision.orchestrator import StrategyPerformanceSummary
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny w buildach light
     from bot_core.decision.orchestrator import DecisionOrchestrator
@@ -31,7 +31,7 @@ def _safe_float(value: object) -> float | None:
 
 
 class AIGovernorDecision(BaseModel):
-    """Reprezentuje ostatnią decyzję AI Governora."""
+    """Reprezentuje ostatnią decyzję warstwy policy/decision governora."""
 
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
@@ -43,6 +43,18 @@ class AIGovernorDecision(BaseModel):
     transaction_cost_bps: float | None
     risk_metrics: Mapping[str, float] = Field(default_factory=dict)
     cycle_metrics: Mapping[str, float] = Field(default_factory=dict)
+    decision_source: Literal["policy", "model", "hybrid"] = Field(
+        "policy",
+        description="Źródło decyzji: policy (heurystyka), model (inference) lub hybrid",
+    )
+    inference_model: str | None = Field(
+        default=None,
+        description="Identyfikator modelu tylko dla ścieżek model/hybrid",
+    )
+    inference_model_version: str | None = Field(
+        default=None,
+        description="Wersja modelu tylko dla ścieżek model/hybrid",
+    )
 
     @field_validator("mode", "reason", "regime", mode="before")
     @classmethod
@@ -71,6 +83,17 @@ class AIGovernorDecision(BaseModel):
         payload["risk_metrics"] = dict(self.risk_metrics)
         payload["cycle_metrics"] = dict(self.cycle_metrics)
         return payload
+
+    @model_validator(mode="after")
+    def _validate_source_contract(self) -> "AIGovernorDecision":
+        if self.decision_source in {"model", "hybrid"}:
+            model_name = (self.inference_model or "").strip()
+            model_version = (self.inference_model_version or "").strip()
+            if not model_name or not model_version:
+                raise ValueError(
+                    "decision_source=model/hybrid wymaga inference_model i inference_model_version"
+                )
+        return self
 
 
 class AutoTraderAIGovernor:
@@ -191,7 +214,7 @@ class AutoTraderAIGovernor:
 
 @dataclass
 class AutoTraderAIGovernorRunner:
-    """Wykonuje cykle AI Governora bazując na metrykach DecisionOrchestratora."""
+    """Wykonuje cykle decision-governora bazując na metrykach DecisionOrchestratora."""
 
     orchestrator: StrategyPerformanceProvider
     governor: AutoTraderAIGovernor = field(default_factory=AutoTraderAIGovernor)
@@ -200,6 +223,9 @@ class AutoTraderAIGovernorRunner:
     _last_mode: str | None = field(default=None, init=False, repr=False)
     _last_cycle_metrics: Mapping[str, float] = field(default_factory=dict, init=False, repr=False)
     _last_risk_metrics: Mapping[str, float] = field(default_factory=dict, init=False, repr=False)
+    _last_decision_source: str = field(default="policy", init=False, repr=False)
+    _last_inference_model: str | None = field(default=None, init=False, repr=False)
+    _last_inference_model_version: str | None = field(default=None, init=False, repr=False)
     _mode_transitions: Deque[dict[str, object]] = field(
         default_factory=lambda: deque(maxlen=16), init=False, repr=False
     )
@@ -234,6 +260,9 @@ class AutoTraderAIGovernorRunner:
             "strategy_switch_total": float(self._switch_total),
         }
         self._last_risk_metrics = dict(risk_metrics)
+        self._last_decision_source = decision.decision_source
+        self._last_inference_model = decision.inference_model
+        self._last_inference_model_version = decision.inference_model_version
         return decision
 
     def run_until(
@@ -285,6 +314,15 @@ class AutoTraderAIGovernorRunner:
             telemetry["riskMetrics"] = dict(self._last_risk_metrics)
         telemetry.setdefault("cycleLatency", self._cycle_latency_demo_metrics())
         telemetry.setdefault("modeTransitions", list(self._mode_transitions))
+        telemetry.setdefault(
+            "decisionContract",
+            {
+                "path": self._last_decision_source or "policy",
+                "policyEngine": "autotrader_mode_policy",
+                "model": self._last_inference_model,
+                "modelVersion": self._last_inference_model_version,
+            },
+        )
         telemetry.setdefault(
             "guardrails",
             {"active": False, "killSwitch": False, "recent": []},
@@ -414,5 +452,13 @@ __all__ = [
     "AIGovernorDecision",
     "AutoTraderAIGovernor",
     "AutoTraderAIGovernorRunner",
+    "AutoTraderDecisionGovernor",
+    "AutoTraderDecisionGovernorRunner",
+    "DecisionGovernorDecision",
     "StrategyPerformanceProvider",
 ]
+
+# Aliasy przejściowe: uczciwsza semantyka "decision governor" bez lawinowego rename'u API.
+DecisionGovernorDecision = AIGovernorDecision
+AutoTraderDecisionGovernor = AutoTraderAIGovernor
+AutoTraderDecisionGovernorRunner = AutoTraderAIGovernorRunner
