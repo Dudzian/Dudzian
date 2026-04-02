@@ -159,6 +159,10 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "PipelineHistoryDiff": (".manager", "PipelineHistoryDiff"),
     "PipelineHistorySnapshot": (".manager", "PipelineHistorySnapshot"),
     "DataQualityCheck": (".manager", "DataQualityCheck"),
+    "TradingOpportunityAI": (".trading_engine", "TradingOpportunityAI"),
+    "OpportunitySnapshot": (".trading_engine", "OpportunitySnapshot"),
+    "OpportunityCandidate": (".trading_engine", "OpportunityCandidate"),
+    "OpportunityDecision": (".trading_engine", "OpportunityDecision"),
 }
 
 _PIPELINE_MONITORING_EXPORTS: Dict[str, Tuple[str, str]] = {
