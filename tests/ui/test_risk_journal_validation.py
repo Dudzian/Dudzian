@@ -110,6 +110,135 @@ def test_risk_journal_ignores_non_risk_entries(caplog: pytest.LogCaptureFixture)
     assert not any("Risk Journal" in message for message in caplog.messages)
 
 
+def test_risk_journal_schema_guard_keeps_backward_compatibility() -> None:
+    metrics, timeline, diagnostics = runtime_service_module._build_risk_context(
+        [
+            {
+                "timestamp": "2024-01-06T10:00:00Z",
+                "event": "risk_update",
+                "status": "freeze",
+                "metadata": {"risk_action": "freeze", "risk_flags": ["drawdown_watch"]},
+            }
+        ]
+    )
+
+    assert metrics["freezeCount"] == 1
+    assert diagnostics["schemaVersion"] == "1"
+    assert diagnostics["schema_version"] == "1"
+    assert diagnostics["unsupportedSchemaVersions"] == []
+    assert diagnostics["unsupported_schema_versions"] == []
+    assert timeline[0]["schemaVersion"] == "1"
+
+
+def test_risk_journal_schema_guard_warns_for_unknown_versions(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="ui.backend.runtime_service"):
+        _metrics, timeline, diagnostics = runtime_service_module._build_risk_context(
+            [
+                {
+                    "timestamp": "2024-01-07T10:00:00Z",
+                    "event": "risk_update",
+                    "status": "freeze",
+                    "metadata": {
+                        "risk_action": "freeze",
+                        "risk_flags": ["drawdown_watch"],
+                        "risk_journal_schema_version": "2",
+                    },
+                }
+            ]
+        )
+
+    assert diagnostics["unsupportedSchemaVersions"] == ["2"]
+    assert diagnostics["unsupported_schema_versions"] == ["2"]
+    assert timeline[0]["schemaVersion"] == "2"
+    assert "not explicitly supported" in caplog.text
+
+
+def test_risk_journal_schema_guard_ignores_nested_decision_schema_aliases() -> None:
+    _metrics, timeline, diagnostics = runtime_service_module._build_risk_context(
+        [
+            {
+                "timestamp": "2024-01-08T10:00:00Z",
+                "event": "risk_update",
+                "status": "freeze",
+                "metadata": {"risk_action": "freeze", "risk_flags": ["drawdown_watch"]},
+                "decision": {"schemaVersion": "99", "schema_version": "77"},
+            }
+        ]
+    )
+
+    assert diagnostics["schemaVersion"] == "1"
+    assert diagnostics["unsupportedSchemaVersions"] == []
+    assert timeline[0]["schemaVersion"] == "1"
+
+
+def test_risk_journal_schema_guard_risk_specific_keys_take_precedence_over_generic_aliases() -> None:
+    _metrics, timeline, diagnostics = runtime_service_module._build_risk_context(
+        [
+            {
+                "timestamp": "2024-01-09T10:00:00Z",
+                "event": "risk_update",
+                "status": "freeze",
+                "schemaVersion": "3",
+                "metadata": {
+                    "risk_action": "freeze",
+                    "risk_flags": ["drawdown_watch"],
+                    "risk_journal_schema_version": "2",
+                },
+                "decision": {"schemaVersion": "999"},
+            }
+        ]
+    )
+
+    assert diagnostics["unsupportedSchemaVersions"] == ["2"]
+    assert timeline[0]["schemaVersion"] == "2"
+
+
+def test_risk_journal_schema_guard_blank_values_fallback_to_default() -> None:
+    _metrics, timeline, diagnostics = runtime_service_module._build_risk_context(
+        [
+            {
+                "timestamp": "2024-01-10T10:00:00Z",
+                "event": "risk_update",
+                "status": "freeze",
+                "schema_version": "   ",
+                "metadata": {
+                    "risk_action": "freeze",
+                    "risk_flags": ["drawdown_watch"],
+                    "risk_journal_schema_version": "",
+                },
+                "decision": {"schema_version": "42"},
+            }
+        ]
+    )
+
+    assert diagnostics["schemaVersion"] == "1"
+    assert diagnostics["unsupportedSchemaVersions"] == []
+    assert timeline[0]["schemaVersion"] == "1"
+
+
+def test_risk_journal_schema_guard_entry_risk_specific_beats_metadata_generic_alias() -> None:
+    _metrics, timeline, diagnostics = runtime_service_module._build_risk_context(
+        [
+            {
+                "timestamp": "2024-01-11T10:00:00Z",
+                "event": "risk_update",
+                "status": "freeze",
+                "risk_journal_schema_version": "4",
+                "metadata": {
+                    "risk_action": "freeze",
+                    "risk_flags": ["drawdown_watch"],
+                    "schemaVersion": "5",
+                },
+            }
+        ]
+    )
+
+    assert diagnostics["unsupportedSchemaVersions"] == ["4"]
+    assert timeline[0]["schemaVersion"] == "4"
+
+
 @pytest.mark.parametrize(
     ("entry", "should_be_classified"),
     [

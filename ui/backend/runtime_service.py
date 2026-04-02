@@ -136,6 +136,16 @@ _RISK_BLOCK_KEYWORDS: frozenset[str] = frozenset(
     {"block", "blocked", "risk_block", "reject", "rejected"}
 )
 _RISK_FREEZE_KEYWORDS: frozenset[str] = frozenset({"freeze", "frozen", "lock"})
+_RISK_JOURNAL_DEFAULT_SCHEMA_VERSION = "1"
+_RISK_JOURNAL_SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1"})
+_RISK_JOURNAL_SCHEMA_RISK_SPECIFIC_KEYS: tuple[str, ...] = (
+    "risk_journal_schema_version",
+    "riskJournalSchemaVersion",
+)
+_RISK_JOURNAL_SCHEMA_GENERIC_KEYS: tuple[str, ...] = (
+    "schema_version",
+    "schemaVersion",
+)
 _AI_FEED_CHANNEL = "ai_governor"
 _AI_HISTORY_LIMIT = 32
 
@@ -395,8 +405,36 @@ def _build_risk_context(
     stress_failure_counter: Counter[str] = Counter()
     risk_flag_counter: Counter[str] = Counter()
     strategy_summaries: dict[str, dict[str, object]] = {}
+    unsupported_schema_versions: set[str] = set()
 
     timeline: list[dict[str, object]] = []
+
+    def _extract_risk_schema_version(
+        entry_payload: Mapping[str, object],
+        metadata_payload: Mapping[str, object],
+    ) -> str:
+        # Granica kontraktu Risk Journal:
+        # - schema version pochodzi tylko z top-level entry albo metadata,
+        # - nested decision payload NIE jest źródłem wersji kontraktu Risk Journal.
+        sources = (entry_payload, metadata_payload)
+
+        # Priorytet kontraktu: risk-specific keys > generic aliases.
+        for keys in (
+            _RISK_JOURNAL_SCHEMA_RISK_SPECIFIC_KEYS,
+            _RISK_JOURNAL_SCHEMA_GENERIC_KEYS,
+        ):
+            for source in sources:
+                for key in keys:
+                    candidate = source.get(key)
+                    if candidate is None:
+                        continue
+                    if isinstance(candidate, str):
+                        normalized = candidate.strip()
+                        if normalized:
+                            return normalized
+                        continue
+                    return str(candidate)
+        return _RISK_JOURNAL_DEFAULT_SCHEMA_VERSION
 
     for entry in entries:
         metadata = _to_mapping(entry.get("metadata"))
@@ -404,6 +442,9 @@ def _build_risk_context(
         if not _is_risk_journal_entry(entry, metadata, decision):
             continue
         total_entries += 1
+        schema_version = _extract_risk_schema_version(entry, metadata)
+        if schema_version not in _RISK_JOURNAL_SUPPORTED_SCHEMA_VERSIONS:
+            unsupported_schema_versions.add(schema_version)
         timestamp = str(entry.get("timestamp") or "")
         event = str(entry.get("event") or "")
         strategy = str(entry.get("strategy") or "").strip()
@@ -580,6 +621,7 @@ def _build_risk_context(
                 "activityScore": 0.0 if is_incomplete else activity_score,
                 "isIncomplete": is_incomplete,
                 "missingFields": missing_fields,
+                "schemaVersion": schema_version,
                 "record": dict(entry),
             }
         )
@@ -680,7 +722,18 @@ def _build_risk_context(
         "incomplete_samples_count": incomplete_samples_count,
         "riskFlagCounts": dict(risk_flag_counter),
         "risk_flag_counts": dict(risk_flag_counter),
+        "schemaVersion": _RISK_JOURNAL_DEFAULT_SCHEMA_VERSION,
+        "unsupportedSchemaVersions": sorted(unsupported_schema_versions),
+        "schema_version": _RISK_JOURNAL_DEFAULT_SCHEMA_VERSION,
+        "unsupported_schema_versions": sorted(unsupported_schema_versions),
     }
+
+    if unsupported_schema_versions:
+        _LOGGER.warning(
+            "Risk Journal schema versions %s are not explicitly supported; applying compatibility parser v%s",
+            sorted(unsupported_schema_versions),
+            _RISK_JOURNAL_DEFAULT_SCHEMA_VERSION,
+        )
 
     return metrics, timeline, diagnostics
 
