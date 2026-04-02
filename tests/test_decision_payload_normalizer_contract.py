@@ -7,6 +7,7 @@ without PySide/QML harness requirements.
 from ui.backend.decision_payload_normalizer import (
     _interpret_schema_version,
     parse_runtime_decision_entry,
+    parse_runtime_decision_payload,
 )
 
 
@@ -22,6 +23,25 @@ def test_contract_accepts_both_decision_object_aliases_and_first_wins() -> None:
     assert entry["decision"]["state"] == "trade"
     assert entry["decision"]["latencyMs"] == 6
     assert entry["decision"]["shouldTrade"] is True
+
+
+def test_contract_parse_runtime_decision_payload_centralizes_alias_handling() -> None:
+    decision = parse_runtime_decision_payload(
+        {
+            "confidence": "0.44",
+            "latency_ms": "6",
+            "Decision": {"signal": "from-Decision", "latencyMs": "9", "should_trade": "yes"},
+            "decision": {"signal": "from-decision", "latency_ms": "11", "shouldTrade": False},
+            "decision_confidence": "0.91",
+            "decision_latency_ms": "11",
+            "decision_should_trade": "0",
+        }
+    )
+
+    assert decision["confidence"] == 0.91
+    assert decision["latencyMs"] == 11
+    assert decision["signal"] == "from-Decision"
+    assert decision["shouldTrade"] is False
 
 
 def test_contract_documents_prefix_heuristics_and_camelization() -> None:
@@ -138,6 +158,103 @@ def test_contract_precedence_mixed_decision_sources_single_payload() -> None:
     assert decision["confidence"] == 0.77
     assert decision["latencyMs"] == 17.5
 
+
+
+def test_contract_nested_decision_key_does_not_leak_to_metadata() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "decision_made",
+            "decision": {"state": "trade", "reason": "ok"},
+            "source": "unit",
+        }
+    ).to_payload()
+
+    assert "decision" not in entry["metadata"]
+    assert entry["decision"]["state"] == "trade"
+    assert entry["metadata"]["source"] == "unit"
+
+
+def test_contract_non_mapping_decision_key_is_preserved_in_metadata() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "decision_made",
+            "decision": "malformed-decision-payload",
+            "source": "unit",
+        }
+    ).to_payload()
+
+    assert entry["metadata"]["decision"] == "malformed-decision-payload"
+    assert entry["metadata"]["source"] == "unit"
+    assert entry["decision"] == {}
+
+
+def test_contract_nested_decision_alias_key_does_not_leak_to_metadata() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "decision_made",
+            "Decision": {"state": "hold", "reason": "risk"},
+            "source": "unit",
+        }
+    ).to_payload()
+
+    assert "Decision" not in entry["metadata"]
+    assert entry["decision"]["state"] == "hold"
+    assert entry["metadata"]["source"] == "unit"
+
+
+def test_contract_non_mapping_decision_alias_key_is_preserved_in_metadata() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "decision_made",
+            "Decision": ["malformed", "decision", "payload"],
+            "source": "unit",
+        }
+    ).to_payload()
+
+    assert entry["metadata"]["Decision"] == ["malformed", "decision", "payload"]
+    assert entry["metadata"]["source"] == "unit"
+    assert entry["decision"] == {}
+
+
+def test_contract_prefixed_decision_fields_do_not_leak_to_metadata() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "decision_made",
+            "decision_state": "monitor",
+            "decision_should_trade": "yes",
+            "source": "unit",
+        }
+    ).to_payload()
+
+    assert "decision_state" not in entry["metadata"]
+    assert "decision_should_trade" not in entry["metadata"]
+    assert entry["decision"]["state"] == "monitor"
+    assert entry["decision"]["shouldTrade"] is True
+    assert entry["metadata"]["source"] == "unit"
+
+
+def test_contract_mixed_decision_sources_keep_precedence_and_clean_metadata() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "decision": {"state": "trade", "confidence": "0.11", "latency_ms": "5"},
+            "Decision": {"state": "hold", "confidence": "0.22", "latency_ms": "6"},
+            "decision_state": "monitor",
+            "decision_confidence": "0.77",
+            "decision_latency_ms": "17.5",
+            "source": "unit",
+        }
+    ).to_payload()
+
+    decision = entry["decision"]
+    assert decision["state"] == "monitor"
+    assert decision["confidence"] == 0.77
+    assert decision["latencyMs"] == 17.5
+    assert "decision" not in entry["metadata"]
+    assert "Decision" not in entry["metadata"]
+    assert "decision_state" not in entry["metadata"]
+    assert "decision_confidence" not in entry["metadata"]
+    assert "decision_latency_ms" not in entry["metadata"]
+    assert entry["metadata"]["source"] == "unit"
 
 
 def test_contract_precedence_mixed_sources_reverse_alias_order() -> None:

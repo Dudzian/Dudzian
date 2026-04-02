@@ -1,4 +1,7 @@
-from ui.backend.decision_payload_normalizer import parse_runtime_decision_entry
+from ui.backend.decision_payload_normalizer import (
+    parse_runtime_decision_entry,
+    parse_runtime_decision_payload,
+)
 
 
 def test_parse_runtime_decision_entry_normalizes_market_regime_fields() -> None:
@@ -116,6 +119,25 @@ def test_parse_runtime_decision_entry_accepts_both_decision_object_aliases_and_f
     assert entry["decision"]["state"] == "trade"
     assert entry["decision"]["latencyMs"] == 6
     assert entry["decision"]["shouldTrade"] is True
+
+
+def test_parse_runtime_decision_payload_is_single_decision_entry_point_for_aliases() -> None:
+    decision = parse_runtime_decision_payload(
+        {
+            "confidence": "0.44",
+            "latency_ms": "6",
+            "Decision": {"signal": "from-Decision", "latencyMs": "9", "should_trade": "yes"},
+            "decision": {"signal": "from-decision", "latency_ms": "11", "shouldTrade": False},
+            "decision_confidence": "0.91",
+            "decision_latency_ms": "11",
+            "decision_should_trade": "0",
+        }
+    )
+
+    assert decision["confidence"] == 0.91
+    assert decision["latencyMs"] == 11
+    assert decision["signal"] == "from-Decision"
+    assert decision["shouldTrade"] is False
 
 
 def test_parse_runtime_decision_entry_documents_prefix_heuristics_and_camelization() -> None:

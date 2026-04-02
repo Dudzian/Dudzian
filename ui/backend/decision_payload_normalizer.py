@@ -132,6 +132,74 @@ def _merge_decision_payload(
         destination.setdefault(normalized_key, payload_value)
 
 
+def _insert_decision_field(
+    destination: MutableMapping[str, object],
+    *,
+    key: str,
+    value: object,
+    overwrite: bool,
+) -> None:
+    normalized_key = str(key)
+    if normalized_key == "should_trade":
+        normalized_key = "shouldTrade"
+    if normalized_key == "latency_ms":
+        normalized_key = "latencyMs"
+
+    payload_value = value
+    if normalized_key == "shouldTrade":
+        payload_value = _normalize_bool(value)
+    elif normalized_key in {"confidence", "latencyMs"}:
+        payload_value = _normalize_number(value)
+
+    if overwrite:
+        destination[normalized_key] = payload_value
+    else:
+        destination.setdefault(normalized_key, payload_value)
+
+
+def parse_runtime_decision_payload(record: DecisionRecord) -> dict[str, object]:
+    """Normalize only nested decision payload semantics from a raw decision record."""
+
+    decision_payload: dict[str, object] = {}
+
+    confidence = record.get("confidence")
+    latency = record.get("latency_ms")
+    if confidence is not None:
+        _insert_decision_field(
+            decision_payload,
+            key="confidence",
+            value=confidence,
+            overwrite=False,
+        )
+    if latency is not None:
+        _insert_decision_field(
+            decision_payload,
+            key="latency_ms",
+            value=latency,
+            overwrite=False,
+        )
+
+    for key, value in record.items():
+        if key in {"confidence", "latency_ms"} | SCHEMA_VERSION_KEYS:
+            continue
+        if key in {"decision", "Decision"} and isinstance(value, Mapping):
+            _merge_decision_payload(decision_payload, value)
+            continue
+        if key.startswith("decision_"):
+            normalized = _camelize("decision_", key)
+            if not normalized:
+                continue
+            _insert_decision_field(
+                decision_payload,
+                key=normalized,
+                value=value,
+                overwrite=True,
+            )
+            continue
+
+    return decision_payload
+
+
 def _interpret_schema_version(record: DecisionRecord) -> str:
     raw: object | None = None
     for key in SCHEMA_VERSION_KEY_PRIORITY:
@@ -169,25 +237,20 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
     """Normalize raw decision journal record to UI-oriented payload structure."""
 
     base: MutableMapping[str, object | None] = {key: None for key in _BASE_FIELD_MAP.values()}
-    decision_payload: MutableMapping[str, object] = {}
+    decision_payload: MutableMapping[str, object] = parse_runtime_decision_payload(record)
     signals_payload: tuple[str, ...] = ()
     ai_payload: MutableMapping[str, object] = {}
     regime_payload: MutableMapping[str, object] = {}
     metadata_payload: MutableMapping[str, object] = {}
     extras: MutableMapping[str, object] = {}
 
-    confidence = record.get("confidence")
-    latency = record.get("latency_ms")
-    if confidence is not None:
-        decision_payload["confidence"] = _normalize_number(confidence)
-    if latency is not None:
-        decision_payload["latencyMs"] = _normalize_number(latency)
-
     for key, value in record.items():
         if key in {"confidence", "latency_ms"} | SCHEMA_VERSION_KEYS:
             continue
-        if key in {"decision", "Decision"} and isinstance(value, Mapping):
-            _merge_decision_payload(decision_payload, value)
+        if key in {"decision", "Decision"}:
+            if isinstance(value, Mapping):
+                continue
+        if key.startswith("decision_"):
             continue
         if key == "signals":
             signals_payload = _normalize_signal_labels(value)
@@ -204,17 +267,6 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
         mapped = _BASE_FIELD_MAP.get(key)
         if mapped is not None:
             base[mapped] = value
-            continue
-        if key.startswith("decision_"):
-            normalized = _camelize("decision_", key)
-            if not normalized:
-                continue
-            payload_value: object = value
-            if normalized == "shouldTrade":
-                payload_value = _normalize_bool(value)
-            elif normalized in {"confidence", "latencyMs"}:
-                payload_value = _normalize_number(value)
-            decision_payload[normalized] = payload_value
             continue
         if key.startswith("ai_"):
             normalized = _camelize("ai_", key)
