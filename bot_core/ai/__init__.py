@@ -163,6 +163,17 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "OpportunitySnapshot": (".trading_engine", "OpportunitySnapshot"),
     "OpportunityCandidate": (".trading_engine", "OpportunityCandidate"),
     "OpportunityDecision": (".trading_engine", "OpportunityDecision"),
+    "OpportunityThresholdConfig": (
+        ".trading_opportunity_shadow",
+        "OpportunityThresholdConfig",
+    ),
+    "OpportunityShadowContext": (".trading_opportunity_shadow", "OpportunityShadowContext"),
+    "OpportunityShadowRecord": (".trading_opportunity_shadow", "OpportunityShadowRecord"),
+    "OpportunityOutcomeLabel": (".trading_opportunity_shadow", "OpportunityOutcomeLabel"),
+    "OpportunityShadowRepository": (
+        ".trading_opportunity_shadow",
+        "OpportunityShadowRepository",
+    ),
 }
 
 _PIPELINE_MONITORING_EXPORTS: Dict[str, Tuple[str, str]] = {

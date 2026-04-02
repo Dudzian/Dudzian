@@ -14,6 +14,11 @@ from typing import Mapping, MutableMapping, Sequence
 
 from .models import ModelArtifact
 from .repository import FilesystemModelRepository, ModelRepository
+from .trading_opportunity_shadow import (
+    OpportunityShadowContext,
+    OpportunityShadowRecord,
+    OpportunityThresholdConfig,
+)
 from .training import SimpleGradientBoostingModel
 
 _FEATURE_NAMES: tuple[str, ...] = (
@@ -242,6 +247,70 @@ class TradingOpportunityAI:
             OpportunityDecision(**{**asdict(entry), "rank": idx})
             for idx, entry in enumerate(ordered, start=1)
         ]
+
+    @classmethod
+    def build_shadow_records(
+        cls,
+        decisions: Sequence[OpportunityDecision],
+        *,
+        decision_timestamp: datetime | None = None,
+        threshold_config: OpportunityThresholdConfig | None = None,
+        snapshot: Mapping[str, object] | None = None,
+        context: OpportunityShadowContext | None = None,
+    ) -> list[OpportunityShadowRecord]:
+        """Buduje audytowalne rekordy shadow bez ingerencji w execution path."""
+
+        resolved_timestamp = decision_timestamp or datetime.now(timezone.utc)
+        if resolved_timestamp.tzinfo is None:
+            resolved_timestamp = resolved_timestamp.replace(tzinfo=timezone.utc)
+        resolved_timestamp = resolved_timestamp.astimezone(timezone.utc)
+        resolved_thresholds = threshold_config or OpportunityThresholdConfig()
+        resolved_context = context or OpportunityShadowContext()
+
+        records: list[OpportunityShadowRecord] = []
+        for entry in decisions:
+            cls._validate_symbol(entry.symbol, context=f"decision#{entry.rank}")
+            record_key = OpportunityShadowRecord.build_record_key(
+                symbol=entry.symbol,
+                decision_timestamp=resolved_timestamp,
+                model_version=entry.model_version,
+                rank=entry.rank,
+            )
+            records.append(
+                OpportunityShadowRecord(
+                    record_key=record_key,
+                    symbol=entry.symbol,
+                    decision_timestamp=resolved_timestamp,
+                    model_version=entry.model_version,
+                    decision_source=entry.decision_source,
+                    expected_edge_bps=float(entry.expected_edge_bps),
+                    success_probability=float(entry.success_probability),
+                    confidence=float(entry.confidence),
+                    proposed_direction=entry.proposed_direction,
+                    accepted=bool(entry.accepted),
+                    rejection_reason=entry.rejection_reason,
+                    rank=int(entry.rank),
+                    provenance=cls._deep_copy_payload(entry.provenance),
+                    threshold_config=resolved_thresholds,
+                    snapshot=cls._deep_copy_payload(snapshot or {}),
+                    context=OpportunityShadowContext(
+                        run_id=resolved_context.run_id,
+                        environment=resolved_context.environment,
+                        notes=cls._deep_copy_payload(resolved_context.notes),
+                    ),
+                )
+            )
+        return records
+
+    @classmethod
+    def _deep_copy_payload(cls, value: object) -> object:
+        if isinstance(value, Mapping):
+            return {str(key): cls._deep_copy_payload(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._deep_copy_payload(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(cls._deep_copy_payload(item) for item in value)
+        return value
 
     def _require_model(self) -> tuple[SimpleGradientBoostingModel, ModelArtifact]:
         if self._model is None or self._artifact is None:

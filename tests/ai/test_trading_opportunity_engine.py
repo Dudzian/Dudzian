@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -8,6 +9,12 @@ from bot_core.ai import (
     FilesystemModelRepository,
     ModelArtifact,
     OpportunityCandidate,
+    OpportunityDecision,
+    OpportunityOutcomeLabel,
+    OpportunityShadowContext,
+    OpportunityShadowRecord,
+    OpportunityShadowRepository,
+    OpportunityThresholdConfig,
     OpportunitySnapshot,
     TradingOpportunityAI,
 )
@@ -394,3 +401,336 @@ def test_rank_provenance_contains_heuristic_probability_markers() -> None:
     assert provenance["confidence_method"] == "distance_from_probability_midpoint"
     assert isinstance(provenance["calibration"], dict)
     assert math.isfinite(float(provenance["calibration"]["scale_bps"]))  # type: ignore[index]
+
+
+def test_shadow_record_building_from_ranked_decisions() -> None:
+    engine = TradingOpportunityAI()
+    engine.fit(_build_samples())
+    decisions = engine.rank(
+        [
+            OpportunityCandidate(
+                symbol="BTC/USDT",
+                signal_strength=0.9,
+                momentum_5m=0.6,
+                volatility_30m=0.3,
+                spread_bps=0.4,
+                fee_bps=0.2,
+                slippage_bps=0.1,
+                liquidity_score=0.9,
+                risk_penalty_bps=0.1,
+            )
+        ]
+    )
+    timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    records = TradingOpportunityAI.build_shadow_records(
+        decisions,
+        decision_timestamp=timestamp,
+        threshold_config=OpportunityThresholdConfig(min_expected_edge_bps=2.0, min_probability=0.6),
+        snapshot={"market_regime": "range"},
+        context=OpportunityShadowContext(run_id="test-run-1", environment="shadow"),
+    )
+    assert len(records) == 1
+    record = records[0]
+    assert record.symbol == decisions[0].symbol
+    assert record.record_key
+    assert record.threshold_config.min_probability == 0.6
+    assert record.snapshot["market_regime"] == "range"
+    assert record.context.run_id == "test-run-1"
+
+
+def test_shadow_and_outcome_contracts_roundtrip_with_repository(tmp_path) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    decision_timestamp = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
+    record_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opp-v1",
+        rank=1,
+    )
+    records = TradingOpportunityAI.build_shadow_records(
+        [
+            OpportunityDecision(
+                symbol="ETH/USDT",
+                decision_source="model",
+                model_version="opp-v1",
+                expected_edge_bps=4.2,
+                success_probability=0.63,
+                confidence=0.26,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"trained_at": "2026-01-01T00:00:00+00:00"},
+            )
+        ],
+        decision_timestamp=decision_timestamp,
+    )
+    assert records[0].record_key == record_key
+    repo.append_shadow_records(records)
+
+    label = OpportunityOutcomeLabel(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        correlation_key=record_key,
+        horizon_minutes=30,
+        realized_return_bps=3.5,
+        max_favorable_excursion_bps=5.1,
+        max_adverse_excursion_bps=-1.8,
+        hit_take_profit=True,
+        hit_stop_loss=False,
+        provenance={"feed": "backtest"},
+        label_quality="high",
+    )
+    repo.append_outcome_labels([label])
+
+    loaded_records = repo.load_shadow_records()
+    loaded_labels = repo.load_outcome_labels()
+    assert loaded_records == records
+    assert loaded_labels == [label]
+
+
+def test_record_key_is_canonical_for_same_instant_in_different_timezones() -> None:
+    utc_instant = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
+    plus_two = utc_instant.astimezone(timezone(timedelta(hours=2)))
+    minus_five = utc_instant.astimezone(timezone(timedelta(hours=-5)))
+
+    key_utc = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=utc_instant,
+        model_version="opp-v1",
+        rank=1,
+    )
+    key_plus_two = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=plus_two,
+        model_version="opp-v1",
+        rank=1,
+    )
+    key_minus_five = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=minus_five,
+        model_version="opp-v1",
+        rank=1,
+    )
+    assert key_utc == key_plus_two == key_minus_five
+
+
+def test_record_key_stable_after_persistence_roundtrip(tmp_path) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    decision_timestamp = datetime(2026, 3, 10, 9, 15, tzinfo=timezone.utc)
+    record = TradingOpportunityAI.build_shadow_records(
+        [
+            OpportunityDecision(
+                symbol="SOL/USDT",
+                decision_source="model",
+                model_version="opp-v2",
+                expected_edge_bps=2.3,
+                success_probability=0.58,
+                confidence=0.16,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"source": "unit_test"},
+            )
+        ],
+        decision_timestamp=decision_timestamp,
+    )[0]
+    repo.append_shadow_records([record])
+    loaded = repo.load_shadow_records()[0]
+    recomputed = OpportunityShadowRecord.build_record_key(
+        symbol=loaded.symbol,
+        decision_timestamp=loaded.decision_timestamp,
+        model_version=loaded.model_version,
+        rank=loaded.rank,
+    )
+    assert loaded.record_key == record.record_key
+    assert loaded.record_key == recomputed
+
+
+def test_from_dict_accepts_only_real_bool_fields() -> None:
+    decision_timestamp = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
+    record = OpportunityShadowRecord.from_dict(
+        {
+            "record_key": "rk",
+            "symbol": "ETH/USDT",
+            "decision_timestamp": decision_timestamp.isoformat(),
+            "model_version": "opp-v1",
+            "decision_source": "model",
+            "expected_edge_bps": 1.2,
+            "success_probability": 0.55,
+            "confidence": 0.10,
+            "proposed_direction": "long",
+            "accepted": True,
+            "rejection_reason": None,
+            "rank": 1,
+            "provenance": {},
+            "threshold_config": {"min_expected_edge_bps": 0.0, "min_probability": 0.5},
+            "snapshot": {},
+            "context": {"run_id": None, "environment": "shadow", "notes": {}},
+        }
+    )
+    assert record.accepted is True
+
+    label = OpportunityOutcomeLabel.from_dict(
+        {
+            "symbol": "ETH/USDT",
+            "decision_timestamp": decision_timestamp.isoformat(),
+            "correlation_key": "rk",
+            "horizon_minutes": 30,
+            "realized_return_bps": 2.2,
+            "max_favorable_excursion_bps": 3.1,
+            "max_adverse_excursion_bps": -1.0,
+            "hit_take_profit": False,
+            "hit_stop_loss": True,
+            "provenance": {},
+            "label_quality": "high",
+        }
+    )
+    assert label.hit_take_profit is False
+    assert label.hit_stop_loss is True
+
+
+def test_from_dict_rejects_string_pseudo_booleans() -> None:
+    decision_timestamp = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="accepted"):
+        OpportunityShadowRecord.from_dict(
+            {
+                "record_key": "rk",
+                "symbol": "ETH/USDT",
+                "decision_timestamp": decision_timestamp.isoformat(),
+                "model_version": "opp-v1",
+                "decision_source": "model",
+                "expected_edge_bps": 1.2,
+                "success_probability": 0.55,
+                "confidence": 0.10,
+                "proposed_direction": "long",
+                "accepted": "true",
+                "rejection_reason": None,
+                "rank": 1,
+                "provenance": {},
+                "threshold_config": {"min_expected_edge_bps": 0.0, "min_probability": 0.5},
+                "snapshot": {},
+                "context": {"run_id": None, "environment": "shadow", "notes": {}},
+            }
+        )
+    with pytest.raises(ValueError, match="hit_take_profit"):
+        OpportunityOutcomeLabel.from_dict(
+            {
+                "symbol": "ETH/USDT",
+                "decision_timestamp": decision_timestamp.isoformat(),
+                "correlation_key": "rk",
+                "horizon_minutes": 30,
+                "realized_return_bps": 2.2,
+                "max_favorable_excursion_bps": 3.1,
+                "max_adverse_excursion_bps": -1.0,
+                "hit_take_profit": "false",
+                "hit_stop_loss": None,
+                "provenance": {},
+                "label_quality": "high",
+            }
+        )
+
+
+def test_build_shadow_records_uses_deep_defensive_copies_for_nested_payloads() -> None:
+    engine = TradingOpportunityAI()
+    engine.fit(_build_samples())
+    decisions = engine.rank(
+        [
+            OpportunityCandidate(
+                symbol="BTC/USDT",
+                signal_strength=1.0,
+                momentum_5m=0.7,
+                volatility_30m=0.2,
+                spread_bps=0.3,
+                fee_bps=0.1,
+                slippage_bps=0.1,
+                liquidity_score=0.9,
+                risk_penalty_bps=0.0,
+            ),
+            OpportunityCandidate(
+                symbol="ETH/USDT",
+                signal_strength=0.8,
+                momentum_5m=0.6,
+                volatility_30m=0.25,
+                spread_bps=0.35,
+                fee_bps=0.1,
+                slippage_bps=0.1,
+                liquidity_score=0.85,
+                risk_penalty_bps=0.0,
+            ),
+        ]
+    )
+    input_snapshot = {"regime": {"name": "trend", "weights": [1, 2]}}
+    input_context = OpportunityShadowContext(
+        run_id="run-42",
+        environment="shadow",
+        notes={"risk": {"bucket": ["low", "mid"]}},
+    )
+    decisions = [
+        OpportunityDecision(
+            symbol=decision.symbol,
+            decision_source=decision.decision_source,
+            model_version=decision.model_version,
+            expected_edge_bps=decision.expected_edge_bps,
+            success_probability=decision.success_probability,
+            confidence=decision.confidence,
+            proposed_direction=decision.proposed_direction,
+            accepted=decision.accepted,
+            rejection_reason=decision.rejection_reason,
+            rank=decision.rank,
+            provenance={
+                "meta": {"source": decision.provenance.get("objective", "unknown")},
+                "flags": ["a", "b"],
+            },
+        )
+        for decision in decisions
+    ]
+    records = TradingOpportunityAI.build_shadow_records(
+        decisions,
+        snapshot=input_snapshot,
+        context=input_context,
+    )
+
+    records[0].snapshot["regime"]["name"] = "mutated"  # type: ignore[index]
+    records[0].snapshot["regime"]["weights"].append(999)  # type: ignore[index]
+    records[0].context.notes["risk"]["bucket"].append("high")  # type: ignore[index]
+    records[0].provenance["meta"]["source"] = "mutated"  # type: ignore[index]
+    records[0].provenance["flags"].append("c")  # type: ignore[index]
+
+    assert records[1].snapshot["regime"]["name"] == "trend"
+    assert records[1].snapshot["regime"]["weights"] == [1, 2]
+    assert records[1].context.notes["risk"]["bucket"] == ["low", "mid"]
+    assert records[1].provenance["meta"]["source"] != "mutated"
+    assert records[1].provenance["flags"] == ["a", "b"]
+
+
+def test_build_shadow_records_normalizes_timestamp_to_utc_in_memory() -> None:
+    decision_timestamp = datetime(
+        2026,
+        4,
+        1,
+        12,
+        0,
+        tzinfo=timezone(timedelta(hours=2)),
+    )
+    records = TradingOpportunityAI.build_shadow_records(
+        [
+            OpportunityDecision(
+                symbol="BTC/USDT",
+                decision_source="model",
+                model_version="opp-v3",
+                expected_edge_bps=1.0,
+                success_probability=0.51,
+                confidence=0.02,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={},
+            )
+        ],
+        decision_timestamp=decision_timestamp,
+    )
+    assert records[0].decision_timestamp.tzinfo == timezone.utc
+    assert records[0].decision_timestamp.isoformat() == "2026-04-01T10:00:00+00:00"

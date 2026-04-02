@@ -1,0 +1,216 @@
+"""Kontrakty danych dla shadow trackingu okazji tradingowych."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable, Mapping, Sequence
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityThresholdConfig:
+    min_expected_edge_bps: float = 0.0
+    min_probability: float = 0.5
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityShadowContext:
+    run_id: str | None = None
+    environment: str = "shadow"
+    notes: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityShadowRecord:
+    record_key: str
+    symbol: str
+    decision_timestamp: datetime
+    model_version: str
+    decision_source: str
+    expected_edge_bps: float
+    success_probability: float
+    confidence: float
+    proposed_direction: str
+    accepted: bool
+    rejection_reason: str | None
+    rank: int
+    provenance: Mapping[str, object] = field(default_factory=dict)
+    threshold_config: OpportunityThresholdConfig = field(default_factory=OpportunityThresholdConfig)
+    snapshot: Mapping[str, object] = field(default_factory=dict)
+    context: OpportunityShadowContext = field(default_factory=OpportunityShadowContext)
+
+    @staticmethod
+    def build_record_key(
+        *,
+        symbol: str,
+        decision_timestamp: datetime,
+        model_version: str,
+        rank: int,
+    ) -> str:
+        canonical_timestamp = _isoformat_utc(decision_timestamp)
+        payload = f"{symbol}|{canonical_timestamp}|{model_version}|{rank}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["decision_timestamp"] = _isoformat_utc(self.decision_timestamp)
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> OpportunityShadowRecord:
+        threshold_payload = payload.get("threshold_config")
+        context_payload = payload.get("context")
+        return cls(
+            record_key=str(payload["record_key"]),
+            symbol=str(payload["symbol"]),
+            decision_timestamp=_parse_datetime(payload["decision_timestamp"]),
+            model_version=str(payload["model_version"]),
+            decision_source=str(payload["decision_source"]),
+            expected_edge_bps=float(payload["expected_edge_bps"]),
+            success_probability=float(payload["success_probability"]),
+            confidence=float(payload["confidence"]),
+            proposed_direction=str(payload["proposed_direction"]),
+            accepted=_parse_bool(payload["accepted"], field_name="accepted"),
+            rejection_reason=str(payload["rejection_reason"]) if payload.get("rejection_reason") is not None else None,
+            rank=int(payload["rank"]),
+            provenance=dict(payload.get("provenance") or {}),
+            threshold_config=OpportunityThresholdConfig(**dict(threshold_payload or {})),
+            snapshot=dict(payload.get("snapshot") or {}),
+            context=OpportunityShadowContext(**dict(context_payload or {})),
+        )
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True)
+
+    @classmethod
+    def from_json(cls, payload: str) -> OpportunityShadowRecord:
+        return cls.from_dict(dict(json.loads(payload)))
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityOutcomeLabel:
+    symbol: str
+    decision_timestamp: datetime
+    correlation_key: str
+    horizon_minutes: int
+    realized_return_bps: float
+    max_favorable_excursion_bps: float
+    max_adverse_excursion_bps: float
+    hit_take_profit: bool | None = None
+    hit_stop_loss: bool | None = None
+    provenance: Mapping[str, object] = field(default_factory=dict)
+    label_quality: str = "unknown"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["decision_timestamp"] = _isoformat_utc(self.decision_timestamp)
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> OpportunityOutcomeLabel:
+        return cls(
+            symbol=str(payload["symbol"]),
+            decision_timestamp=_parse_datetime(payload["decision_timestamp"]),
+            correlation_key=str(payload["correlation_key"]),
+            horizon_minutes=int(payload["horizon_minutes"]),
+            realized_return_bps=float(payload["realized_return_bps"]),
+            max_favorable_excursion_bps=float(payload["max_favorable_excursion_bps"]),
+            max_adverse_excursion_bps=float(payload["max_adverse_excursion_bps"]),
+            hit_take_profit=_parse_optional_bool(payload.get("hit_take_profit"), field_name="hit_take_profit"),
+            hit_stop_loss=_parse_optional_bool(payload.get("hit_stop_loss"), field_name="hit_stop_loss"),
+            provenance=dict(payload.get("provenance") or {}),
+            label_quality=str(payload.get("label_quality") or "unknown"),
+        )
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True)
+
+    @classmethod
+    def from_json(cls, payload: str) -> OpportunityOutcomeLabel:
+        return cls.from_dict(dict(json.loads(payload)))
+
+
+class OpportunityShadowRepository:
+    """Minimalne repozytorium NDJSON dla shadow decisions i outcome labels."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = Path(root)
+        self._root.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def shadow_records_path(self) -> Path:
+        return self._root / "opportunity_shadow_records.ndjson"
+
+    @property
+    def outcome_labels_path(self) -> Path:
+        return self._root / "opportunity_outcome_labels.ndjson"
+
+    def append_shadow_records(self, records: Sequence[OpportunityShadowRecord]) -> Path:
+        return _append_ndjson(self.shadow_records_path, (entry.to_dict() for entry in records))
+
+    def append_outcome_labels(self, labels: Sequence[OpportunityOutcomeLabel]) -> Path:
+        return _append_ndjson(self.outcome_labels_path, (entry.to_dict() for entry in labels))
+
+    def load_shadow_records(self) -> list[OpportunityShadowRecord]:
+        return [OpportunityShadowRecord.from_dict(payload) for payload in _read_ndjson(self.shadow_records_path)]
+
+    def load_outcome_labels(self) -> list[OpportunityOutcomeLabel]:
+        return [OpportunityOutcomeLabel.from_dict(payload) for payload in _read_ndjson(self.outcome_labels_path)]
+
+
+def _isoformat_utc(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _parse_datetime(value: object) -> datetime:
+    parsed = datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _append_ndjson(path: Path, rows: Iterable[dict[str, Any]]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
+            handle.write("\n")
+    return path
+
+
+def _read_ndjson(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    payloads: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        payloads.append(dict(json.loads(stripped)))
+    return payloads
+
+
+def _parse_bool(value: object, *, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"Pole {field_name} musi być typu bool")
+
+
+def _parse_optional_bool(value: object, *, field_name: str) -> bool | None:
+    if value is None:
+        return None
+    return _parse_bool(value, field_name=field_name)
+
+
+__all__ = [
+    "OpportunityOutcomeLabel",
+    "OpportunityShadowContext",
+    "OpportunityShadowRecord",
+    "OpportunityShadowRepository",
+    "OpportunityThresholdConfig",
+]
