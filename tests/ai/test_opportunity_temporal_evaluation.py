@@ -55,8 +55,11 @@ def test_evaluate_uses_classifier_path_when_available() -> None:
     report = evaluator.evaluate(artifact, _build_samples())
 
     assert report.sample_count == 30
-    assert report.probability_method == "model_success_classifier"
+    assert report.probability_method == "model_success_classifier_calibrated"
+    assert report.calibration_method == "platt_scaling"
     assert 0.0 <= report.avg_success_probability <= 1.0
+    assert report.success_probability_ece >= 0.0
+    assert report.reliability_summary
 
 
 def test_evaluate_falls_back_for_legacy_artifact_without_classifier() -> None:
@@ -84,6 +87,115 @@ def test_evaluate_falls_back_for_legacy_artifact_without_classifier() -> None:
     report = evaluator.evaluate(legacy, _build_samples())
 
     assert report.probability_method == "heuristic_sigmoid_scaled_edge_fallback"
+
+
+def test_evaluate_reports_uncalibrated_when_metadata_declares_platt_but_state_missing() -> None:
+    engine = TradingOpportunityAI()
+    artifact = engine.fit(_build_samples())
+    assert isinstance(artifact.metadata.get("probability_calibration"), dict)
+    metadata_declares_platt = {
+        **dict(artifact.metadata),
+        "probability_calibration": {
+            "method": "platt_scaling",
+            "fit_split": "validation",
+        },
+    }
+    state_without_calibrator = {
+        key: value
+        for key, value in dict(artifact.model_state).items()
+        if key != "success_probability_calibrator"
+    }
+    inconsistent_artifact = type(artifact)(
+        feature_names=artifact.feature_names,
+        model_state=state_without_calibrator,
+        trained_at=artifact.trained_at,
+        metrics=artifact.metrics,
+        metadata=metadata_declares_platt,
+        target_scale=artifact.target_scale,
+        training_rows=artifact.training_rows,
+        validation_rows=artifact.validation_rows,
+        test_rows=artifact.test_rows,
+        feature_scalers=artifact.feature_scalers,
+        decision_journal_entry_id=artifact.decision_journal_entry_id,
+        backend=artifact.backend,
+    )
+    evaluator = OpportunityTemporalEvaluator()
+
+    report = evaluator.evaluate(inconsistent_artifact, _build_samples())
+
+    assert report.probability_method == "model_success_classifier_uncalibrated"
+    assert report.calibration_method == "none"
+
+
+def test_evaluate_reports_uncalibrated_when_calibrator_payload_is_invalid() -> None:
+    engine = TradingOpportunityAI()
+    artifact = engine.fit(_build_samples())
+    metadata_declares_platt = {
+        **dict(artifact.metadata),
+        "probability_calibration": {
+            "method": "platt_scaling",
+            "fit_split": "validation",
+        },
+    }
+    invalid_state = {
+        **dict(artifact.model_state),
+        "success_probability_calibrator": {
+            "method": "platt_scaling",
+            "slope": "invalid",
+            "intercept": "invalid",
+        },
+    }
+    inconsistent_artifact = type(artifact)(
+        feature_names=artifact.feature_names,
+        model_state=invalid_state,
+        trained_at=artifact.trained_at,
+        metrics=artifact.metrics,
+        metadata=metadata_declares_platt,
+        target_scale=artifact.target_scale,
+        training_rows=artifact.training_rows,
+        validation_rows=artifact.validation_rows,
+        test_rows=artifact.test_rows,
+        feature_scalers=artifact.feature_scalers,
+        decision_journal_entry_id=artifact.decision_journal_entry_id,
+        backend=artifact.backend,
+    )
+    evaluator = OpportunityTemporalEvaluator()
+
+    report = evaluator.evaluate(inconsistent_artifact, _build_samples())
+
+    assert report.probability_method == "model_success_classifier_uncalibrated"
+    assert report.calibration_method == "none"
+
+
+def test_evaluate_reports_heuristic_and_no_calibration_when_classifier_missing_but_calibrator_present() -> None:
+    engine = TradingOpportunityAI()
+    artifact = engine.fit(_build_samples())
+    model_state_without_classifier = {
+        key: value
+        for key, value in dict(artifact.model_state).items()
+        if key != "classifier_head_state"
+    }
+    assert "success_probability_calibrator" in model_state_without_classifier
+    classifier_missing_artifact = type(artifact)(
+        feature_names=artifact.feature_names,
+        model_state=model_state_without_classifier,
+        trained_at=artifact.trained_at,
+        metrics=artifact.metrics,
+        metadata=artifact.metadata,
+        target_scale=artifact.target_scale,
+        training_rows=artifact.training_rows,
+        validation_rows=artifact.validation_rows,
+        test_rows=artifact.test_rows,
+        feature_scalers=artifact.feature_scalers,
+        decision_journal_entry_id=artifact.decision_journal_entry_id,
+        backend=artifact.backend,
+    )
+    evaluator = OpportunityTemporalEvaluator()
+
+    report = evaluator.evaluate(classifier_missing_artifact, _build_samples())
+
+    assert report.probability_method == "heuristic_sigmoid_scaled_edge_fallback"
+    assert report.calibration_method == "none"
 
 
 def test_evaluate_with_model_comparison_uses_common_subset_fairness() -> None:
@@ -208,7 +320,7 @@ def test_evaluate_from_shadow_labels_uses_record_outcome_contract() -> None:
         accepted=True,
         rejection_reason=None,
         rank=1,
-        provenance={"probability_method": "model_success_classifier"},
+        provenance={"probability_method": "model_success_classifier_calibrated"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
     )
@@ -227,4 +339,5 @@ def test_evaluate_from_shadow_labels_uses_record_outcome_contract() -> None:
     assert report.sample_count == 1
     assert report.matched_outcomes == 1
     assert report.label_coverage == pytest.approx(1.0)
-    assert report.probability_method == "model_success_classifier"
+    assert report.probability_method == "model_success_classifier_calibrated"
+    assert report.success_probability_ece >= 0.0
