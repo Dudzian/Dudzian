@@ -92,6 +92,7 @@ class TradingOpportunityAI:
         self._repository = repository
         self._artifact: ModelArtifact | None = None
         self._model: SimpleGradientBoostingModel | None = None
+        self._classifier_model: SimpleGradientBoostingModel | None = None
 
     @property
     def artifact(self) -> ModelArtifact | None:
@@ -104,10 +105,21 @@ class TradingOpportunityAI:
 
         matrix = [self._vector_from_snapshot(sample) for sample in samples]
         targets = [self._target(sample) for sample in samples]
+        classifier_targets = [self._success_target(edge) for edge in targets]
 
         model = SimpleGradientBoostingModel(learning_rate=0.12, n_estimators=32, min_samples_leaf=2)
         model.fit_matrix(matrix, _FEATURE_NAMES, targets)
+        classifier = SimpleGradientBoostingModel(
+            learning_rate=0.1,
+            n_estimators=28,
+            min_samples_leaf=2,
+        )
+        classifier.fit_matrix(matrix, _FEATURE_NAMES, classifier_targets)
         predictions = [model.predict(self._features_from_vector(vector)) for vector in matrix]
+        probability_predictions = [
+            self._clip_probability(classifier.predict(self._features_from_vector(vector)))
+            for vector in matrix
+        ]
 
         mae = sum(abs(p - y) for p, y in zip(predictions, targets)) / len(targets)
         mse = sum((p - y) ** 2 for p, y in zip(predictions, targets)) / len(targets)
@@ -116,6 +128,16 @@ class TradingOpportunityAI:
             1 for p, y in zip(predictions, targets) if (p >= 0 and y >= 0) or (p < 0 and y < 0)
         )
         direction_acc = directional_hits / len(targets)
+        classification_hits = sum(
+            1
+            for predicted, expected in zip(probability_predictions, classifier_targets)
+            if (predicted >= 0.5 and expected >= 0.5) or (predicted < 0.5 and expected < 0.5)
+        )
+        classification_acc = classification_hits / len(classifier_targets)
+        brier = sum(
+            (predicted - expected) ** 2
+            for predicted, expected in zip(probability_predictions, classifier_targets)
+        ) / len(classifier_targets)
         target_scale = max(10.0, self._stddev(targets))
 
         trained_at = datetime.now(timezone.utc)
@@ -124,20 +146,38 @@ class TradingOpportunityAI:
             "model_version": version,
             "objective": "maximize_expected_net_edge_bps_after_costs",
             "target_definition": "realized_return_bps - spread_bps - fee_bps - slippage_bps - risk_penalty_bps",
+            "classification_target_definition": "1 if target_definition > 0 else 0",
             "decision_source": "model",
             "probability_scale_bps": target_scale,
             "training_scope": "opportunity_ranking_shadow",
+            "artifact_schema_version": "opportunity_dual_head_v1",
+            "heads": {
+                "edge_regressor": {
+                    "type": "regression",
+                    "prediction_field": "expected_edge_bps",
+                    "target_definition": "realized_return_bps - spread_bps - fee_bps - slippage_bps - risk_penalty_bps",
+                },
+                "success_classifier": {
+                    "type": "classification",
+                    "prediction_field": "success_probability",
+                    "target_definition": "1 if target_definition > 0 else 0",
+                },
+            },
         }
+        model_state: MutableMapping[str, object] = dict(model.to_state())
+        model_state["classifier_head_state"] = classifier.to_state()
 
         artifact = ModelArtifact(
             feature_names=_FEATURE_NAMES,
-            model_state=model.to_state(),
+            model_state=model_state,
             trained_at=trained_at,
             metrics={
                 "summary": {
                     "mae_bps": mae,
                     "rmse_bps": rmse,
                     "directional_accuracy": direction_acc,
+                    "classifier_accuracy": classification_acc,
+                    "classifier_brier_score": brier,
                 }
             },
             metadata=metadata,
@@ -150,6 +190,7 @@ class TradingOpportunityAI:
         )
         self._artifact = artifact
         self._model = model
+        self._classifier_model = classifier
         return artifact
 
     def save_model(self, *, version: str | None = None, activate: bool = False) -> str:
@@ -175,8 +216,16 @@ class TradingOpportunityAI:
         model = artifact.build_model()
         if not isinstance(model, SimpleGradientBoostingModel):
             raise TypeError("TradingOpportunityAI wymaga backendu builtin")
+        classifier_state = artifact.model_state.get("classifier_head_state")
+        classifier: SimpleGradientBoostingModel | None = None
+        if isinstance(classifier_state, Mapping):
+            loaded_classifier = SimpleGradientBoostingModel()
+            loaded_classifier.load_state(classifier_state)
+            if loaded_classifier.feature_names:
+                classifier = loaded_classifier
         self._artifact = artifact
         self._model = model
+        self._classifier_model = classifier
         return artifact
 
     def rank(
@@ -193,6 +242,7 @@ class TradingOpportunityAI:
         self._validate_candidates(candidates)
         model, artifact = self._require_model()
         decisions: list[OpportunityDecision] = []
+        classifier = self._classifier_model if self._classifier_model is not None else None
         prob_scale = self._safe_probability_scale(
             artifact.metadata.get("probability_scale_bps", artifact.target_scale)
         )
@@ -201,7 +251,23 @@ class TradingOpportunityAI:
         for candidate in candidates:
             features = self._features_from_vector(self._vector_from_candidate(candidate))
             edge = float(model.predict(features))
-            probability = self._edge_to_probability(edge=edge, scale=prob_scale)
+            if classifier is not None:
+                probability = self._clip_probability(classifier.predict(features))
+                probability_method = "model_success_classifier"
+                calibration = {
+                    "type": "classifier",
+                    "target_definition": artifact.metadata.get(
+                        "classification_target_definition",
+                        "1 if target_definition > 0 else 0",
+                    ),
+                }
+            else:
+                probability = self._edge_to_probability(edge=edge, scale=prob_scale)
+                probability_method = "heuristic_sigmoid_scaled_edge_fallback"
+                calibration = {
+                    "type": "heuristic_fallback",
+                    "scale_bps": prob_scale,
+                }
             confidence = abs(probability - 0.5) * 2.0
 
             accepted = edge >= min_expected_edge_bps and probability >= min_probability
@@ -232,12 +298,9 @@ class TradingOpportunityAI:
                         "target_definition": artifact.metadata.get("target_definition", ""),
                         "trained_at": artifact.trained_at.isoformat(),
                         "feature_names": list(artifact.feature_names),
-                        "probability_method": "heuristic_sigmoid_scaled_edge",
+                        "probability_method": probability_method,
                         "confidence_method": "distance_from_probability_midpoint",
-                        "calibration": {
-                            "type": "heuristic",
-                            "scale_bps": prob_scale,
-                        },
+                        "calibration": calibration,
                     },
                 )
             )
@@ -332,6 +395,10 @@ class TradingOpportunityAI:
             - snapshot.slippage_bps
             - snapshot.risk_penalty_bps
         )
+
+    @staticmethod
+    def _success_target(edge_bps: float) -> float:
+        return 1.0 if float(edge_bps) > 0.0 else 0.0
 
     @staticmethod
     def _vector_from_snapshot(snapshot: OpportunitySnapshot) -> list[float]:
@@ -459,6 +526,12 @@ class TradingOpportunityAI:
         if z <= -60.0:
             return 0.0
         return 1.0 / (1.0 + math.exp(-z))
+
+    @classmethod
+    def _clip_probability(cls, value: float) -> float:
+        if not cls._is_finite(value):
+            return 0.5
+        return max(0.0, min(1.0, float(value)))
 
 
 __all__ = [
