@@ -264,6 +264,74 @@ def test_evaluate_with_model_comparison_raises_on_empty_common_scoreable_subset(
         evaluator.evaluate_with_model_comparison(latest_bad, previous, _build_samples())
 
 
+def test_evaluate_with_model_comparison_uses_common_subset_for_classifier_feature_requirements() -> None:
+    engine = TradingOpportunityAI()
+    latest = engine.fit(_build_samples(scale=1.0))
+    previous = engine.fit(_build_samples(scale=-1.0))
+    latest_with_unscoreable_classifier = ModelArtifact(
+        feature_names=latest.feature_names,
+        model_state={
+            **dict(latest.model_state),
+            "classifier_head_state": {
+                **dict(latest.model_state["classifier_head_state"]),
+                "feature_names": ["ghost_feature"],
+            },
+        },
+        trained_at=latest.trained_at,
+        metrics=latest.metrics,
+        metadata=latest.metadata,
+        target_scale=latest.target_scale,
+        training_rows=latest.training_rows,
+        validation_rows=latest.validation_rows,
+        test_rows=latest.test_rows,
+        feature_scalers=latest.feature_scalers,
+        decision_journal_entry_id=latest.decision_journal_entry_id,
+        backend=latest.backend,
+    )
+    evaluator = OpportunityTemporalEvaluator()
+
+    with pytest.raises(ValueError, match="Brak wspólnego podzbioru"):
+        evaluator.evaluate_with_model_comparison(
+            latest_with_unscoreable_classifier,
+            previous,
+            _build_samples(),
+        )
+
+
+def test_evaluate_with_model_comparison_computes_deltas_on_aligned_rows_only() -> None:
+    engine = TradingOpportunityAI()
+    latest = engine.fit(_build_samples(scale=1.0))
+    previous = engine.fit(_build_samples(scale=-1.0))
+    evaluator = OpportunityTemporalEvaluator()
+    base_samples = _build_samples()
+    unscoreable = OpportunitySnapshot(
+        symbol="PAIR0",
+        signal_strength=float("nan"),
+        momentum_5m=0.1,
+        volatility_30m=0.2,
+        spread_bps=0.3,
+        fee_bps=0.1,
+        slippage_bps=0.1,
+        liquidity_score=0.8,
+        risk_penalty_bps=0.0,
+        realized_return_bps=0.2,
+        as_of=datetime(2026, 1, 4, tzinfo=timezone.utc),
+    )
+    samples = base_samples + [unscoreable]
+
+    comparison = evaluator.evaluate_with_model_comparison(latest, previous, samples)
+    latest_aligned = evaluator.evaluate(latest, base_samples)
+    previous_aligned = evaluator.evaluate(previous, base_samples)
+
+    assert comparison.common_sample_count == len(base_samples)
+    assert comparison.delta_edge_mae_bps == pytest.approx(
+        latest_aligned.edge_mae_bps - previous_aligned.edge_mae_bps
+    )
+    assert comparison.delta_success_probability_brier == pytest.approx(
+        latest_aligned.success_probability_brier - previous_aligned.success_probability_brier
+    )
+
+
 def test_evaluate_latest_vs_previous_loads_versions_from_repository(tmp_path) -> None:
     repository = FilesystemModelRepository(tmp_path / "repo")
     engine = TradingOpportunityAI(repository=repository)

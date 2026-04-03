@@ -271,8 +271,8 @@ class OpportunityTemporalEvaluator:
 
         aligned, fairness_applied = self._aligned_common_subset(
             samples=samples,
-            latest_model=latest_model,
-            previous_model=previous_model,
+            latest_artifact=latest_artifact,
+            previous_artifact=previous_artifact,
         )
         if not aligned:
             raise ValueError("Brak wspólnego podzbioru próbek do porównania")
@@ -329,10 +329,19 @@ class OpportunityTemporalEvaluator:
         cls,
         samples: Sequence["OpportunitySnapshot"],
         *,
-        latest_model: SimpleGradientBoostingModel,
-        previous_model: SimpleGradientBoostingModel,
+        latest_artifact: ModelArtifact,
+        previous_artifact: ModelArtifact,
     ) -> tuple[list["OpportunitySnapshot"], bool]:
         from .trading_engine import TradingOpportunityAI
+
+        latest_model = latest_artifact.build_model()
+        previous_model = previous_artifact.build_model()
+        if not isinstance(latest_model, SimpleGradientBoostingModel):
+            raise TypeError("OpportunityTemporalEvaluator wymaga backendu builtin (latest)")
+        if not isinstance(previous_model, SimpleGradientBoostingModel):
+            raise TypeError("OpportunityTemporalEvaluator wymaga backendu builtin (previous)")
+        latest_classifier = cls._build_classifier_from_artifact(latest_artifact)
+        previous_classifier = cls._build_classifier_from_artifact(previous_artifact)
 
         ordered = cls._sort_samples(samples)
         deduped: list["OpportunitySnapshot"] = []
@@ -349,35 +358,57 @@ class OpportunityTemporalEvaluator:
         aligned: list["OpportunitySnapshot"] = []
         known_features = set(TradingOpportunityAI._features_from_vector([0.0] * 8).keys())
         for item in deduped:
-            if not cls._is_scoreable_for_model(item, latest_model, known_features):
+            if not cls._is_scoreable_for_models(
+                sample=item,
+                primary_model=latest_model,
+                classifier_model=latest_classifier,
+                known_features=known_features,
+            ):
                 continue
-            if not cls._is_scoreable_for_model(item, previous_model, known_features):
+            if not cls._is_scoreable_for_models(
+                sample=item,
+                primary_model=previous_model,
+                classifier_model=previous_classifier,
+                known_features=known_features,
+            ):
                 continue
             aligned.append(item)
         fairness_applied = len(aligned) != len(ordered)
         return aligned, fairness_applied
 
     @staticmethod
-    def _is_scoreable_for_model(
+    def _is_scoreable_for_models(
         sample: "OpportunitySnapshot",
-        model: SimpleGradientBoostingModel,
+        primary_model: SimpleGradientBoostingModel,
+        classifier_model: SimpleGradientBoostingModel | None,
         known_features: set[str],
     ) -> bool:
         from .trading_engine import TradingOpportunityAI
 
-        if any(name not in known_features for name in model.feature_names):
-            return False
-        vector = TradingOpportunityAI._raw_vector_from_snapshot(sample)
-        if not all(TradingOpportunityAI._is_finite(value) for value in vector):
-            return False
-        features = TradingOpportunityAI._features_from_vector(
-            TradingOpportunityAI._vector_from_snapshot(sample)
+        raw_values = TradingOpportunityAI._raw_vector_from_snapshot(sample)
+        raw_features = {
+            name: value
+            for name, value in zip(
+                TradingOpportunityAI._features_from_vector([0.0] * len(raw_values)).keys(),
+                raw_values,
+            )
+        }
+        models_to_check: tuple[SimpleGradientBoostingModel, ...] = (
+            (primary_model, classifier_model) if classifier_model is not None else (primary_model,)
         )
-        try:
-            prediction = float(model.predict(features))
-        except Exception:
-            return False
-        return math.isfinite(prediction)
+        for model in models_to_check:
+            if any(name not in known_features for name in model.feature_names):
+                return False
+            for feature_name in model.feature_names:
+                if not TradingOpportunityAI._is_finite(raw_features.get(feature_name)):
+                    return False
+            try:
+                prediction = float(model.predict(raw_features))
+            except Exception:
+                return False
+            if not math.isfinite(prediction):
+                return False
+        return True
 
     @staticmethod
     def _build_classifier_from_artifact(
