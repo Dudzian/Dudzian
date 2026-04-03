@@ -85,6 +85,85 @@ class OpportunityDecision:
     provenance: Mapping[str, object]
 
 
+@dataclass(slots=True, frozen=True)
+class _PlattSuccessCalibrator:
+    """Lekki kalibrator Platta dla prawdopodobieństw sukcesu."""
+
+    slope: float
+    intercept: float
+
+    def apply(self, raw_probability: float) -> float:
+        clipped = TradingOpportunityAI._clip_probability(raw_probability)
+        logit_input = min(max(clipped, 1e-6), 1.0 - 1e-6)
+        logit = math.log(logit_input / (1.0 - logit_input))
+        z = self.slope * logit + self.intercept
+        if z >= 60.0:
+            return 1.0
+        if z <= -60.0:
+            return 0.0
+        return 1.0 / (1.0 + math.exp(-z))
+
+    def to_mapping(self) -> Mapping[str, float]:
+        return {"method": "platt_scaling", "slope": float(self.slope), "intercept": float(self.intercept)}
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, object]) -> "_PlattSuccessCalibrator | None":
+        if str(payload.get("method", "")).strip() != "platt_scaling":
+            return None
+        slope = payload.get("slope")
+        intercept = payload.get("intercept")
+        if not TradingOpportunityAI._is_finite(slope) or not TradingOpportunityAI._is_finite(intercept):
+            return None
+        return cls(slope=float(slope), intercept=float(intercept))
+
+    @classmethod
+    def fit(
+        cls,
+        *,
+        raw_probabilities: Sequence[float],
+        targets: Sequence[float],
+        iterations: int = 200,
+        learning_rate: float = 0.05,
+    ) -> "_PlattSuccessCalibrator | None":
+        if len(raw_probabilities) != len(targets) or len(raw_probabilities) < 4:
+            return None
+        positives = sum(1 for value in targets if float(value) >= 0.5)
+        negatives = len(targets) - positives
+        if positives == 0 or negatives == 0:
+            return None
+
+        logits: list[float] = []
+        ys: list[float] = []
+        for raw, target in zip(raw_probabilities, targets):
+            clipped = min(max(TradingOpportunityAI._clip_probability(raw), 1e-6), 1.0 - 1e-6)
+            logits.append(math.log(clipped / (1.0 - clipped)))
+            ys.append(1.0 if float(target) >= 0.5 else 0.0)
+
+        slope = 1.0
+        intercept = 0.0
+        n = len(logits)
+        for _ in range(max(1, iterations)):
+            grad_slope = 0.0
+            grad_intercept = 0.0
+            for x, y in zip(logits, ys):
+                z = slope * x + intercept
+                if z >= 60.0:
+                    pred = 1.0
+                elif z <= -60.0:
+                    pred = 0.0
+                else:
+                    pred = 1.0 / (1.0 + math.exp(-z))
+                err = pred - y
+                grad_slope += err * x
+                grad_intercept += err
+            slope -= learning_rate * (grad_slope / n)
+            intercept -= learning_rate * (grad_intercept / n)
+
+        if not TradingOpportunityAI._is_finite(slope) or not TradingOpportunityAI._is_finite(intercept):
+            return None
+        return cls(slope=float(slope), intercept=float(intercept))
+
+
 class TradingOpportunityAI:
     """Lekki silnik AI do rankingu okazji tradingowych."""
 
@@ -93,6 +172,7 @@ class TradingOpportunityAI:
         self._artifact: ModelArtifact | None = None
         self._model: SimpleGradientBoostingModel | None = None
         self._classifier_model: SimpleGradientBoostingModel | None = None
+        self._success_calibrator: _PlattSuccessCalibrator | None = None
 
     @property
     def artifact(self) -> ModelArtifact | None:
@@ -103,23 +183,63 @@ class TradingOpportunityAI:
             raise ValueError("Do treningu potrzeba co najmniej 5 snapshotów")
         self._validate_training_samples(samples)
 
-        matrix = [self._vector_from_snapshot(sample) for sample in samples]
-        targets = [self._target(sample) for sample in samples]
-        classifier_targets = [self._success_target(edge) for edge in targets]
+        ordered_samples = list(samples)
+        all_targets = [self._target(sample) for sample in ordered_samples]
+        all_classifier_targets = [self._success_target(edge) for edge in all_targets]
+        positive_indices = [idx for idx, value in enumerate(all_classifier_targets) if value >= 0.5]
+        negative_indices = [idx for idx, value in enumerate(all_classifier_targets) if value < 0.5]
+
+        validation_indices: set[int] = set()
+        if positive_indices and negative_indices:
+            positive_count = max(1, int(len(positive_indices) * 0.2))
+            negative_count = max(1, int(len(negative_indices) * 0.2))
+            validation_indices.update(positive_indices[-positive_count:])
+            validation_indices.update(negative_indices[-negative_count:])
+        else:
+            validation_size = max(1, int(len(ordered_samples) * 0.2))
+            validation_size = min(validation_size, len(ordered_samples) - 1)
+            validation_indices.update(range(len(ordered_samples) - validation_size, len(ordered_samples)))
+
+        validation_samples = [sample for idx, sample in enumerate(ordered_samples) if idx in validation_indices]
+        train_samples = [sample for idx, sample in enumerate(ordered_samples) if idx not in validation_indices]
+
+        train_matrix = [self._vector_from_snapshot(sample) for sample in train_samples]
+        train_targets = [self._target(sample) for sample in train_samples]
+        train_classifier_targets = [self._success_target(edge) for edge in train_targets]
 
         model = SimpleGradientBoostingModel(learning_rate=0.12, n_estimators=32, min_samples_leaf=2)
-        model.fit_matrix(matrix, _FEATURE_NAMES, targets)
+        model.fit_matrix(train_matrix, _FEATURE_NAMES, train_targets)
         classifier = SimpleGradientBoostingModel(
             learning_rate=0.1,
             n_estimators=28,
             min_samples_leaf=2,
         )
-        classifier.fit_matrix(matrix, _FEATURE_NAMES, classifier_targets)
+        classifier.fit_matrix(train_matrix, _FEATURE_NAMES, train_classifier_targets)
+
+        matrix = [self._vector_from_snapshot(sample) for sample in ordered_samples]
+        targets = [self._target(sample) for sample in ordered_samples]
+        classifier_targets = [self._success_target(edge) for edge in targets]
         predictions = [model.predict(self._features_from_vector(vector)) for vector in matrix]
-        probability_predictions = [
+        raw_probability_predictions = [
             self._clip_probability(classifier.predict(self._features_from_vector(vector)))
             for vector in matrix
         ]
+
+        validation_matrix = [self._vector_from_snapshot(sample) for sample in validation_samples]
+        validation_probability_raw = [
+            self._clip_probability(classifier.predict(self._features_from_vector(vector)))
+            for vector in validation_matrix
+        ]
+        validation_targets = [self._success_target(self._target(sample)) for sample in validation_samples]
+        success_calibrator = _PlattSuccessCalibrator.fit(
+            raw_probabilities=validation_probability_raw,
+            targets=validation_targets,
+        )
+        probability_predictions = (
+            [success_calibrator.apply(value) for value in raw_probability_predictions]
+            if success_calibrator is not None
+            else raw_probability_predictions
+        )
 
         mae = sum(abs(p - y) for p, y in zip(predictions, targets)) / len(targets)
         mse = sum((p - y) ** 2 for p, y in zip(predictions, targets)) / len(targets)
@@ -151,6 +271,7 @@ class TradingOpportunityAI:
             "probability_scale_bps": target_scale,
             "training_scope": "opportunity_ranking_shadow",
             "artifact_schema_version": "opportunity_dual_head_v1",
+            "probability_raw_method": "model_success_classifier",
             "heads": {
                 "edge_regressor": {
                     "type": "regression",
@@ -164,8 +285,25 @@ class TradingOpportunityAI:
                 },
             },
         }
+        if success_calibrator is not None:
+            metadata["probability_calibration"] = {
+                **success_calibrator.to_mapping(),
+                "fit_split": "validation",
+                "validation_rows": len(validation_samples),
+                "raw_probability_method": "model_success_classifier",
+            }
+        else:
+            metadata["probability_calibration"] = {
+                "method": "none",
+                "fit_split": "validation",
+                "validation_rows": len(validation_samples),
+                "reason": "insufficient_validation_label_diversity_or_rows",
+                "raw_probability_method": "model_success_classifier",
+            }
         model_state: MutableMapping[str, object] = dict(model.to_state())
         model_state["classifier_head_state"] = classifier.to_state()
+        if success_calibrator is not None:
+            model_state["success_probability_calibrator"] = dict(success_calibrator.to_mapping())
 
         artifact = ModelArtifact(
             feature_names=_FEATURE_NAMES,
@@ -178,12 +316,16 @@ class TradingOpportunityAI:
                     "directional_accuracy": direction_acc,
                     "classifier_accuracy": classification_acc,
                     "classifier_brier_score": brier,
+                    "classifier_raw_brier_score": (
+                        sum((predicted - expected) ** 2 for predicted, expected in zip(raw_probability_predictions, classifier_targets))
+                        / len(classifier_targets)
+                    ),
                 }
             },
             metadata=metadata,
             target_scale=target_scale,
             training_rows=len(samples),
-            validation_rows=0,
+            validation_rows=len(validation_samples),
             test_rows=0,
             feature_scalers=model.feature_scalers,
             backend="builtin",
@@ -191,6 +333,7 @@ class TradingOpportunityAI:
         self._artifact = artifact
         self._model = model
         self._classifier_model = classifier
+        self._success_calibrator = success_calibrator
         return artifact
 
     def save_model(self, *, version: str | None = None, activate: bool = False) -> str:
@@ -223,9 +366,14 @@ class TradingOpportunityAI:
             loaded_classifier.load_state(classifier_state)
             if loaded_classifier.feature_names:
                 classifier = loaded_classifier
+        calibrator_payload = artifact.model_state.get("success_probability_calibrator")
+        calibrator: _PlattSuccessCalibrator | None = None
+        if isinstance(calibrator_payload, Mapping):
+            calibrator = _PlattSuccessCalibrator.from_mapping(calibrator_payload)
         self._artifact = artifact
         self._model = model
         self._classifier_model = classifier
+        self._success_calibrator = calibrator
         return artifact
 
     def rank(
@@ -243,6 +391,7 @@ class TradingOpportunityAI:
         model, artifact = self._require_model()
         decisions: list[OpportunityDecision] = []
         classifier = self._classifier_model if self._classifier_model is not None else None
+        calibrator = self._success_calibrator if classifier is not None else None
         prob_scale = self._safe_probability_scale(
             artifact.metadata.get("probability_scale_bps", artifact.target_scale)
         )
@@ -252,21 +401,39 @@ class TradingOpportunityAI:
             features = self._features_from_vector(self._vector_from_candidate(candidate))
             edge = float(model.predict(features))
             if classifier is not None:
-                probability = self._clip_probability(classifier.predict(features))
-                probability_method = "model_success_classifier"
-                calibration = {
-                    "type": "classifier",
-                    "target_definition": artifact.metadata.get(
-                        "classification_target_definition",
-                        "1 if target_definition > 0 else 0",
-                    ),
-                }
+                raw_probability = self._clip_probability(classifier.predict(features))
+                if calibrator is not None:
+                    probability = self._clip_probability(calibrator.apply(raw_probability))
+                    probability_method = "model_success_classifier_calibrated"
+                    calibration = {
+                        "type": "probability_calibrator",
+                        "path": "calibrated",
+                        "method": "platt_scaling",
+                        "raw_probability_method": "model_success_classifier",
+                    }
+                else:
+                    probability = raw_probability
+                    probability_method = "model_success_classifier_uncalibrated"
+                    calibration = {
+                        "type": "classifier",
+                        "path": "uncalibrated",
+                        "method": "none",
+                        "raw_probability_method": "model_success_classifier",
+                        "target_definition": artifact.metadata.get(
+                            "classification_target_definition",
+                            "1 if target_definition > 0 else 0",
+                        ),
+                    }
             else:
-                probability = self._edge_to_probability(edge=edge, scale=prob_scale)
+                raw_probability = self._edge_to_probability(edge=edge, scale=prob_scale)
+                probability = raw_probability
                 probability_method = "heuristic_sigmoid_scaled_edge_fallback"
                 calibration = {
                     "type": "heuristic_fallback",
+                    "path": "uncalibrated",
+                    "method": "none",
                     "scale_bps": prob_scale,
+                    "raw_probability_method": "heuristic_sigmoid_scaled_edge_fallback",
                 }
             confidence = abs(probability - 0.5) * 2.0
 
@@ -299,6 +466,7 @@ class TradingOpportunityAI:
                         "trained_at": artifact.trained_at.isoformat(),
                         "feature_names": list(artifact.feature_names),
                         "probability_method": probability_method,
+                        "raw_probability_method": calibration.get("raw_probability_method", probability_method),
                         "confidence_method": "distance_from_probability_midpoint",
                         "calibration": calibration,
                     },

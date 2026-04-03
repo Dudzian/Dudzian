@@ -19,8 +19,11 @@ class OpportunityTemporalEvaluation:
     edge_rmse_bps: float
     directional_accuracy: float
     success_probability_brier: float
+    success_probability_ece: float
     avg_success_probability: float
     probability_method: str
+    calibration_method: str = "none"
+    reliability_summary: tuple[Mapping[str, float], ...] = ()
     matched_outcomes: int = 0
     label_coverage: float = 0.0
 
@@ -93,11 +96,15 @@ class OpportunityTemporalEvaluator:
             raise TypeError("OpportunityTemporalEvaluator wymaga backendu builtin")
 
         classifier = self._build_classifier_from_artifact(artifact)
-        probability_method = (
-            "model_success_classifier"
-            if classifier is not None
-            else "heuristic_sigmoid_scaled_edge_fallback"
+        calibrator = self._build_calibrator_from_artifact(artifact)
+        calibration_method = (
+            "platt_scaling" if classifier is not None and calibrator is not None else "none"
         )
+        probability_method = "heuristic_sigmoid_scaled_edge_fallback"
+        if classifier is not None and calibrator is not None and calibration_method != "none":
+            probability_method = "model_success_classifier_calibrated"
+        elif classifier is not None:
+            probability_method = "model_success_classifier_uncalibrated"
         probability_scale = TradingOpportunityAI._safe_probability_scale(
             artifact.metadata.get("probability_scale_bps", artifact.target_scale)
         )
@@ -114,7 +121,12 @@ class OpportunityTemporalEvaluator:
             edge_pred = float(model.predict(features))
             edge_target = TradingOpportunityAI._target(sample)
             if classifier is not None:
-                probability_pred = TradingOpportunityAI._clip_probability(classifier.predict(features))
+                raw_probability = TradingOpportunityAI._clip_probability(classifier.predict(features))
+                probability_pred = (
+                    TradingOpportunityAI._clip_probability(calibrator.apply(raw_probability))
+                    if calibrator is not None
+                    else raw_probability
+                )
             else:
                 probability_pred = TradingOpportunityAI._edge_to_probability(
                     edge=edge_pred,
@@ -141,6 +153,10 @@ class OpportunityTemporalEvaluator:
             (prediction - target) ** 2
             for prediction, target in zip(probability_predictions, probability_targets)
         ) / sample_count
+        probability_ece, reliability_summary = self._calibration_error_summary(
+            probability_predictions,
+            probability_targets,
+        )
         avg_probability = sum(probability_predictions) / sample_count
 
         return OpportunityTemporalEvaluation(
@@ -150,8 +166,11 @@ class OpportunityTemporalEvaluator:
             edge_rmse_bps=edge_rmse,
             directional_accuracy=directional_accuracy,
             success_probability_brier=probability_brier,
+            success_probability_ece=probability_ece,
             avg_success_probability=avg_probability,
             probability_method=probability_method,
+            calibration_method=calibration_method,
+            reliability_summary=reliability_summary,
             matched_outcomes=sample_count,
             label_coverage=1.0,
         )
@@ -209,6 +228,10 @@ class OpportunityTemporalEvaluator:
             (prediction - target) ** 2
             for prediction, target in zip(probability_predictions, probability_targets)
         ) / sample_count
+        probability_ece, reliability_summary = self._calibration_error_summary(
+            probability_predictions,
+            probability_targets,
+        )
         avg_probability = sum(probability_predictions) / sample_count
 
         probability_method = (
@@ -224,8 +247,11 @@ class OpportunityTemporalEvaluator:
             edge_rmse_bps=edge_rmse,
             directional_accuracy=directional_accuracy,
             success_probability_brier=probability_brier,
+            success_probability_ece=probability_ece,
             avg_success_probability=avg_probability,
             probability_method=probability_method,
+            calibration_method="unknown_from_shadow_records",
+            reliability_summary=reliability_summary,
             matched_outcomes=sample_count,
             label_coverage=sample_count / len(shadow_records),
         )
@@ -365,6 +391,56 @@ class OpportunityTemporalEvaluator:
         if not classifier.feature_names:
             return None
         return classifier
+
+    @staticmethod
+    def _build_calibrator_from_artifact(
+        artifact: ModelArtifact,
+    ) -> "_PlattSuccessCalibrator | None":
+        from .trading_engine import _PlattSuccessCalibrator
+
+        payload = artifact.model_state.get("success_probability_calibrator")
+        if not isinstance(payload, Mapping):
+            return None
+        return _PlattSuccessCalibrator.from_mapping(payload)
+
+    @staticmethod
+    def _calibration_error_summary(
+        predictions: Sequence[float],
+        targets: Sequence[float],
+        *,
+        buckets: int = 10,
+    ) -> tuple[float, tuple[Mapping[str, float], ...]]:
+        if not predictions:
+            return 0.0, ()
+        effective_buckets = max(2, int(buckets))
+        grouped: list[list[tuple[float, float]]] = [[] for _ in range(effective_buckets)]
+        for prediction, target in zip(predictions, targets):
+            clipped = max(0.0, min(1.0, float(prediction)))
+            idx = min(effective_buckets - 1, int(clipped * effective_buckets))
+            grouped[idx].append((clipped, float(target)))
+        total = len(predictions)
+        ece = 0.0
+        summary: list[Mapping[str, float]] = []
+        for idx, rows in enumerate(grouped):
+            if not rows:
+                continue
+            count = len(rows)
+            avg_conf = sum(pred for pred, _ in rows) / count
+            avg_acc = sum(target for _, target in rows) / count
+            gap = abs(avg_conf - avg_acc)
+            ece += (count / total) * gap
+            summary.append(
+                {
+                    "bucket_index": float(idx),
+                    "bucket_start": idx / effective_buckets,
+                    "bucket_end": (idx + 1) / effective_buckets,
+                    "count": float(count),
+                    "avg_confidence": avg_conf,
+                    "avg_accuracy": avg_acc,
+                    "abs_gap": gap,
+                }
+            )
+        return ece, tuple(summary)
 
 
 __all__ = [

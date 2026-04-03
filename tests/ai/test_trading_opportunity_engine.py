@@ -144,6 +144,17 @@ def test_fit_dual_head_contains_classifier_state_and_metadata() -> None:
     summary = artifact.metrics.summary()
     assert "classifier_accuracy" in summary
     assert "classifier_brier_score" in summary
+    assert "classifier_raw_brier_score" in summary
+    assert artifact.metadata["probability_calibration"]["fit_split"] == "validation"  # type: ignore[index]
+
+
+def test_fit_persists_success_probability_calibrator_state() -> None:
+    engine = TradingOpportunityAI()
+    artifact = engine.fit(_build_samples())
+
+    calibration_payload = artifact.model_state.get("success_probability_calibrator")
+    assert isinstance(calibration_payload, dict)
+    assert calibration_payload["method"] == "platt_scaling"
 
 
 def test_save_load_dual_head_artifact_keeps_classifier_probability(tmp_path) -> None:
@@ -439,10 +450,12 @@ def test_rank_uses_classifier_probability_when_available() -> None:
         ]
     )[0]
     provenance = decision.provenance
-    assert provenance["probability_method"] == "model_success_classifier"
+    assert provenance["probability_method"] == "model_success_classifier_calibrated"
+    assert provenance["raw_probability_method"] == "model_success_classifier"
     assert provenance["confidence_method"] == "distance_from_probability_midpoint"
     assert isinstance(provenance["calibration"], dict)
-    assert provenance["calibration"]["type"] == "classifier"  # type: ignore[index]
+    assert provenance["calibration"]["type"] == "probability_calibrator"  # type: ignore[index]
+    assert provenance["calibration"]["method"] == "platt_scaling"  # type: ignore[index]
 
 
 def test_rank_falls_back_to_heuristic_probability_without_classifier() -> None:
@@ -491,6 +504,29 @@ def test_rank_falls_back_to_heuristic_probability_without_classifier() -> None:
     assert math.isfinite(float(provenance["calibration"]["scale_bps"]))  # type: ignore[index]
 
 
+def test_rank_uses_uncalibrated_classifier_when_calibrator_missing() -> None:
+    engine = TradingOpportunityAI()
+    engine.fit(_build_samples())
+    engine._success_calibrator = None
+    decision = engine.rank(
+        [
+            OpportunityCandidate(
+                symbol="ADA/USDT",
+                signal_strength=0.5,
+                momentum_5m=0.3,
+                volatility_30m=0.2,
+                spread_bps=0.4,
+                fee_bps=0.2,
+                slippage_bps=0.1,
+                liquidity_score=0.9,
+                risk_penalty_bps=0.0,
+            )
+        ]
+    )[0]
+    assert decision.provenance["probability_method"] == "model_success_classifier_uncalibrated"
+    assert decision.provenance["calibration"]["path"] == "uncalibrated"  # type: ignore[index]
+
+
 def test_temporal_evaluator_uses_classifier_probability_when_available() -> None:
     engine = TradingOpportunityAI()
     artifact = engine.fit(_build_samples())
@@ -499,9 +535,12 @@ def test_temporal_evaluator_uses_classifier_probability_when_available() -> None
     evaluation = evaluator.evaluate(artifact, _build_samples())
 
     assert evaluation.sample_count == 30
-    assert evaluation.probability_method == "model_success_classifier"
+    assert evaluation.probability_method == "model_success_classifier_calibrated"
+    assert evaluation.calibration_method == "platt_scaling"
     assert 0.0 <= evaluation.avg_success_probability <= 1.0
     assert evaluation.success_probability_brier >= 0.0
+    assert evaluation.success_probability_ece >= 0.0
+    assert evaluation.reliability_summary
 
 
 def test_temporal_evaluator_falls_back_to_heuristic_for_legacy_artifact() -> None:
@@ -558,14 +597,14 @@ def test_save_load_keeps_classifier_based_ranking_and_evaluation(tmp_path) -> No
     original_eval = evaluator.evaluate(original_artifact, _build_samples())
     reloaded_eval = evaluator.evaluate(reloaded_artifact, _build_samples())
 
-    assert original_decision.provenance["probability_method"] == "model_success_classifier"
-    assert reloaded_decision.provenance["probability_method"] == "model_success_classifier"
+    assert original_decision.provenance["probability_method"] == "model_success_classifier_calibrated"
+    assert reloaded_decision.provenance["probability_method"] == "model_success_classifier_calibrated"
     assert reloaded_decision.success_probability == pytest.approx(
         original_decision.success_probability,
         rel=1e-12,
         abs=1e-12,
     )
-    assert reloaded_eval.probability_method == "model_success_classifier"
+    assert reloaded_eval.probability_method == "model_success_classifier_calibrated"
     assert reloaded_eval.avg_success_probability == pytest.approx(
         original_eval.avg_success_probability,
         rel=1e-12,
@@ -585,8 +624,8 @@ def test_temporal_evaluator_model_comparison_uses_matching_probability_method() 
         samples=_build_samples(),
     )
 
-    assert comparison.latest.probability_method == "model_success_classifier"
-    assert comparison.previous.probability_method == "model_success_classifier"
+    assert comparison.latest.probability_method == "model_success_classifier_calibrated"
+    assert comparison.previous.probability_method == "model_success_classifier_calibrated"
     assert math.isfinite(comparison.delta_edge_mae_bps)
     assert math.isfinite(comparison.delta_success_probability_brier)
 
@@ -621,7 +660,7 @@ def test_temporal_evaluator_model_comparison_handles_legacy_previous_artifact() 
         samples=_build_samples(),
     )
 
-    assert comparison.latest.probability_method == "model_success_classifier"
+    assert comparison.latest.probability_method == "model_success_classifier_calibrated"
     assert comparison.previous.probability_method == "heuristic_sigmoid_scaled_edge_fallback"
 
 
