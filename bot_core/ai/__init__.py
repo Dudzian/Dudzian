@@ -174,6 +174,12 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
         ".trading_opportunity_shadow",
         "OpportunityShadowRepository",
     ),
+    "OpportunityEvaluationMetrics": (".opportunity_evaluation", "OpportunityEvaluationMetrics"),
+    "OpportunityEvaluationReport": (".opportunity_evaluation", "OpportunityEvaluationReport"),
+    "OpportunityModelComparison": (".opportunity_evaluation", "OpportunityModelComparison"),
+    "OpportunitySplitConfig": (".opportunity_evaluation", "OpportunitySplitConfig"),
+    "OpportunityTemporalEvaluator": (".opportunity_evaluation", "OpportunityTemporalEvaluator"),
+    "OpportunityWalkForwardFoldReport": (".opportunity_evaluation", "OpportunityWalkForwardFoldReport"),
 }
 
 _PIPELINE_MONITORING_EXPORTS: Dict[str, Tuple[str, str]] = {
