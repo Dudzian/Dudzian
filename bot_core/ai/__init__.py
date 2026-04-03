@@ -163,6 +163,18 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "OpportunitySnapshot": (".trading_engine", "OpportunitySnapshot"),
     "OpportunityCandidate": (".trading_engine", "OpportunityCandidate"),
     "OpportunityDecision": (".trading_engine", "OpportunityDecision"),
+    "OpportunityTemporalEvaluation": (
+        ".opportunity_evaluation",
+        "OpportunityTemporalEvaluation",
+    ),
+    "OpportunityTemporalComparison": (
+        ".opportunity_evaluation",
+        "OpportunityTemporalComparison",
+    ),
+    "OpportunityTemporalEvaluator": (
+        ".opportunity_evaluation",
+        "OpportunityTemporalEvaluator",
+    ),
     "OpportunityThresholdConfig": (
         ".trading_opportunity_shadow",
         "OpportunityThresholdConfig",

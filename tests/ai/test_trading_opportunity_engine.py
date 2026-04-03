@@ -14,6 +14,7 @@ from bot_core.ai import (
     OpportunityShadowContext,
     OpportunityShadowRecord,
     OpportunityShadowRepository,
+    OpportunityTemporalEvaluator,
     OpportunityThresholdConfig,
     OpportunitySnapshot,
     TradingOpportunityAI,
@@ -58,6 +59,7 @@ def test_training_and_contract_ranking_fields(tmp_path) -> None:
 
     assert artifact.training_rows == 30
     assert artifact.metadata["decision_source"] == "model"
+    assert artifact.metadata["artifact_schema_version"] == "opportunity_dual_head_v1"
     assert path.endswith(".json")
 
     decisions = engine.rank(
@@ -129,6 +131,46 @@ def test_save_load_keeps_prediction_consistent(tmp_path) -> None:
 
     assert abs(a.expected_edge_bps - b.expected_edge_bps) < 1e-9
     assert abs(a.success_probability - b.success_probability) < 1e-12
+
+
+def test_fit_dual_head_contains_classifier_state_and_metadata() -> None:
+    engine = TradingOpportunityAI()
+    artifact = engine.fit(_build_samples())
+
+    assert "classifier_head_state" in artifact.model_state
+    assert artifact.metadata["artifact_schema_version"] == "opportunity_dual_head_v1"
+    assert artifact.metadata["classification_target_definition"] == "1 if target_definition > 0 else 0"
+    assert artifact.metadata["heads"]["success_classifier"]["prediction_field"] == "success_probability"
+    summary = artifact.metrics.summary()
+    assert "classifier_accuracy" in summary
+    assert "classifier_brier_score" in summary
+
+
+def test_save_load_dual_head_artifact_keeps_classifier_probability(tmp_path) -> None:
+    repository = FilesystemModelRepository(tmp_path / "repo")
+    trainer = TradingOpportunityAI(repository=repository)
+    trainer.fit(_build_samples())
+    trainer.save_model(version="dual-head", activate=True)
+
+    candidate = OpportunityCandidate(
+        symbol="UNI/USDT",
+        signal_strength=0.95,
+        momentum_5m=0.7,
+        volatility_30m=0.25,
+        spread_bps=0.4,
+        fee_bps=0.2,
+        slippage_bps=0.1,
+        liquidity_score=0.9,
+        risk_penalty_bps=0.0,
+    )
+    before = trainer.rank([candidate])[0]
+
+    reloaded = TradingOpportunityAI(repository=repository)
+    artifact = reloaded.load_model("dual-head")
+    after = reloaded.rank([candidate])[0]
+
+    assert "classifier_head_state" in artifact.model_state
+    assert before.success_probability == pytest.approx(after.success_probability, rel=1e-12, abs=1e-12)
 
 
 def test_model_retrains_and_changes_scores_when_distribution_changes() -> None:
@@ -378,7 +420,7 @@ def test_rank_handles_extreme_inputs_without_probability_overflow() -> None:
     assert math.isfinite(decision.confidence)
 
 
-def test_rank_provenance_contains_heuristic_probability_markers() -> None:
+def test_rank_uses_classifier_probability_when_available() -> None:
     engine = TradingOpportunityAI()
     engine.fit(_build_samples())
     decision = engine.rank(
@@ -397,10 +439,190 @@ def test_rank_provenance_contains_heuristic_probability_markers() -> None:
         ]
     )[0]
     provenance = decision.provenance
-    assert provenance["probability_method"] == "heuristic_sigmoid_scaled_edge"
+    assert provenance["probability_method"] == "model_success_classifier"
     assert provenance["confidence_method"] == "distance_from_probability_midpoint"
     assert isinstance(provenance["calibration"], dict)
+    assert provenance["calibration"]["type"] == "classifier"  # type: ignore[index]
+
+
+def test_rank_falls_back_to_heuristic_probability_without_classifier() -> None:
+    engine = TradingOpportunityAI()
+    engine.fit(_build_samples())
+    assert engine.artifact is not None
+    model_state_without_classifier = {
+        key: value
+        for key, value in dict(engine.artifact.model_state).items()
+        if key != "classifier_head_state"
+    }
+    engine._artifact = ModelArtifact(
+        feature_names=engine.artifact.feature_names,
+        model_state=model_state_without_classifier,
+        trained_at=engine.artifact.trained_at,
+        metrics=engine.artifact.metrics,
+        metadata=engine.artifact.metadata,
+        target_scale=engine.artifact.target_scale,
+        training_rows=engine.artifact.training_rows,
+        validation_rows=engine.artifact.validation_rows,
+        test_rows=engine.artifact.test_rows,
+        feature_scalers=engine.artifact.feature_scalers,
+        decision_journal_entry_id=engine.artifact.decision_journal_entry_id,
+        backend=engine.artifact.backend,
+    )
+    engine._classifier_model = None
+
+    decision = engine.rank(
+        [
+            OpportunityCandidate(
+                symbol="ADA/USDT",
+                signal_strength=0.5,
+                momentum_5m=0.3,
+                volatility_30m=0.2,
+                spread_bps=0.4,
+                fee_bps=0.2,
+                slippage_bps=0.1,
+                liquidity_score=0.9,
+                risk_penalty_bps=0.0,
+            )
+        ]
+    )[0]
+    provenance = decision.provenance
+    assert provenance["probability_method"] == "heuristic_sigmoid_scaled_edge_fallback"
+    assert provenance["calibration"]["type"] == "heuristic_fallback"  # type: ignore[index]
     assert math.isfinite(float(provenance["calibration"]["scale_bps"]))  # type: ignore[index]
+
+
+def test_temporal_evaluator_uses_classifier_probability_when_available() -> None:
+    engine = TradingOpportunityAI()
+    artifact = engine.fit(_build_samples())
+    evaluator = OpportunityTemporalEvaluator()
+
+    evaluation = evaluator.evaluate(artifact, _build_samples())
+
+    assert evaluation.sample_count == 30
+    assert evaluation.probability_method == "model_success_classifier"
+    assert 0.0 <= evaluation.avg_success_probability <= 1.0
+    assert evaluation.success_probability_brier >= 0.0
+
+
+def test_temporal_evaluator_falls_back_to_heuristic_for_legacy_artifact() -> None:
+    engine = TradingOpportunityAI()
+    artifact = engine.fit(_build_samples())
+    legacy_model_state = {
+        key: value for key, value in dict(artifact.model_state).items() if key != "classifier_head_state"
+    }
+    legacy_artifact = ModelArtifact(
+        feature_names=artifact.feature_names,
+        model_state=legacy_model_state,
+        trained_at=artifact.trained_at,
+        metrics=artifact.metrics,
+        metadata=artifact.metadata,
+        target_scale=artifact.target_scale,
+        training_rows=artifact.training_rows,
+        validation_rows=artifact.validation_rows,
+        test_rows=artifact.test_rows,
+        feature_scalers=artifact.feature_scalers,
+        decision_journal_entry_id=artifact.decision_journal_entry_id,
+        backend=artifact.backend,
+    )
+    evaluator = OpportunityTemporalEvaluator()
+
+    evaluation = evaluator.evaluate(legacy_artifact, _build_samples())
+
+    assert evaluation.probability_method == "heuristic_sigmoid_scaled_edge_fallback"
+    assert 0.0 <= evaluation.avg_success_probability <= 1.0
+
+
+def test_save_load_keeps_classifier_based_ranking_and_evaluation(tmp_path) -> None:
+    repository = FilesystemModelRepository(tmp_path / "repo")
+    trainer = TradingOpportunityAI(repository=repository)
+    original_artifact = trainer.fit(_build_samples())
+    trainer.save_model(version="dual-head-eval", activate=True)
+
+    reloaded = TradingOpportunityAI(repository=repository)
+    reloaded_artifact = reloaded.load_model("dual-head-eval")
+    evaluator = OpportunityTemporalEvaluator()
+    sample = OpportunityCandidate(
+        symbol="AVAX/USDT",
+        signal_strength=0.7,
+        momentum_5m=0.5,
+        volatility_30m=0.3,
+        spread_bps=0.4,
+        fee_bps=0.2,
+        slippage_bps=0.1,
+        liquidity_score=0.85,
+        risk_penalty_bps=0.0,
+    )
+
+    original_decision = trainer.rank([sample])[0]
+    reloaded_decision = reloaded.rank([sample])[0]
+    original_eval = evaluator.evaluate(original_artifact, _build_samples())
+    reloaded_eval = evaluator.evaluate(reloaded_artifact, _build_samples())
+
+    assert original_decision.provenance["probability_method"] == "model_success_classifier"
+    assert reloaded_decision.provenance["probability_method"] == "model_success_classifier"
+    assert reloaded_decision.success_probability == pytest.approx(
+        original_decision.success_probability,
+        rel=1e-12,
+        abs=1e-12,
+    )
+    assert reloaded_eval.probability_method == "model_success_classifier"
+    assert reloaded_eval.avg_success_probability == pytest.approx(
+        original_eval.avg_success_probability,
+        rel=1e-12,
+        abs=1e-12,
+    )
+
+
+def test_temporal_evaluator_model_comparison_uses_matching_probability_method() -> None:
+    engine = TradingOpportunityAI()
+    latest_artifact = engine.fit(_build_samples(scale=1.0))
+    previous_artifact = engine.fit(_build_samples(scale=-1.0))
+    evaluator = OpportunityTemporalEvaluator()
+
+    comparison = evaluator.compare_latest_vs_previous(
+        latest_artifact=latest_artifact,
+        previous_artifact=previous_artifact,
+        samples=_build_samples(),
+    )
+
+    assert comparison.latest.probability_method == "model_success_classifier"
+    assert comparison.previous.probability_method == "model_success_classifier"
+    assert math.isfinite(comparison.delta_edge_mae_bps)
+    assert math.isfinite(comparison.delta_success_probability_brier)
+
+
+def test_temporal_evaluator_model_comparison_handles_legacy_previous_artifact() -> None:
+    engine = TradingOpportunityAI()
+    latest_artifact = engine.fit(_build_samples(scale=1.0))
+    previous_full = engine.fit(_build_samples(scale=-1.0))
+    legacy_previous = ModelArtifact(
+        feature_names=previous_full.feature_names,
+        model_state={
+            key: value
+            for key, value in dict(previous_full.model_state).items()
+            if key != "classifier_head_state"
+        },
+        trained_at=previous_full.trained_at,
+        metrics=previous_full.metrics,
+        metadata=previous_full.metadata,
+        target_scale=previous_full.target_scale,
+        training_rows=previous_full.training_rows,
+        validation_rows=previous_full.validation_rows,
+        test_rows=previous_full.test_rows,
+        feature_scalers=previous_full.feature_scalers,
+        decision_journal_entry_id=previous_full.decision_journal_entry_id,
+        backend=previous_full.backend,
+    )
+    evaluator = OpportunityTemporalEvaluator()
+
+    comparison = evaluator.compare_latest_vs_previous(
+        latest_artifact=latest_artifact,
+        previous_artifact=legacy_previous,
+        samples=_build_samples(),
+    )
+
+    assert comparison.latest.probability_method == "model_success_classifier"
+    assert comparison.previous.probability_method == "heuristic_sigmoid_scaled_edge_fallback"
 
 
 def test_shadow_record_building_from_ranked_decisions() -> None:
