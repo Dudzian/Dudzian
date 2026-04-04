@@ -272,6 +272,142 @@ def test_save_load_dual_head_artifact_keeps_classifier_probability(tmp_path) -> 
     assert before.success_probability == pytest.approx(after.success_probability, rel=1e-12, abs=1e-12)
 
 
+def test_save_load_preserves_ensemble_states_and_scores(tmp_path) -> None:
+    repository = FilesystemModelRepository(tmp_path / "repo")
+    trainer = TradingOpportunityAI(repository=repository)
+    trainer.fit(_build_samples())
+    trainer.save_model(version="ensemble", activate=True)
+    candidate = OpportunityCandidate(
+        symbol="ADA/USDT",
+        signal_strength=0.7,
+        momentum_5m=0.42,
+        volatility_30m=0.33,
+        spread_bps=0.5,
+        fee_bps=0.2,
+        slippage_bps=0.1,
+        liquidity_score=0.8,
+        risk_penalty_bps=0.1,
+    )
+    before = trainer.rank([candidate])[0]
+
+    reloaded = TradingOpportunityAI(repository=repository)
+    artifact = reloaded.load_model("ensemble")
+    after = reloaded.rank([candidate])[0]
+
+    assert "ensemble_edge_states" in artifact.model_state
+    assert "ensemble_classifier_states" in artifact.model_state
+    assert before.expected_edge_bps == pytest.approx(after.expected_edge_bps, rel=1e-12, abs=1e-12)
+    assert before.success_probability == pytest.approx(after.success_probability, rel=1e-12, abs=1e-12)
+
+
+def test_rank_provenance_contains_uncertainty_and_agreement_markers() -> None:
+    engine = TradingOpportunityAI()
+    engine.fit(_build_samples())
+    candidate = OpportunityCandidate(
+        symbol="MATIC/USDT",
+        signal_strength=0.6,
+        momentum_5m=0.3,
+        volatility_30m=0.28,
+        spread_bps=0.5,
+        fee_bps=0.2,
+        slippage_bps=0.1,
+        liquidity_score=0.85,
+        risk_penalty_bps=0.05,
+    )
+
+    decision = engine.rank([candidate])[0]
+
+    assert decision.provenance["uncertainty_method"] == "edge_stddev_plus_probability_dispersion"
+    assert isinstance(decision.provenance["uncertainty_score"], float)
+    assert isinstance(decision.provenance["agreement_score"], float)
+    assert decision.provenance["ensemble_member_count"] == 3
+
+
+def test_rank_abstains_when_agreement_is_too_low() -> None:
+    engine = TradingOpportunityAI()
+    artifact = engine.fit(_build_samples())
+    metadata = dict(artifact.metadata)
+    ensemble = dict(metadata["ensemble"])  # type: ignore[index]
+    abstain_policy = dict(ensemble["abstain_policy"])  # type: ignore[index]
+    abstain_policy["max_uncertainty"] = 999.0
+    abstain_policy["min_agreement"] = 0.999999
+    ensemble["abstain_policy"] = abstain_policy
+    metadata["ensemble"] = ensemble
+    engine._artifact = type(artifact)(
+        feature_names=artifact.feature_names,
+        model_state=artifact.model_state,
+        trained_at=artifact.trained_at,
+        metrics=artifact.metrics,
+        metadata=metadata,
+        target_scale=artifact.target_scale,
+        training_rows=artifact.training_rows,
+        validation_rows=artifact.validation_rows,
+        test_rows=artifact.test_rows,
+        feature_scalers=artifact.feature_scalers,
+        decision_journal_entry_id=artifact.decision_journal_entry_id,
+        backend=artifact.backend,
+    )
+
+    decision = engine.rank(
+        [
+            OpportunityCandidate(
+                symbol="DOGE/USDT",
+                signal_strength=1.2,
+                momentum_5m=0.9,
+                volatility_30m=0.55,
+                spread_bps=0.7,
+                fee_bps=0.3,
+                slippage_bps=0.25,
+                liquidity_score=0.35,
+                risk_penalty_bps=0.8,
+            )
+        ]
+    )[0]
+
+    assert decision.accepted is False
+    assert decision.proposed_direction == "skip"
+    assert decision.rejection_reason == "abstain_low_agreement"
+
+
+def test_ranking_remains_deterministic_with_ensemble_scoring() -> None:
+    engine = TradingOpportunityAI()
+    engine.fit(_build_samples())
+    candidates = [
+        OpportunityCandidate(
+            symbol="BTC/USDT",
+            signal_strength=0.8,
+            momentum_5m=0.5,
+            volatility_30m=0.28,
+            spread_bps=0.4,
+            fee_bps=0.2,
+            slippage_bps=0.1,
+            liquidity_score=0.9,
+            risk_penalty_bps=0.0,
+        ),
+        OpportunityCandidate(
+            symbol="ETH/USDT",
+            signal_strength=0.5,
+            momentum_5m=0.3,
+            volatility_30m=0.3,
+            spread_bps=0.45,
+            fee_bps=0.2,
+            slippage_bps=0.1,
+            liquidity_score=0.88,
+            risk_penalty_bps=0.05,
+        ),
+    ]
+    first = engine.rank(candidates)
+    second = engine.rank(candidates)
+
+    assert [item.symbol for item in first] == [item.symbol for item in second]
+    assert [item.rank for item in first] == [item.rank for item in second]
+    assert [item.expected_edge_bps for item in first] == pytest.approx(
+        [item.expected_edge_bps for item in second],
+        rel=1e-12,
+        abs=1e-12,
+    )
+
+
 def test_model_retrains_and_changes_scores_when_distribution_changes() -> None:
     engine = TradingOpportunityAI()
     candidate = OpportunityCandidate(

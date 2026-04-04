@@ -10,6 +10,10 @@ from .models import ModelArtifact
 from .repository import ModelRepository
 from .training import SimpleGradientBoostingModel
 
+_ABSTAIN_REJECTION_REASONS: frozenset[str] = frozenset(
+    {"abstain_uncertainty_high", "abstain_low_agreement"}
+)
+
 
 @dataclass(slots=True, frozen=True)
 class OpportunityTemporalEvaluation:
@@ -26,6 +30,11 @@ class OpportunityTemporalEvaluation:
     reliability_summary: tuple[Mapping[str, float], ...] = ()
     matched_outcomes: int = 0
     label_coverage: float = 0.0
+    coverage: float = 0.0
+    abstention_rate: float = 0.0
+    accepted_sample_count: int = 0
+    accepted_edge_mae_bps: float = 0.0
+    accepted_success_probability_brier: float = 0.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -174,6 +183,11 @@ class OpportunityTemporalEvaluator:
             reliability_summary=reliability_summary,
             matched_outcomes=sample_count,
             label_coverage=1.0,
+            coverage=1.0,
+            abstention_rate=0.0,
+            accepted_sample_count=sample_count,
+            accepted_edge_mae_bps=edge_mae,
+            accepted_success_probability_brier=probability_brier,
         )
 
     def evaluate_from_shadow_labels(
@@ -192,6 +206,7 @@ class OpportunityTemporalEvaluator:
 
         labels_by_key = {str(label.correlation_key): label for label in outcome_labels}
         matched: list[tuple[float, float, float, float]] = []
+        accepted_matched: list[tuple[float, float, float, float]] = []
         probability_methods: set[str] = set()
         for record in shadow_records:
             label = labels_by_key.get(str(record.record_key))
@@ -202,6 +217,10 @@ class OpportunityTemporalEvaluator:
             edge_target = float(label.realized_return_bps)
             probability_target = 1.0 if edge_target > 0.0 else 0.0
             matched.append((edge_prediction, edge_target, probability_prediction, probability_target))
+            if bool(record.accepted):
+                accepted_matched.append(
+                    (edge_prediction, edge_target, probability_prediction, probability_target)
+                )
             method = record.provenance.get("probability_method") if isinstance(record.provenance, Mapping) else None
             if isinstance(method, str) and method.strip():
                 probability_methods.add(method.strip())
@@ -241,6 +260,27 @@ class OpportunityTemporalEvaluator:
             else "mixed_from_shadow_records"
         )
         model_version = str(shadow_records[0].model_version)
+        accepted_sample_count = len(accepted_matched)
+        if accepted_sample_count:
+            accepted_edge_mae = (
+                sum(abs(p - y) for p, y, _, _ in accepted_matched) / accepted_sample_count
+            )
+            accepted_probability_brier = (
+                sum((probability - target) ** 2 for _, _, probability, target in accepted_matched)
+                / accepted_sample_count
+            )
+        else:
+            accepted_edge_mae = 0.0
+            accepted_probability_brier = 0.0
+        total_shadow_records = len(shadow_records)
+        coverage = sample_count / total_shadow_records
+        abstained_total = sum(
+            1
+            for record in shadow_records
+            if isinstance(record.rejection_reason, str)
+            and record.rejection_reason.strip() in _ABSTAIN_REJECTION_REASONS
+        )
+        abstention_rate = abstained_total / total_shadow_records
         return OpportunityTemporalEvaluation(
             model_version=model_version,
             sample_count=sample_count,
@@ -254,7 +294,12 @@ class OpportunityTemporalEvaluator:
             calibration_method="unknown_from_shadow_records",
             reliability_summary=reliability_summary,
             matched_outcomes=sample_count,
-            label_coverage=sample_count / len(shadow_records),
+            label_coverage=coverage,
+            coverage=coverage,
+            abstention_rate=abstention_rate,
+            accepted_sample_count=accepted_sample_count,
+            accepted_edge_mae_bps=accepted_edge_mae,
+            accepted_success_probability_brier=accepted_probability_brier,
         )
 
     def evaluate_with_model_comparison(
