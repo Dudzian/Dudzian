@@ -38,6 +38,11 @@ _REGIME_FEATURE_NAMES: tuple[str, ...] = (
 )
 _FEATURE_NAMES: tuple[str, ...] = _RAW_FEATURE_NAMES + _REGIME_FEATURE_NAMES
 _FEATURE_SPEC_VERSION = "opportunity_features_v1"
+_ENSEMBLE_VARIANTS: tuple[tuple[float, int], ...] = (
+    (0.12, 32),
+    (0.09, 24),
+    (0.16, 40),
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -316,6 +321,8 @@ class TradingOpportunityAI:
         self._model: SimpleGradientBoostingModel | None = None
         self._classifier_model: SimpleGradientBoostingModel | None = None
         self._success_calibrator: _PlattSuccessCalibrator | None = None
+        self._edge_ensemble_models: tuple[SimpleGradientBoostingModel, ...] = ()
+        self._classifier_ensemble_models: tuple[SimpleGradientBoostingModel, ...] = ()
 
     @property
     def artifact(self) -> ModelArtifact | None:
@@ -350,27 +357,50 @@ class TradingOpportunityAI:
         train_targets = [self._target(sample) for sample in train_samples]
         train_classifier_targets = [self._success_target(edge) for edge in train_targets]
 
-        model = SimpleGradientBoostingModel(learning_rate=0.12, n_estimators=32, min_samples_leaf=2)
-        model.fit_matrix(train_matrix, _FEATURE_NAMES, train_targets)
-        classifier = SimpleGradientBoostingModel(
-            learning_rate=0.1,
-            n_estimators=28,
-            min_samples_leaf=2,
-        )
-        classifier.fit_matrix(train_matrix, _FEATURE_NAMES, train_classifier_targets)
+        ensemble_models: list[SimpleGradientBoostingModel] = []
+        classifier_ensemble_models: list[SimpleGradientBoostingModel] = []
+        for learning_rate, n_estimators in _ENSEMBLE_VARIANTS:
+            edge_model = SimpleGradientBoostingModel(
+                learning_rate=learning_rate,
+                n_estimators=n_estimators,
+                min_samples_leaf=2,
+            )
+            edge_model.fit_matrix(train_matrix, _FEATURE_NAMES, train_targets)
+            ensemble_models.append(edge_model)
+
+            classifier_model = SimpleGradientBoostingModel(
+                learning_rate=max(0.05, learning_rate - 0.02),
+                n_estimators=max(16, n_estimators - 4),
+                min_samples_leaf=2,
+            )
+            classifier_model.fit_matrix(train_matrix, _FEATURE_NAMES, train_classifier_targets)
+            classifier_ensemble_models.append(classifier_model)
+
+        model = ensemble_models[0]
+        classifier = classifier_ensemble_models[0]
 
         matrix = [self._vector_from_snapshot(sample) for sample in ordered_samples]
         targets = [self._target(sample) for sample in ordered_samples]
         classifier_targets = [self._success_target(edge) for edge in targets]
-        predictions = [model.predict(self._features_from_vector(vector)) for vector in matrix]
-        raw_probability_predictions = [
-            self._clip_probability(classifier.predict(self._features_from_vector(vector)))
-            for vector in matrix
-        ]
+        predictions = []
+        raw_probability_predictions = []
+        for vector in matrix:
+            features = self._features_from_vector(vector)
+            edge_members = [float(member.predict(features)) for member in ensemble_models]
+            prob_members = [
+                self._clip_probability(member.predict(features))
+                for member in classifier_ensemble_models
+            ]
+            predictions.append(sum(edge_members) / len(edge_members))
+            raw_probability_predictions.append(sum(prob_members) / len(prob_members))
 
         validation_matrix = [self._vector_from_snapshot(sample) for sample in validation_samples]
         validation_probability_raw = [
-            self._clip_probability(classifier.predict(self._features_from_vector(vector)))
+            sum(
+                self._clip_probability(member.predict(self._features_from_vector(vector)))
+                for member in classifier_ensemble_models
+            )
+            / len(classifier_ensemble_models)
             for vector in validation_matrix
         ]
         validation_targets = [self._success_target(self._target(sample)) for sample in validation_samples]
@@ -431,6 +461,24 @@ class TradingOpportunityAI:
                 "version": _OpportunityFeaturePipeline.feature_spec_version(),
                 "names": list(_OpportunityFeaturePipeline.feature_names()),
             },
+            "ensemble": {
+                "method": "mean_of_variants",
+                "variant_count": len(ensemble_models),
+                "variants": [
+                    {
+                        "variant_id": idx,
+                        "learning_rate": learning_rate,
+                        "n_estimators": n_estimators,
+                    }
+                    for idx, (learning_rate, n_estimators) in enumerate(_ENSEMBLE_VARIANTS, start=1)
+                ],
+                "uncertainty_method": "edge_stddev_and_probability_dispersion",
+                "agreement_method": "1_minus_probability_dispersion",
+                "abstain_policy": {
+                    "max_uncertainty": 12.0,
+                    "min_agreement": 0.6,
+                },
+            },
         }
         if success_calibrator is not None:
             metadata["probability_calibration"] = {
@@ -449,6 +497,10 @@ class TradingOpportunityAI:
             }
         model_state: MutableMapping[str, object] = dict(model.to_state())
         model_state["classifier_head_state"] = classifier.to_state()
+        model_state["ensemble_edge_states"] = [member.to_state() for member in ensemble_models]
+        model_state["ensemble_classifier_states"] = [
+            member.to_state() for member in classifier_ensemble_models
+        ]
         if success_calibrator is not None:
             model_state["success_probability_calibrator"] = dict(success_calibrator.to_mapping())
 
@@ -481,6 +533,8 @@ class TradingOpportunityAI:
         self._model = model
         self._classifier_model = classifier
         self._success_calibrator = success_calibrator
+        self._edge_ensemble_models = tuple(ensemble_models)
+        self._classifier_ensemble_models = tuple(classifier_ensemble_models)
         return artifact
 
     def save_model(self, *, version: str | None = None, activate: bool = False) -> str:
@@ -518,10 +572,40 @@ class TradingOpportunityAI:
         calibrator: _PlattSuccessCalibrator | None = None
         if isinstance(calibrator_payload, Mapping):
             calibrator = _PlattSuccessCalibrator.from_mapping(calibrator_payload)
+        edge_ensemble_models: list[SimpleGradientBoostingModel] = []
+        raw_edge_states = artifact.model_state.get("ensemble_edge_states")
+        if isinstance(raw_edge_states, Sequence) and not isinstance(raw_edge_states, (str, bytes)):
+            for state in raw_edge_states:
+                if not isinstance(state, Mapping):
+                    continue
+                loaded_edge_model = SimpleGradientBoostingModel()
+                loaded_edge_model.load_state(state)
+                if loaded_edge_model.feature_names:
+                    edge_ensemble_models.append(loaded_edge_model)
+
+        classifier_ensemble_models: list[SimpleGradientBoostingModel] = []
+        raw_classifier_states = artifact.model_state.get("ensemble_classifier_states")
+        if isinstance(raw_classifier_states, Sequence) and not isinstance(
+            raw_classifier_states, (str, bytes)
+        ):
+            for state in raw_classifier_states:
+                if not isinstance(state, Mapping):
+                    continue
+                loaded_classifier_model = SimpleGradientBoostingModel()
+                loaded_classifier_model.load_state(state)
+                if loaded_classifier_model.feature_names:
+                    classifier_ensemble_models.append(loaded_classifier_model)
+
         self._artifact = artifact
         self._model = model
         self._classifier_model = classifier
         self._success_calibrator = calibrator
+        self._edge_ensemble_models = tuple(edge_ensemble_models) if edge_ensemble_models else (model,)
+        self._classifier_ensemble_models = (
+            tuple(classifier_ensemble_models)
+            if classifier_ensemble_models
+            else ((classifier,) if classifier is not None else ())
+        )
         return artifact
 
     def rank(
@@ -538,19 +622,42 @@ class TradingOpportunityAI:
         self._validate_candidates(candidates)
         model, artifact = self._require_model()
         decisions: list[OpportunityDecision] = []
+        edge_members = self._edge_ensemble_models if self._edge_ensemble_models else (model,)
         classifier = self._classifier_model if self._classifier_model is not None else None
+        classifier_members = (
+            self._classifier_ensemble_models
+            if self._classifier_ensemble_models
+            else ((classifier,) if classifier is not None else ())
+        )
         calibrator = self._success_calibrator if classifier is not None else None
         prob_scale = self._safe_probability_scale(
             artifact.metadata.get("probability_scale_bps", artifact.target_scale)
         )
         model_version = str(artifact.metadata.get("model_version", "unknown"))
+        ensemble_config = artifact.metadata.get("ensemble")
+        if isinstance(ensemble_config, Mapping):
+            abstain_policy = ensemble_config.get("abstain_policy")
+        else:
+            abstain_policy = None
+        max_uncertainty = 12.0
+        min_agreement = 0.6
+        if isinstance(abstain_policy, Mapping):
+            if self._is_finite(abstain_policy.get("max_uncertainty")):
+                max_uncertainty = float(abstain_policy["max_uncertainty"])
+            if self._is_finite(abstain_policy.get("min_agreement")):
+                min_agreement = float(abstain_policy["min_agreement"])
 
         for candidate in candidates:
             feature_payload = _OpportunityFeaturePipeline.from_candidate(candidate)
             features = self._features_from_vector(feature_payload.feature_values)
-            edge = float(model.predict(features))
+            edge_predictions = [float(member.predict(features)) for member in edge_members]
+            edge = sum(edge_predictions) / len(edge_predictions)
             if classifier is not None:
-                raw_probability = self._clip_probability(classifier.predict(features))
+                raw_probability_members = [
+                    self._clip_probability(member.predict(features))
+                    for member in classifier_members
+                ]
+                raw_probability = sum(raw_probability_members) / len(raw_probability_members)
                 if calibrator is not None:
                     probability = self._clip_probability(calibrator.apply(raw_probability))
                     probability_method = "model_success_classifier_calibrated"
@@ -585,14 +692,27 @@ class TradingOpportunityAI:
                     "raw_probability_method": "heuristic_sigmoid_scaled_edge_fallback",
                 }
             confidence = abs(probability - 0.5) * 2.0
+            edge_stddev = self._stddev(edge_predictions)
+            probability_dispersion = (
+                self._stddev(raw_probability_members) if classifier is not None else 0.0
+            )
+            uncertainty = edge_stddev + probability_dispersion
+            agreement = max(0.0, min(1.0, 1.0 - probability_dispersion))
 
             accepted = edge >= min_expected_edge_bps and probability >= min_probability
+            abstain = uncertainty > max_uncertainty or agreement < min_agreement
+            if abstain:
+                accepted = False
             if accepted:
                 direction = self._resolve_direction(candidate)
                 rejection_reason = None
             else:
                 direction = "skip"
-                if edge < min_expected_edge_bps:
+                if abstain and uncertainty > max_uncertainty:
+                    rejection_reason = "abstain_uncertainty_high"
+                elif abstain and agreement < min_agreement:
+                    rejection_reason = "abstain_low_agreement"
+                elif edge < min_expected_edge_bps:
                     rejection_reason = "edge_below_threshold"
                 else:
                     rejection_reason = "probability_below_threshold"
@@ -620,6 +740,11 @@ class TradingOpportunityAI:
                         "probability_method": probability_method,
                         "raw_probability_method": calibration.get("raw_probability_method", probability_method),
                         "confidence_method": "distance_from_probability_midpoint",
+                        "uncertainty_method": "edge_stddev_plus_probability_dispersion",
+                        "uncertainty_score": uncertainty,
+                        "agreement_score": agreement,
+                        "ensemble_member_count": len(edge_members),
+                        "abstain_triggered": abstain,
                         "calibration": calibration,
                     },
                 )

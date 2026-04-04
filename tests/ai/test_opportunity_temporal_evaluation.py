@@ -437,5 +437,151 @@ def test_evaluate_from_shadow_labels_uses_record_outcome_contract() -> None:
     assert report.sample_count == 1
     assert report.matched_outcomes == 1
     assert report.label_coverage == pytest.approx(1.0)
+    assert report.coverage == pytest.approx(1.0)
+    assert report.abstention_rate == pytest.approx(0.0)
+    assert report.accepted_sample_count == 1
     assert report.probability_method == "model_success_classifier_calibrated"
     assert report.success_probability_ece >= 0.0
+
+
+def test_evaluate_from_shadow_labels_reports_abstention_and_conditional_quality() -> None:
+    evaluator = OpportunityTemporalEvaluator()
+    decision_timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    accepted_record = OpportunityShadowRecord(
+        record_key="rk-accepted",
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opp-v1",
+        decision_source="model",
+        expected_edge_bps=2.0,
+        success_probability=0.7,
+        confidence=0.4,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "model_success_classifier_calibrated"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+    )
+    abstained_record = OpportunityShadowRecord(
+        record_key="rk-abstain",
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opp-v1",
+        decision_source="model",
+        expected_edge_bps=1.5,
+        success_probability=0.52,
+        confidence=0.04,
+        proposed_direction="skip",
+        accepted=False,
+        rejection_reason="abstain_low_agreement",
+        rank=2,
+        provenance={"probability_method": "model_success_classifier_calibrated"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+    )
+    labels = [
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp,
+            correlation_key="rk-accepted",
+            horizon_minutes=30,
+            realized_return_bps=1.0,
+            max_favorable_excursion_bps=2.0,
+            max_adverse_excursion_bps=-0.5,
+        ),
+        OpportunityOutcomeLabel(
+            symbol="ETH/USDT",
+            decision_timestamp=decision_timestamp,
+            correlation_key="rk-abstain",
+            horizon_minutes=30,
+            realized_return_bps=-1.2,
+            max_favorable_excursion_bps=0.4,
+            max_adverse_excursion_bps=-1.8,
+        ),
+    ]
+
+    report = evaluator.evaluate_from_shadow_labels([accepted_record, abstained_record], labels)
+
+    assert report.coverage == pytest.approx(1.0)
+    assert report.abstention_rate == pytest.approx(0.5)
+    assert report.accepted_sample_count == 1
+    assert report.accepted_edge_mae_bps == pytest.approx(1.0)
+    assert report.accepted_success_probability_brier == pytest.approx(0.09)
+
+
+def test_evaluate_from_shadow_labels_uses_full_shadow_set_for_abstention_rate() -> None:
+    evaluator = OpportunityTemporalEvaluator()
+    decision_timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    shadow_records = [
+        OpportunityShadowRecord(
+            record_key="rk-accepted-labeled",
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp,
+            model_version="opp-v1",
+            decision_source="model",
+            expected_edge_bps=2.0,
+            success_probability=0.75,
+            confidence=0.5,
+            proposed_direction="long",
+            accepted=True,
+            rejection_reason=None,
+            rank=1,
+            provenance={"probability_method": "model_success_classifier_calibrated"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+        ),
+        OpportunityShadowRecord(
+            record_key="rk-abstain-unlabeled-1",
+            symbol="ETH/USDT",
+            decision_timestamp=decision_timestamp,
+            model_version="opp-v1",
+            decision_source="model",
+            expected_edge_bps=1.2,
+            success_probability=0.51,
+            confidence=0.02,
+            proposed_direction="skip",
+            accepted=False,
+            rejection_reason="abstain_low_agreement",
+            rank=2,
+            provenance={"probability_method": "model_success_classifier_calibrated"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+        ),
+        OpportunityShadowRecord(
+            record_key="rk-threshold-reject-unlabeled",
+            symbol="SOL/USDT",
+            decision_timestamp=decision_timestamp,
+            model_version="opp-v1",
+            decision_source="model",
+            expected_edge_bps=0.8,
+            success_probability=0.49,
+            confidence=0.02,
+            proposed_direction="skip",
+            accepted=False,
+            rejection_reason="edge_below_threshold",
+            rank=3,
+            provenance={"probability_method": "model_success_classifier_calibrated"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+        ),
+    ]
+    labels = [
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp,
+            correlation_key="rk-accepted-labeled",
+            horizon_minutes=30,
+            realized_return_bps=1.0,
+            max_favorable_excursion_bps=1.9,
+            max_adverse_excursion_bps=-0.4,
+        )
+    ]
+
+    report = evaluator.evaluate_from_shadow_labels(shadow_records, labels)
+
+    assert report.sample_count == 1
+    assert report.coverage == pytest.approx(1.0 / 3.0)
+    assert report.abstention_rate == pytest.approx(1.0 / 3.0)
+    assert report.accepted_sample_count == 1
