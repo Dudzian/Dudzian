@@ -25,6 +25,11 @@ class _AcceptingOrchestrator:
         return SimpleNamespace(accepted=True, reasons=(), risk_flags=(), stress_failures=(), latency_ms=None)
 
 
+class _RejectingOrchestrator:
+    def evaluate_candidate(self, candidate, _context):
+        return SimpleNamespace(accepted=False, reasons=(), risk_flags=(), stress_failures=(), latency_ms=None)
+
+
 class _RiskEngine:
     def snapshot_state(self, _profile: str):
         return {}
@@ -362,13 +367,202 @@ def test_live_mode_degraded_keeps_safe_base_path() -> None:
         signals=(signal,),
     )
 
-    exported = sink.export()
-    assert len(exported) == 1
-    assert len(exported[0][1]) == 1
+    assert sink.export() == ()
     event = journal.events[-1]
     assert event.metadata["opportunity_policy_mode"] == "live"
     assert event.metadata["ai_decision_status"] == "degraded"
     assert event.metadata["ai_decision_available"] == "false"
-    assert event.metadata["final_decision_accepted"] == "true"
-    assert event.metadata["decision_authority"] == "decision_orchestrator"
+    assert event.metadata["final_decision_accepted"] == "false"
+    assert event.metadata["decision_authority"] == "opportunity_ai_live_fail_closed"
+    assert event.metadata["live_gate_failed_closed"] == "true"
     assert event.metadata["opportunity_degraded_reason"] == "model_unavailable"
+
+
+def test_live_mode_accepts_when_base_and_ai_accept() -> None:
+    journal = _CollectingJournal()
+    adapter = _PolicyAdapter(
+        OpportunityRuntimeShadowAdapter.PolicyProbeResult(
+            status="proposal",
+            decision_available=True,
+            accepted=True,
+            model_version="live-v1",
+            decision_source="opportunity_ai_shadow",
+            mode="live",
+        )
+    )
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="live",
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    exported = sink.export()
+    assert len(exported) == 1
+    assert len(exported[0][1]) == 1
+    event = journal.events[-1]
+    assert event.metadata["final_decision_accepted"] == "true"
+    assert event.metadata["ai_required_for_execution"] == "true"
+    assert event.metadata["decision_authority"] == "shared_live_policy"
+
+
+def test_live_mode_base_reject_cannot_be_overridden_by_ai() -> None:
+    journal = _CollectingJournal()
+    adapter = _PolicyAdapter(
+        OpportunityRuntimeShadowAdapter.PolicyProbeResult(
+            status="proposal",
+            decision_available=True,
+            accepted=True,
+            model_version="live-v1",
+            decision_source="opportunity_ai_shadow",
+            mode="live",
+        )
+    )
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_RejectingOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="live",
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    assert sink.export() == ()
+    event = journal.events[-1]
+    assert event.metadata["base_decision_accepted"] == "false"
+    assert event.metadata["ai_decision_accepted"] == "true"
+    assert event.metadata["final_decision_accepted"] == "false"
+
+
+def test_manual_kill_switch_disables_ai_and_restores_base_decision() -> None:
+    journal = _CollectingJournal()
+    adapter = _PolicyAdapter(
+        OpportunityRuntimeShadowAdapter.PolicyProbeResult(
+            status="proposal",
+            decision_available=True,
+            accepted=False,
+            model_version="live-v1",
+            decision_source="opportunity_ai_shadow",
+            mode="live",
+        )
+    )
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="live",
+        opportunity_ai_kill_switch_override=True,
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    exported = sink.export()
+    assert len(exported) == 1
+    event = journal.events[-1]
+    assert event.metadata["final_decision_accepted"] == "true"
+    assert event.metadata["opportunity_ai_enabled"] == "false"
+    assert event.metadata["opportunity_ai_manual_kill_switch_active"] == "true"
+    assert event.metadata["ai_required_for_execution"] == "false"
+    assert event.metadata["opportunity_ai_disabled_reason"] == (
+        "manual_kill_switch:DUDZIAN_OPPORTUNITY_AI_KILL_SWITCH"
+    )
+
+
+def test_runtime_enable_override_false_disables_ai_path() -> None:
+    journal = _CollectingJournal()
+    adapter = _PolicyAdapter(
+        OpportunityRuntimeShadowAdapter.PolicyProbeResult(
+            status="proposal",
+            decision_available=True,
+            accepted=False,
+            model_version="assist-v1",
+            decision_source="opportunity_ai_shadow",
+            mode="assist",
+        )
+    )
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="assist",
+        opportunity_ai_enabled_override=False,
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported = sink.export()
+    assert len(exported) == 1
+    event = journal.events[-1]
+    assert event.metadata["opportunity_ai_enabled"] == "false"
+    assert event.metadata["opportunity_ai_disabled_reason"] == (
+        "runtime_override:DUDZIAN_OPPORTUNITY_AI_ENABLED"
+    )

@@ -656,6 +656,7 @@ class DecisionEngineConfig:
     penalty_cost_bps: float = 0.0
     evaluation_history_limit: int = 256
     opportunity_policy_mode: str = "shadow"
+    opportunity_ai_enabled: bool = True
     tco: DecisionEngineTCOConfig | None = None
 
 

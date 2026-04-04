@@ -155,6 +155,8 @@ except Exception:  # pragma: no cover
 _DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
 _LOGGER = logging.getLogger(__name__)
 _TEST_MODE_ENV = "DUDZIAN_TEST_MODE"
+_OPPORTUNITY_AI_ENABLED_ENV = "DUDZIAN_OPPORTUNITY_AI_ENABLED"
+_OPPORTUNITY_AI_KILL_SWITCH_ENV = "DUDZIAN_OPPORTUNITY_AI_KILL_SWITCH"
 _PIPELINE_THREAD_NAME = "PipelineStream"
 _PIPELINE_CONFIG_LOADER = PipelineConfigLoader()
 _STRATEGY_BOOTSTRAPPER = StrategyBootstrapper()
@@ -338,6 +340,23 @@ def _as_bool(value: Any, *, default: bool = False) -> bool:
         if lowered in {"0", "false", "no", "n", "off"}:
             return False
     return bool(value)
+
+
+def _resolve_env_bool_override(name: str) -> bool | None:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    _LOGGER.warning(
+        "Niepoprawna wartość %s=%r – oczekiwano wartości logicznej, ignoruję override.",
+        name,
+        raw_value,
+    )
+    return None
 
 
 def _resolve_environment_name_for_mode(
@@ -2825,6 +2844,7 @@ def _build_decision_sink(
     decision_config = getattr(bootstrap, "decision_engine_config", None)
     min_probability = 0.55
     opportunity_policy_mode = "shadow"
+    opportunity_ai_enabled = True
     if decision_config is not None:
         try:
             min_probability = float(getattr(decision_config, "min_probability", min_probability))
@@ -2832,6 +2852,7 @@ def _build_decision_sink(
             min_probability = 0.55
         raw_mode = str(getattr(decision_config, "opportunity_policy_mode", "shadow") or "shadow")
         opportunity_policy_mode = raw_mode.strip().lower() or "shadow"
+        opportunity_ai_enabled = bool(getattr(decision_config, "opportunity_ai_enabled", True))
     exchange_name = getattr(bootstrap.environment, "exchange", "")
     journal = getattr(bootstrap, "decision_journal", None)
     history_limit = 256
@@ -2845,6 +2866,8 @@ def _build_decision_sink(
         journal=journal,
         engine=TradingOpportunityAI(repository=FilesystemModelRepository(Path("data/ai"))),
     )
+    enabled_override = _resolve_env_bool_override(_OPPORTUNITY_AI_ENABLED_ENV)
+    kill_switch_override = _resolve_env_bool_override(_OPPORTUNITY_AI_KILL_SWITCH_ENV)
 
     return DecisionAwareSignalSink(
         base_sink=base_sink,
@@ -2859,6 +2882,9 @@ def _build_decision_sink(
         evaluation_history_limit=history_limit,
         opportunity_shadow_adapter=opportunity_shadow_adapter,
         opportunity_policy_mode=opportunity_policy_mode,
+        opportunity_ai_enabled=opportunity_ai_enabled,
+        opportunity_ai_enabled_override=enabled_override,
+        opportunity_ai_kill_switch_override=kill_switch_override,
     )
 
 
@@ -2880,10 +2906,15 @@ class DecisionAwareSignalSink(StrategySignalSink):
         ai_influenced_outcome: bool
         decision_authority: str
         ai_status: str
+        opportunity_ai_enabled: bool
+        opportunity_ai_manual_kill_switch_active: bool
+        ai_required_for_execution: bool
+        live_gate_failed_closed: bool
         ai_decision_source: str | None = None
         ai_model_version: str | None = None
         ai_rejection_reason: str | None = None
         ai_degraded_reason: str | None = None
+        opportunity_ai_disabled_reason: str | None = None
 
     def __init__(
         self,
@@ -2900,6 +2931,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
         evaluation_history_limit: int = 256,
         opportunity_shadow_adapter: OpportunityRuntimeShadowAdapter | None = None,
         opportunity_policy_mode: str = "shadow",
+        opportunity_ai_enabled: bool = True,
+        opportunity_ai_enabled_override: bool | None = None,
+        opportunity_ai_kill_switch_override: bool | None = None,
     ) -> None:
         self._base_sink = base_sink
         self._orchestrator = orchestrator
@@ -2916,6 +2950,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
         self._journal = journal
         self._opportunity_shadow_adapter = opportunity_shadow_adapter
         self._opportunity_policy_mode = self._parse_opportunity_policy_mode(opportunity_policy_mode)
+        self._opportunity_ai_enabled = bool(opportunity_ai_enabled)
+        self._opportunity_ai_enabled_override = opportunity_ai_enabled_override
+        self._opportunity_ai_kill_switch_override = opportunity_ai_kill_switch_override
         if self._opportunity_shadow_adapter is not None:
             self._opportunity_shadow_adapter.mode = self._opportunity_policy_mode.value
 
@@ -3282,6 +3319,18 @@ class DecisionAwareSignalSink(StrategySignalSink):
         metadata.setdefault("decision_status", "accepted" if policy_resolution.final_accepted else "rejected")
         metadata.setdefault("source", "decision_orchestrator")
         metadata.setdefault("opportunity_policy_mode", policy_resolution.mode.value)
+        metadata.setdefault(
+            "opportunity_ai_enabled",
+            "true" if policy_resolution.opportunity_ai_enabled else "false",
+        )
+        metadata.setdefault(
+            "opportunity_ai_manual_kill_switch_active",
+            "true" if policy_resolution.opportunity_ai_manual_kill_switch_active else "false",
+        )
+        metadata.setdefault(
+            "ai_required_for_execution",
+            "true" if policy_resolution.ai_required_for_execution else "false",
+        )
         metadata.setdefault("base_decision_accepted", "true" if policy_resolution.base_accepted else "false")
         metadata.setdefault(
             "ai_decision_available",
@@ -3301,6 +3350,10 @@ class DecisionAwareSignalSink(StrategySignalSink):
             "ai_influenced_outcome",
             "true" if policy_resolution.ai_influenced_outcome else "false",
         )
+        metadata.setdefault(
+            "live_gate_failed_closed",
+            "true" if policy_resolution.live_gate_failed_closed else "false",
+        )
         metadata.setdefault("decision_authority", policy_resolution.decision_authority)
         if policy_resolution.ai_model_version:
             metadata.setdefault("opportunity_model_version", policy_resolution.ai_model_version)
@@ -3310,6 +3363,11 @@ class DecisionAwareSignalSink(StrategySignalSink):
             metadata.setdefault("opportunity_rejection_reason", policy_resolution.ai_rejection_reason)
         if policy_resolution.ai_degraded_reason:
             metadata.setdefault("opportunity_degraded_reason", policy_resolution.ai_degraded_reason)
+        if policy_resolution.opportunity_ai_disabled_reason:
+            metadata.setdefault(
+                "opportunity_ai_disabled_reason",
+                policy_resolution.opportunity_ai_disabled_reason,
+            )
 
         _store_float(
             "model_success_probability",
@@ -3402,7 +3460,24 @@ class DecisionAwareSignalSink(StrategySignalSink):
         base_accepted = bool(getattr(evaluation, "accepted", False))
         mode = self._opportunity_policy_mode
         adapter = self._opportunity_shadow_adapter
-        if adapter is None:
+        enabled = self._opportunity_ai_enabled
+        disabled_reason: str | None = None
+        manual_kill_switch = False
+        if self._opportunity_ai_enabled_override is not None:
+            enabled = bool(self._opportunity_ai_enabled_override)
+            disabled_reason = f"runtime_override:{_OPPORTUNITY_AI_ENABLED_ENV}"
+        if self._opportunity_ai_kill_switch_override is True:
+            enabled = False
+            manual_kill_switch = True
+            disabled_reason = f"manual_kill_switch:{_OPPORTUNITY_AI_KILL_SWITCH_ENV}"
+        elif self._opportunity_ai_kill_switch_override is False:
+            manual_kill_switch = False
+        if not enabled and disabled_reason is None:
+            disabled_reason = "config_disabled"
+        ai_required_for_execution = (
+            mode == self.OpportunityExecutionPolicyMode.LIVE and enabled and not manual_kill_switch
+        )
+        if not enabled:
             evaluation.accepted = base_accepted
             return self.OpportunityPolicyResolution(
                 mode=mode,
@@ -3412,7 +3487,33 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 final_accepted=base_accepted,
                 ai_influenced_outcome=False,
                 decision_authority="decision_orchestrator",
+                ai_status="disabled",
+                opportunity_ai_enabled=False,
+                opportunity_ai_manual_kill_switch_active=manual_kill_switch,
+                ai_required_for_execution=False,
+                live_gate_failed_closed=False,
+                opportunity_ai_disabled_reason=disabled_reason,
+            )
+        if adapter is None:
+            final_accepted = False if ai_required_for_execution and base_accepted else base_accepted
+            evaluation.accepted = final_accepted
+            return self.OpportunityPolicyResolution(
+                mode=mode,
+                base_accepted=base_accepted,
+                ai_decision_available=False,
+                ai_decision_accepted=None,
+                final_accepted=final_accepted,
+                ai_influenced_outcome=ai_required_for_execution and base_accepted,
+                decision_authority=(
+                    "opportunity_ai_live_fail_closed"
+                    if ai_required_for_execution and base_accepted
+                    else "decision_orchestrator"
+                ),
                 ai_status="unwired",
+                opportunity_ai_enabled=True,
+                opportunity_ai_manual_kill_switch_active=False,
+                ai_required_for_execution=ai_required_for_execution,
+                live_gate_failed_closed=ai_required_for_execution and base_accepted,
                 ai_degraded_reason="opportunity_adapter_unwired",
             )
         portfolio = self._portfolio or self._environment
@@ -3431,24 +3532,26 @@ class DecisionAwareSignalSink(StrategySignalSink):
         final_accepted = base_accepted
         authority = "decision_orchestrator"
         influenced = False
-        if mode in (
-            self.OpportunityExecutionPolicyMode.ASSIST,
-            self.OpportunityExecutionPolicyMode.LIVE,
-        ):
+        live_gate_failed_closed = False
+        if mode == self.OpportunityExecutionPolicyMode.ASSIST:
             if base_accepted and probe.decision_available and ai_accepted is False:
                 final_accepted = False
                 influenced = True
-                authority = (
-                    "opportunity_ai_assist_policy"
-                    if mode == self.OpportunityExecutionPolicyMode.ASSIST
-                    else "opportunity_ai_live_policy"
-                )
+                authority = "opportunity_ai_assist_policy"
             elif base_accepted and probe.decision_available:
-                authority = (
-                    "shared_assist_policy"
-                    if mode == self.OpportunityExecutionPolicyMode.ASSIST
-                    else "shared_live_policy"
-                )
+                authority = "shared_assist_policy"
+        elif mode == self.OpportunityExecutionPolicyMode.LIVE and base_accepted:
+            if not probe.decision_available:
+                final_accepted = False
+                influenced = True
+                live_gate_failed_closed = True
+                authority = "opportunity_ai_live_fail_closed"
+            elif ai_accepted is False:
+                final_accepted = False
+                influenced = True
+                authority = "opportunity_ai_live_policy"
+            elif ai_accepted is True:
+                authority = "shared_live_policy"
         evaluation.accepted = final_accepted
         return self.OpportunityPolicyResolution(
             mode=mode,
@@ -3459,6 +3562,10 @@ class DecisionAwareSignalSink(StrategySignalSink):
             ai_influenced_outcome=influenced,
             decision_authority=authority,
             ai_status=probe.status,
+            opportunity_ai_enabled=True,
+            opportunity_ai_manual_kill_switch_active=False,
+            ai_required_for_execution=ai_required_for_execution,
+            live_gate_failed_closed=live_gate_failed_closed,
             ai_decision_source=probe.decision_source,
             ai_model_version=probe.model_version,
             ai_rejection_reason=probe.rejection_reason,
