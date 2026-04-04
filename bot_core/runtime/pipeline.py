@@ -48,6 +48,8 @@ from bot_core.config.models import (
     StrategyOptimizationTaskConfig,
 )
 from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
+from bot_core.ai.opportunity_shadow_adapter import OpportunityRuntimeShadowAdapter
+from bot_core.ai.trading_engine import TradingOpportunityAI
 from bot_core.data import CachedOHLCVSource
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
 from bot_core.data.ohlcv import OHLCVBackfillService
@@ -2835,6 +2837,11 @@ def _build_decision_sink(
         except (TypeError, ValueError):  # pragma: no cover - konfiguracja może być uszkodzona
             history_limit = 256
 
+    opportunity_shadow_adapter = OpportunityRuntimeShadowAdapter(
+        journal=journal,
+        engine=TradingOpportunityAI(repository=FilesystemModelRepository(Path("data/ai"))),
+    )
+
     return DecisionAwareSignalSink(
         base_sink=base_sink,
         orchestrator=orchestrator,
@@ -2846,6 +2853,7 @@ def _build_decision_sink(
         portfolio=portfolio_id,
         journal=journal,
         evaluation_history_limit=history_limit,
+        opportunity_shadow_adapter=opportunity_shadow_adapter,
     )
 
 
@@ -2865,6 +2873,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         portfolio: str | None = None,
         journal: TradingDecisionJournal | None = None,
         evaluation_history_limit: int = 256,
+        opportunity_shadow_adapter: OpportunityRuntimeShadowAdapter | None = None,
     ) -> None:
         self._base_sink = base_sink
         self._orchestrator = orchestrator
@@ -2879,6 +2888,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         )
         self._portfolio = str(portfolio) if portfolio is not None else ""
         self._journal = journal
+        self._opportunity_shadow_adapter = opportunity_shadow_adapter
 
     @staticmethod
     def _coerce_float(value: object) -> float | None:
@@ -3296,6 +3306,46 @@ class DecisionAwareSignalSink(StrategySignalSink):
             journal.record(event)
         except Exception:  # pragma: no cover - dziennik nie powinien blokować handlu
             self._logger.debug("Nie udało się zapisać decision_evaluation", exc_info=True)
+        self._emit_opportunity_shadow_proposal(
+            evaluation=evaluation,
+            candidate=candidate,
+            signal=signal,
+            strategy_name=strategy_name,
+            schedule_name=schedule_name,
+            risk_profile=risk_profile,
+            timestamp=timestamp,
+            portfolio=str(portfolio),
+        )
+
+    def _emit_opportunity_shadow_proposal(
+        self,
+        *,
+        evaluation: DecisionEvaluation,
+        candidate: DecisionCandidate,
+        signal: StrategySignal,
+        strategy_name: str,
+        schedule_name: str,
+        risk_profile: str,
+        timestamp: datetime,
+        portfolio: str,
+    ) -> None:
+        adapter = self._opportunity_shadow_adapter
+        if adapter is None:
+            return
+        try:
+            adapter.emit_shadow_proposal(
+                evaluation=evaluation,
+                candidate=candidate,
+                signal=signal,
+                strategy_name=strategy_name,
+                schedule_name=schedule_name,
+                risk_profile=risk_profile,
+                timestamp=timestamp,
+                environment=self._environment,
+                portfolio=portfolio,
+            )
+        except Exception:  # pragma: no cover - adapter nie może blokować execution path
+            self._logger.debug("Nie udało się wyemitować opportunity shadow proposal", exc_info=True)
 
     def _build_candidate(
         self,
