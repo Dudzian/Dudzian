@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Mapping
+from typing import Mapping, Literal
 
 from bot_core.ai.trading_engine import OpportunityCandidate, TradingOpportunityAI
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
@@ -41,6 +41,17 @@ class OpportunityRuntimeShadowAdapter:
     _last_degraded_event_key: tuple[str, ...] | None = None
     _last_degraded_event_at: datetime | None = None
 
+    @dataclass(slots=True, frozen=True)
+    class PolicyProbeResult:
+        status: Literal["proposal", "degraded", "skipped"]
+        decision_available: bool
+        accepted: bool | None
+        model_version: str | None = None
+        decision_source: str | None = None
+        rejection_reason: str | None = None
+        degraded_reason: str | None = None
+        mode: str = "shadow"
+
     def emit_shadow_proposal(
         self,
         *,
@@ -53,14 +64,37 @@ class OpportunityRuntimeShadowAdapter:
         risk_profile: str,
         environment: str,
         portfolio: str,
-    ) -> None:
+    ) -> "OpportunityRuntimeShadowAdapter.PolicyProbeResult":
         if self.journal is None:
-            return
+            return self.PolicyProbeResult(
+                status="skipped",
+                decision_available=False,
+                accepted=None,
+                degraded_reason="journal_unavailable",
+                mode=self.mode,
+            )
         timestamp_utc = self._ensure_utc(timestamp)
 
         opportunity_candidate = self._build_opportunity_candidate(candidate)
         if opportunity_candidate is None:
-            return
+            self._emit_degraded_event(
+                timestamp=timestamp_utc,
+                strategy_name=strategy_name,
+                schedule_name=schedule_name,
+                risk_profile=risk_profile,
+                environment=environment,
+                portfolio=portfolio,
+                symbol=str(getattr(candidate, "symbol", "")),
+                side=str(getattr(signal, "side", "")),
+                reason="missing_or_invalid_required_features",
+            )
+            return self.PolicyProbeResult(
+                status="degraded",
+                decision_available=False,
+                accepted=None,
+                degraded_reason="missing_or_invalid_required_features",
+                mode=self.mode,
+            )
 
         if not self._ensure_model_loaded(now=timestamp_utc):
             self._emit_degraded_event(
@@ -73,11 +107,56 @@ class OpportunityRuntimeShadowAdapter:
                 symbol=opportunity_candidate.symbol,
                 side=str(getattr(signal, "side", "")),
             )
-            return
+            return self.PolicyProbeResult(
+                status="degraded",
+                decision_available=False,
+                accepted=None,
+                degraded_reason=self._model_unavailable_reason or "model_unavailable",
+                mode=self.mode,
+            )
 
-        decisions = self.engine.rank((opportunity_candidate,))
+        try:
+            decisions = self.engine.rank((opportunity_candidate,))
+        except Exception as exc:  # pragma: no cover - defensywnie, inference nie może zatrzymać runtime
+            reason = f"inference_error:{type(exc).__name__}"
+            self._emit_degraded_event(
+                timestamp=timestamp_utc,
+                strategy_name=strategy_name,
+                schedule_name=schedule_name,
+                risk_profile=risk_profile,
+                environment=environment,
+                portfolio=portfolio,
+                symbol=opportunity_candidate.symbol,
+                side=str(getattr(signal, "side", "")),
+                reason=reason,
+            )
+            return self.PolicyProbeResult(
+                status="degraded",
+                decision_available=False,
+                accepted=None,
+                degraded_reason=reason,
+                mode=self.mode,
+            )
         if not decisions:
-            return
+            reason = "empty_decision_set"
+            self._emit_degraded_event(
+                timestamp=timestamp_utc,
+                strategy_name=strategy_name,
+                schedule_name=schedule_name,
+                risk_profile=risk_profile,
+                environment=environment,
+                portfolio=portfolio,
+                symbol=opportunity_candidate.symbol,
+                side=str(getattr(signal, "side", "")),
+                reason=reason,
+            )
+            return self.PolicyProbeResult(
+                status="degraded",
+                decision_available=False,
+                accepted=None,
+                degraded_reason=reason,
+                mode=self.mode,
+            )
         decision = decisions[0]
         provenance = dict(decision.provenance)
         provenance.update(
@@ -119,6 +198,15 @@ class OpportunityRuntimeShadowAdapter:
             },
         )
         self.journal.record(event)
+        return self.PolicyProbeResult(
+            status="proposal",
+            decision_available=True,
+            accepted=bool(decision.accepted),
+            model_version=decision.model_version,
+            decision_source=self.decision_source,
+            rejection_reason=decision.rejection_reason,
+            mode=self.mode,
+        )
 
     def _ensure_model_loaded(self, *, now: datetime) -> bool:
         if self._model_ready:
@@ -155,6 +243,7 @@ class OpportunityRuntimeShadowAdapter:
         portfolio: str,
         symbol: str,
         side: str,
+        reason: str | None = None,
     ) -> None:
         if self.journal is None:
             return
@@ -165,7 +254,7 @@ class OpportunityRuntimeShadowAdapter:
             str(schedule_name),
             str(strategy_name),
             str(symbol),
-            str(self._model_unavailable_reason or "model_unavailable"),
+            str(reason or self._model_unavailable_reason or "model_unavailable"),
         )
         if self._last_degraded_event_key == event_key and self._last_degraded_event_at is not None:
             elapsed = (timestamp - self._last_degraded_event_at).total_seconds()
@@ -188,7 +277,7 @@ class OpportunityRuntimeShadowAdapter:
                 "mode": self.mode,
                 "shadow": "true",
                 "degraded": "true",
-                "degraded_reason": self._model_unavailable_reason or "model_unavailable",
+                "degraded_reason": reason or self._model_unavailable_reason or "model_unavailable",
             },
         )
         self._last_degraded_event_key = event_key

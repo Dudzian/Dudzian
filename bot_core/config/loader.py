@@ -3208,6 +3208,11 @@ def _load_decision_engine_config(
     min_probability = float(raw.get("min_probability", 0.0))
     require_cost_data = bool(raw.get("require_cost_data", False))
     penalty_cost_bps = float(raw.get("penalty_cost_bps", 0.0))
+    opportunity_policy_mode = str(raw.get("opportunity_policy_mode", "shadow") or "shadow").strip().lower()
+    if opportunity_policy_mode not in {"shadow", "assist", "live"}:
+        raise ValueError(
+            "decision_engine.opportunity_policy_mode musi być jednym z: shadow, assist, live"
+        )
     history_limit_raw = raw.get("evaluation_history_limit")
     evaluation_history_limit = 256
     if history_limit_raw not in (None, ""):
@@ -3318,6 +3323,7 @@ def _load_decision_engine_config(
         require_cost_data=require_cost_data,
         penalty_cost_bps=penalty_cost_bps,
         evaluation_history_limit=evaluation_history_limit,
+        opportunity_policy_mode=opportunity_policy_mode,
         tco=tco_config,
     )
 

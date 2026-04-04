@@ -15,6 +15,7 @@ from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from enum import Enum
 from pathlib import Path
 from typing import (
     Any,
@@ -2823,11 +2824,14 @@ def _build_decision_sink(
         return None
     decision_config = getattr(bootstrap, "decision_engine_config", None)
     min_probability = 0.55
+    opportunity_policy_mode = "shadow"
     if decision_config is not None:
         try:
             min_probability = float(getattr(decision_config, "min_probability", min_probability))
         except (TypeError, ValueError):  # pragma: no cover - konfiguracja może zawierać tekst
             min_probability = 0.55
+        raw_mode = str(getattr(decision_config, "opportunity_policy_mode", "shadow") or "shadow")
+        opportunity_policy_mode = raw_mode.strip().lower() or "shadow"
     exchange_name = getattr(bootstrap.environment, "exchange", "")
     journal = getattr(bootstrap, "decision_journal", None)
     history_limit = 256
@@ -2854,11 +2858,32 @@ def _build_decision_sink(
         journal=journal,
         evaluation_history_limit=history_limit,
         opportunity_shadow_adapter=opportunity_shadow_adapter,
+        opportunity_policy_mode=opportunity_policy_mode,
     )
 
 
 class DecisionAwareSignalSink(StrategySignalSink):
     """Filtruje sygnały strategii przez DecisionOrchestratora."""
+
+    class OpportunityExecutionPolicyMode(str, Enum):
+        SHADOW = "shadow"
+        ASSIST = "assist"
+        LIVE = "live"
+
+    @dataclass(slots=True, frozen=True)
+    class OpportunityPolicyResolution:
+        mode: "DecisionAwareSignalSink.OpportunityExecutionPolicyMode"
+        base_accepted: bool
+        ai_decision_available: bool
+        ai_decision_accepted: bool | None
+        final_accepted: bool
+        ai_influenced_outcome: bool
+        decision_authority: str
+        ai_status: str
+        ai_decision_source: str | None = None
+        ai_model_version: str | None = None
+        ai_rejection_reason: str | None = None
+        ai_degraded_reason: str | None = None
 
     def __init__(
         self,
@@ -2874,6 +2899,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         journal: TradingDecisionJournal | None = None,
         evaluation_history_limit: int = 256,
         opportunity_shadow_adapter: OpportunityRuntimeShadowAdapter | None = None,
+        opportunity_policy_mode: str = "shadow",
     ) -> None:
         self._base_sink = base_sink
         self._orchestrator = orchestrator
@@ -2889,6 +2915,20 @@ class DecisionAwareSignalSink(StrategySignalSink):
         self._portfolio = str(portfolio) if portfolio is not None else ""
         self._journal = journal
         self._opportunity_shadow_adapter = opportunity_shadow_adapter
+        self._opportunity_policy_mode = self._parse_opportunity_policy_mode(opportunity_policy_mode)
+        if self._opportunity_shadow_adapter is not None:
+            self._opportunity_shadow_adapter.mode = self._opportunity_policy_mode.value
+
+    @staticmethod
+    def _parse_opportunity_policy_mode(
+        mode: object,
+    ) -> "DecisionAwareSignalSink.OpportunityExecutionPolicyMode":
+        normalized = str(mode or "").strip().lower()
+        if normalized == DecisionAwareSignalSink.OpportunityExecutionPolicyMode.ASSIST.value:
+            return DecisionAwareSignalSink.OpportunityExecutionPolicyMode.ASSIST
+        if normalized == DecisionAwareSignalSink.OpportunityExecutionPolicyMode.LIVE.value:
+            return DecisionAwareSignalSink.OpportunityExecutionPolicyMode.LIVE
+        return DecisionAwareSignalSink.OpportunityExecutionPolicyMode.SHADOW
 
     @staticmethod
     def _coerce_float(value: object) -> float | None:
@@ -3101,7 +3141,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 )
                 continue
             self._evaluations.append(evaluation)
-            self._record_evaluation(
+            policy_resolution = self._resolve_opportunity_policy(
                 evaluation=evaluation,
                 candidate=candidate,
                 signal=signal,
@@ -3110,7 +3150,17 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 risk_profile=risk_profile,
                 timestamp=timestamp,
             )
-            if evaluation.accepted:
+            self._record_evaluation(
+                evaluation=evaluation,
+                candidate=candidate,
+                signal=signal,
+                strategy_name=strategy_name,
+                schedule_name=schedule_name,
+                risk_profile=risk_profile,
+                timestamp=timestamp,
+                policy_resolution=policy_resolution,
+            )
+            if policy_resolution.final_accepted:
                 accepted.append(signal)
             else:
                 self._logger.debug(
@@ -3190,6 +3240,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         schedule_name: str,
         risk_profile: str,
         timestamp: datetime,
+        policy_resolution: "DecisionAwareSignalSink.OpportunityPolicyResolution",
     ) -> None:
         journal = self._journal
         if journal is None or TradingDecisionEvent is None:
@@ -3228,8 +3279,37 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 ";".join(str(failure) for failure in stress_failures),
             )
 
-        metadata.setdefault("decision_status", "accepted" if evaluation.accepted else "rejected")
+        metadata.setdefault("decision_status", "accepted" if policy_resolution.final_accepted else "rejected")
         metadata.setdefault("source", "decision_orchestrator")
+        metadata.setdefault("opportunity_policy_mode", policy_resolution.mode.value)
+        metadata.setdefault("base_decision_accepted", "true" if policy_resolution.base_accepted else "false")
+        metadata.setdefault(
+            "ai_decision_available",
+            "true" if policy_resolution.ai_decision_available else "false",
+        )
+        if policy_resolution.ai_decision_accepted is not None:
+            metadata.setdefault(
+                "ai_decision_accepted",
+                "true" if policy_resolution.ai_decision_accepted else "false",
+            )
+        metadata.setdefault("ai_decision_status", policy_resolution.ai_status)
+        metadata.setdefault(
+            "final_decision_accepted",
+            "true" if policy_resolution.final_accepted else "false",
+        )
+        metadata.setdefault(
+            "ai_influenced_outcome",
+            "true" if policy_resolution.ai_influenced_outcome else "false",
+        )
+        metadata.setdefault("decision_authority", policy_resolution.decision_authority)
+        if policy_resolution.ai_model_version:
+            metadata.setdefault("opportunity_model_version", policy_resolution.ai_model_version)
+        if policy_resolution.ai_decision_source:
+            metadata.setdefault("opportunity_decision_source", policy_resolution.ai_decision_source)
+        if policy_resolution.ai_rejection_reason:
+            metadata.setdefault("opportunity_rejection_reason", policy_resolution.ai_rejection_reason)
+        if policy_resolution.ai_degraded_reason:
+            metadata.setdefault("opportunity_degraded_reason", policy_resolution.ai_degraded_reason)
 
         _store_float(
             "model_success_probability",
@@ -3295,7 +3375,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
             side=str(signal.side),
             schedule=schedule_name,
             strategy=strategy_name,
-            status="accepted" if evaluation.accepted else "rejected",
+            status="accepted" if policy_resolution.final_accepted else "rejected",
             confidence=confidence_value,
             latency_ms=latency_ms if isinstance(latency_ms, (int, float)) else None,
             telemetry_namespace=f"{self._environment}.decision.{schedule_name}",
@@ -3306,18 +3386,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
             journal.record(event)
         except Exception:  # pragma: no cover - dziennik nie powinien blokować handlu
             self._logger.debug("Nie udało się zapisać decision_evaluation", exc_info=True)
-        self._emit_opportunity_shadow_proposal(
-            evaluation=evaluation,
-            candidate=candidate,
-            signal=signal,
-            strategy_name=strategy_name,
-            schedule_name=schedule_name,
-            risk_profile=risk_profile,
-            timestamp=timestamp,
-            portfolio=str(portfolio),
-        )
+        
 
-    def _emit_opportunity_shadow_proposal(
+    def _resolve_opportunity_policy(
         self,
         *,
         evaluation: DecisionEvaluation,
@@ -3327,25 +3398,72 @@ class DecisionAwareSignalSink(StrategySignalSink):
         schedule_name: str,
         risk_profile: str,
         timestamp: datetime,
-        portfolio: str,
-    ) -> None:
+    ) -> "DecisionAwareSignalSink.OpportunityPolicyResolution":
+        base_accepted = bool(getattr(evaluation, "accepted", False))
+        mode = self._opportunity_policy_mode
         adapter = self._opportunity_shadow_adapter
         if adapter is None:
-            return
-        try:
-            adapter.emit_shadow_proposal(
-                evaluation=evaluation,
-                candidate=candidate,
-                signal=signal,
-                strategy_name=strategy_name,
-                schedule_name=schedule_name,
-                risk_profile=risk_profile,
-                timestamp=timestamp,
-                environment=self._environment,
-                portfolio=portfolio,
+            evaluation.accepted = base_accepted
+            return self.OpportunityPolicyResolution(
+                mode=mode,
+                base_accepted=base_accepted,
+                ai_decision_available=False,
+                ai_decision_accepted=None,
+                final_accepted=base_accepted,
+                ai_influenced_outcome=False,
+                decision_authority="decision_orchestrator",
+                ai_status="unwired",
+                ai_degraded_reason="opportunity_adapter_unwired",
             )
-        except Exception:  # pragma: no cover - adapter nie może blokować execution path
-            self._logger.debug("Nie udało się wyemitować opportunity shadow proposal", exc_info=True)
+        portfolio = self._portfolio or self._environment
+        probe = adapter.emit_shadow_proposal(
+            evaluation=evaluation,
+            candidate=candidate,
+            signal=signal,
+            strategy_name=strategy_name,
+            schedule_name=schedule_name,
+            risk_profile=risk_profile,
+            timestamp=timestamp,
+            environment=self._environment,
+            portfolio=str(portfolio),
+        )
+        ai_accepted = probe.accepted if probe.decision_available else None
+        final_accepted = base_accepted
+        authority = "decision_orchestrator"
+        influenced = False
+        if mode in (
+            self.OpportunityExecutionPolicyMode.ASSIST,
+            self.OpportunityExecutionPolicyMode.LIVE,
+        ):
+            if base_accepted and probe.decision_available and ai_accepted is False:
+                final_accepted = False
+                influenced = True
+                authority = (
+                    "opportunity_ai_assist_policy"
+                    if mode == self.OpportunityExecutionPolicyMode.ASSIST
+                    else "opportunity_ai_live_policy"
+                )
+            elif base_accepted and probe.decision_available:
+                authority = (
+                    "shared_assist_policy"
+                    if mode == self.OpportunityExecutionPolicyMode.ASSIST
+                    else "shared_live_policy"
+                )
+        evaluation.accepted = final_accepted
+        return self.OpportunityPolicyResolution(
+            mode=mode,
+            base_accepted=base_accepted,
+            ai_decision_available=probe.decision_available,
+            ai_decision_accepted=ai_accepted,
+            final_accepted=final_accepted,
+            ai_influenced_outcome=influenced,
+            decision_authority=authority,
+            ai_status=probe.status,
+            ai_decision_source=probe.decision_source,
+            ai_model_version=probe.model_version,
+            ai_rejection_reason=probe.rejection_reason,
+            ai_degraded_reason=probe.degraded_reason,
+        )
 
     def _build_candidate(
         self,
