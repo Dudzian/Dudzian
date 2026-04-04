@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Mapping, Sequence
 
 from .models import ModelArtifact
@@ -45,6 +46,110 @@ class OpportunityTemporalComparison:
     fairness_applied: bool
     delta_edge_mae_bps: float
     delta_success_probability_brier: float
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityDriftMetric:
+    name: str
+    score: float
+    threshold: float
+    drift_detected: bool
+    details: Mapping[str, float] | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityDriftReport:
+    reference_count: int
+    evaluation_count: int
+    feature_distribution: tuple[OpportunityDriftMetric, ...]
+    prediction_distribution: tuple[OpportunityDriftMetric, ...]
+    realized_outcome: tuple[OpportunityDriftMetric, ...] = ()
+
+    @property
+    def has_drift(self) -> bool:
+        for group in (
+            self.feature_distribution,
+            self.prediction_distribution,
+            self.realized_outcome,
+        ):
+            if any(metric.drift_detected for metric in group):
+                return True
+        return False
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityPromotionGateConfig:
+    min_edge_mae_improvement_bps: float = 0.0
+    min_brier_improvement: float = 0.0
+    max_directional_accuracy_regression: float = 0.0
+    max_drift_metrics_triggered: int = 0
+    require_shadow_no_regression: bool = True
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityPromotionGateResult:
+    gate: str
+    passed: bool
+    observed: float
+    expected: float
+    comparator: str
+    message: str
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityPromotionReport:
+    champion_version: str
+    challenger_version: str
+    evaluation_window_start: datetime | None
+    evaluation_window_end: datetime | None
+    temporal_comparison: OpportunityTemporalComparison
+    shadow_comparison: OpportunityTemporalComparison | None
+    drift_report: OpportunityDriftReport
+    gate_config: OpportunityPromotionGateConfig
+    gate_results: tuple[OpportunityPromotionGateResult, ...]
+    promotion_recommended: bool
+
+    def to_metadata(self) -> Mapping[str, object]:
+        return {
+            "compared_versions": {
+                "champion": self.champion_version,
+                "challenger": self.challenger_version,
+            },
+            "evaluation_window": {
+                "start": self.evaluation_window_start.isoformat()
+                if self.evaluation_window_start is not None
+                else None,
+                "end": self.evaluation_window_end.isoformat()
+                if self.evaluation_window_end is not None
+                else None,
+                "sample_count": self.temporal_comparison.common_sample_count,
+            },
+            "drift": {
+                "has_drift": self.drift_report.has_drift,
+                "triggered_metrics": sum(
+                    1
+                    for metric in (
+                        *self.drift_report.feature_distribution,
+                        *self.drift_report.prediction_distribution,
+                        *self.drift_report.realized_outcome,
+                    )
+                    if metric.drift_detected
+                ),
+            },
+            "promotion": {
+                "recommended": self.promotion_recommended,
+                "gates": [
+                    {
+                        "gate": gate.gate,
+                        "passed": gate.passed,
+                        "observed": gate.observed,
+                        "expected": gate.expected,
+                        "comparator": gate.comparator,
+                    }
+                    for gate in self.gate_results
+                ],
+            },
+        }
 
 
 class OpportunityTemporalEvaluator:
@@ -352,6 +457,143 @@ class OpportunityTemporalEvaluator:
             samples=samples,
         )
 
+    def detect_drift(
+        self,
+        *,
+        reference_artifact: ModelArtifact,
+        evaluation_artifact: ModelArtifact,
+        reference_samples: Sequence["OpportunitySnapshot"],
+        evaluation_samples: Sequence["OpportunitySnapshot"],
+        feature_threshold: float = 0.2,
+        prediction_threshold: float = 0.15,
+        realized_outcome_threshold: float = 0.2,
+    ) -> OpportunityDriftReport:
+        from .trading_engine import TradingOpportunityAI
+
+        if not reference_samples or not evaluation_samples:
+            raise ValueError("detect_drift wymaga referencyjnych i ewaluacyjnych próbek")
+        TradingOpportunityAI._validate_artifact_feature_spec(reference_artifact)
+        TradingOpportunityAI._validate_artifact_feature_spec(evaluation_artifact)
+
+        feature_names = TradingOpportunityAI._features_from_vector([0.0] * 8).keys()
+        feature_metrics: list[OpportunityDriftMetric] = []
+        for feature_name in feature_names:
+            ref_values = self._feature_values(reference_samples, feature_name)
+            eval_values = self._feature_values(evaluation_samples, feature_name)
+            if not ref_values or not eval_values:
+                continue
+            score = self._normalized_mean_shift(ref_values, eval_values)
+            feature_metrics.append(
+                OpportunityDriftMetric(
+                    name=str(feature_name),
+                    score=score,
+                    threshold=float(feature_threshold),
+                    drift_detected=score > float(feature_threshold),
+                    details={
+                        "reference_mean": sum(ref_values) / len(ref_values),
+                        "evaluation_mean": sum(eval_values) / len(eval_values),
+                    },
+                )
+            )
+
+        ref_predictions = self._predict_edges(reference_artifact, reference_samples)
+        eval_predictions = self._predict_edges(evaluation_artifact, evaluation_samples)
+        prediction_score = self._normalized_mean_shift(ref_predictions, eval_predictions)
+        prediction_metric = OpportunityDriftMetric(
+            name="expected_edge_bps_distribution",
+            score=prediction_score,
+            threshold=float(prediction_threshold),
+            drift_detected=prediction_score > float(prediction_threshold),
+            details={
+                "reference_mean": sum(ref_predictions) / len(ref_predictions),
+                "evaluation_mean": sum(eval_predictions) / len(eval_predictions),
+            },
+        )
+
+        ref_outcomes = [self._target_value(sample) for sample in reference_samples]
+        eval_outcomes = [self._target_value(sample) for sample in evaluation_samples]
+        outcome_score = self._normalized_mean_shift(ref_outcomes, eval_outcomes)
+        outcome_metric = OpportunityDriftMetric(
+            name="realized_return_bps_distribution",
+            score=outcome_score,
+            threshold=float(realized_outcome_threshold),
+            drift_detected=outcome_score > float(realized_outcome_threshold),
+            details={
+                "reference_mean": sum(ref_outcomes) / len(ref_outcomes),
+                "evaluation_mean": sum(eval_outcomes) / len(eval_outcomes),
+            },
+        )
+
+        return OpportunityDriftReport(
+            reference_count=len(reference_samples),
+            evaluation_count=len(evaluation_samples),
+            feature_distribution=tuple(feature_metrics),
+            prediction_distribution=(prediction_metric,),
+            realized_outcome=(outcome_metric,),
+        )
+
+    def build_promotion_report(
+        self,
+        *,
+        champion_artifact: ModelArtifact,
+        challenger_artifact: ModelArtifact,
+        evaluation_samples: Sequence["OpportunitySnapshot"],
+        reference_samples: Sequence["OpportunitySnapshot"],
+        gate_config: OpportunityPromotionGateConfig | None = None,
+        champion_shadow: OpportunityTemporalEvaluation | None = None,
+        challenger_shadow: OpportunityTemporalEvaluation | None = None,
+    ) -> OpportunityPromotionReport:
+        config = gate_config or OpportunityPromotionGateConfig()
+        temporal = self.evaluate_with_model_comparison(
+            latest_artifact=challenger_artifact,
+            previous_artifact=champion_artifact,
+            samples=evaluation_samples,
+        )
+        shadow_comparison: OpportunityTemporalComparison | None = None
+        if champion_shadow is not None and challenger_shadow is not None:
+            shadow_comparison = OpportunityTemporalComparison(
+                latest=challenger_shadow,
+                previous=champion_shadow,
+                common_sample_count=min(
+                    challenger_shadow.sample_count,
+                    champion_shadow.sample_count,
+                ),
+                fairness_applied=False,
+                delta_edge_mae_bps=challenger_shadow.edge_mae_bps - champion_shadow.edge_mae_bps,
+                delta_success_probability_brier=(
+                    challenger_shadow.success_probability_brier
+                    - champion_shadow.success_probability_brier
+                ),
+            )
+        drift = self.detect_drift(
+            reference_artifact=champion_artifact,
+            evaluation_artifact=challenger_artifact,
+            reference_samples=reference_samples,
+            evaluation_samples=evaluation_samples,
+        )
+        gates = self._evaluate_promotion_gates(
+            config=config,
+            temporal=temporal,
+            shadow=shadow_comparison,
+            drift=drift,
+        )
+        promotion_recommended = all(gate.passed for gate in gates)
+        ordered = self._sort_samples(evaluation_samples)
+        window_start = ordered[0].as_of if ordered else None
+        window_end = ordered[-1].as_of if ordered else None
+        return OpportunityPromotionReport(
+            champion_version=str(champion_artifact.metadata.get("model_version", "unknown")),
+            challenger_version=str(challenger_artifact.metadata.get("model_version", "unknown")),
+            evaluation_window_start=window_start,
+            evaluation_window_end=window_end,
+            temporal_comparison=temporal,
+            shadow_comparison=shadow_comparison,
+            drift_report=drift,
+            gate_config=config,
+            gate_results=tuple(gates),
+            promotion_recommended=promotion_recommended,
+        )
+
     def evaluate_latest_vs_previous(
         self,
         repository: ModelRepository,
@@ -525,8 +767,140 @@ class OpportunityTemporalEvaluator:
             )
         return ece, tuple(summary)
 
+    @staticmethod
+    def _target_value(sample: "OpportunitySnapshot") -> float:
+        return float(getattr(sample, "realized_return_bps", 0.0))
+
+    @classmethod
+    def _feature_values(
+        cls,
+        samples: Sequence["OpportunitySnapshot"],
+        feature_name: str,
+    ) -> list[float]:
+        from .trading_engine import TradingOpportunityAI
+
+        values: list[float] = []
+        for sample in samples:
+            raw = TradingOpportunityAI._features_from_vector(
+                TradingOpportunityAI._vector_from_snapshot(sample)
+            )
+            value = raw.get(feature_name)
+            if TradingOpportunityAI._is_finite(value):
+                values.append(float(value))
+        return values
+
+    @classmethod
+    def _predict_edges(
+        cls,
+        artifact: ModelArtifact,
+        samples: Sequence["OpportunitySnapshot"],
+    ) -> list[float]:
+        from .trading_engine import TradingOpportunityAI
+
+        model = artifact.build_model()
+        if not isinstance(model, SimpleGradientBoostingModel):
+            raise TypeError("detect_drift wymaga backendu builtin")
+        predictions: list[float] = []
+        for sample in samples:
+            values = TradingOpportunityAI._features_from_vector(
+                TradingOpportunityAI._vector_from_snapshot(sample)
+            )
+            prediction = float(model.predict(values))
+            if math.isfinite(prediction):
+                predictions.append(prediction)
+        return predictions
+
+    @staticmethod
+    def _normalized_mean_shift(reference: Sequence[float], evaluation: Sequence[float]) -> float:
+        if not reference or not evaluation:
+            return 0.0
+        ref_mean = sum(reference) / len(reference)
+        eval_mean = sum(evaluation) / len(evaluation)
+        ref_var = sum((value - ref_mean) ** 2 for value in reference) / max(1, len(reference))
+        eval_var = sum((value - eval_mean) ** 2 for value in evaluation) / max(1, len(evaluation))
+        pooled_scale = math.sqrt((ref_var + eval_var) / 2.0)
+        if pooled_scale <= 1e-12:
+            mean_delta = abs(eval_mean - ref_mean)
+            if mean_delta <= 1e-12:
+                return 0.0
+            return mean_delta
+        return abs(eval_mean - ref_mean) / pooled_scale
+
+    @staticmethod
+    def _evaluate_promotion_gates(
+        *,
+        config: OpportunityPromotionGateConfig,
+        temporal: OpportunityTemporalComparison,
+        shadow: OpportunityTemporalComparison | None,
+        drift: OpportunityDriftReport,
+    ) -> list[OpportunityPromotionGateResult]:
+        drift_triggered = sum(
+            1
+            for metric in (
+                *drift.feature_distribution,
+                *drift.prediction_distribution,
+                *drift.realized_outcome,
+            )
+            if metric.drift_detected
+        )
+        directional_regression = (
+            temporal.previous.directional_accuracy - temporal.latest.directional_accuracy
+        )
+        gates = [
+            OpportunityPromotionGateResult(
+                gate="min_edge_mae_improvement_bps",
+                passed=(-temporal.delta_edge_mae_bps) >= config.min_edge_mae_improvement_bps,
+                observed=-temporal.delta_edge_mae_bps,
+                expected=config.min_edge_mae_improvement_bps,
+                comparator=">=",
+                message="Challenger musi poprawić edge MAE względem championa.",
+            ),
+            OpportunityPromotionGateResult(
+                gate="min_brier_improvement",
+                passed=(-temporal.delta_success_probability_brier)
+                >= config.min_brier_improvement,
+                observed=-temporal.delta_success_probability_brier,
+                expected=config.min_brier_improvement,
+                comparator=">=",
+                message="Challenger musi poprawić Brier score względem championa.",
+            ),
+            OpportunityPromotionGateResult(
+                gate="directional_accuracy_no_regression",
+                passed=directional_regression <= config.max_directional_accuracy_regression,
+                observed=directional_regression,
+                expected=config.max_directional_accuracy_regression,
+                comparator="<=",
+                message="Directional accuracy nie może istotnie się pogorszyć.",
+            ),
+            OpportunityPromotionGateResult(
+                gate="max_triggered_drift_metrics",
+                passed=drift_triggered <= config.max_drift_metrics_triggered,
+                observed=float(drift_triggered),
+                expected=float(config.max_drift_metrics_triggered),
+                comparator="<=",
+                message="Liczba alarmów driftu musi mieścić się w limicie bezpieczeństwa.",
+            ),
+        ]
+        if config.require_shadow_no_regression and shadow is not None:
+            gates.append(
+                OpportunityPromotionGateResult(
+                    gate="shadow_edge_mae_no_regression",
+                    passed=shadow.delta_edge_mae_bps <= 0.0,
+                    observed=shadow.delta_edge_mae_bps,
+                    expected=0.0,
+                    comparator="<=",
+                    message="Shadow edge MAE challengera nie może być gorszy od championa.",
+                )
+            )
+        return gates
+
 
 __all__ = [
+    "OpportunityDriftMetric",
+    "OpportunityDriftReport",
+    "OpportunityPromotionGateConfig",
+    "OpportunityPromotionGateResult",
+    "OpportunityPromotionReport",
     "OpportunityTemporalComparison",
     "OpportunityTemporalEvaluation",
     "OpportunityTemporalEvaluator",
