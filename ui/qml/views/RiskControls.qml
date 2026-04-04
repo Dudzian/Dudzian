@@ -331,7 +331,7 @@ Item {
                     id: killSwitchToggle
                     objectName: "killSwitchToggle"
                     checked: root.killSwitchState
-                    text: checked ? qsTr("Kill-switch aktywny") : qsTr("Kill-switch nieaktywny")
+                    text: checked ? qsTr("Risk kill-switch aktywny") : qsTr("Risk kill-switch nieaktywny")
                     onToggled: root.applyKillSwitch(checked)
                 }
 
@@ -348,6 +348,15 @@ Item {
                     enabled: !killSwitchToggle.checked
                     onClicked: killSwitchToggle.checked = true
                 }
+            }
+
+            Label {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                text: qsTr("To jest risk kill-switch (portfel/ryzyko), nie opportunity AI manual kill-switch.")
+                color: palette.mid
+                wrapMode: Text.WordWrap
             }
         }
     }

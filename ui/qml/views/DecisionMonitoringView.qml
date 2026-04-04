@@ -18,6 +18,8 @@ Item {
     property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
     property string executionMode: runtimeService ? runtimeService.executionMode : "manual"
     property var guardrails: runtimeService && runtimeService.guardrails ? runtimeService.guardrails : ({})
+    property var opportunitySettings: runtimeService && runtimeService.opportunityRuntimeSettings
+                                      ? runtimeService.opportunityRuntimeSettings : ({})
     readonly property var palette: Qt.application.palette
 
     function syncFromController() {
@@ -35,6 +37,7 @@ Item {
             return
         executionMode = runtimeService.executionMode || "manual"
         guardrails = runtimeService.guardrails || {}
+        opportunitySettings = runtimeService.opportunityRuntimeSettings || {}
     }
 
     function guardrailBannerText() {
@@ -69,6 +72,7 @@ Item {
         function onExecutionModeChanged() { syncRuntimeState() }
         function onGuardrailsChanged() { syncRuntimeState() }
         function onFeedSlaReportChanged() { syncRuntimeState() }
+        function onOpportunityRuntimeSettingsChanged() { syncRuntimeState() }
     }
 
     ColumnLayout {
@@ -121,6 +125,129 @@ Item {
                 text: guardrailBannerText()
                 color: "#d95468"
                 font.bold: true
+            }
+        }
+
+        GroupBox {
+            title: qsTr("Opportunity AI / Policy Runtime Control")
+            Layout.fillWidth: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 8
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: qsTr("Opportunity AI enabled"); Layout.fillWidth: true }
+                    Rectangle {
+                        width: 12
+                        height: 12
+                        radius: 6
+                        color: opportunitySettings && opportunitySettings.opportunityAiEnabled ? "#2ecc71" : "#7f8c8d"
+                    }
+                    Switch {
+                        checked: opportunitySettings && opportunitySettings.opportunityAiEnabled
+                        enabled: runtimeService !== null
+                        onToggled: runtimeService ? runtimeService.applyOpportunityRuntimeSettings({
+                            opportunityAiEnabled: checked
+                        }) : null
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: qsTr("Opportunity AI manual kill-switch"); Layout.fillWidth: true }
+                    Rectangle {
+                        width: 12
+                        height: 12
+                        radius: 6
+                        color: opportunitySettings && opportunitySettings.manualKillSwitch ? "#e74c3c" : "#7f8c8d"
+                    }
+                    Switch {
+                        checked: opportunitySettings && opportunitySettings.manualKillSwitch
+                        enabled: runtimeService !== null
+                        onToggled: runtimeService ? runtimeService.applyOpportunityRuntimeSettings({
+                            manualKillSwitch: checked
+                        }) : null
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: qsTr("Env override: AI enabled"); Layout.fillWidth: true }
+                    Rectangle {
+                        width: 12
+                        height: 12
+                        radius: 6
+                        color: opportunitySettings && opportunitySettings.envOverrideEnabledActive ? "#e74c3c" : "#7f8c8d"
+                    }
+                    Label {
+                        text: opportunitySettings && opportunitySettings.envOverrideEnabledActive
+                              ? qsTr("Aktywny (%1)").arg(String(opportunitySettings.envOverrideEnabledValue))
+                              : qsTr("Brak")
+                        color: palette.mid
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: qsTr("Env override: kill-switch"); Layout.fillWidth: true }
+                    Rectangle {
+                        width: 12
+                        height: 12
+                        radius: 6
+                        color: opportunitySettings && opportunitySettings.envOverrideKillSwitchActive ? "#e74c3c" : "#7f8c8d"
+                    }
+                    Label {
+                        text: opportunitySettings && opportunitySettings.envOverrideKillSwitchActive
+                              ? qsTr("Aktywny (%1)").arg(String(opportunitySettings.envOverrideKillSwitchValue))
+                              : qsTr("Brak")
+                        color: palette.mid
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: qsTr("Opportunity policy mode"); Layout.fillWidth: true }
+                    ComboBox {
+                        id: opportunityModeCombo
+                        model: ["shadow", "assist", "live"]
+                        enabled: runtimeService !== null
+                        currentIndex: {
+                            var mode = opportunitySettings && opportunitySettings.policyMode
+                                       ? String(opportunitySettings.policyMode) : "shadow"
+                            var idx = model.indexOf(mode)
+                            return idx >= 0 ? idx : 0
+                        }
+                        onActivated: runtimeService ? runtimeService.applyOpportunityRuntimeSettings({
+                            policyMode: currentText
+                        }) : null
+                    }
+                    Label {
+                        text: qsTr("Effective AI")
+                    }
+                    Rectangle {
+                        width: 12
+                        height: 12
+                        radius: 6
+                        color: opportunitySettings && opportunitySettings.effectiveAiEnabled ? "#2ecc71" : "#e74c3c"
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Source-of-truth: %1").arg(
+                              opportunitySettings && opportunitySettings.sourceOfTruth
+                              ? String(opportunitySettings.sourceOfTruth)
+                              : "runtime_control_plane")
+                    color: palette.mid
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: opportunitySettings && opportunitySettings.effectiveStateDiffersFromNominal
+                    text: qsTr("Uwaga: efektywny stan różni się od nominalnego (override/kill-switch).")
+                    color: "#d95468"
+                }
             }
         }
 

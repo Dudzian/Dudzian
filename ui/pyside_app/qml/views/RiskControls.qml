@@ -7,6 +7,8 @@ ColumnLayout {
     id: root
     property var runtimeService
     property var designSystem
+    property var opportunitySettings: runtimeService && runtimeService.opportunityRuntimeSettings
+                                      ? runtimeService.opportunityRuntimeSettings : ({})
 
     spacing: 12
 
@@ -93,7 +95,7 @@ ColumnLayout {
         }
         RowLayout {
             spacing: 10
-            Label { text: qsTr("Kill-switch aktywny"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 200 }
+            Label { text: qsTr("Risk kill-switch (portfel/ryzyko)"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 200 }
             Switch {
                 id: killSwitchToggle
                 checked: runtimeService ? runtimeService.riskControls.killSwitch : false
@@ -113,6 +115,124 @@ ColumnLayout {
             positionLimit.text = String(rc.maxPositionUsd || 0)
             slippageSpin.value = Math.round((rc.maxSlippagePct || 0) * 10)
             killSwitchToggle.checked = rc.killSwitch || false
+        }
+        function onOpportunityRuntimeSettingsChanged() {
+            root.opportunitySettings = runtimeService ? runtimeService.opportunityRuntimeSettings || ({}) : ({})
+        }
+    }
+
+    GroupBox {
+        title: qsTr("Opportunity AI / Policy Runtime")
+        Layout.fillWidth: true
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: qsTr("Opportunity AI enabled"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
+                Rectangle {
+                    width: 12
+                    height: 12
+                    radius: 6
+                    color: opportunitySettings && opportunitySettings.opportunityAiEnabled ? "#2ecc71" : "#7f8c8d"
+                }
+                Switch {
+                    checked: opportunitySettings && opportunitySettings.opportunityAiEnabled
+                    onToggled: runtimeService ? runtimeService.applyOpportunityRuntimeSettings({
+                        opportunityAiEnabled: checked
+                    }) : null
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: qsTr("Opportunity manual kill-switch"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
+                Rectangle {
+                    width: 12
+                    height: 12
+                    radius: 6
+                    color: opportunitySettings && opportunitySettings.manualKillSwitch ? "#e74c3c" : "#7f8c8d"
+                }
+                Switch {
+                    checked: opportunitySettings && opportunitySettings.manualKillSwitch
+                    onToggled: runtimeService ? runtimeService.applyOpportunityRuntimeSettings({
+                        manualKillSwitch: checked
+                    }) : null
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: qsTr("Env override: AI enabled"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
+                Rectangle {
+                    width: 12
+                    height: 12
+                    radius: 6
+                    color: opportunitySettings && opportunitySettings.envOverrideEnabledActive ? "#e74c3c" : "#7f8c8d"
+                }
+                Label {
+                    text: opportunitySettings && opportunitySettings.envOverrideEnabledActive
+                          ? qsTr("Aktywny (%1)").arg(String(opportunitySettings.envOverrideEnabledValue))
+                          : qsTr("Brak")
+                    color: designSystem.color("textSecondary")
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: qsTr("Env override: kill-switch"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
+                Rectangle {
+                    width: 12
+                    height: 12
+                    radius: 6
+                    color: opportunitySettings && opportunitySettings.envOverrideKillSwitchActive ? "#e74c3c" : "#7f8c8d"
+                }
+                Label {
+                    text: opportunitySettings && opportunitySettings.envOverrideKillSwitchActive
+                          ? qsTr("Aktywny (%1)").arg(String(opportunitySettings.envOverrideKillSwitchValue))
+                          : qsTr("Brak")
+                    color: designSystem.color("textSecondary")
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: qsTr("Opportunity policy mode"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
+                ComboBox {
+                    model: ["shadow", "assist", "live"]
+                    currentIndex: {
+                        var mode = opportunitySettings && opportunitySettings.policyMode
+                                   ? String(opportunitySettings.policyMode) : "shadow"
+                        var idx = model.indexOf(mode)
+                        return idx >= 0 ? idx : 0
+                    }
+                    onActivated: runtimeService ? runtimeService.applyOpportunityRuntimeSettings({
+                        policyMode: currentText
+                    }) : null
+                }
+                Label { text: qsTr("Effective"); color: designSystem.color("textSecondary") }
+                Rectangle {
+                    width: 12
+                    height: 12
+                    radius: 6
+                    color: opportunitySettings && opportunitySettings.effectiveAiEnabled ? "#2ecc71" : "#e74c3c"
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                color: designSystem.color("textSecondary")
+                text: qsTr("Source: %1").arg(opportunitySettings && opportunitySettings.sourceOfTruth
+                                            ? String(opportunitySettings.sourceOfTruth)
+                                            : "runtime_control_plane")
+            }
+            Label {
+                Layout.fillWidth: true
+                color: designSystem.color("textSecondary")
+                text: qsTr("Uwaga: risk kill-switch ≠ opportunity AI manual kill-switch.")
+            }
         }
     }
 

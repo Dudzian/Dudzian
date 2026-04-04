@@ -275,6 +275,56 @@ def test_runtime_service_request_freeze_can_be_invoked_via_qvariant_signature() 
         assert service.lastOperatorAction["entry"]["id"] == "decision-freeze-variant"
 
 
+def test_runtime_service_exposes_opportunity_runtime_settings() -> None:
+    service = RuntimeService(decision_loader=lambda limit: [])
+    settings = service.opportunityRuntimeSettings
+    assert set(settings).issuperset(
+        {
+            "opportunityAiEnabled",
+            "manualKillSwitch",
+            "policyMode",
+            "effectiveAiEnabled",
+            "sourceOfTruth",
+            "envOverrideEnabledActive",
+            "envOverrideKillSwitchActive",
+            "revision",
+        }
+    )
+
+
+def test_runtime_service_applies_opportunity_runtime_settings_and_audits() -> None:
+    service = RuntimeService(decision_loader=lambda limit: [])
+    initial = service.opportunityRuntimeSettings
+
+    result = service.applyOpportunityRuntimeSettings(
+        {"opportunityAiEnabled": True, "manualKillSwitch": True, "policyMode": "live"}
+    )
+    assert result["success"] is True
+    applied = result["settings"]
+    assert applied["policyMode"] == "live"
+    assert applied["manualKillSwitch"] is True
+    assert applied["effectiveAiEnabled"] is False
+    assert applied["sourceOfTruth"] in {
+        "runtime_control_plane",
+        "env_override:DUDZIAN_OPPORTUNITY_AI_ENABLED",
+        "env_override:DUDZIAN_OPPORTUNITY_AI_KILL_SWITCH",
+    }
+
+    action = service.lastOperatorAction
+    assert action["action"] == "opportunity_runtime_settings_changed"
+    assert action["entry"]["scope"] == "opportunity_runtime_settings"
+    assert action["entry"]["from"]["policyMode"] == initial["policyMode"]
+    assert action["entry"]["to"]["policyMode"] == "live"
+
+    service.applyOpportunityRuntimeSettings(
+        {
+            "opportunityAiEnabled": initial["opportunityAiEnabled"],
+            "manualKillSwitch": initial["manualKillSwitch"],
+            "policyMode": initial["policyMode"],
+        }
+    )
+
+
 def test_runtime_service_trigger_operator_action_normalizes_qjsvalue_like_entry() -> None:
     service = RuntimeService(decision_loader=lambda limit: [])
 

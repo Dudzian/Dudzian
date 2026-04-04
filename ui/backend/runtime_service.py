@@ -50,6 +50,7 @@ from bot_core.runtime.cloud_client import (
     perform_cloud_handshake,
 )
 from bot_core.runtime.journal import TradingDecisionJournal
+from bot_core.runtime.opportunity_runtime_controls import get_opportunity_runtime_controls
 from .ai_governor_demo import build_demo_ai_governor_snapshot
 from .alert_manager import AlertManager
 from .demo_data import load_demo_decisions
@@ -148,6 +149,20 @@ _RISK_JOURNAL_SCHEMA_GENERIC_KEYS: tuple[str, ...] = (
 )
 _AI_FEED_CHANNEL = "ai_governor"
 _AI_HISTORY_LIMIT = 32
+_OPPORTUNITY_AI_ENABLED_ENV = "DUDZIAN_OPPORTUNITY_AI_ENABLED"
+_OPPORTUNITY_AI_KILL_SWITCH_ENV = "DUDZIAN_OPPORTUNITY_AI_KILL_SWITCH"
+
+
+def _resolve_env_bool_override(name: str) -> bool | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    normalized = str(raw).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 def _default_loader(limit: int) -> Iterable[DecisionRecord]:
@@ -1131,6 +1146,7 @@ class RuntimeService(QObject):
     guardrailsChanged = Signal()
     strategyConfigsChanged = Signal()
     riskControlsChanged = Signal()
+    opportunityRuntimeSettingsChanged = Signal()
 
     def __init__(
         self,
@@ -1226,6 +1242,8 @@ class RuntimeService(QObject):
         self._risk_controls_path = (config_base / "risk_controls.yaml").resolve()
         self._strategy_configs: list[dict[str, object]] = self._load_strategy_configs()
         self._risk_controls: dict[str, object] = self._load_risk_controls()
+        self._opportunity_runtime_controls = get_opportunity_runtime_controls()
+        self._last_opportunity_settings_error = ""
         self._grpc_thread: threading.Thread | None = None
         self._grpc_client: GrpcDecisionStreamClient | None = None
         self._grpc_stop_event: threading.Event | None = None
@@ -1406,6 +1424,48 @@ class RuntimeService(QObject):
     def riskControls(self) -> dict[str, object]:  # type: ignore[override]
         return to_plain_dict(self._risk_controls)
 
+    @Property("QVariantMap", notify=opportunityRuntimeSettingsChanged)
+    def opportunityRuntimeSettings(self) -> dict[str, object]:  # type: ignore[override]
+        snapshot = self._opportunity_runtime_controls.snapshot()
+        env_enabled_override = _resolve_env_bool_override(_OPPORTUNITY_AI_ENABLED_ENV)
+        env_kill_switch_override = _resolve_env_bool_override(_OPPORTUNITY_AI_KILL_SWITCH_ENV)
+        nominal_enabled = bool(snapshot.opportunity_ai_enabled)
+        runtime_manual_kill = bool(snapshot.manual_kill_switch)
+        effective_enabled = nominal_enabled
+        source_of_truth = "runtime_control_plane"
+        disabled_reason = ""
+        if env_enabled_override is not None:
+            effective_enabled = bool(env_enabled_override)
+            source_of_truth = f"env_override:{_OPPORTUNITY_AI_ENABLED_ENV}"
+            if not effective_enabled:
+                disabled_reason = f"runtime_override:{_OPPORTUNITY_AI_ENABLED_ENV}"
+        if env_kill_switch_override is True:
+            effective_enabled = False
+            source_of_truth = f"env_override:{_OPPORTUNITY_AI_KILL_SWITCH_ENV}"
+            disabled_reason = f"manual_kill_switch:{_OPPORTUNITY_AI_KILL_SWITCH_ENV}"
+        elif env_kill_switch_override is False:
+            runtime_manual_kill = False
+        elif runtime_manual_kill:
+            effective_enabled = False
+            disabled_reason = "manual_kill_switch:runtime_control_plane"
+        return {
+            "opportunityAiEnabled": nominal_enabled,
+            "manualKillSwitch": bool(snapshot.manual_kill_switch),
+            "policyMode": str(snapshot.policy_mode),
+            "effectiveAiEnabled": effective_enabled,
+            "effectiveManualKillSwitch": runtime_manual_kill or env_kill_switch_override is True,
+            "sourceOfTruth": source_of_truth,
+            "envOverrideEnabledActive": env_enabled_override is not None,
+            "envOverrideEnabledValue": env_enabled_override,
+            "envOverrideKillSwitchActive": env_kill_switch_override is not None,
+            "envOverrideKillSwitchValue": env_kill_switch_override,
+            "effectiveStateDiffersFromNominal": effective_enabled != nominal_enabled
+            or (runtime_manual_kill != bool(snapshot.manual_kill_switch)),
+            "effectiveDisabledReason": disabled_reason,
+            "revision": int(snapshot.revision),
+            "lastError": str(self._last_opportunity_settings_error),
+        }
+
     @Property("QVariantMap", notify=operatorActionChanged)
     def lastOperatorAction(self) -> dict[str, object]:  # type: ignore[override]
         if self._last_operator_action is None:
@@ -1535,6 +1595,56 @@ class RuntimeService(QObject):
             "success": True,
             "message": "Zapisano limity ryzyka",
             "riskControls": deepcopy(sanitized),
+        }
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def applyOpportunityRuntimeSettings(self, payload: Mapping[str, object]) -> dict[str, object]:
+        plain = to_plain_dict(payload)
+        previous = self._opportunity_runtime_controls.snapshot()
+        update_payload: dict[str, object] = {}
+        if "opportunityAiEnabled" in plain:
+            update_payload["opportunity_ai_enabled"] = bool(plain.get("opportunityAiEnabled"))
+        if "manualKillSwitch" in plain:
+            update_payload["manual_kill_switch"] = bool(plain.get("manualKillSwitch"))
+        if "policyMode" in plain:
+            requested_mode = str(plain.get("policyMode") or "").strip().lower()
+            if requested_mode not in {"shadow", "assist", "live"}:
+                self._last_opportunity_settings_error = (
+                    "Nieprawidłowy policyMode (dozwolone: shadow, assist, live)"
+                )
+                self.opportunityRuntimeSettingsChanged.emit()
+                return {"success": False, "message": self._last_opportunity_settings_error}
+            update_payload["policy_mode"] = requested_mode
+        if not update_payload:
+            return {
+                "success": True,
+                "message": "Brak zmian",
+                "settings": self.opportunityRuntimeSettings,
+            }
+        snapshot = self._opportunity_runtime_controls.update(**update_payload)
+        self._last_opportunity_settings_error = ""
+        self.opportunityRuntimeSettingsChanged.emit()
+        action_entry = {
+            "scope": "opportunity_runtime_settings",
+            "environment": self._active_profile or "default",
+            "applied": True,
+            "from": {
+                "opportunityAiEnabled": bool(previous.opportunity_ai_enabled),
+                "manualKillSwitch": bool(previous.manual_kill_switch),
+                "policyMode": str(previous.policy_mode),
+            },
+            "to": {
+                "opportunityAiEnabled": bool(snapshot.opportunity_ai_enabled),
+                "manualKillSwitch": bool(snapshot.manual_kill_switch),
+                "policyMode": str(snapshot.policy_mode),
+            },
+            "runtimeRevision": int(snapshot.revision),
+        }
+        self._record_operator_action("opportunity_runtime_settings_changed", action_entry)
+        return {
+            "success": True,
+            "message": "Zaktualizowano ustawienia Opportunity AI",
+            "settings": self.opportunityRuntimeSettings,
         }
 
     def _update_feed_health(
