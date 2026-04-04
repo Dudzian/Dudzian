@@ -50,6 +50,7 @@ from bot_core.config.models import (
 )
 from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.opportunity_shadow_adapter import OpportunityRuntimeShadowAdapter
+from bot_core.runtime.opportunity_runtime_controls import get_opportunity_runtime_controls
 from bot_core.ai.trading_engine import TradingOpportunityAI
 from bot_core.data import CachedOHLCVSource
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
@@ -2885,6 +2886,7 @@ def _build_decision_sink(
         opportunity_ai_enabled=opportunity_ai_enabled,
         opportunity_ai_enabled_override=enabled_override,
         opportunity_ai_kill_switch_override=kill_switch_override,
+        opportunity_runtime_controls=get_opportunity_runtime_controls(),
     )
 
 
@@ -2934,6 +2936,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         opportunity_ai_enabled: bool = True,
         opportunity_ai_enabled_override: bool | None = None,
         opportunity_ai_kill_switch_override: bool | None = None,
+        opportunity_runtime_controls: object | None = None,
     ) -> None:
         self._base_sink = base_sink
         self._orchestrator = orchestrator
@@ -2953,6 +2956,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         self._opportunity_ai_enabled = bool(opportunity_ai_enabled)
         self._opportunity_ai_enabled_override = opportunity_ai_enabled_override
         self._opportunity_ai_kill_switch_override = opportunity_ai_kill_switch_override
+        self._opportunity_runtime_controls = opportunity_runtime_controls
         if self._opportunity_shadow_adapter is not None:
             self._opportunity_shadow_adapter.mode = self._opportunity_policy_mode.value
 
@@ -3461,8 +3465,25 @@ class DecisionAwareSignalSink(StrategySignalSink):
         mode = self._opportunity_policy_mode
         adapter = self._opportunity_shadow_adapter
         enabled = self._opportunity_ai_enabled
+        runtime_manual_kill_switch = False
+        runtime_controls = self._opportunity_runtime_controls
+        if runtime_controls is not None and hasattr(runtime_controls, "snapshot"):
+            try:
+                runtime_snapshot = runtime_controls.snapshot()
+            except Exception:  # pragma: no cover - defensywne zabezpieczenie runtime bridge
+                runtime_snapshot = None
+            if runtime_snapshot is not None:
+                mode = self._parse_opportunity_policy_mode(
+                    getattr(runtime_snapshot, "policy_mode", mode.value)
+                )
+                enabled = bool(getattr(runtime_snapshot, "opportunity_ai_enabled", enabled))
+                runtime_manual_kill_switch = bool(
+                    getattr(runtime_snapshot, "manual_kill_switch", False)
+                )
+                if self._opportunity_shadow_adapter is not None:
+                    self._opportunity_shadow_adapter.mode = mode.value
         disabled_reason: str | None = None
-        manual_kill_switch = False
+        manual_kill_switch = runtime_manual_kill_switch
         if self._opportunity_ai_enabled_override is not None:
             enabled = bool(self._opportunity_ai_enabled_override)
             disabled_reason = f"runtime_override:{_OPPORTUNITY_AI_ENABLED_ENV}"
@@ -3472,6 +3493,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
             disabled_reason = f"manual_kill_switch:{_OPPORTUNITY_AI_KILL_SWITCH_ENV}"
         elif self._opportunity_ai_kill_switch_override is False:
             manual_kill_switch = False
+        elif manual_kill_switch:
+            enabled = False
+            disabled_reason = "manual_kill_switch:runtime_control_plane"
         if not enabled and disabled_reason is None:
             disabled_reason = "config_disabled"
         ai_required_for_execution = (

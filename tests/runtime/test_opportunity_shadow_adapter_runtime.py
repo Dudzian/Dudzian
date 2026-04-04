@@ -8,6 +8,7 @@ from bot_core.ai.opportunity_shadow_adapter import OpportunityRuntimeShadowAdapt
 from bot_core.ai.repository import FilesystemModelRepository
 from bot_core.ai.trading_engine import OpportunitySnapshot, TradingOpportunityAI
 from bot_core.runtime.journal import TradingDecisionEvent
+from bot_core.runtime.opportunity_runtime_controls import OpportunityRuntimeControls
 from bot_core.runtime.pipeline import DecisionAwareSignalSink, InMemoryStrategySignalSink
 from bot_core.strategies.base import StrategySignal
 
@@ -566,3 +567,65 @@ def test_runtime_enable_override_false_disables_ai_path() -> None:
     assert event.metadata["opportunity_ai_disabled_reason"] == (
         "runtime_override:DUDZIAN_OPPORTUNITY_AI_ENABLED"
     )
+
+
+def test_runtime_control_plane_hot_updates_policy_without_restart() -> None:
+    journal = _CollectingJournal()
+    controls = OpportunityRuntimeControls(
+        opportunity_ai_enabled=True,
+        manual_kill_switch=False,
+        policy_mode="assist",
+    )
+    adapter = _PolicyAdapter(
+        OpportunityRuntimeShadowAdapter.PolicyProbeResult(
+            status="proposal",
+            decision_available=True,
+            accepted=False,
+            model_version="assist-v2",
+            decision_source="opportunity_ai_shadow",
+            mode="assist",
+        )
+    )
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=controls,
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    first_event = journal.events[-1]
+    assert first_event.metadata["opportunity_policy_mode"] == "assist"
+    assert first_event.metadata["final_decision_accepted"] == "false"
+
+    controls.update(manual_kill_switch=True, policy_mode="live")
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 6, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    second_event = journal.events[-1]
+    assert second_event.metadata["opportunity_policy_mode"] == "live"
+    assert second_event.metadata["opportunity_ai_enabled"] == "false"
+    assert second_event.metadata["opportunity_ai_manual_kill_switch_active"] == "true"
+    assert second_event.metadata["opportunity_ai_disabled_reason"] == "manual_kill_switch:runtime_control_plane"
