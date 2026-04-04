@@ -171,6 +171,17 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
         ".opportunity_evaluation",
         "OpportunityTemporalComparison",
     ),
+    "OpportunityDriftMetric": (".opportunity_evaluation", "OpportunityDriftMetric"),
+    "OpportunityDriftReport": (".opportunity_evaluation", "OpportunityDriftReport"),
+    "OpportunityPromotionGateConfig": (
+        ".opportunity_evaluation",
+        "OpportunityPromotionGateConfig",
+    ),
+    "OpportunityPromotionGateResult": (
+        ".opportunity_evaluation",
+        "OpportunityPromotionGateResult",
+    ),
+    "OpportunityPromotionReport": (".opportunity_evaluation", "OpportunityPromotionReport"),
     "OpportunityTemporalEvaluator": (
         ".opportunity_evaluation",
         "OpportunityTemporalEvaluator",

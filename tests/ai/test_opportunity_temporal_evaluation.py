@@ -6,6 +6,7 @@ import pytest
 
 from bot_core.ai import (
     FilesystemModelRepository,
+    OpportunityPromotionGateConfig,
     OpportunityOutcomeLabel,
     OpportunityShadowRecord,
     OpportunitySnapshot,
@@ -377,6 +378,116 @@ def test_evaluate_latest_vs_previous_loads_versions_from_repository(tmp_path) ->
     assert comparison.latest.model_version == second_artifact.metadata["model_version"]
     assert comparison.previous.model_version == first_artifact.metadata["model_version"]
     assert comparison.fairness_applied is False
+
+
+def test_detect_drift_report_contract_includes_feature_prediction_and_outcome_metrics() -> None:
+    engine = TradingOpportunityAI()
+    evaluator = OpportunityTemporalEvaluator()
+    champion = engine.fit(_build_samples(scale=-1.0))
+    challenger = engine.fit(_build_samples(scale=1.0))
+
+    drift = evaluator.detect_drift(
+        reference_artifact=champion,
+        evaluation_artifact=challenger,
+        reference_samples=_build_samples(scale=-1.0),
+        evaluation_samples=_build_samples(scale=1.0),
+    )
+
+    assert drift.reference_count == 30
+    assert drift.evaluation_count == 30
+    assert drift.feature_distribution
+    assert drift.prediction_distribution
+    assert drift.realized_outcome
+    assert all(metric.name for metric in drift.feature_distribution)
+
+
+def test_build_promotion_report_rejects_worse_challenger() -> None:
+    engine = TradingOpportunityAI()
+    evaluator = OpportunityTemporalEvaluator()
+    champion = engine.fit(_build_samples(scale=1.0))
+    challenger = engine.fit(_build_samples(scale=-1.0))
+
+    report = evaluator.build_promotion_report(
+        champion_artifact=champion,
+        challenger_artifact=challenger,
+        evaluation_samples=_build_samples(scale=1.0),
+        reference_samples=_build_samples(scale=1.0),
+    )
+
+    assert report.promotion_recommended is False
+    assert any(not gate.passed for gate in report.gate_results)
+
+
+def test_build_promotion_report_recommends_better_challenger_without_regression() -> None:
+    engine = TradingOpportunityAI()
+    evaluator = OpportunityTemporalEvaluator()
+    champion = engine.fit(_build_samples(scale=-1.0))
+    challenger = engine.fit(_build_samples(scale=1.0))
+
+    report = evaluator.build_promotion_report(
+        champion_artifact=champion,
+        challenger_artifact=challenger,
+        evaluation_samples=_build_samples(scale=1.0),
+        reference_samples=_build_samples(scale=1.0),
+        gate_config=OpportunityPromotionGateConfig(
+            min_edge_mae_improvement_bps=0.01,
+            min_brier_improvement=0.0,
+            max_directional_accuracy_regression=0.0,
+            max_drift_metrics_triggered=20,
+            require_shadow_no_regression=False,
+        ),
+    )
+    metadata = report.to_metadata()
+
+    assert report.promotion_recommended is True
+    assert all(gate.passed for gate in report.gate_results)
+    assert metadata["compared_versions"] == {
+        "champion": champion.metadata["model_version"],
+        "challenger": challenger.metadata["model_version"],
+    }
+    assert metadata["promotion"]["recommended"] is True
+
+
+def test_detect_drift_rejects_artifact_with_inconsistent_feature_spec_metadata() -> None:
+    engine = TradingOpportunityAI()
+    evaluator = OpportunityTemporalEvaluator()
+    reference = engine.fit(_build_samples(scale=-1.0))
+    evaluation = engine.fit(_build_samples(scale=1.0))
+    evaluation_bad_metadata = ModelArtifact(
+        feature_names=evaluation.feature_names,
+        model_state=evaluation.model_state,
+        trained_at=evaluation.trained_at,
+        metrics=evaluation.metrics,
+        metadata={
+            **dict(evaluation.metadata),
+            "feature_spec": {
+                **dict(evaluation.metadata["feature_spec"]),
+                "names": ["signal_strength", "momentum_5m"],
+            },
+        },
+        target_scale=evaluation.target_scale,
+        training_rows=evaluation.training_rows,
+        validation_rows=evaluation.validation_rows,
+        test_rows=evaluation.test_rows,
+        feature_scalers=evaluation.feature_scalers,
+        decision_journal_entry_id=evaluation.decision_journal_entry_id,
+        backend=evaluation.backend,
+    )
+
+    with pytest.raises(ValueError, match="Feature spec mismatch"):
+        evaluator.detect_drift(
+            reference_artifact=reference,
+            evaluation_artifact=evaluation_bad_metadata,
+            reference_samples=_build_samples(scale=-1.0),
+            evaluation_samples=_build_samples(scale=1.0),
+        )
+
+
+def test_normalized_mean_shift_for_constant_distributions_with_different_means_is_non_zero() -> None:
+    score = OpportunityTemporalEvaluator._normalized_mean_shift([1.0, 1.0, 1.0], [10.0, 10.0, 10.0])
+
+    assert score > 0.0
+    assert score == pytest.approx(9.0)
 
 
 def test_temporal_split_and_walk_forward_contract() -> None:
