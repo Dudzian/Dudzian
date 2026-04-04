@@ -21,7 +21,7 @@ from .trading_opportunity_shadow import (
 )
 from .training import SimpleGradientBoostingModel
 
-_FEATURE_NAMES: tuple[str, ...] = (
+_RAW_FEATURE_NAMES: tuple[str, ...] = (
     "signal_strength",
     "momentum_5m",
     "volatility_30m",
@@ -31,6 +31,149 @@ _FEATURE_NAMES: tuple[str, ...] = (
     "liquidity_score",
     "risk_penalty_bps",
 )
+_REGIME_FEATURE_NAMES: tuple[str, ...] = (
+    "regime_trend_score",
+    "regime_volatility_score",
+    "regime_liquidity_score",
+)
+_FEATURE_NAMES: tuple[str, ...] = _RAW_FEATURE_NAMES + _REGIME_FEATURE_NAMES
+_FEATURE_SPEC_VERSION = "opportunity_features_v1"
+
+
+@dataclass(slots=True, frozen=True)
+class MarketRegimeSnapshot:
+    trend_regime: str
+    volatility_regime: str
+    liquidity_regime: str
+
+    @classmethod
+    def from_inputs(
+        cls, *, momentum_5m: float, volatility_30m: float, liquidity_score: float
+    ) -> "MarketRegimeSnapshot":
+        if momentum_5m > 0.15:
+            trend = "uptrend"
+        elif momentum_5m < -0.15:
+            trend = "downtrend"
+        else:
+            trend = "range"
+
+        if volatility_30m >= 0.45:
+            volatility = "high"
+        elif volatility_30m >= 0.25:
+            volatility = "medium"
+        else:
+            volatility = "low"
+
+        if liquidity_score >= 0.75:
+            liquidity = "deep"
+        elif liquidity_score >= 0.40:
+            liquidity = "normal"
+        else:
+            liquidity = "thin"
+
+        return cls(
+            trend_regime=trend,
+            volatility_regime=volatility,
+            liquidity_regime=liquidity,
+        )
+
+    def to_feature_values(self) -> Mapping[str, float]:
+        trend_map = {"downtrend": -1.0, "range": 0.0, "uptrend": 1.0}
+        volatility_map = {"low": 0.0, "medium": 1.0, "high": 2.0}
+        liquidity_map = {"thin": 0.0, "normal": 1.0, "deep": 2.0}
+        return {
+            "regime_trend_score": trend_map[self.trend_regime],
+            "regime_volatility_score": volatility_map[self.volatility_regime],
+            "regime_liquidity_score": liquidity_map[self.liquidity_regime],
+        }
+
+    def to_mapping(self) -> Mapping[str, str]:
+        return {
+            "trend_regime": self.trend_regime,
+            "volatility_regime": self.volatility_regime,
+            "liquidity_regime": self.liquidity_regime,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityFeaturePayload:
+    spec_version: str
+    feature_names: tuple[str, ...]
+    feature_values: tuple[float, ...]
+    regime: MarketRegimeSnapshot
+    freshness_seconds: float | None
+    provenance: Mapping[str, object]
+
+
+class _OpportunityFeaturePipeline:
+    @classmethod
+    def feature_names(cls) -> tuple[str, ...]:
+        return _FEATURE_NAMES
+
+    @classmethod
+    def feature_spec_version(cls) -> str:
+        return _FEATURE_SPEC_VERSION
+
+    @classmethod
+    def from_snapshot(cls, snapshot: "OpportunitySnapshot") -> OpportunityFeaturePayload:
+        raw_values = TradingOpportunityAI._raw_vector_from_snapshot(snapshot)
+        raw_mapping = {name: value for name, value in zip(_RAW_FEATURE_NAMES, raw_values)}
+        freshness = cls._freshness_seconds(snapshot.as_of)
+        return cls._build_payload(raw_mapping, freshness_seconds=freshness, context="snapshot")
+
+    @classmethod
+    def from_candidate(cls, candidate: "OpportunityCandidate") -> OpportunityFeaturePayload:
+        raw_values = TradingOpportunityAI._raw_vector_from_candidate(candidate)
+        raw_mapping = {name: value for name, value in zip(_RAW_FEATURE_NAMES, raw_values)}
+        as_of = candidate.metadata.get("as_of") if isinstance(candidate.metadata, Mapping) else None
+        freshness = cls._freshness_seconds(as_of)
+        return cls._build_payload(raw_mapping, freshness_seconds=freshness, context="candidate")
+
+    @classmethod
+    def _build_payload(
+        cls,
+        raw_mapping: Mapping[str, object],
+        *,
+        freshness_seconds: float | None,
+        context: str,
+    ) -> OpportunityFeaturePayload:
+        missing = [name for name in _RAW_FEATURE_NAMES if name not in raw_mapping]
+        if missing:
+            raise ValueError(f"Brak wymaganych cech ({context}): {', '.join(missing)}")
+        numeric_raw: dict[str, float] = {}
+        for feature_name in _RAW_FEATURE_NAMES:
+            value = raw_mapping.get(feature_name)
+            if not TradingOpportunityAI._is_finite(value):
+                raise ValueError(f"Niefinitywna cecha {feature_name} ({context})")
+            numeric_raw[feature_name] = float(value)
+
+        regime = MarketRegimeSnapshot.from_inputs(
+            momentum_5m=numeric_raw["momentum_5m"],
+            volatility_30m=numeric_raw["volatility_30m"],
+            liquidity_score=numeric_raw["liquidity_score"],
+        )
+        regime_values = regime.to_feature_values()
+        values = tuple(float({**numeric_raw, **regime_values}[name]) for name in _FEATURE_NAMES)
+        return OpportunityFeaturePayload(
+            spec_version=_FEATURE_SPEC_VERSION,
+            feature_names=_FEATURE_NAMES,
+            feature_values=values,
+            regime=regime,
+            freshness_seconds=freshness_seconds,
+            provenance={
+                "pipeline": "opportunity_feature_pipeline",
+                "feature_spec_version": _FEATURE_SPEC_VERSION,
+                "freshness_seconds": freshness_seconds,
+            },
+        )
+
+    @staticmethod
+    def _freshness_seconds(value: object) -> float | None:
+        if not isinstance(value, datetime):
+            return None
+        as_of = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        freshness = (datetime.now(timezone.utc) - as_of.astimezone(timezone.utc)).total_seconds()
+        return max(0.0, freshness)
 
 
 @dataclass(slots=True)
@@ -284,6 +427,10 @@ class TradingOpportunityAI:
                     "target_definition": "1 if target_definition > 0 else 0",
                 },
             },
+            "feature_spec": {
+                "version": _OpportunityFeaturePipeline.feature_spec_version(),
+                "names": list(_OpportunityFeaturePipeline.feature_names()),
+            },
         }
         if success_calibrator is not None:
             metadata["probability_calibration"] = {
@@ -359,6 +506,7 @@ class TradingOpportunityAI:
         model = artifact.build_model()
         if not isinstance(model, SimpleGradientBoostingModel):
             raise TypeError("TradingOpportunityAI wymaga backendu builtin")
+        self._validate_artifact_feature_spec(artifact)
         classifier_state = artifact.model_state.get("classifier_head_state")
         classifier: SimpleGradientBoostingModel | None = None
         if isinstance(classifier_state, Mapping):
@@ -398,7 +546,8 @@ class TradingOpportunityAI:
         model_version = str(artifact.metadata.get("model_version", "unknown"))
 
         for candidate in candidates:
-            features = self._features_from_vector(self._vector_from_candidate(candidate))
+            feature_payload = _OpportunityFeaturePipeline.from_candidate(candidate)
+            features = self._features_from_vector(feature_payload.feature_values)
             edge = float(model.predict(features))
             if classifier is not None:
                 raw_probability = self._clip_probability(classifier.predict(features))
@@ -465,6 +614,9 @@ class TradingOpportunityAI:
                         "target_definition": artifact.metadata.get("target_definition", ""),
                         "trained_at": artifact.trained_at.isoformat(),
                         "feature_names": list(artifact.feature_names),
+                        "feature_spec_version": _FEATURE_SPEC_VERSION,
+                        "feature_freshness_seconds": feature_payload.freshness_seconds,
+                        "market_regime": feature_payload.regime.to_mapping(),
                         "probability_method": probability_method,
                         "raw_probability_method": calibration.get("raw_probability_method", probability_method),
                         "confidence_method": "distance_from_probability_midpoint",
@@ -570,11 +722,13 @@ class TradingOpportunityAI:
 
     @staticmethod
     def _vector_from_snapshot(snapshot: OpportunitySnapshot) -> list[float]:
-        return [float(value) for value in TradingOpportunityAI._raw_vector_from_snapshot(snapshot)]
+        payload = _OpportunityFeaturePipeline.from_snapshot(snapshot)
+        return [float(value) for value in payload.feature_values]
 
     @staticmethod
     def _vector_from_candidate(candidate: OpportunityCandidate) -> list[float]:
-        return [float(value) for value in TradingOpportunityAI._raw_vector_from_candidate(candidate)]
+        payload = _OpportunityFeaturePipeline.from_candidate(candidate)
+        return [float(value) for value in payload.feature_values]
 
     @staticmethod
     def _raw_vector_from_snapshot(snapshot: OpportunitySnapshot) -> list[object]:
@@ -604,7 +758,10 @@ class TradingOpportunityAI:
 
     @staticmethod
     def _features_from_vector(vector: Sequence[float]) -> Mapping[str, float]:
-        return {name: float(value) for name, value in zip(_FEATURE_NAMES, vector)}
+        padded = list(vector)
+        if len(padded) < len(_FEATURE_NAMES):
+            padded.extend([0.0] * (len(_FEATURE_NAMES) - len(padded)))
+        return {name: float(value) for name, value in zip(_FEATURE_NAMES, padded)}
 
     @staticmethod
     def _stddev(values: Sequence[float]) -> float:
@@ -636,7 +793,7 @@ class TradingOpportunityAI:
     def _validate_feature_vector(
         cls, values: Sequence[object], *, context: str, item_index: int
     ) -> None:
-        for feature_name, value in zip(_FEATURE_NAMES, values):
+        for feature_name, value in zip(_RAW_FEATURE_NAMES, values):
             if not cls._is_finite(value):
                 raise ValueError(
                     f"Niefinitywna cecha {feature_name} ({context}#{item_index})"
@@ -646,8 +803,9 @@ class TradingOpportunityAI:
     def _validate_training_samples(cls, samples: Sequence[OpportunitySnapshot]) -> None:
         for index, sample in enumerate(samples):
             cls._validate_symbol(sample.symbol, context=f"snapshot#{index}")
-            vector = cls._raw_vector_from_snapshot(sample)
-            cls._validate_feature_vector(vector, context="snapshot", item_index=index)
+            _OpportunityFeaturePipeline.from_snapshot(sample)
+            raw_vector = cls._raw_vector_from_snapshot(sample)
+            cls._validate_feature_vector(raw_vector, context="snapshot", item_index=index)
             try:
                 target = cls._target(sample)
             except (TypeError, ValueError):
@@ -659,8 +817,29 @@ class TradingOpportunityAI:
     def _validate_candidates(cls, candidates: Sequence[OpportunityCandidate]) -> None:
         for index, candidate in enumerate(candidates):
             cls._validate_symbol(candidate.symbol, context=f"candidate#{index}")
-            vector = cls._raw_vector_from_candidate(candidate)
-            cls._validate_feature_vector(vector, context="candidate", item_index=index)
+            _OpportunityFeaturePipeline.from_candidate(candidate)
+            raw_vector = cls._raw_vector_from_candidate(candidate)
+            cls._validate_feature_vector(raw_vector, context="candidate", item_index=index)
+
+    @classmethod
+    def _validate_artifact_feature_spec(cls, artifact: ModelArtifact) -> None:
+        top_level_names = tuple(artifact.feature_names)
+        if top_level_names != _FEATURE_NAMES:
+            raise ValueError("Feature spec mismatch: artifact feature names are incompatible")
+        feature_spec = artifact.metadata.get("feature_spec")
+        if not isinstance(feature_spec, Mapping):
+            raise ValueError("Feature version mismatch: missing feature spec metadata")
+        version = str(feature_spec.get("version", "")).strip()
+        if version != _FEATURE_SPEC_VERSION:
+            raise ValueError("Feature version mismatch: unsupported opportunity feature spec version")
+        metadata_names_raw = feature_spec.get("names")
+        if not isinstance(metadata_names_raw, Sequence) or isinstance(metadata_names_raw, (str, bytes)):
+            raise ValueError("Feature spec mismatch: metadata.feature_spec.names is invalid")
+        metadata_names = tuple(str(name) for name in metadata_names_raw)
+        if metadata_names != _FEATURE_NAMES:
+            raise ValueError("Feature spec mismatch: metadata feature names are incompatible")
+        if metadata_names != top_level_names:
+            raise ValueError("Feature spec mismatch: metadata/top-level feature names are inconsistent")
 
     @classmethod
     def _validate_rank_thresholds(

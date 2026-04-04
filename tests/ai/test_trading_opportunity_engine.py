@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime, timedelta, timezone
 
@@ -133,6 +134,80 @@ def test_save_load_keeps_prediction_consistent(tmp_path) -> None:
     assert abs(a.success_probability - b.success_probability) < 1e-12
 
 
+def test_feature_pipeline_is_deterministic_and_stably_ordered() -> None:
+    candidate = OpportunityCandidate(
+        symbol="BTC/USDT",
+        signal_strength=0.7,
+        momentum_5m=0.42,
+        volatility_30m=0.31,
+        spread_bps=0.4,
+        fee_bps=0.2,
+        slippage_bps=0.15,
+        liquidity_score=0.82,
+        risk_penalty_bps=0.05,
+    )
+
+    vector_a = TradingOpportunityAI._vector_from_candidate(candidate)
+    vector_b = TradingOpportunityAI._vector_from_candidate(candidate)
+    features_a = TradingOpportunityAI._features_from_vector(vector_a)
+    features_b = TradingOpportunityAI._features_from_vector(vector_b)
+
+    assert vector_a == vector_b
+    assert list(features_a.keys()) == list(features_b.keys())
+    assert tuple(features_a.keys()) == (
+        "signal_strength",
+        "momentum_5m",
+        "volatility_30m",
+        "spread_bps",
+        "fee_bps",
+        "slippage_bps",
+        "liquidity_score",
+        "risk_penalty_bps",
+        "regime_trend_score",
+        "regime_volatility_score",
+        "regime_liquidity_score",
+    )
+
+
+def test_regime_fields_change_feature_payload_by_contract() -> None:
+    low_regime = OpportunityCandidate(
+        symbol="LTC/USDT",
+        signal_strength=0.2,
+        momentum_5m=0.0,
+        volatility_30m=0.2,
+        spread_bps=0.5,
+        fee_bps=0.2,
+        slippage_bps=0.1,
+        liquidity_score=0.2,
+        risk_penalty_bps=0.0,
+    )
+    high_regime = OpportunityCandidate(
+        symbol="LTC/USDT",
+        signal_strength=0.2,
+        momentum_5m=0.4,
+        volatility_30m=0.6,
+        spread_bps=0.5,
+        fee_bps=0.2,
+        slippage_bps=0.1,
+        liquidity_score=0.9,
+        risk_penalty_bps=0.0,
+    )
+
+    low_features = TradingOpportunityAI._features_from_vector(
+        TradingOpportunityAI._vector_from_candidate(low_regime)
+    )
+    high_features = TradingOpportunityAI._features_from_vector(
+        TradingOpportunityAI._vector_from_candidate(high_regime)
+    )
+
+    assert low_features["regime_trend_score"] == 0.0
+    assert high_features["regime_trend_score"] == 1.0
+    assert low_features["regime_volatility_score"] == 0.0
+    assert high_features["regime_volatility_score"] == 2.0
+    assert low_features["regime_liquidity_score"] == 0.0
+    assert high_features["regime_liquidity_score"] == 2.0
+
+
 def test_fit_dual_head_contains_classifier_state_and_metadata() -> None:
     engine = TradingOpportunityAI()
     artifact = engine.fit(_build_samples())
@@ -146,6 +221,19 @@ def test_fit_dual_head_contains_classifier_state_and_metadata() -> None:
     assert "classifier_brier_score" in summary
     assert "classifier_raw_brier_score" in summary
     assert artifact.metadata["probability_calibration"]["fit_split"] == "validation"  # type: ignore[index]
+    assert artifact.metadata["feature_spec"]["version"] == "opportunity_features_v1"  # type: ignore[index]
+
+
+def test_save_load_artifact_preserves_feature_spec_version(tmp_path) -> None:
+    repository = FilesystemModelRepository(tmp_path / "repo")
+    trainer = TradingOpportunityAI(repository=repository)
+    artifact = trainer.fit(_build_samples())
+    trainer.save_model(version="feature-spec", activate=True)
+
+    loaded = TradingOpportunityAI(repository=repository).load_model("feature-spec")
+
+    assert artifact.metadata["feature_spec"]["version"] == "opportunity_features_v1"  # type: ignore[index]
+    assert loaded.metadata["feature_spec"]["version"] == "opportunity_features_v1"  # type: ignore[index]
 
 
 def test_fit_persists_success_probability_calibrator_state() -> None:
@@ -390,6 +478,51 @@ def test_rank_rejects_invalid_candidate_and_thresholds() -> None:
         engine.rank([valid_candidate], min_probability=float("nan"))
     with pytest.raises(ValueError, match="Nieprawidłowy min_expected_edge_bps"):
         engine.rank([valid_candidate], min_expected_edge_bps=float("inf"))
+
+
+def test_load_rejects_feature_spec_name_mismatch(tmp_path) -> None:
+    repository = FilesystemModelRepository(tmp_path / "repo")
+    trainer = TradingOpportunityAI(repository=repository)
+    trainer.fit(_build_samples())
+    trainer.save_model(version="bad-spec", activate=True)
+
+    payload_path = tmp_path / "repo" / "trading-opportunity-bad-spec.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["feature_names"] = ["signal_strength", "momentum_5m"]
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Feature spec mismatch"):
+        TradingOpportunityAI(repository=repository).load_model("bad-spec")
+
+
+def test_load_rejects_feature_spec_version_mismatch(tmp_path) -> None:
+    repository = FilesystemModelRepository(tmp_path / "repo")
+    trainer = TradingOpportunityAI(repository=repository)
+    trainer.fit(_build_samples())
+    trainer.save_model(version="bad-version", activate=True)
+
+    payload_path = tmp_path / "repo" / "trading-opportunity-bad-version.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["metadata"]["feature_spec"]["version"] = "opportunity_features_v999"
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Feature version mismatch"):
+        TradingOpportunityAI(repository=repository).load_model("bad-version")
+
+
+def test_load_rejects_metadata_feature_spec_names_mismatch_with_top_level(tmp_path) -> None:
+    repository = FilesystemModelRepository(tmp_path / "repo")
+    trainer = TradingOpportunityAI(repository=repository)
+    trainer.fit(_build_samples())
+    trainer.save_model(version="bad-metadata-names", activate=True)
+
+    payload_path = tmp_path / "repo" / "trading-opportunity-bad-metadata-names.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["metadata"]["feature_spec"]["names"] = ["signal_strength", "momentum_5m"]
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="metadata feature names are incompatible"):
+        TradingOpportunityAI(repository=repository).load_model("bad-metadata-names")
 
 
 def test_rank_handles_extreme_inputs_without_probability_overflow() -> None:

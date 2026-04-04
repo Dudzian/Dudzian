@@ -90,6 +90,7 @@ class OpportunityTemporalEvaluator:
             raise ValueError("Brak próbek do oceny temporalnej")
         if not all(isinstance(sample, OpportunitySnapshot) for sample in samples):
             raise TypeError("OpportunityTemporalEvaluator wymaga listy OpportunitySnapshot")
+        TradingOpportunityAI._validate_artifact_feature_spec(artifact)
 
         model = artifact.build_model()
         if not isinstance(model, SimpleGradientBoostingModel):
@@ -262,6 +263,10 @@ class OpportunityTemporalEvaluator:
         previous_artifact: ModelArtifact,
         samples: Sequence["OpportunitySnapshot"],
     ) -> OpportunityTemporalComparison:
+        from .trading_engine import TradingOpportunityAI
+
+        TradingOpportunityAI._validate_artifact_feature_spec(latest_artifact)
+        TradingOpportunityAI._validate_artifact_feature_spec(previous_artifact)
         latest_model = latest_artifact.build_model()
         previous_model = previous_artifact.build_model()
         if not isinstance(latest_model, SimpleGradientBoostingModel):
@@ -356,7 +361,12 @@ class OpportunityTemporalEvaluator:
             seen.add(key)
             deduped.append(item)
         aligned: list["OpportunitySnapshot"] = []
-        known_features = set(TradingOpportunityAI._features_from_vector([0.0] * 8).keys())
+        max_features = max(
+            len(latest_artifact.feature_names),
+            len(previous_artifact.feature_names),
+            8,
+        )
+        known_features = set(TradingOpportunityAI._features_from_vector([0.0] * max_features).keys())
         for item in deduped:
             if not cls._is_scoreable_for_models(
                 sample=item,
@@ -385,14 +395,11 @@ class OpportunityTemporalEvaluator:
     ) -> bool:
         from .trading_engine import TradingOpportunityAI
 
-        raw_values = TradingOpportunityAI._raw_vector_from_snapshot(sample)
-        raw_features = {
-            name: value
-            for name, value in zip(
-                TradingOpportunityAI._features_from_vector([0.0] * len(raw_values)).keys(),
-                raw_values,
-            )
-        }
+        try:
+            feature_values = TradingOpportunityAI._vector_from_snapshot(sample)
+            raw_features = TradingOpportunityAI._features_from_vector(feature_values)
+        except ValueError:
+            return False
         models_to_check: tuple[SimpleGradientBoostingModel, ...] = (
             (primary_model, classifier_model) if classifier_model is not None else (primary_model,)
         )
