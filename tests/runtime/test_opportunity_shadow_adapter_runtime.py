@@ -30,6 +30,18 @@ class _RiskEngine:
         return {}
 
 
+class _PolicyAdapter:
+    def __init__(
+        self,
+        result: OpportunityRuntimeShadowAdapter.PolicyProbeResult,
+    ) -> None:
+        self.result = result
+        self.mode = result.mode
+
+    def emit_shadow_proposal(self, **_kwargs):
+        return self.result
+
+
 def _train_model(repo_path: Path) -> TradingOpportunityAI:
     repo = FilesystemModelRepository(repo_path)
     engine = TradingOpportunityAI(repository=repo)
@@ -261,3 +273,102 @@ def test_decision_sink_without_shadow_adapter_still_works() -> None:
     exported = sink.export()
     assert len(exported) == 1
     assert len(exported[0][1]) == 1
+
+
+def test_assist_mode_can_veto_base_acceptance() -> None:
+    journal = _CollectingJournal()
+    adapter = _PolicyAdapter(
+        OpportunityRuntimeShadowAdapter.PolicyProbeResult(
+            status="proposal",
+            decision_available=True,
+            accepted=False,
+            model_version="assist-v1",
+            decision_source="opportunity_ai_shadow",
+            rejection_reason="probability_below_threshold",
+            mode="assist",
+        )
+    )
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="assist",
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+    )
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    assert sink.export() == ()
+    event = journal.events[-1]
+    assert event.metadata["opportunity_policy_mode"] == "assist"
+    assert event.metadata["base_decision_accepted"] == "true"
+    assert event.metadata["ai_decision_accepted"] == "false"
+    assert event.metadata["final_decision_accepted"] == "false"
+    assert event.metadata["ai_influenced_outcome"] == "true"
+    assert event.metadata["decision_authority"] == "opportunity_ai_assist_policy"
+
+
+def test_live_mode_degraded_keeps_safe_base_path() -> None:
+    journal = _CollectingJournal()
+    adapter = _PolicyAdapter(
+        OpportunityRuntimeShadowAdapter.PolicyProbeResult(
+            status="degraded",
+            decision_available=False,
+            accepted=None,
+            degraded_reason="model_unavailable",
+            mode="live",
+        )
+    )
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="live",
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0},
+    )
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    exported = sink.export()
+    assert len(exported) == 1
+    assert len(exported[0][1]) == 1
+    event = journal.events[-1]
+    assert event.metadata["opportunity_policy_mode"] == "live"
+    assert event.metadata["ai_decision_status"] == "degraded"
+    assert event.metadata["ai_decision_available"] == "false"
+    assert event.metadata["final_decision_accepted"] == "true"
+    assert event.metadata["decision_authority"] == "decision_orchestrator"
+    assert event.metadata["opportunity_degraded_reason"] == "model_unavailable"

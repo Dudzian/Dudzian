@@ -451,6 +451,28 @@ def test_bootstrap_rejects_invalid_pipeline_schedule(tmp_path: Path, temp_model_
         )
 
 
+def test_bootstrap_rejects_invalid_opportunity_policy_mode(
+    tmp_path: Path, temp_model_file: Path
+) -> None:
+    config_path = _write_config(tmp_path, temp_model_file)
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload["decision_engine"]["opportunity_policy_mode"] = "auto"
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+
+    with pytest.raises(
+        ValueError,
+        match=r"decision_engine.opportunity_policy_mode musi być jednym z: shadow, assist, live",
+    ):
+        bootstrap_environment(
+            "paper_ai",
+            config_path=config_path,
+            secret_manager=secret_manager,
+        )
+
+
 def test_bootstrap_initializes_runtime_tco_reporter_exactly_once(
     tmp_path: Path,
     temp_model_file: Path,
