@@ -3213,6 +3213,10 @@ def _load_decision_engine_config(
         raise ValueError(
             "decision_engine.opportunity_policy_mode musi być jednym z: shadow, assist, live"
         )
+    opportunity_ai_enabled_raw = raw.get("opportunity_ai_enabled", True)
+    if not isinstance(opportunity_ai_enabled_raw, bool):
+        raise ValueError("decision_engine.opportunity_ai_enabled musi być wartością logiczną")
+    opportunity_ai_enabled = opportunity_ai_enabled_raw
     history_limit_raw = raw.get("evaluation_history_limit")
     evaluation_history_limit = 256
     if history_limit_raw not in (None, ""):
@@ -3324,6 +3328,7 @@ def _load_decision_engine_config(
         penalty_cost_bps=penalty_cost_bps,
         evaluation_history_limit=evaluation_history_limit,
         opportunity_policy_mode=opportunity_policy_mode,
+        opportunity_ai_enabled=opportunity_ai_enabled,
         tco=tco_config,
     )
 
