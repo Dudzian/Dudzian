@@ -264,6 +264,36 @@ def test_evaluate_with_model_comparison_raises_on_empty_common_scoreable_subset(
         evaluator.evaluate_with_model_comparison(latest_bad, previous, _build_samples())
 
 
+def test_evaluate_with_model_comparison_rejects_inconsistent_feature_spec_metadata() -> None:
+    engine = TradingOpportunityAI()
+    latest = engine.fit(_build_samples(scale=1.0))
+    previous = engine.fit(_build_samples(scale=-1.0))
+    previous_bad_metadata = ModelArtifact(
+        feature_names=previous.feature_names,
+        model_state=previous.model_state,
+        trained_at=previous.trained_at,
+        metrics=previous.metrics,
+        metadata={
+            **dict(previous.metadata),
+            "feature_spec": {
+                **dict(previous.metadata["feature_spec"]),
+                "names": ["signal_strength", "momentum_5m"],
+            },
+        },
+        target_scale=previous.target_scale,
+        training_rows=previous.training_rows,
+        validation_rows=previous.validation_rows,
+        test_rows=previous.test_rows,
+        feature_scalers=previous.feature_scalers,
+        decision_journal_entry_id=previous.decision_journal_entry_id,
+        backend=previous.backend,
+    )
+    evaluator = OpportunityTemporalEvaluator()
+
+    with pytest.raises(ValueError, match="Feature spec mismatch"):
+        evaluator.evaluate_with_model_comparison(latest, previous_bad_metadata, _build_samples())
+
+
 def test_evaluate_with_model_comparison_uses_common_subset_for_classifier_feature_requirements() -> None:
     engine = TradingOpportunityAI()
     latest = engine.fit(_build_samples(scale=1.0))
