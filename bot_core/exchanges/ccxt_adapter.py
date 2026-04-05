@@ -369,6 +369,8 @@ class CCXTSpotAdapter(ExchangeAdapter):
         **kwargs: Any,
     ) -> Any:
         method = getattr(self._client, method_name)
+        if kwargs.get("params") is None:
+            kwargs.pop("params", None)
         return self._wrap_call(method, *args, retry=retry, **kwargs)
 
     # --- Implementacja interfejsu ExchangeAdapter -------------------------
