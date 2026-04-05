@@ -15,6 +15,12 @@ from bot_core.execution import ExecutionService
 from bot_core.observability import MetricsRegistry
 from bot_core.ui.api import build_explainability_feed
 
+from bot_core.ai.trading_opportunity_shadow import (
+    OpportunityShadowContext,
+    OpportunityShadowRecord,
+    OpportunityShadowRepository,
+    OpportunityThresholdConfig,
+)
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
 from bot_core.runtime import TradingController
@@ -216,6 +222,193 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     exported = tuple(audit.export())
     assert len(exported) >= 2
     assert any(event["event"] == "order_executed" for event in journal.export())
+
+
+def _shadow_record_for_key(
+    *,
+    correlation_key: str,
+    decision_timestamp: datetime,
+) -> OpportunityShadowRecord:
+    return OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "test"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+
+
+def test_controller_attaches_runtime_outcome_label_for_opportunity_shadow_record(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    controller.process_signals([signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].correlation_key == correlation_key
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events
+    assert attach_events[-1]["status"] == "attached"
+
+
+def test_controller_outcome_attach_duplicate_is_idempotent_noop(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    controller.process_signals([signal])
+    controller.process_signals([signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events[-1]["status"] == "duplicate_noop"
+
+
+def test_controller_outcome_attach_rejects_missing_shadow_record(tmp_path: Path) -> None:
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _signal("BUY")
+    signal.metadata = {**dict(signal.metadata), "opportunity_shadow_record_key": "missing-key"}
+
+    controller.process_signals([signal])
+
+    assert shadow_repo.load_outcome_labels() == []
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events
+    assert attach_events[-1]["status"] == "missing_shadow_record"
+
+
+def test_controller_outcome_attach_upgrades_proxy_to_final_on_exit(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    close_signal = _signal("SELL", price=110.0)
+
+    controller.process_signals([open_signal])
+    controller.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert labels[0].realized_return_bps == pytest.approx(1000.0, rel=1e-6)
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert any(event["status"] == "final_upgraded" for event in attach_events)
 
 
 def test_controller_handles_multi_leg_signal() -> None:

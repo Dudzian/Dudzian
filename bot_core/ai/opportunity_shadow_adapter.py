@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from typing import Mapping, Literal
 
 from bot_core.ai.trading_engine import OpportunityCandidate, TradingOpportunityAI
+from bot_core.ai.trading_opportunity_shadow import (
+    OpportunityShadowContext,
+    OpportunityShadowRepository,
+)
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +36,7 @@ class OpportunityRuntimeShadowAdapter:
     model_reference: str = "latest"
     decision_source: str = "opportunity_ai_shadow"
     mode: str = "shadow"
+    shadow_repository: OpportunityShadowRepository | None = None
     model_retry_cooldown_seconds: float = 60.0
     degraded_event_cooldown_seconds: float = 120.0
 
@@ -50,6 +55,9 @@ class OpportunityRuntimeShadowAdapter:
         decision_source: str | None = None
         rejection_reason: str | None = None
         degraded_reason: str | None = None
+        shadow_record_key: str | None = None
+        shadow_persistence_status: str = "disabled"
+        shadow_persistence_error: str | None = None
         mode: str = "shadow"
 
     def emit_shadow_proposal(
@@ -158,6 +166,15 @@ class OpportunityRuntimeShadowAdapter:
                 mode=self.mode,
             )
         decision = decisions[0]
+        shadow_record_key, persistence_status, persistence_error = self._persist_shadow_record(
+            decision=decision,
+            decision_timestamp=timestamp_utc,
+            candidate=opportunity_candidate,
+            strategy_name=strategy_name,
+            schedule_name=schedule_name,
+            risk_profile=risk_profile,
+            environment=environment,
+        )
         provenance = dict(decision.provenance)
         provenance.update(
             {
@@ -194,6 +211,9 @@ class OpportunityRuntimeShadowAdapter:
                 "runtime_evaluation_accepted": "true"
                 if bool(getattr(evaluation, "accepted", False))
                 else "false",
+                "shadow_record_key": shadow_record_key or "",
+                "shadow_persistence_status": persistence_status,
+                "shadow_persistence_error": persistence_error or "",
                 "provenance": provenance,
             },
         )
@@ -205,8 +225,71 @@ class OpportunityRuntimeShadowAdapter:
             model_version=decision.model_version,
             decision_source=self.decision_source,
             rejection_reason=decision.rejection_reason,
+            shadow_record_key=shadow_record_key,
+            shadow_persistence_status=persistence_status,
+            shadow_persistence_error=persistence_error,
             mode=self.mode,
         )
+
+    def _persist_shadow_record(
+        self,
+        *,
+        decision: object,
+        decision_timestamp: datetime,
+        candidate: OpportunityCandidate,
+        strategy_name: str,
+        schedule_name: str,
+        risk_profile: str,
+        environment: str,
+    ) -> tuple[str | None, str, str | None]:
+        if self.shadow_repository is None:
+            return None, "disabled", None
+        try:
+            records = self.engine.build_shadow_records(
+                [decision],
+                decision_timestamp=decision_timestamp,
+                snapshot={
+                    "strategy_name": strategy_name,
+                    "schedule_name": schedule_name,
+                    "risk_profile": risk_profile,
+                    "candidate_metadata": self._json_safe_payload(dict(candidate.metadata)),
+                },
+                context=OpportunityShadowContext(
+                    environment=environment,
+                    notes={"adapter_mode": self.mode},
+                ),
+            )
+            self.shadow_repository.append_shadow_records(records)
+            return records[0].record_key, "persisted", None
+        except Exception as exc:  # pragma: no cover - runtime degradacja persistence
+            reason = f"shadow_persistence_error:{type(exc).__name__}"
+            self._emit_degraded_event(
+                timestamp=decision_timestamp,
+                strategy_name=strategy_name,
+                schedule_name=schedule_name,
+                risk_profile=risk_profile,
+                environment=environment,
+                portfolio="shadow_persistence",
+                symbol=str(getattr(decision, "symbol", "")),
+                side=str(getattr(decision, "proposed_direction", "")),
+                reason=reason,
+            )
+            _LOGGER.warning("Opportunity shadow persistence failed", exc_info=True)
+            return None, "error", str(exc)
+
+    @classmethod
+    def _json_safe_payload(cls, payload: Mapping[str, object]) -> dict[str, object]:
+        return {str(key): cls._json_safe_value(value) for key, value in payload.items()}
+
+    @classmethod
+    def _json_safe_value(cls, value: object) -> object:
+        if isinstance(value, datetime):
+            return cls._ensure_utc(value).isoformat()
+        if isinstance(value, Mapping):
+            return cls._json_safe_payload({str(key): item for key, item in value.items()})
+        if isinstance(value, (list, tuple)):
+            return [cls._json_safe_value(item) for item in value]
+        return value
 
     def _ensure_model_loaded(self, *, now: datetime) -> bool:
         if self._model_ready:

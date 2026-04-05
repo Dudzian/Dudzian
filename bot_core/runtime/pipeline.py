@@ -50,6 +50,7 @@ from bot_core.config.models import (
 )
 from bot_core.ai.repository import FilesystemModelRepository, ModelRepository
 from bot_core.ai.opportunity_shadow_adapter import OpportunityRuntimeShadowAdapter
+from bot_core.ai.trading_opportunity_shadow import OpportunityShadowRepository
 from bot_core.runtime.opportunity_runtime_controls import get_opportunity_runtime_controls
 from bot_core.ai.trading_engine import TradingOpportunityAI
 from bot_core.data import CachedOHLCVSource
@@ -654,6 +655,7 @@ def create_trading_controller(
             "environment": environment_cfg.name,
             "controller": pipeline.controller_name,
         },
+        opportunity_shadow_repository=OpportunityShadowRepository(Path("data/ai/opportunity_shadow")),
     )
 
 
@@ -2866,6 +2868,7 @@ def _build_decision_sink(
     opportunity_shadow_adapter = OpportunityRuntimeShadowAdapter(
         journal=journal,
         engine=TradingOpportunityAI(repository=FilesystemModelRepository(Path("data/ai"))),
+        shadow_repository=OpportunityShadowRepository(Path("data/ai/opportunity_shadow")),
     )
     enabled_override = _resolve_env_bool_override(_OPPORTUNITY_AI_ENABLED_ENV)
     kill_switch_override = _resolve_env_bool_override(_OPPORTUNITY_AI_KILL_SWITCH_ENV)
@@ -2916,6 +2919,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
         ai_model_version: str | None = None
         ai_rejection_reason: str | None = None
         ai_degraded_reason: str | None = None
+        ai_shadow_record_key: str | None = None
+        ai_shadow_persistence_status: str | None = None
+        ai_shadow_persistence_error: str | None = None
         opportunity_ai_disabled_reason: str | None = None
 
     def __init__(
@@ -3202,7 +3208,37 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 policy_resolution=policy_resolution,
             )
             if policy_resolution.final_accepted:
-                accepted.append(signal)
+                enriched_signal_metadata = dict(signal.metadata or {})
+                if policy_resolution.ai_shadow_record_key:
+                    enriched_signal_metadata.setdefault(
+                        "opportunity_shadow_record_key",
+                        policy_resolution.ai_shadow_record_key,
+                    )
+                    enriched_signal_metadata.setdefault(
+                        "opportunity_decision_timestamp",
+                        timestamp.isoformat(),
+                    )
+                if policy_resolution.ai_model_version:
+                    enriched_signal_metadata.setdefault(
+                        "opportunity_model_version",
+                        policy_resolution.ai_model_version,
+                    )
+                if policy_resolution.ai_decision_source:
+                    enriched_signal_metadata.setdefault(
+                        "opportunity_decision_source",
+                        policy_resolution.ai_decision_source,
+                    )
+                accepted.append(
+                    StrategySignal(
+                        symbol=signal.symbol,
+                        side=signal.side,
+                        confidence=signal.confidence,
+                        quantity=signal.quantity,
+                        intent=signal.intent,
+                        legs=signal.legs,
+                        metadata=enriched_signal_metadata,
+                    )
+                )
             else:
                 self._logger.debug(
                     "DecisionOrchestrator odrzucił sygnał %s/%s: %s",
@@ -3367,6 +3403,18 @@ class DecisionAwareSignalSink(StrategySignalSink):
             metadata.setdefault("opportunity_rejection_reason", policy_resolution.ai_rejection_reason)
         if policy_resolution.ai_degraded_reason:
             metadata.setdefault("opportunity_degraded_reason", policy_resolution.ai_degraded_reason)
+        if policy_resolution.ai_shadow_record_key:
+            metadata.setdefault("opportunity_shadow_record_key", policy_resolution.ai_shadow_record_key)
+        if policy_resolution.ai_shadow_persistence_status:
+            metadata.setdefault(
+                "opportunity_shadow_persistence_status",
+                policy_resolution.ai_shadow_persistence_status,
+            )
+        if policy_resolution.ai_shadow_persistence_error:
+            metadata.setdefault(
+                "opportunity_shadow_persistence_error",
+                policy_resolution.ai_shadow_persistence_error,
+            )
         if policy_resolution.opportunity_ai_disabled_reason:
             metadata.setdefault(
                 "opportunity_ai_disabled_reason",
@@ -3516,6 +3564,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 opportunity_ai_manual_kill_switch_active=manual_kill_switch,
                 ai_required_for_execution=False,
                 live_gate_failed_closed=False,
+                ai_shadow_record_key=None,
+                ai_shadow_persistence_status=None,
+                ai_shadow_persistence_error=None,
                 opportunity_ai_disabled_reason=disabled_reason,
             )
         if adapter is None:
@@ -3539,6 +3590,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 ai_required_for_execution=ai_required_for_execution,
                 live_gate_failed_closed=ai_required_for_execution and base_accepted,
                 ai_degraded_reason="opportunity_adapter_unwired",
+                ai_shadow_record_key=None,
+                ai_shadow_persistence_status="disabled",
+                ai_shadow_persistence_error=None,
             )
         portfolio = self._portfolio or self._environment
         probe = adapter.emit_shadow_proposal(
@@ -3594,6 +3648,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
             ai_model_version=probe.model_version,
             ai_rejection_reason=probe.rejection_reason,
             ai_degraded_reason=probe.degraded_reason,
+            ai_shadow_record_key=probe.shadow_record_key,
+            ai_shadow_persistence_status=probe.shadow_persistence_status,
+            ai_shadow_persistence_error=probe.shadow_persistence_error,
         )
 
     def _build_candidate(
