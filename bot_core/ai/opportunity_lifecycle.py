@@ -97,10 +97,7 @@ class OpportunityLifecycleService:
             for label in labels
             if str(label.label_quality or "").strip().lower().startswith(_PARTIAL_LABEL_PREFIXES)
         ]
-        eligible_labels = [
-            label
-            for label in final_labels
-        ]
+        eligible_labels = [label for label in final_labels]
         if labels and not final_labels and partial_labels:
             reasons.append("partial_only_outcomes_excluded_from_governance")
         elif labels and not eligible_labels:

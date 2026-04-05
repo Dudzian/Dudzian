@@ -469,7 +469,11 @@ def test_controller_restores_open_outcome_tracker_after_restart(tmp_path: Path) 
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -518,7 +522,9 @@ def test_controller_restores_open_outcome_tracker_after_restart(tmp_path: Path) 
     assert shadow_repo.load_open_outcomes() == []
 
 
-def test_controller_close_without_correlation_key_is_rejected_when_ambiguous(tmp_path: Path) -> None:
+def test_controller_close_without_correlation_key_is_rejected_when_ambiguous(
+    tmp_path: Path,
+) -> None:
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     keyed_timestamps: list[tuple[str, datetime]] = []
@@ -575,7 +581,11 @@ def test_controller_close_with_correlation_key_missing_tracker_is_unresolved_wit
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     journal = CollectingDecisionJournal()
     controller = TradingController(
@@ -598,7 +608,9 @@ def test_controller_close_with_correlation_key_missing_tracker_is_unresolved_wit
 
     assert shadow_repo.load_open_outcomes() == []
     assert shadow_repo.load_outcome_labels() == []
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "close_correlation_unresolved"
     assert attach_events[-1]["close_correlation_resolution"] == "missing"
 
@@ -615,7 +627,11 @@ def test_controller_close_with_correlation_key_side_mismatch_is_unresolved_witho
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     journal = CollectingDecisionJournal()
     controller = TradingController(
@@ -649,7 +665,9 @@ def test_controller_close_with_correlation_key_side_mismatch_is_unresolved_witho
     assert labels[0].label_quality == "execution_proxy_pending_exit"
     open_outcomes = shadow_repo.load_open_outcomes()
     assert len(open_outcomes) == 1
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "close_correlation_unresolved"
     assert attach_events[-1]["close_correlation_resolution"] == "side_mismatch"
 
@@ -666,7 +684,11 @@ def test_controller_close_with_correlation_key_symbol_mismatch_is_unresolved_wit
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     shadow_repo.upsert_open_outcome(
         shadow_repo.OpenOutcomeState(
@@ -700,7 +722,9 @@ def test_controller_close_with_correlation_key_symbol_mismatch_is_unresolved_wit
 
     assert len(shadow_repo.load_open_outcomes()) == 1
     assert shadow_repo.load_outcome_labels() == []
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "close_correlation_unresolved"
     assert attach_events[-1]["close_correlation_resolution"] == "symbol_mismatch"
 
@@ -717,7 +741,11 @@ def test_controller_close_with_correlation_key_and_timestamp_hint_missing_tracke
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     journal = CollectingDecisionJournal()
     controller = TradingController(
@@ -740,7 +768,9 @@ def test_controller_close_with_correlation_key_and_timestamp_hint_missing_tracke
     controller.process_signals([close_signal])
     assert shadow_repo.load_open_outcomes() == []
     assert shadow_repo.load_outcome_labels() == []
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "close_correlation_unresolved"
     assert attach_events[-1]["close_correlation_resolution"] == "missing"
 
@@ -757,7 +787,11 @@ def test_controller_close_with_correlation_key_and_timestamp_hint_side_mismatch_
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     journal = CollectingDecisionJournal()
     controller = TradingController(
@@ -788,7 +822,9 @@ def test_controller_close_with_correlation_key_and_timestamp_hint_side_mismatch_
     labels = shadow_repo.load_outcome_labels()
     assert len(labels) == 1
     assert labels[0].label_quality == "execution_proxy_pending_exit"
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "close_correlation_unresolved"
     assert attach_events[-1]["close_correlation_resolution"] == "side_mismatch"
 
@@ -805,7 +841,11 @@ def test_controller_close_with_correlation_key_and_timestamp_hint_symbol_mismatc
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     shadow_repo.upsert_open_outcome(
         shadow_repo.OpenOutcomeState(
@@ -839,7 +879,9 @@ def test_controller_close_with_correlation_key_and_timestamp_hint_symbol_mismatc
     controller.process_signals([close_signal])
     assert len(shadow_repo.load_open_outcomes()) == 1
     assert shadow_repo.load_outcome_labels() == []
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "close_correlation_unresolved"
     assert attach_events[-1]["close_correlation_resolution"] == "symbol_mismatch"
 
@@ -854,7 +896,11 @@ def test_controller_partial_close_does_not_create_final_or_drop_tracker(tmp_path
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
@@ -895,7 +941,9 @@ def test_controller_partial_close_does_not_create_final_or_drop_tracker(tmp_path
     open_outcomes = shadow_repo.load_open_outcomes()
     assert len(open_outcomes) == 1
     assert open_outcomes[0].closed_quantity == pytest.approx(0.4, rel=1e-6)
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "quality_upgraded"
 
 
@@ -909,7 +957,11 @@ def test_controller_final_close_after_partial_upgrades_and_removes_tracker(tmp_p
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
@@ -936,9 +988,15 @@ def test_controller_final_close_after_partial_upgrades_and_removes_tracker(tmp_p
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
     partial_close_signal = _signal("SELL", price=108.0)
-    partial_close_signal.metadata = {**dict(partial_close_signal.metadata), "opportunity_shadow_record_key": correlation_key}
+    partial_close_signal.metadata = {
+        **dict(partial_close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
     final_close_signal = _signal("SELL", price=112.0)
-    final_close_signal.metadata = {**dict(final_close_signal.metadata), "opportunity_shadow_record_key": correlation_key}
+    final_close_signal.metadata = {
+        **dict(final_close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
     controller.process_signals([open_signal])
     controller.process_signals([partial_close_signal])
     controller.process_signals([final_close_signal])
