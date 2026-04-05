@@ -84,6 +84,29 @@ class _ErrorClient:
         raise ExchangeAPIError("deribit error", status_code=self.status, payload=self.payload)
 
 
+class _TickerClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def fetch_ticker(self, symbol: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append((symbol, dict(kwargs)))
+        return {"symbol": symbol}
+
+
+def test_deribit_futures_fetch_ticker_omits_none_params_in_ccxt_call() -> None:
+    client = _TickerClient()
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.fetch_ticker("BTC-PERPETUAL")
+
+    assert client.calls == [("BTC-PERPETUAL", {})]
+
+
 def test_deribit_futures_maps_auth_errors() -> None:
     payload = '{"error": {"code": 13002, "message": "authorization invalid"}}'
     adapter = DeribitFuturesAdapter(

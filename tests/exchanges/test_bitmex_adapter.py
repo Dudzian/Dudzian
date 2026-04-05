@@ -83,6 +83,29 @@ class _ErrorClient:
         raise ExchangeAPIError("bitmex error", status_code=self.status, payload=self.payload)
 
 
+class _TickerClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def fetch_ticker(self, symbol: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append((symbol, dict(kwargs)))
+        return {"symbol": symbol}
+
+
+def test_bitmex_futures_fetch_ticker_omits_none_params_in_ccxt_call() -> None:
+    client = _TickerClient()
+    adapter = BitmexFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.fetch_ticker("XBTUSD")
+
+    assert client.calls == [("XBTUSD", {})]
+
+
 def test_bitmex_futures_maps_auth_errors() -> None:
     payload = '{"error": {"name": "InvalidApiKey", "message": "key disabled"}}'
     adapter = BitmexFuturesAdapter(

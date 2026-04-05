@@ -287,6 +287,15 @@ class _BytesPayloadOrders(bytes):
         return iter(self._entries)
 
 
+class _CallCaptureClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def call(self, *args: object, **kwargs: object) -> dict[str, object]:
+        self.calls.append((args, dict(kwargs)))
+        return {"ok": True}
+
+
 class _ProbeWatchdog(Watchdog):
     def __init__(self, *, retry_policy: RetryPolicy) -> None:
         super().__init__(retry_policy=retry_policy, sleep=lambda _: None)
@@ -299,6 +308,43 @@ class _ProbeWatchdog(Watchdog):
 
 def _build_request(symbol: str = "BTC/USDT") -> OrderRequest:
     return OrderRequest(symbol=symbol, side="buy", quantity=1.0, order_type="limit", price=10.5)
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_kwargs"),
+    [
+        (None, {"since": 123, "limit": 7, "context": "snapshot"}),
+        ({}, {"params": {}, "since": 123, "limit": 7, "context": "snapshot"}),
+        (
+            {"type": "future", "recvWindow": 30_000},
+            {
+                "params": {"type": "future", "recvWindow": 30_000},
+                "since": 123,
+                "limit": 7,
+                "context": "snapshot",
+            },
+        ),
+    ],
+)
+def test_ccxt_spot_call_client_params_contract(params, expected_kwargs) -> None:
+    client = _CallCaptureClient()
+    adapter = CoinbaseSpotAdapter(
+        ExchangeCredentials(key_id="k", secret="s"),
+        environment=Environment.TESTNET,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter._call_client(
+        "call",
+        "BTC/USDT",
+        params=params,
+        since=123,
+        limit=7,
+        context="snapshot",
+    )
+
+    assert client.calls == [(("BTC/USDT",), expected_kwargs)]
 
 
 def test_coinbase_adapter_basic_flow():
