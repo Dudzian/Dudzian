@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Mapping, Sequence
 
 from .opportunity_evaluation import (
@@ -32,6 +33,8 @@ _REQUIRED_FEATURE_CONTEXT_KEYS: tuple[str, ...] = (
 )
 _FINAL_LABEL_PREFIXES: tuple[str, ...] = ("final",)
 _PARTIAL_LABEL_PREFIXES: tuple[str, ...] = ("partial",)
+_NON_FINAL_EXCLUDED_PREFIX = "non_final_outcomes_excluded:"
+_MIXED_FINAL_PARTIAL_PREFIX = "mixed_final_partial_outcomes_degraded:"
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,6 +57,59 @@ class OpportunityPersistedPromotionReadinessReport:
     matched_outcomes: Mapping[str, int]
     evaluation_window_start: datetime | None
     evaluation_window_end: datetime | None
+
+
+class OpportunityAutonomyMode(str, Enum):
+    DENIED = "denied"
+    SHADOW_ONLY = "shadow_only"
+    PAPER_AUTONOMOUS = "paper_autonomous"
+    LIVE_ASSISTED = "live_assisted"
+    LIVE_AUTONOMOUS = "live_autonomous"
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityAutonomyGateConfig:
+    min_final_outcomes_for_live_autonomy: int = 8
+    min_total_matched_outcomes: int = 6
+    min_observed_outcomes_for_paper_autonomy: int = 2
+    allow_partial_only_for_shadow_or_paper: bool = False
+    require_promotion_pass_for_live: bool = True
+    require_activation_ready_for_live: bool = True
+    max_allowed_degraded_reasons_for_live_assisted: int = 2
+    blocking_degraded_reasons: tuple[str, ...] = (
+        "proxy_only_outcomes_excluded_from_governance",
+        "promotion_gate_failed",
+    )
+    allowlisted_degraded_reasons: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityAutonomyDecision:
+    mode: OpportunityAutonomyMode
+    primary_reason: str
+    reasons: tuple[str, ...]
+    blocking_reasons: tuple[str, ...]
+    warnings: tuple[str, ...]
+    evidence_summary: Mapping[str, int | bool | str]
+
+    @property
+    def autonomous_execution_allowed(self) -> bool:
+        return self.mode in {
+            OpportunityAutonomyMode.PAPER_AUTONOMOUS,
+            OpportunityAutonomyMode.LIVE_ASSISTED,
+            OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        }
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "mode": self.mode.value,
+            "autonomous_execution_allowed": self.autonomous_execution_allowed,
+            "primary_reason": self.primary_reason,
+            "reasons": list(self.reasons),
+            "blocking_reasons": list(self.blocking_reasons),
+            "warnings": list(self.warnings),
+            "evidence_summary": dict(self.evidence_summary),
+        }
 
 
 class OpportunityLifecycleService:
@@ -195,6 +251,185 @@ class OpportunityLifecycleService:
             evaluation_window_end=window_end,
         )
 
+    def evaluate_autonomy_gate(
+        self,
+        *,
+        readiness_report: OpportunityPersistedPromotionReadinessReport,
+        gate_config: OpportunityAutonomyGateConfig | None = None,
+    ) -> OpportunityAutonomyDecision:
+        config = gate_config or OpportunityAutonomyGateConfig()
+        degraded_reasons = tuple(readiness_report.degraded_reasons)
+        matched = tuple(int(value) for value in readiness_report.matched_outcomes.values())
+        paired_matched_outcomes = min(matched) if matched else 0
+        quality_counts = self._extract_quality_counts(degraded_reasons)
+        final_outcomes = max(quality_counts.get("final", 0), paired_matched_outcomes)
+        partial_outcomes = sum(
+            value for key, value in quality_counts.items() if key.startswith(_PARTIAL_LABEL_PREFIXES)
+        )
+        non_final_non_partial_outcomes = max(
+            0,
+            sum(quality_counts.values()) - quality_counts.get("final", 0) - partial_outcomes,
+        )
+        observed_outcomes = (
+            final_outcomes + partial_outcomes + non_final_non_partial_outcomes
+            if quality_counts
+            else paired_matched_outcomes
+        )
+        has_partial_only = "partial_only_outcomes_excluded_from_governance" in degraded_reasons
+        has_proxy_only = "proxy_only_outcomes_excluded_from_governance" in degraded_reasons
+        mixed_final_partial = any(
+            reason.startswith(_MIXED_FINAL_PARTIAL_PREFIX) for reason in degraded_reasons
+        )
+        promotion_passed = (
+            readiness_report.promotion_report is not None
+            and readiness_report.promotion_report.promotion_recommended
+        )
+        activation_ready = readiness_report.activation_readiness.activation_ready
+
+        blocking_reasons = self._collect_blocking_reasons(
+            degraded_reasons=degraded_reasons,
+            config=config,
+            has_proxy_only=has_proxy_only,
+        )
+        non_blocking_degradations = tuple(
+            reason for reason in degraded_reasons if reason not in set(blocking_reasons)
+        )
+        evidence_summary: dict[str, int | bool | str] = {
+            "paired_matched_outcomes": paired_matched_outcomes,
+            "observed_outcomes": observed_outcomes,
+            "final_outcomes": final_outcomes,
+            "partial_outcomes": partial_outcomes,
+            "non_final_non_partial_outcomes": non_final_non_partial_outcomes,
+            "promotion_passed": promotion_passed,
+            "activation_ready": activation_ready,
+            "has_proxy_only_evidence": has_proxy_only,
+            "has_partial_only_evidence": has_partial_only,
+            "has_mixed_final_partial_evidence": mixed_final_partial,
+        }
+
+        if blocking_reasons:
+            reasons = ("blocking_degradation_present", *blocking_reasons)
+            return OpportunityAutonomyDecision(
+                mode=OpportunityAutonomyMode.DENIED,
+                primary_reason="blocking_degradation_present",
+                reasons=reasons,
+                blocking_reasons=blocking_reasons,
+                warnings=degraded_reasons,
+                evidence_summary=evidence_summary,
+            )
+        if observed_outcomes == 0:
+            return OpportunityAutonomyDecision(
+                mode=OpportunityAutonomyMode.DENIED,
+                primary_reason="missing_outcome_evidence",
+                reasons=("missing_outcome_evidence",),
+                blocking_reasons=(),
+                warnings=degraded_reasons,
+                evidence_summary=evidence_summary,
+            )
+        if has_proxy_only:
+            return OpportunityAutonomyDecision(
+                mode=OpportunityAutonomyMode.DENIED,
+                primary_reason="proxy_only_evidence",
+                reasons=("proxy_only_evidence",),
+                blocking_reasons=(),
+                warnings=degraded_reasons,
+                evidence_summary=evidence_summary,
+            )
+
+        live_ready = (
+            paired_matched_outcomes >= config.min_total_matched_outcomes
+            and final_outcomes >= config.min_final_outcomes_for_live_autonomy
+            and (not config.require_promotion_pass_for_live or promotion_passed)
+            and (not config.require_activation_ready_for_live or activation_ready)
+        )
+        if live_ready:
+            if non_blocking_degradations:
+                if len(non_blocking_degradations) <= config.max_allowed_degraded_reasons_for_live_assisted:
+                    return OpportunityAutonomyDecision(
+                        mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+                        primary_reason="live_allowed_with_degradations",
+                        reasons=("live_allowed_with_degradations",),
+                        blocking_reasons=(),
+                        warnings=degraded_reasons,
+                        evidence_summary=evidence_summary,
+                    )
+                return OpportunityAutonomyDecision(
+                    mode=OpportunityAutonomyMode.PAPER_AUTONOMOUS,
+                    primary_reason="live_downgraded_due_to_degradations",
+                    reasons=("live_downgraded_due_to_degradations",),
+                    blocking_reasons=(),
+                    warnings=degraded_reasons,
+                    evidence_summary=evidence_summary,
+                )
+            return OpportunityAutonomyDecision(
+                mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+                primary_reason="live_autonomy_gate_passed",
+                reasons=("live_autonomy_gate_passed",),
+                blocking_reasons=(),
+                warnings=(),
+                evidence_summary=evidence_summary,
+            )
+
+        allow_paper_with_partial_only = (
+            has_partial_only and config.allow_partial_only_for_shadow_or_paper
+        )
+        paper_evidence_ready = observed_outcomes >= config.min_observed_outcomes_for_paper_autonomy
+        if paper_evidence_ready and (not has_partial_only or allow_paper_with_partial_only):
+            return OpportunityAutonomyDecision(
+                mode=OpportunityAutonomyMode.PAPER_AUTONOMOUS,
+                primary_reason="sufficient_evidence_for_paper_only",
+                reasons=("sufficient_evidence_for_paper_only",),
+                blocking_reasons=(),
+                warnings=degraded_reasons,
+                evidence_summary=evidence_summary,
+            )
+
+        return OpportunityAutonomyDecision(
+            mode=OpportunityAutonomyMode.SHADOW_ONLY,
+            primary_reason="insufficient_evidence_for_paper_or_live",
+            reasons=("insufficient_evidence_for_paper_or_live",),
+            blocking_reasons=(),
+            warnings=degraded_reasons,
+            evidence_summary=evidence_summary,
+        )
+
+    @staticmethod
+    def _extract_quality_counts(degraded_reasons: Sequence[str]) -> dict[str, int]:
+        for reason in degraded_reasons:
+            if not reason.startswith(_NON_FINAL_EXCLUDED_PREFIX):
+                continue
+            counts_raw = reason.split(_NON_FINAL_EXCLUDED_PREFIX, 1)[1]
+            counts: dict[str, int] = {}
+            for item in counts_raw.split(","):
+                key, _, value = item.partition(":")
+                key = key.strip()
+                if not key:
+                    continue
+                try:
+                    counts[key] = int(value.strip())
+                except ValueError:
+                    continue
+            return counts
+        return {}
+
+    @staticmethod
+    def _collect_blocking_reasons(
+        *,
+        degraded_reasons: Sequence[str],
+        config: OpportunityAutonomyGateConfig,
+        has_proxy_only: bool,
+    ) -> tuple[str, ...]:
+        blocking_prefixes = tuple(config.blocking_degraded_reasons)
+        allowlisted = set(config.allowlisted_degraded_reasons)
+        blocked = [
+            reason
+            for reason in degraded_reasons
+            if reason not in allowlisted and any(reason.startswith(prefix) for prefix in blocking_prefixes)
+        ]
+        if has_proxy_only and "proxy_only_outcomes_excluded_from_governance" not in blocked:
+            blocked.append("proxy_only_outcomes_excluded_from_governance")
+        return tuple(blocked)
+
     def _safe_shadow_eval(
         self,
         records: Sequence[OpportunityShadowRecord],
@@ -274,6 +509,9 @@ class OpportunityLifecycleService:
 
 
 __all__ = [
+    "OpportunityAutonomyDecision",
+    "OpportunityAutonomyGateConfig",
+    "OpportunityAutonomyMode",
     "OpportunityActivationReadiness",
     "OpportunityLifecycleService",
     "OpportunityPersistedPromotionReadinessReport",
