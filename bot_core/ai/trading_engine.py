@@ -251,8 +251,12 @@ class _PlattSuccessCalibrator:
             return 0.0
         return 1.0 / (1.0 + math.exp(-z))
 
-    def to_mapping(self) -> Mapping[str, float]:
-        return {"method": "platt_scaling", "slope": float(self.slope), "intercept": float(self.intercept)}
+    def to_mapping(self) -> Mapping[str, object]:
+        return {
+            "method": "platt_scaling",
+            "slope": float(self.slope),
+            "intercept": float(self.intercept),
+        }
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> "_PlattSuccessCalibrator | None":
@@ -260,7 +264,9 @@ class _PlattSuccessCalibrator:
             return None
         slope = payload.get("slope")
         intercept = payload.get("intercept")
-        if not TradingOpportunityAI._is_finite(slope) or not TradingOpportunityAI._is_finite(intercept):
+        if not TradingOpportunityAI._is_finite(slope) or not TradingOpportunityAI._is_finite(
+            intercept
+        ):
             return None
         return cls(slope=float(slope), intercept=float(intercept))
 
@@ -307,7 +313,9 @@ class _PlattSuccessCalibrator:
             slope -= learning_rate * (grad_slope / n)
             intercept -= learning_rate * (grad_intercept / n)
 
-        if not TradingOpportunityAI._is_finite(slope) or not TradingOpportunityAI._is_finite(intercept):
+        if not TradingOpportunityAI._is_finite(slope) or not TradingOpportunityAI._is_finite(
+            intercept
+        ):
             return None
         return cls(slope=float(slope), intercept=float(intercept))
 
@@ -348,10 +356,16 @@ class TradingOpportunityAI:
         else:
             validation_size = max(1, int(len(ordered_samples) * 0.2))
             validation_size = min(validation_size, len(ordered_samples) - 1)
-            validation_indices.update(range(len(ordered_samples) - validation_size, len(ordered_samples)))
+            validation_indices.update(
+                range(len(ordered_samples) - validation_size, len(ordered_samples))
+            )
 
-        validation_samples = [sample for idx, sample in enumerate(ordered_samples) if idx in validation_indices]
-        train_samples = [sample for idx, sample in enumerate(ordered_samples) if idx not in validation_indices]
+        validation_samples = [
+            sample for idx, sample in enumerate(ordered_samples) if idx in validation_indices
+        ]
+        train_samples = [
+            sample for idx, sample in enumerate(ordered_samples) if idx not in validation_indices
+        ]
 
         train_matrix = [self._vector_from_snapshot(sample) for sample in train_samples]
         train_targets = [self._target(sample) for sample in train_samples]
@@ -403,7 +417,9 @@ class TradingOpportunityAI:
             / len(classifier_ensemble_models)
             for vector in validation_matrix
         ]
-        validation_targets = [self._success_target(self._target(sample)) for sample in validation_samples]
+        validation_targets = [
+            self._success_target(self._target(sample)) for sample in validation_samples
+        ]
         success_calibrator = _PlattSuccessCalibrator.fit(
             raw_probabilities=validation_probability_raw,
             targets=validation_targets,
@@ -516,7 +532,12 @@ class TradingOpportunityAI:
                     "classifier_accuracy": classification_acc,
                     "classifier_brier_score": brier,
                     "classifier_raw_brier_score": (
-                        sum((predicted - expected) ** 2 for predicted, expected in zip(raw_probability_predictions, classifier_targets))
+                        sum(
+                            (predicted - expected) ** 2
+                            for predicted, expected in zip(
+                                raw_probability_predictions, classifier_targets
+                            )
+                        )
                         / len(classifier_targets)
                     ),
                 }
@@ -600,7 +621,9 @@ class TradingOpportunityAI:
         self._model = model
         self._classifier_model = classifier
         self._success_calibrator = calibrator
-        self._edge_ensemble_models = tuple(edge_ensemble_models) if edge_ensemble_models else (model,)
+        self._edge_ensemble_models = (
+            tuple(edge_ensemble_models) if edge_ensemble_models else (model,)
+        )
         self._classifier_ensemble_models = (
             tuple(classifier_ensemble_models)
             if classifier_ensemble_models
@@ -652,6 +675,7 @@ class TradingOpportunityAI:
             features = self._features_from_vector(feature_payload.feature_values)
             edge_predictions = [float(member.predict(features)) for member in edge_members]
             edge = sum(edge_predictions) / len(edge_predictions)
+            calibration: dict[str, object]
             if classifier is not None:
                 raw_probability_members = [
                     self._clip_probability(member.predict(features))
@@ -738,7 +762,9 @@ class TradingOpportunityAI:
                         "feature_freshness_seconds": feature_payload.freshness_seconds,
                         "market_regime": feature_payload.regime.to_mapping(),
                         "probability_method": probability_method,
-                        "raw_probability_method": calibration.get("raw_probability_method", probability_method),
+                        "raw_probability_method": calibration.get(
+                            "raw_probability_method", probability_method
+                        ),
                         "confidence_method": "distance_from_probability_midpoint",
                         "uncertainty_method": "edge_stddev_plus_probability_dispersion",
                         "uncertainty_score": uncertainty,
@@ -920,9 +946,7 @@ class TradingOpportunityAI:
     ) -> None:
         for feature_name, value in zip(_RAW_FEATURE_NAMES, values):
             if not cls._is_finite(value):
-                raise ValueError(
-                    f"Niefinitywna cecha {feature_name} ({context}#{item_index})"
-                )
+                raise ValueError(f"Niefinitywna cecha {feature_name} ({context}#{item_index})")
 
     @classmethod
     def _validate_training_samples(cls, samples: Sequence[OpportunitySnapshot]) -> None:
@@ -956,15 +980,21 @@ class TradingOpportunityAI:
             raise ValueError("Feature version mismatch: missing feature spec metadata")
         version = str(feature_spec.get("version", "")).strip()
         if version != _FEATURE_SPEC_VERSION:
-            raise ValueError("Feature version mismatch: unsupported opportunity feature spec version")
+            raise ValueError(
+                "Feature version mismatch: unsupported opportunity feature spec version"
+            )
         metadata_names_raw = feature_spec.get("names")
-        if not isinstance(metadata_names_raw, Sequence) or isinstance(metadata_names_raw, (str, bytes)):
+        if not isinstance(metadata_names_raw, Sequence) or isinstance(
+            metadata_names_raw, (str, bytes)
+        ):
             raise ValueError("Feature spec mismatch: metadata.feature_spec.names is invalid")
         metadata_names = tuple(str(name) for name in metadata_names_raw)
         if metadata_names != _FEATURE_NAMES:
             raise ValueError("Feature spec mismatch: metadata feature names are incompatible")
         if metadata_names != top_level_names:
-            raise ValueError("Feature spec mismatch: metadata/top-level feature names are inconsistent")
+            raise ValueError(
+                "Feature spec mismatch: metadata/top-level feature names are inconsistent"
+            )
 
     @classmethod
     def _validate_rank_thresholds(

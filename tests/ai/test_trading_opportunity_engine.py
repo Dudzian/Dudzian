@@ -214,8 +214,13 @@ def test_fit_dual_head_contains_classifier_state_and_metadata() -> None:
 
     assert "classifier_head_state" in artifact.model_state
     assert artifact.metadata["artifact_schema_version"] == "opportunity_dual_head_v1"
-    assert artifact.metadata["classification_target_definition"] == "1 if target_definition > 0 else 0"
-    assert artifact.metadata["heads"]["success_classifier"]["prediction_field"] == "success_probability"
+    assert (
+        artifact.metadata["classification_target_definition"] == "1 if target_definition > 0 else 0"
+    )
+    assert (
+        artifact.metadata["heads"]["success_classifier"]["prediction_field"]
+        == "success_probability"
+    )
     summary = artifact.metrics.summary()
     assert "classifier_accuracy" in summary
     assert "classifier_brier_score" in summary
@@ -269,7 +274,9 @@ def test_save_load_dual_head_artifact_keeps_classifier_probability(tmp_path) -> 
     after = reloaded.rank([candidate])[0]
 
     assert "classifier_head_state" in artifact.model_state
-    assert before.success_probability == pytest.approx(after.success_probability, rel=1e-12, abs=1e-12)
+    assert before.success_probability == pytest.approx(
+        after.success_probability, rel=1e-12, abs=1e-12
+    )
 
 
 def test_save_load_preserves_ensemble_states_and_scores(tmp_path) -> None:
@@ -297,7 +304,9 @@ def test_save_load_preserves_ensemble_states_and_scores(tmp_path) -> None:
     assert "ensemble_edge_states" in artifact.model_state
     assert "ensemble_classifier_states" in artifact.model_state
     assert before.expected_edge_bps == pytest.approx(after.expected_edge_bps, rel=1e-12, abs=1e-12)
-    assert before.success_probability == pytest.approx(after.success_probability, rel=1e-12, abs=1e-12)
+    assert before.success_probability == pytest.approx(
+        after.success_probability, rel=1e-12, abs=1e-12
+    )
 
 
 def test_rank_provenance_contains_uncertainty_and_agreement_markers() -> None:
@@ -816,7 +825,9 @@ def test_temporal_evaluator_falls_back_to_heuristic_for_legacy_artifact() -> Non
     engine = TradingOpportunityAI()
     artifact = engine.fit(_build_samples())
     legacy_model_state = {
-        key: value for key, value in dict(artifact.model_state).items() if key != "classifier_head_state"
+        key: value
+        for key, value in dict(artifact.model_state).items()
+        if key != "classifier_head_state"
     }
     legacy_artifact = ModelArtifact(
         feature_names=artifact.feature_names,
@@ -866,8 +877,12 @@ def test_save_load_keeps_classifier_based_ranking_and_evaluation(tmp_path) -> No
     original_eval = evaluator.evaluate(original_artifact, _build_samples())
     reloaded_eval = evaluator.evaluate(reloaded_artifact, _build_samples())
 
-    assert original_decision.provenance["probability_method"] == "model_success_classifier_calibrated"
-    assert reloaded_decision.provenance["probability_method"] == "model_success_classifier_calibrated"
+    assert (
+        original_decision.provenance["probability_method"] == "model_success_classifier_calibrated"
+    )
+    assert (
+        reloaded_decision.provenance["probability_method"] == "model_success_classifier_calibrated"
+    )
     assert reloaded_decision.success_probability == pytest.approx(
         original_decision.success_probability,
         rel=1e-12,

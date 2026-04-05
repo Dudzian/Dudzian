@@ -48,7 +48,9 @@ def _json_safe(value: object) -> object:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-repo", required=True, help="Path to model repository root")
-    parser.add_argument("--shadow-repo", required=True, help="Path to opportunity shadow repository root")
+    parser.add_argument(
+        "--shadow-repo", required=True, help="Path to opportunity shadow repository root"
+    )
     parser.add_argument("--champion-version", required=True, help="Champion model version")
     parser.add_argument("--challenger-version", required=True, help="Challenger model version")
     parser.add_argument("--output", help="Optional path to save JSON report")

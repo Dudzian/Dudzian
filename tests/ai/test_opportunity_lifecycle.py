@@ -6,7 +6,11 @@ from pathlib import Path
 from bot_core.ai.opportunity_lifecycle import OpportunityLifecycleService
 from bot_core.ai.opportunity_evaluation import OpportunityPromotionGateConfig
 from bot_core.ai.repository import FilesystemModelRepository
-from bot_core.ai.trading_engine import OpportunityDecision, OpportunitySnapshot, TradingOpportunityAI
+from bot_core.ai.trading_engine import (
+    OpportunityDecision,
+    OpportunitySnapshot,
+    TradingOpportunityAI,
+)
 from bot_core.ai.trading_opportunity_shadow import (
     OpportunityOutcomeLabel,
     OpportunityShadowRepository,
@@ -171,7 +175,9 @@ def test_build_persisted_promotion_readiness_is_explicitly_degraded_without_labe
     assert report.degraded_reasons
 
 
-def test_build_persisted_promotion_readiness_flags_incomplete_feature_context(tmp_path: Path) -> None:
+def test_build_persisted_promotion_readiness_flags_incomplete_feature_context(
+    tmp_path: Path,
+) -> None:
     model_repo = FilesystemModelRepository(tmp_path / "models")
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     engine = TradingOpportunityAI(repository=model_repo)

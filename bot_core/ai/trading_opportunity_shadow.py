@@ -74,7 +74,9 @@ class OpportunityShadowRecord:
             confidence=float(payload["confidence"]),
             proposed_direction=str(payload["proposed_direction"]),
             accepted=_parse_bool(payload["accepted"], field_name="accepted"),
-            rejection_reason=str(payload["rejection_reason"]) if payload.get("rejection_reason") is not None else None,
+            rejection_reason=str(payload["rejection_reason"])
+            if payload.get("rejection_reason") is not None
+            else None,
             rank=int(payload["rank"]),
             provenance=dict(payload.get("provenance") or {}),
             threshold_config=OpportunityThresholdConfig(**dict(threshold_payload or {})),
@@ -119,8 +121,12 @@ class OpportunityOutcomeLabel:
             realized_return_bps=float(payload["realized_return_bps"]),
             max_favorable_excursion_bps=float(payload["max_favorable_excursion_bps"]),
             max_adverse_excursion_bps=float(payload["max_adverse_excursion_bps"]),
-            hit_take_profit=_parse_optional_bool(payload.get("hit_take_profit"), field_name="hit_take_profit"),
-            hit_stop_loss=_parse_optional_bool(payload.get("hit_stop_loss"), field_name="hit_stop_loss"),
+            hit_take_profit=_parse_optional_bool(
+                payload.get("hit_take_profit"), field_name="hit_take_profit"
+            ),
+            hit_stop_loss=_parse_optional_bool(
+                payload.get("hit_stop_loss"), field_name="hit_stop_loss"
+            ),
             provenance=dict(payload.get("provenance") or {}),
             label_quality=str(payload.get("label_quality") or "unknown"),
         )
@@ -239,8 +245,7 @@ class OpportunityShadowRepository:
         known_shadow_keys = {record.record_key for record in shadow_records}
         shadow_by_key = {record.record_key: record for record in shadow_records}
         existing_labels = {
-            str(label.correlation_key): label
-            for label in self.load_outcome_labels()
+            str(label.correlation_key): label for label in self.load_outcome_labels()
         }
         pending: dict[str, OpportunityOutcomeLabel] = {}
         attached: list[str] = []
@@ -291,7 +296,11 @@ class OpportunityShadowRepository:
             existing_rows = self.load_outcome_labels()
             by_key = {str(row.correlation_key): row for row in existing_rows}
             by_key.update(pending)
-            ordered_keys = [str(row.correlation_key) for row in existing_rows if str(row.correlation_key) in by_key]
+            ordered_keys = [
+                str(row.correlation_key)
+                for row in existing_rows
+                if str(row.correlation_key) in by_key
+            ]
             for key in pending:
                 if key not in ordered_keys:
                     ordered_keys.append(key)
@@ -334,10 +343,16 @@ class OpportunityShadowRepository:
         return 0
 
     def load_shadow_records(self) -> list[OpportunityShadowRecord]:
-        return [OpportunityShadowRecord.from_dict(payload) for payload in _read_ndjson(self.shadow_records_path)]
+        return [
+            OpportunityShadowRecord.from_dict(payload)
+            for payload in _read_ndjson(self.shadow_records_path)
+        ]
 
     def load_outcome_labels(self) -> list[OpportunityOutcomeLabel]:
-        return [OpportunityOutcomeLabel.from_dict(payload) for payload in _read_ndjson(self.outcome_labels_path)]
+        return [
+            OpportunityOutcomeLabel.from_dict(payload)
+            for payload in _read_ndjson(self.outcome_labels_path)
+        ]
 
     def load_open_outcomes(self) -> list["OpportunityShadowRepository.OpenOutcomeState"]:
         return [

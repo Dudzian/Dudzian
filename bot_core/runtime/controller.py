@@ -1724,9 +1724,8 @@ class TradingController:
 
     @staticmethod
     def _is_closing_side(open_side: str, current_side: str) -> bool:
-        return (
-            (open_side in _BUY_SIDES and current_side in _SELL_SIDES)
-            or (open_side in _SELL_SIDES and current_side in _BUY_SIDES)
+        return (open_side in _BUY_SIDES and current_side in _SELL_SIDES) or (
+            open_side in _SELL_SIDES and current_side in _BUY_SIDES
         )
 
     @staticmethod
