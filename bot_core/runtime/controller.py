@@ -218,9 +218,12 @@ def _normalize_execution_status(value: object | None) -> str:
 @dataclass(slots=True)
 class _OpportunityOpenOutcomeTracker:
     correlation_key: str
+    symbol: str
     side: str
     entry_price: float
     decision_timestamp: datetime
+    entry_quantity: float = 0.0
+    closed_quantity: float = 0.0
 
 
 def _extract_adjusted_quantity(
@@ -566,6 +569,89 @@ class TradingController:
         self._ai_health_status = None
         self._opportunity_shadow_repository = self.opportunity_shadow_repository
         self._opportunity_open_outcomes = {}
+        self._restore_opportunity_open_outcomes()
+
+    def _restore_opportunity_open_outcomes(self) -> None:
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return
+        try:
+            restored = repository.load_open_outcomes()
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug("Nie udało się odtworzyć open Opportunity outcomes", exc_info=True)
+            return
+        for row in restored:
+            self._opportunity_open_outcomes[row.correlation_key] = _OpportunityOpenOutcomeTracker(
+                correlation_key=row.correlation_key,
+                symbol=row.symbol,
+                side=row.side,
+                entry_price=row.entry_price,
+                decision_timestamp=row.decision_timestamp,
+                entry_quantity=float(row.entry_quantity),
+                closed_quantity=float(row.closed_quantity),
+            )
+
+    def _persist_open_outcome_tracker(self, tracker: _OpportunityOpenOutcomeTracker) -> None:
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return
+        try:
+            repository.upsert_open_outcome(
+                repository.OpenOutcomeState(
+                    correlation_key=tracker.correlation_key,
+                    symbol=tracker.symbol,
+                    side=tracker.side,
+                    entry_price=tracker.entry_price,
+                    decision_timestamp=tracker.decision_timestamp,
+                    entry_quantity=tracker.entry_quantity,
+                    closed_quantity=tracker.closed_quantity,
+                    provenance={
+                        "source": "trading_controller_open_execution",
+                        "environment": self.environment,
+                        "portfolio": self.portfolio_id,
+                    },
+                )
+            )
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug("Nie udało się utrwalić open Opportunity outcome", exc_info=True)
+
+    def _discard_open_outcome_tracker(self, correlation_key: str) -> None:
+        self._opportunity_open_outcomes.pop(correlation_key, None)
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return
+        try:
+            repository.remove_open_outcome(correlation_key)
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug("Nie udało się usunąć open Opportunity outcome", exc_info=True)
+
+    def _resolve_open_outcome_tracker(
+        self,
+        *,
+        symbol: str,
+        current_side: str,
+        correlation_key: str,
+    ) -> tuple[_OpportunityOpenOutcomeTracker | None, str]:
+        if correlation_key:
+            tracked = self._opportunity_open_outcomes.get(correlation_key)
+            if tracked is None:
+                return None, "missing"
+            if str(tracked.symbol) != str(symbol):
+                return None, "symbol_mismatch"
+            if not self._is_closing_side(tracked.side, current_side):
+                return None, "side_mismatch"
+            return tracked, "resolved_by_correlation_key"
+
+        candidates = [
+            row
+            for row in self._opportunity_open_outcomes.values()
+            if str(row.symbol) == str(symbol) and self._is_closing_side(row.side, current_side)
+        ]
+        if not candidates:
+            return None, "missing"
+        if len(candidates) > 1:
+            return None, "ambiguous"
+        return candidates[0], "resolved_by_symbol_singleton"
 
     def _record_decision_event(
         self,
@@ -1314,6 +1400,22 @@ class TradingController:
         repository = self._opportunity_shadow_repository
         if repository is None:
             return
+        try:
+            existing_labels_by_key = {
+                str(row.correlation_key): row
+                for row in repository.load_outcome_labels()
+            }
+        except Exception:  # pragma: no cover - diagnostics only
+            existing_labels_by_key = {}
+        try:
+            shadow_by_key = {
+                str(row.record_key): row
+                for row in repository.load_shadow_records()
+            }
+            known_shadow_keys = set(shadow_by_key)
+        except Exception:  # pragma: no cover - diagnostics only
+            shadow_by_key = {}
+            known_shadow_keys = set()
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
         side = str(request.side or "").upper()
@@ -1329,8 +1431,9 @@ class TradingController:
         except (TypeError, ValueError):
             avg_price = None
         raw_decision_timestamp = request_metadata.get("opportunity_decision_timestamp")
+        has_decision_timestamp_hint = isinstance(raw_decision_timestamp, str) and bool(raw_decision_timestamp.strip())
         timestamp = self._clock()
-        if isinstance(raw_decision_timestamp, str) and raw_decision_timestamp.strip():
+        if has_decision_timestamp_hint:
             try:
                 timestamp = datetime.fromisoformat(raw_decision_timestamp.replace("Z", "+00:00"))
             except ValueError:
@@ -1339,7 +1442,182 @@ class TradingController:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
         timestamp_utc = timestamp.astimezone(timezone.utc)
         proxy_label: OpportunityOutcomeLabel | None = None
-        if correlation_key:
+
+        final_label: OpportunityOutcomeLabel | None = None
+        partial_label: OpportunityOutcomeLabel | None = None
+        final_tracker: _OpportunityOpenOutcomeTracker | None = None
+        final_resolution = ""
+        unresolved_close_with_correlation_key = False
+        open_intent_candidate = False
+        replay_open_candidate = False
+        if is_filled_or_partial and avg_price is not None:
+            tracked, resolution = self._resolve_open_outcome_tracker(
+                symbol=str(request.symbol),
+                current_side=side,
+                correlation_key=correlation_key,
+            )
+            final_resolution = resolution
+            shadow_record = shadow_by_key.get(correlation_key) if correlation_key else None
+            expected_open_side = ""
+            if shadow_record is not None:
+                proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                expected_open_side = "BUY" if proposed_direction in {"long", "buy"} else (
+                    "SELL" if proposed_direction in {"short", "sell"} else ""
+                )
+            if correlation_key and resolution == "missing":
+                if shadow_record is not None:
+                    existing_quality = ""
+                    existing_label = existing_labels_by_key.get(correlation_key)
+                    if existing_label is not None:
+                        existing_quality = str(existing_label.label_quality)
+                    open_intent_candidate = (
+                        expected_open_side == side
+                        and OpportunityShadowRepository._quality_rank(existing_quality) < OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed")
+                    )
+            if correlation_key and resolution == "side_mismatch" and has_decision_timestamp_hint:
+                existing_quality = ""
+                existing_label = existing_labels_by_key.get(correlation_key)
+                if existing_label is not None:
+                    existing_quality = str(existing_label.label_quality)
+                existing_provenance = existing_label.provenance if existing_label is not None else {}
+                existing_avg_price = ""
+                existing_filled_quantity = ""
+                if isinstance(existing_provenance, Mapping):
+                    existing_avg_price = str(existing_provenance.get("avg_price", ""))
+                    existing_filled_quantity = str(existing_provenance.get("filled_quantity", ""))
+                incoming_avg_price = str(metadata.get("avg_price", ""))
+                incoming_filled_quantity = str(metadata.get("filled_quantity", ""))
+                replay_open_candidate = (
+                    expected_open_side == side
+                    and OpportunityShadowRepository._quality_rank(existing_quality)
+                    <= OpportunityShadowRepository._quality_rank("execution_proxy_pending_exit")
+                    and existing_avg_price == incoming_avg_price
+                    and existing_filled_quantity == incoming_filled_quantity
+                )
+            if tracked is not None:
+                realized_return_bps = self._realized_return_bps(
+                    entry_side=tracked.side,
+                    entry_price=tracked.entry_price,
+                    exit_price=avg_price,
+                )
+                horizon_minutes = max(
+                    0,
+                    int((timestamp_utc - tracked.decision_timestamp).total_seconds() / 60),
+                )
+                close_quantity = self._safe_float(
+                    metadata.get("filled_quantity", result.filled_quantity if result.filled_quantity is not None else request.quantity)
+                )
+                cumulative_closed_quantity = max(0.0, tracked.closed_quantity + max(close_quantity, 0.0))
+                tracked.closed_quantity = cumulative_closed_quantity
+                self._persist_open_outcome_tracker(tracked)
+                has_quantity_proof = tracked.entry_quantity > 0.0 and cumulative_closed_quantity > 0.0
+                is_confirmed_final_close = (
+                    normalized_status in _FILLED_EXECUTION_STATUSES
+                    and has_quantity_proof
+                    and cumulative_closed_quantity + 1e-9 >= tracked.entry_quantity
+                )
+                if is_confirmed_final_close:
+                    final_label = OpportunityOutcomeLabel(
+                        symbol=request.symbol,
+                        decision_timestamp=tracked.decision_timestamp,
+                        correlation_key=tracked.correlation_key,
+                        horizon_minutes=horizon_minutes,
+                        realized_return_bps=realized_return_bps,
+                        max_favorable_excursion_bps=0.0,
+                        max_adverse_excursion_bps=0.0,
+                        provenance={
+                            "source": "trading_controller_exit_result",
+                            "environment": self.environment,
+                            "portfolio": self.portfolio_id,
+                            "entry_price": f"{tracked.entry_price:.8f}",
+                            "exit_price": f"{avg_price:.8f}",
+                            "order_id": result.order_id or "",
+                            "execution_status": normalized_status,
+                            "excursion_metrics_available": "false",
+                            "max_favorable_excursion_bps_semantics": "not_computed_in_runtime_controller_flow",
+                            "max_adverse_excursion_bps_semantics": "not_computed_in_runtime_controller_flow",
+                            "return_metric_scope": "entry_exit_realized_only",
+                            "close_correlation_resolution": resolution,
+                            "entry_quantity": f"{tracked.entry_quantity:.8f}",
+                            "closed_quantity_cumulative": f"{cumulative_closed_quantity:.8f}",
+                            "close_confirmation": "quantity_and_filled_status",
+                        },
+                        label_quality="final",
+                    )
+                    final_tracker = tracked
+                else:
+                    existing_quality = ""
+                    existing_label = existing_labels_by_key.get(tracked.correlation_key)
+                    if existing_label is not None:
+                        existing_quality = str(existing_label.label_quality)
+                    if OpportunityShadowRepository._quality_rank(existing_quality) < OpportunityShadowRepository._quality_rank(
+                        "partial_exit_unconfirmed"
+                    ):
+                        partial_label = OpportunityOutcomeLabel(
+                            symbol=request.symbol,
+                            decision_timestamp=tracked.decision_timestamp,
+                            correlation_key=tracked.correlation_key,
+                            horizon_minutes=horizon_minutes,
+                            realized_return_bps=realized_return_bps,
+                            max_favorable_excursion_bps=0.0,
+                            max_adverse_excursion_bps=0.0,
+                            provenance={
+                                "source": "trading_controller_partial_exit_result",
+                                "environment": self.environment,
+                                "portfolio": self.portfolio_id,
+                                "entry_price": f"{tracked.entry_price:.8f}",
+                                "exit_price": f"{avg_price:.8f}",
+                                "order_id": result.order_id or "",
+                                "execution_status": normalized_status,
+                                "close_correlation_resolution": resolution,
+                                "entry_quantity": f"{tracked.entry_quantity:.8f}",
+                                "closed_quantity_cumulative": f"{cumulative_closed_quantity:.8f}",
+                                "close_confirmation": "insufficient_evidence_for_final_close",
+                            },
+                            label_quality="partial_exit_unconfirmed",
+                        )
+            elif correlation_key and open_intent_candidate and side in _BUY_SIDES | _SELL_SIDES:
+                tracker = _OpportunityOpenOutcomeTracker(
+                    correlation_key=correlation_key,
+                    symbol=str(request.symbol),
+                    side=side,
+                    entry_price=avg_price,
+                    decision_timestamp=timestamp_utc,
+                    entry_quantity=max(
+                        0.0,
+                        self._safe_float(
+                            metadata.get(
+                                "filled_quantity",
+                                result.filled_quantity if result.filled_quantity is not None else request.quantity,
+                            )
+                        ),
+                    ),
+                )
+                self._opportunity_open_outcomes[correlation_key] = tracker
+                self._persist_open_outcome_tracker(tracker)
+            elif (
+                correlation_key
+                and correlation_key in known_shadow_keys
+                and resolution in {"missing", "ambiguous", "side_mismatch", "symbol_mismatch"}
+                and not open_intent_candidate
+                and not replay_open_candidate
+            ):
+                unresolved_close_with_correlation_key = True
+        if unresolved_close_with_correlation_key:
+            self._record_decision_event(
+                "opportunity_outcome_attach",
+                signal=signal,
+                request=request,
+                status="close_correlation_unresolved",
+                metadata={
+                    "execution_status": normalized_status,
+                    "close_correlation_resolution": final_resolution,
+                    "symbol": request.symbol,
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            return
+        if correlation_key and final_label is None and partial_label is None:
             proxy_label = OpportunityOutcomeLabel(
                 symbol=request.symbol,
                 decision_timestamp=timestamp_utc,
@@ -1360,53 +1638,31 @@ class TradingController:
                 label_quality="execution_proxy_pending_exit",
             )
 
-        final_label: OpportunityOutcomeLabel | None = None
-        if is_filled_or_partial and avg_price is not None:
-            tracked = self._opportunity_open_outcomes.get(str(request.symbol))
-            if tracked is not None and self._is_closing_side(tracked.side, side):
-                realized_return_bps = self._realized_return_bps(
-                    entry_side=tracked.side,
-                    entry_price=tracked.entry_price,
-                    exit_price=avg_price,
-                )
-                horizon_minutes = max(
-                    0,
-                    int((timestamp_utc - tracked.decision_timestamp).total_seconds() / 60),
-                )
-                final_label = OpportunityOutcomeLabel(
-                    symbol=request.symbol,
-                    decision_timestamp=tracked.decision_timestamp,
-                    correlation_key=tracked.correlation_key,
-                    horizon_minutes=horizon_minutes,
-                    realized_return_bps=realized_return_bps,
-                    max_favorable_excursion_bps=0.0,
-                    max_adverse_excursion_bps=0.0,
-                    provenance={
-                        "source": "trading_controller_exit_result",
-                        "environment": self.environment,
-                        "portfolio": self.portfolio_id,
-                        "entry_price": f"{tracked.entry_price:.8f}",
-                        "exit_price": f"{avg_price:.8f}",
-                        "order_id": result.order_id or "",
-                        "execution_status": normalized_status,
-                        "excursion_metrics": "unavailable_in_runtime_controller_flow",
-                    },
-                    label_quality="final",
-                )
-                self._opportunity_open_outcomes.pop(str(request.symbol), None)
-            elif correlation_key and side in _BUY_SIDES | _SELL_SIDES:
-                self._opportunity_open_outcomes[str(request.symbol)] = _OpportunityOpenOutcomeTracker(
-                    correlation_key=correlation_key,
-                    side=side,
-                    entry_price=avg_price,
-                    decision_timestamp=timestamp_utc,
-                )
-
         labels_to_attach: list[OpportunityOutcomeLabel] = []
         if proxy_label is not None:
             labels_to_attach.append(proxy_label)
+        if partial_label is not None:
+            labels_to_attach.append(partial_label)
         if final_label is not None:
             labels_to_attach.append(final_label)
+        if (
+            final_label is None
+            and proxy_label is None
+            and side in _BUY_SIDES | _SELL_SIDES
+            and any(row.symbol == str(request.symbol) for row in self._opportunity_open_outcomes.values())
+            and final_resolution in {"ambiguous", "missing", "side_mismatch", "symbol_mismatch"}
+        ):
+            self._record_decision_event(
+                "opportunity_outcome_attach",
+                signal=signal,
+                request=request,
+                status="close_correlation_unresolved",
+                metadata={
+                    "execution_status": normalized_status,
+                    "close_correlation_resolution": final_resolution,
+                    "symbol": request.symbol,
+                },
+            )
         if not labels_to_attach:
             return
         try:
@@ -1414,15 +1670,30 @@ class TradingController:
             attach_metadata: dict[str, object] = {
                 "execution_status": normalized_status,
                 "proxy_correlation_key": correlation_key,
+                "partial_correlation_key": partial_label.correlation_key if partial_label is not None else "",
                 "final_correlation_key": final_label.correlation_key if final_label is not None else "",
+                "close_correlation_resolution": final_resolution,
             }
             if attach_result.upgraded_correlation_keys:
-                attach_status = "final_upgraded"
+                attach_status = "final_upgraded" if final_label is not None else "quality_upgraded"
                 attach_metadata["upgraded"] = ";".join(attach_result.upgraded_correlation_keys)
+                if final_tracker is not None:
+                    self._discard_open_outcome_tracker(final_tracker.correlation_key)
             elif attach_result.attached_correlation_keys:
-                attach_status = "attached"
+                if final_label is not None:
+                    attach_status = "final_attached"
+                elif partial_label is not None:
+                    attach_status = "partial_attached"
+                elif proxy_label is not None:
+                    attach_status = "proxy_attached"
+                else:
+                    attach_status = "attached"
+                if final_tracker is not None and final_label is not None:
+                    self._discard_open_outcome_tracker(final_label.correlation_key)
             elif attach_result.duplicate_noop_correlation_keys:
                 attach_status = "duplicate_noop"
+                if final_tracker is not None:
+                    self._discard_open_outcome_tracker(final_tracker.correlation_key)
             elif attach_result.conflicting_correlation_keys:
                 attach_status = "conflict_rejected"
                 attach_metadata["conflicts"] = ";".join(attach_result.conflicting_correlation_keys)
@@ -1467,6 +1738,13 @@ class TradingController:
         if entry_side in _SELL_SIDES:
             return ((entry_price - exit_price) / entry_price) * 10_000.0
         return 0.0
+
+    @staticmethod
+    def _safe_float(value: object, *, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _maybe_reverse_position(
         self,

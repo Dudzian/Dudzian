@@ -30,7 +30,8 @@ _REQUIRED_FEATURE_CONTEXT_KEYS: tuple[str, ...] = (
     "liquidity_score",
     "risk_penalty_bps",
 )
-_FINAL_LABEL_PREFIXES: tuple[str, ...] = ("final", "partial")
+_FINAL_LABEL_PREFIXES: tuple[str, ...] = ("final",)
+_PARTIAL_LABEL_PREFIXES: tuple[str, ...] = ("partial",)
 
 
 @dataclass(slots=True, frozen=True)
@@ -86,14 +87,30 @@ class OpportunityLifecycleService:
         for label in labels:
             quality = str(label.label_quality or "unknown")
             quality_counts[quality] = quality_counts.get(quality, 0) + 1
-        eligible_labels = [
+        final_labels = [
             label
             for label in labels
             if str(label.label_quality or "").strip().lower().startswith(_FINAL_LABEL_PREFIXES)
         ]
-        if labels and not eligible_labels:
+        partial_labels = [
+            label
+            for label in labels
+            if str(label.label_quality or "").strip().lower().startswith(_PARTIAL_LABEL_PREFIXES)
+        ]
+        eligible_labels = [
+            label
+            for label in final_labels
+        ]
+        if labels and not final_labels and partial_labels:
+            reasons.append("partial_only_outcomes_excluded_from_governance")
+        elif labels and not eligible_labels:
             reasons.append("proxy_only_outcomes_excluded_from_governance")
-        elif labels and len(eligible_labels) < len(labels):
+        elif final_labels and partial_labels:
+            reasons.append(
+                "mixed_final_partial_outcomes_degraded:"
+                + f"final:{len(final_labels)},partial:{len(partial_labels)}"
+            )
+        if labels and len(eligible_labels) < len(labels):
             reasons.append(
                 "non_final_outcomes_excluded:"
                 + ",".join(f"{key}:{quality_counts[key]}" for key in sorted(quality_counts))

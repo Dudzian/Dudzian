@@ -1169,6 +1169,206 @@ def test_outcome_label_attach_allows_upgrade_from_proxy_to_final(tmp_path) -> No
     assert labels[0].label_quality == "final"
 
 
+def test_outcome_label_upgrade_rejects_timestamp_mismatch_even_with_higher_quality(tmp_path) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    decision_timestamp = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
+    record = TradingOpportunityAI.build_shadow_records(
+        [
+            OpportunityDecision(
+                symbol="ETH/USDT",
+                decision_source="model",
+                model_version="opp-v1",
+                expected_edge_bps=2.0,
+                success_probability=0.6,
+                confidence=0.2,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={},
+            )
+        ],
+        decision_timestamp=decision_timestamp,
+    )[0]
+    repo.append_shadow_records([record])
+    proxy = OpportunityOutcomeLabel(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        correlation_key=record.record_key,
+        horizon_minutes=0,
+        realized_return_bps=0.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="execution_proxy_pending_exit",
+    )
+    invalid_upgrade = OpportunityOutcomeLabel(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        correlation_key=record.record_key,
+        horizon_minutes=30,
+        realized_return_bps=12.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="final",
+    )
+    repo.attach_outcome_labels_idempotent([proxy])
+    result = repo.attach_outcome_labels_idempotent([invalid_upgrade])
+    assert result.conflicting_correlation_keys == (record.record_key,)
+
+
+def test_open_outcome_state_is_persisted_and_removable(tmp_path) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    state = repo.OpenOutcomeState(
+        correlation_key="corr-1",
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc),
+        provenance={"source": "test"},
+    )
+    repo.upsert_open_outcome(state)
+    assert len(repo.load_open_outcomes()) == 1
+    repo.remove_open_outcome("corr-1")
+    assert repo.load_open_outcomes() == []
+
+
+def test_first_outcome_attach_rejects_timestamp_mismatch_against_shadow_record(tmp_path) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    decision_timestamp = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
+    record = TradingOpportunityAI.build_shadow_records(
+        [
+            OpportunityDecision(
+                symbol="ETH/USDT",
+                decision_source="model",
+                model_version="opp-v1",
+                expected_edge_bps=2.0,
+                success_probability=0.6,
+                confidence=0.2,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={},
+            )
+        ],
+        decision_timestamp=decision_timestamp,
+    )[0]
+    repo.append_shadow_records([record])
+    mismatch = OpportunityOutcomeLabel(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        correlation_key=record.record_key,
+        horizon_minutes=15,
+        realized_return_bps=2.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="execution_proxy_pending_exit",
+    )
+    result = repo.attach_outcome_labels_idempotent([mismatch])
+    assert result.conflicting_correlation_keys == (record.record_key,)
+    assert repo.load_outcome_labels() == []
+
+
+def test_first_outcome_attach_rejects_symbol_mismatch_against_shadow_record(tmp_path) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    decision_timestamp = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
+    record = TradingOpportunityAI.build_shadow_records(
+        [
+            OpportunityDecision(
+                symbol="ETH/USDT",
+                decision_source="model",
+                model_version="opp-v1",
+                expected_edge_bps=2.0,
+                success_probability=0.6,
+                confidence=0.2,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={},
+            )
+        ],
+        decision_timestamp=decision_timestamp,
+    )[0]
+    repo.append_shadow_records([record])
+    mismatch = OpportunityOutcomeLabel(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        correlation_key=record.record_key,
+        horizon_minutes=15,
+        realized_return_bps=2.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="execution_proxy_pending_exit",
+    )
+    result = repo.attach_outcome_labels_idempotent([mismatch])
+    assert result.conflicting_correlation_keys == (record.record_key,)
+    assert repo.load_outcome_labels() == []
+
+
+def test_outcome_label_attach_allows_upgrade_proxy_to_partial_to_final(tmp_path) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    decision_timestamp = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
+    record = TradingOpportunityAI.build_shadow_records(
+        [
+            OpportunityDecision(
+                symbol="ETH/USDT",
+                decision_source="model",
+                model_version="opp-v1",
+                expected_edge_bps=2.0,
+                success_probability=0.6,
+                confidence=0.2,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={},
+            )
+        ],
+        decision_timestamp=decision_timestamp,
+    )[0]
+    repo.append_shadow_records([record])
+    proxy = OpportunityOutcomeLabel(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        correlation_key=record.record_key,
+        horizon_minutes=0,
+        realized_return_bps=0.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="execution_proxy_pending_exit",
+    )
+    partial = OpportunityOutcomeLabel(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        correlation_key=record.record_key,
+        horizon_minutes=15,
+        realized_return_bps=6.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="partial_exit_unconfirmed",
+    )
+    final = OpportunityOutcomeLabel(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        correlation_key=record.record_key,
+        horizon_minutes=45,
+        realized_return_bps=11.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="final",
+    )
+    first = repo.attach_outcome_labels_idempotent([proxy])
+    second = repo.attach_outcome_labels_idempotent([partial])
+    third = repo.attach_outcome_labels_idempotent([final])
+    assert first.attached_correlation_keys == (record.record_key,)
+    assert second.upgraded_correlation_keys == (record.record_key,)
+    assert third.upgraded_correlation_keys == (record.record_key,)
+    labels = repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+
+
 def test_record_key_is_canonical_for_same_instant_in_different_timezones() -> None:
     utc_instant = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
     plus_two = utc_instant.astimezone(timezone(timedelta(hours=2)))
