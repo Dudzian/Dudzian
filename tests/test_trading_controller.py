@@ -154,6 +154,32 @@ class StatusExecutionService(ExecutionService):
         return None
 
 
+class SequencedExecutionService(ExecutionService):
+    def __init__(self, responses: Sequence[dict[str, object]]) -> None:
+        self._responses = list(responses)
+        self.requests: list[OrderRequest] = []
+
+    def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+        self.requests.append(request)
+        if self._responses:
+            payload = dict(self._responses.pop(0))
+        else:
+            payload = {}
+        return OrderResult(
+            order_id=str(payload.get("order_id", "order-seq")),
+            status=str(payload.get("status", "filled")),
+            filled_quantity=payload.get("filled_quantity", request.quantity),
+            avg_price=payload.get("avg_price", request.price),
+            raw_response={"context": context.metadata},
+        )
+
+    def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+        return None
+
+    def flush(self) -> None:
+        return None
+
+
 def _account_snapshot() -> AccountSnapshot:
     return AccountSnapshot(
         balances={},
@@ -299,7 +325,7 @@ def test_controller_attaches_runtime_outcome_label_for_opportunity_shadow_record
         event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
     ]
     assert attach_events
-    assert attach_events[-1]["status"] == "attached"
+    assert attach_events[-1]["status"] == "proxy_attached"
 
 
 def test_controller_outcome_attach_duplicate_is_idempotent_noop(tmp_path: Path) -> None:
@@ -431,6 +457,497 @@ def test_controller_outcome_attach_upgrades_proxy_to_final_on_exit(tmp_path: Pat
         event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
     ]
     assert any(event["status"] == "final_upgraded" for event in attach_events)
+
+
+def test_controller_restores_open_outcome_tracker_after_restart(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    controller_open = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller_open.process_signals([open_signal])
+    assert shadow_repo.load_open_outcomes()
+
+    controller_close = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller_close.process_signals([close_signal])
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert labels[0].provenance.get("close_correlation_resolution") == "resolved_by_correlation_key"
+    assert shadow_repo.load_open_outcomes() == []
+
+
+def test_controller_close_without_correlation_key_is_rejected_when_ambiguous(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    keyed_timestamps: list[tuple[str, datetime]] = []
+    for rank in (1, 2):
+        keyed_ts = decision_timestamp + timedelta(minutes=rank)
+        key = OpportunityShadowRecord.build_record_key(
+            symbol="BTC/USDT",
+            decision_timestamp=keyed_ts,
+            model_version="opportunity-v1",
+            rank=rank,
+        )
+        keyed_timestamps.append((key, keyed_ts))
+        shadow_repo.append_shadow_records(
+            [_shadow_record_for_key(correlation_key=key, decision_timestamp=keyed_ts)]
+        )
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    for key, keyed_ts in keyed_timestamps:
+        signal = _signal("BUY", price=100.0)
+        signal.metadata = {
+            **dict(signal.metadata),
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": keyed_ts.isoformat(),
+        }
+        controller.process_signals([signal])
+
+    close_signal = _signal("SELL", price=110.0)
+    controller.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 2
+    assert all(label.label_quality == "execution_proxy_pending_exit" for label in labels)
+    assert len(shadow_repo.load_open_outcomes()) == 2
+
+
+def test_controller_close_with_correlation_key_missing_tracker_is_unresolved_without_new_open_tracker(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller.process_signals([close_signal])
+
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events[-1]["status"] == "close_correlation_unresolved"
+    assert attach_events[-1]["close_correlation_resolution"] == "missing"
+
+
+def test_controller_close_with_correlation_key_side_mismatch_is_unresolved_without_new_open_tracker(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller.process_signals([open_signal])
+
+    side_mismatch_close = _signal("BUY", price=109.0)
+    side_mismatch_close.metadata = {
+        **dict(side_mismatch_close.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller.process_signals([side_mismatch_close])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    open_outcomes = shadow_repo.load_open_outcomes()
+    assert len(open_outcomes) == 1
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events[-1]["status"] == "close_correlation_unresolved"
+    assert attach_events[-1]["close_correlation_resolution"] == "side_mismatch"
+
+
+def test_controller_close_with_correlation_key_symbol_mismatch_is_unresolved_without_new_open_tracker(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="ETH/USDT",
+            side="BUY",
+            entry_price=100.0,
+            entry_quantity=1.0,
+            decision_timestamp=decision_timestamp,
+            provenance={"source": "test"},
+        )
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller.process_signals([close_signal])
+
+    assert len(shadow_repo.load_open_outcomes()) == 1
+    assert shadow_repo.load_outcome_labels() == []
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events[-1]["status"] == "close_correlation_unresolved"
+    assert attach_events[-1]["close_correlation_resolution"] == "symbol_mismatch"
+
+
+def test_controller_close_with_correlation_key_and_timestamp_hint_missing_tracker_still_unresolved(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller.process_signals([close_signal])
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events[-1]["status"] == "close_correlation_unresolved"
+    assert attach_events[-1]["close_correlation_resolution"] == "missing"
+
+
+def test_controller_close_with_correlation_key_and_timestamp_hint_side_mismatch_still_unresolved(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller.process_signals([open_signal])
+    close_signal = _signal("BUY", price=109.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller.process_signals([close_signal])
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events[-1]["status"] == "close_correlation_unresolved"
+    assert attach_events[-1]["close_correlation_resolution"] == "side_mismatch"
+
+
+def test_controller_close_with_correlation_key_and_timestamp_hint_symbol_mismatch_still_unresolved(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="ETH/USDT",
+            side="BUY",
+            entry_price=100.0,
+            entry_quantity=1.0,
+            decision_timestamp=decision_timestamp,
+            provenance={"source": "test"},
+        )
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller.process_signals([close_signal])
+    assert len(shadow_repo.load_open_outcomes()) == 1
+    assert shadow_repo.load_outcome_labels() == []
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events[-1]["status"] == "close_correlation_unresolved"
+    assert attach_events[-1]["close_correlation_resolution"] == "symbol_mismatch"
+
+
+def test_controller_partial_close_does_not_create_final_or_drop_tracker(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 110.0},
+        ]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller.process_signals([open_signal])
+    controller.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "partial_exit_unconfirmed"
+    assert labels[0].provenance.get("close_confirmation") == "insufficient_evidence_for_final_close"
+    open_outcomes = shadow_repo.load_open_outcomes()
+    assert len(open_outcomes) == 1
+    assert open_outcomes[0].closed_quantity == pytest.approx(0.4, rel=1e-6)
+    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    assert attach_events[-1]["status"] == "quality_upgraded"
+
+
+def test_controller_final_close_after_partial_upgrades_and_removes_tracker(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 108.0},
+            {"status": "filled", "filled_quantity": 0.6, "avg_price": 112.0},
+        ]
+    )
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    partial_close_signal = _signal("SELL", price=108.0)
+    partial_close_signal.metadata = {**dict(partial_close_signal.metadata), "opportunity_shadow_record_key": correlation_key}
+    final_close_signal = _signal("SELL", price=112.0)
+    final_close_signal.metadata = {**dict(final_close_signal.metadata), "opportunity_shadow_record_key": correlation_key}
+    controller.process_signals([open_signal])
+    controller.process_signals([partial_close_signal])
+    controller.process_signals([final_close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert labels[0].provenance.get("close_confirmation") == "quantity_and_filled_status"
+    assert shadow_repo.load_open_outcomes() == []
 
 
 def test_controller_handles_multi_leg_signal() -> None:

@@ -288,3 +288,119 @@ def test_build_persisted_promotion_readiness_excludes_proxy_only_outcomes(tmp_pa
     )
     assert report.promotion_report is None
     assert "proxy_only_outcomes_excluded_from_governance" in report.degraded_reasons
+
+
+def test_build_persisted_promotion_readiness_degrades_partial_only_outcomes(tmp_path: Path) -> None:
+    model_repo = FilesystemModelRepository(tmp_path / "models")
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    engine = TradingOpportunityAI(repository=model_repo)
+    engine.fit(_build_samples(scale=1.0))
+    engine.save_model(version="champion-v1", activate=False)
+    engine.fit(_build_samples(scale=1.1))
+    engine.save_model(version="challenger-v2", activate=False)
+
+    decision_time = datetime(2024, 1, 2, 12, 0, tzinfo=timezone.utc)
+    champion = engine.build_shadow_records(
+        [_shadow_decision("champion-v1", 5.0)],
+        decision_timestamp=decision_time,
+        snapshot={"candidate_metadata": _snapshot_metadata()},
+    )[0]
+    challenger = engine.build_shadow_records(
+        [_shadow_decision("challenger-v2", 6.0)],
+        decision_timestamp=decision_time,
+        snapshot={"candidate_metadata": _snapshot_metadata()},
+    )[0]
+    shadow_repo.append_shadow_records([champion, challenger])
+    shadow_repo.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol=champion.symbol,
+                decision_timestamp=champion.decision_timestamp,
+                correlation_key=champion.record_key,
+                horizon_minutes=15,
+                realized_return_bps=2.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=0.0,
+                label_quality="partial_exit_unconfirmed",
+            ),
+            OpportunityOutcomeLabel(
+                symbol=challenger.symbol,
+                decision_timestamp=challenger.decision_timestamp,
+                correlation_key=challenger.record_key,
+                horizon_minutes=10,
+                realized_return_bps=1.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=0.0,
+                label_quality="partial_exit_unconfirmed",
+            ),
+        ]
+    )
+
+    service = OpportunityLifecycleService()
+    report = service.build_persisted_promotion_readiness(
+        model_repository=model_repo,
+        shadow_repository=shadow_repo,
+        champion_version="champion-v1",
+        challenger_version="challenger-v2",
+    )
+    assert report.promotion_report is None
+    assert "partial_only_outcomes_excluded_from_governance" in report.degraded_reasons
+
+
+def test_build_persisted_promotion_readiness_flags_mixed_final_partial_evidence(tmp_path: Path) -> None:
+    model_repo = FilesystemModelRepository(tmp_path / "models")
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    engine = TradingOpportunityAI(repository=model_repo)
+    engine.fit(_build_samples(scale=1.0))
+    engine.save_model(version="champion-v1", activate=False)
+    engine.fit(_build_samples(scale=1.1))
+    engine.save_model(version="challenger-v2", activate=False)
+
+    decision_time = datetime(2024, 1, 2, 12, 0, tzinfo=timezone.utc)
+    champion = engine.build_shadow_records(
+        [_shadow_decision("champion-v1", 5.0)],
+        decision_timestamp=decision_time,
+        snapshot={"candidate_metadata": _snapshot_metadata()},
+    )[0]
+    challenger = engine.build_shadow_records(
+        [_shadow_decision("challenger-v2", 6.0)],
+        decision_timestamp=decision_time,
+        snapshot={"candidate_metadata": _snapshot_metadata()},
+    )[0]
+    shadow_repo.append_shadow_records([champion, challenger])
+    shadow_repo.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol=champion.symbol,
+                decision_timestamp=champion.decision_timestamp,
+                correlation_key=champion.record_key,
+                horizon_minutes=30,
+                realized_return_bps=4.0,
+                max_favorable_excursion_bps=6.0,
+                max_adverse_excursion_bps=-2.0,
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol=challenger.symbol,
+                decision_timestamp=challenger.decision_timestamp,
+                correlation_key=challenger.record_key,
+                horizon_minutes=10,
+                realized_return_bps=1.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=0.0,
+                label_quality="partial_exit_unconfirmed",
+            ),
+        ]
+    )
+
+    service = OpportunityLifecycleService()
+    report = service.build_persisted_promotion_readiness(
+        model_repository=model_repo,
+        shadow_repository=shadow_repo,
+        champion_version="champion-v1",
+        challenger_version="challenger-v2",
+    )
+    assert any(
+        reason.startswith("mixed_final_partial_outcomes_degraded:")
+        for reason in report.degraded_reasons
+    )
