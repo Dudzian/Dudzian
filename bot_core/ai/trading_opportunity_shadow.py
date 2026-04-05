@@ -148,6 +148,42 @@ class OpportunityShadowRepository:
     def outcome_labels_path(self) -> Path:
         return self._root / "opportunity_outcome_labels.ndjson"
 
+    @property
+    def open_outcomes_path(self) -> Path:
+        return self._root / "opportunity_open_outcomes.ndjson"
+
+    @dataclass(slots=True, frozen=True)
+    class OpenOutcomeState:
+        correlation_key: str
+        symbol: str
+        side: str
+        entry_price: float
+        decision_timestamp: datetime
+        entry_quantity: float = 0.0
+        closed_quantity: float = 0.0
+        provenance: Mapping[str, object] = field(default_factory=dict)
+
+        def to_dict(self) -> dict[str, Any]:
+            payload = asdict(self)
+            payload["decision_timestamp"] = _isoformat_utc(self.decision_timestamp)
+            return payload
+
+        @classmethod
+        def from_dict(
+            cls,
+            payload: Mapping[str, object],
+        ) -> "OpportunityShadowRepository.OpenOutcomeState":
+            return cls(
+                correlation_key=str(payload["correlation_key"]),
+                symbol=str(payload["symbol"]),
+                side=str(payload["side"]),
+                entry_price=float(payload["entry_price"]),
+                decision_timestamp=_parse_datetime(payload["decision_timestamp"]),
+                entry_quantity=float(payload.get("entry_quantity") or 0.0),
+                closed_quantity=float(payload.get("closed_quantity") or 0.0),
+                provenance=dict(payload.get("provenance") or {}),
+            )
+
     def append_shadow_records(self, records: Sequence[OpportunityShadowRecord]) -> Path:
         return _append_ndjson(self.shadow_records_path, (entry.to_dict() for entry in records))
 
@@ -266,6 +302,12 @@ class OpportunityShadowRepository:
         existing: OpportunityOutcomeLabel,
         incoming: OpportunityOutcomeLabel,
     ) -> bool:
+        if str(existing.correlation_key) != str(incoming.correlation_key):
+            return False
+        if str(existing.symbol) != str(incoming.symbol):
+            return False
+        if _isoformat_utc(existing.decision_timestamp) != _isoformat_utc(incoming.decision_timestamp):
+            return False
         existing_rank = OpportunityShadowRepository._quality_rank(existing.label_quality)
         incoming_rank = OpportunityShadowRepository._quality_rank(incoming.label_quality)
         return incoming_rank > existing_rank
@@ -286,6 +328,28 @@ class OpportunityShadowRepository:
 
     def load_outcome_labels(self) -> list[OpportunityOutcomeLabel]:
         return [OpportunityOutcomeLabel.from_dict(payload) for payload in _read_ndjson(self.outcome_labels_path)]
+
+    def load_open_outcomes(self) -> list["OpportunityShadowRepository.OpenOutcomeState"]:
+        return [
+            self.OpenOutcomeState.from_dict(payload)
+            for payload in _read_ndjson(self.open_outcomes_path)
+        ]
+
+    def upsert_open_outcome(self, state: "OpportunityShadowRepository.OpenOutcomeState") -> Path:
+        existing_rows = self.load_open_outcomes()
+        by_key = {row.correlation_key: row for row in existing_rows}
+        by_key[state.correlation_key] = state
+        ordered_keys = [row.correlation_key for row in existing_rows if row.correlation_key in by_key]
+        if state.correlation_key not in ordered_keys:
+            ordered_keys.append(state.correlation_key)
+        return _write_ndjson(self.open_outcomes_path, (by_key[key].to_dict() for key in ordered_keys))
+
+    def remove_open_outcome(self, correlation_key: str) -> Path | None:
+        existing_rows = self.load_open_outcomes()
+        filtered = [row for row in existing_rows if row.correlation_key != correlation_key]
+        if len(filtered) == len(existing_rows):
+            return None
+        return _write_ndjson(self.open_outcomes_path, (row.to_dict() for row in filtered))
 
     def load_shadow_records_for_model(self, model_version: str) -> list[OpportunityShadowRecord]:
         normalized = str(model_version).strip()
