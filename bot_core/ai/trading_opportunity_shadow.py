@@ -264,7 +264,9 @@ class OpportunityShadowRepository:
                 if str(shadow_record.symbol) != str(label.symbol):
                     conflicting.add(correlation_key)
                     continue
-                if _isoformat_utc(shadow_record.decision_timestamp) != _isoformat_utc(label.decision_timestamp):
+                if _isoformat_utc(shadow_record.decision_timestamp) != _isoformat_utc(
+                    label.decision_timestamp
+                ):
                     conflicting.add(correlation_key)
                     continue
             existing = pending.get(correlation_key) or existing_labels.get(correlation_key)
@@ -325,7 +327,9 @@ class OpportunityShadowRepository:
             return False
         if str(existing.symbol) != str(incoming.symbol):
             return False
-        if _isoformat_utc(existing.decision_timestamp) != _isoformat_utc(incoming.decision_timestamp):
+        if _isoformat_utc(existing.decision_timestamp) != _isoformat_utc(
+            incoming.decision_timestamp
+        ):
             return False
         existing_rank = OpportunityShadowRepository._quality_rank(existing.label_quality)
         incoming_rank = OpportunityShadowRepository._quality_rank(incoming.label_quality)
@@ -364,10 +368,14 @@ class OpportunityShadowRepository:
         existing_rows = self.load_open_outcomes()
         by_key = {row.correlation_key: row for row in existing_rows}
         by_key[state.correlation_key] = state
-        ordered_keys = [row.correlation_key for row in existing_rows if row.correlation_key in by_key]
+        ordered_keys = [
+            row.correlation_key for row in existing_rows if row.correlation_key in by_key
+        ]
         if state.correlation_key not in ordered_keys:
             ordered_keys.append(state.correlation_key)
-        return _write_ndjson(self.open_outcomes_path, (by_key[key].to_dict() for key in ordered_keys))
+        return _write_ndjson(
+            self.open_outcomes_path, (by_key[key].to_dict() for key in ordered_keys)
+        )
 
     def remove_open_outcome(self, correlation_key: str) -> Path | None:
         existing_rows = self.load_open_outcomes()

@@ -347,7 +347,9 @@ def test_build_persisted_promotion_readiness_degrades_partial_only_outcomes(tmp_
     assert "partial_only_outcomes_excluded_from_governance" in report.degraded_reasons
 
 
-def test_build_persisted_promotion_readiness_flags_mixed_final_partial_evidence(tmp_path: Path) -> None:
+def test_build_persisted_promotion_readiness_flags_mixed_final_partial_evidence(
+    tmp_path: Path,
+) -> None:
     model_repo = FilesystemModelRepository(tmp_path / "models")
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     engine = TradingOpportunityAI(repository=model_repo)

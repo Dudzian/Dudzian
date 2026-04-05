@@ -1184,7 +1184,9 @@ def test_outcome_label_attach_allows_upgrade_from_proxy_to_final(tmp_path) -> No
     assert labels[0].label_quality == "final"
 
 
-def test_outcome_label_upgrade_rejects_timestamp_mismatch_even_with_higher_quality(tmp_path) -> None:
+def test_outcome_label_upgrade_rejects_timestamp_mismatch_even_with_higher_quality(
+    tmp_path,
+) -> None:
     repo = OpportunityShadowRepository(tmp_path / "shadow")
     decision_timestamp = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
     record = TradingOpportunityAI.build_shadow_records(

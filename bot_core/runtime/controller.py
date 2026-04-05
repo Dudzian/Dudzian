@@ -1402,16 +1402,12 @@ class TradingController:
             return
         try:
             existing_labels_by_key = {
-                str(row.correlation_key): row
-                for row in repository.load_outcome_labels()
+                str(row.correlation_key): row for row in repository.load_outcome_labels()
             }
         except Exception:  # pragma: no cover - diagnostics only
             existing_labels_by_key = {}
         try:
-            shadow_by_key = {
-                str(row.record_key): row
-                for row in repository.load_shadow_records()
-            }
+            shadow_by_key = {str(row.record_key): row for row in repository.load_shadow_records()}
             known_shadow_keys = set(shadow_by_key)
         except Exception:  # pragma: no cover - diagnostics only
             shadow_by_key = {}
@@ -1431,7 +1427,9 @@ class TradingController:
         except (TypeError, ValueError):
             avg_price = None
         raw_decision_timestamp = request_metadata.get("opportunity_decision_timestamp")
-        has_decision_timestamp_hint = isinstance(raw_decision_timestamp, str) and bool(raw_decision_timestamp.strip())
+        has_decision_timestamp_hint = isinstance(raw_decision_timestamp, str) and bool(
+            raw_decision_timestamp.strip()
+        )
         timestamp = self._clock()
         if has_decision_timestamp_hint:
             try:
@@ -1460,9 +1458,13 @@ class TradingController:
             shadow_record = shadow_by_key.get(correlation_key) if correlation_key else None
             expected_open_side = ""
             if shadow_record is not None:
-                proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
-                expected_open_side = "BUY" if proposed_direction in {"long", "buy"} else (
-                    "SELL" if proposed_direction in {"short", "sell"} else ""
+                proposed_direction = (
+                    str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                )
+                expected_open_side = (
+                    "BUY"
+                    if proposed_direction in {"long", "buy"}
+                    else ("SELL" if proposed_direction in {"short", "sell"} else "")
                 )
             if correlation_key and resolution == "missing":
                 if shadow_record is not None:
@@ -1472,14 +1474,17 @@ class TradingController:
                         existing_quality = str(existing_label.label_quality)
                     open_intent_candidate = (
                         expected_open_side == side
-                        and OpportunityShadowRepository._quality_rank(existing_quality) < OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed")
+                        and OpportunityShadowRepository._quality_rank(existing_quality)
+                        < OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed")
                     )
             if correlation_key and resolution == "side_mismatch" and has_decision_timestamp_hint:
                 existing_quality = ""
                 existing_label = existing_labels_by_key.get(correlation_key)
                 if existing_label is not None:
                     existing_quality = str(existing_label.label_quality)
-                existing_provenance = existing_label.provenance if existing_label is not None else {}
+                existing_provenance = (
+                    existing_label.provenance if existing_label is not None else {}
+                )
                 existing_avg_price = ""
                 existing_filled_quantity = ""
                 if isinstance(existing_provenance, Mapping):
@@ -1505,12 +1510,21 @@ class TradingController:
                     int((timestamp_utc - tracked.decision_timestamp).total_seconds() / 60),
                 )
                 close_quantity = self._safe_float(
-                    metadata.get("filled_quantity", result.filled_quantity if result.filled_quantity is not None else request.quantity)
+                    metadata.get(
+                        "filled_quantity",
+                        result.filled_quantity
+                        if result.filled_quantity is not None
+                        else request.quantity,
+                    )
                 )
-                cumulative_closed_quantity = max(0.0, tracked.closed_quantity + max(close_quantity, 0.0))
+                cumulative_closed_quantity = max(
+                    0.0, tracked.closed_quantity + max(close_quantity, 0.0)
+                )
                 tracked.closed_quantity = cumulative_closed_quantity
                 self._persist_open_outcome_tracker(tracked)
-                has_quantity_proof = tracked.entry_quantity > 0.0 and cumulative_closed_quantity > 0.0
+                has_quantity_proof = (
+                    tracked.entry_quantity > 0.0 and cumulative_closed_quantity > 0.0
+                )
                 is_confirmed_final_close = (
                     normalized_status in _FILLED_EXECUTION_STATUSES
                     and has_quantity_proof
@@ -1550,9 +1564,9 @@ class TradingController:
                     existing_label = existing_labels_by_key.get(tracked.correlation_key)
                     if existing_label is not None:
                         existing_quality = str(existing_label.label_quality)
-                    if OpportunityShadowRepository._quality_rank(existing_quality) < OpportunityShadowRepository._quality_rank(
-                        "partial_exit_unconfirmed"
-                    ):
+                    if OpportunityShadowRepository._quality_rank(
+                        existing_quality
+                    ) < OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed"):
                         partial_label = OpportunityOutcomeLabel(
                             symbol=request.symbol,
                             decision_timestamp=tracked.decision_timestamp,
@@ -1588,7 +1602,9 @@ class TradingController:
                         self._safe_float(
                             metadata.get(
                                 "filled_quantity",
-                                result.filled_quantity if result.filled_quantity is not None else request.quantity,
+                                result.filled_quantity
+                                if result.filled_quantity is not None
+                                else request.quantity,
                             )
                         ),
                     ),
@@ -1649,7 +1665,10 @@ class TradingController:
             final_label is None
             and proxy_label is None
             and side in _BUY_SIDES | _SELL_SIDES
-            and any(row.symbol == str(request.symbol) for row in self._opportunity_open_outcomes.values())
+            and any(
+                row.symbol == str(request.symbol)
+                for row in self._opportunity_open_outcomes.values()
+            )
             and final_resolution in {"ambiguous", "missing", "side_mismatch", "symbol_mismatch"}
         ):
             self._record_decision_event(
@@ -1670,8 +1689,12 @@ class TradingController:
             attach_metadata: dict[str, object] = {
                 "execution_status": normalized_status,
                 "proxy_correlation_key": correlation_key,
-                "partial_correlation_key": partial_label.correlation_key if partial_label is not None else "",
-                "final_correlation_key": final_label.correlation_key if final_label is not None else "",
+                "partial_correlation_key": partial_label.correlation_key
+                if partial_label is not None
+                else "",
+                "final_correlation_key": final_label.correlation_key
+                if final_label is not None
+                else "",
                 "close_correlation_resolution": final_resolution,
             }
             if attach_result.upgraded_correlation_keys:
