@@ -37,13 +37,19 @@ def test_builtin_profiles_are_bootstrapable_and_complete() -> None:
     assert profiles["rule_auto_router"].execution_mode == "auto"
 
 
-def test_builtin_profiles_work_outside_repo_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_builtin_profiles_work_outside_repo_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
 
     profiles = builtin_bot_modes()
 
     assert len(profiles) == 3
-    assert {profile.id for profile in profiles} == {"signal_grid", "paper_monitoring", "rule_auto_router"}
+    assert {profile.id for profile in profiles} == {
+        "signal_grid",
+        "paper_monitoring",
+        "rule_auto_router",
+    }
 
 
 def test_signal_grid_uses_engine_available_in_runtime_contract() -> None:
@@ -58,7 +64,9 @@ def test_rule_auto_router_and_paper_monitoring_follow_mode_policy() -> None:
     selector = ExecutionModeSelector()
     profiles = {profile.id: profile for profile in builtin_bot_modes()}
 
-    paper_settings = RuntimeExecutionSettings(default_mode=profiles["paper_monitoring"].execution_mode)
+    paper_settings = RuntimeExecutionSettings(
+        default_mode=profiles["paper_monitoring"].execution_mode
+    )
     assert selector.resolve(paper_settings, _Env(environment="paper")) == "paper"
 
     auto_settings = RuntimeExecutionSettings(

@@ -655,7 +655,9 @@ def create_trading_controller(
             "environment": environment_cfg.name,
             "controller": pipeline.controller_name,
         },
-        opportunity_shadow_repository=OpportunityShadowRepository(Path("data/ai/opportunity_shadow")),
+        opportunity_shadow_repository=OpportunityShadowRepository(
+            Path("data/ai/opportunity_shadow")
+        ),
     )
 
 
@@ -3356,7 +3358,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 ";".join(str(failure) for failure in stress_failures),
             )
 
-        metadata.setdefault("decision_status", "accepted" if policy_resolution.final_accepted else "rejected")
+        metadata.setdefault(
+            "decision_status", "accepted" if policy_resolution.final_accepted else "rejected"
+        )
         metadata.setdefault("source", "decision_orchestrator")
         metadata.setdefault("opportunity_policy_mode", policy_resolution.mode.value)
         metadata.setdefault(
@@ -3371,7 +3375,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
             "ai_required_for_execution",
             "true" if policy_resolution.ai_required_for_execution else "false",
         )
-        metadata.setdefault("base_decision_accepted", "true" if policy_resolution.base_accepted else "false")
+        metadata.setdefault(
+            "base_decision_accepted", "true" if policy_resolution.base_accepted else "false"
+        )
         metadata.setdefault(
             "ai_decision_available",
             "true" if policy_resolution.ai_decision_available else "false",
@@ -3400,11 +3406,15 @@ class DecisionAwareSignalSink(StrategySignalSink):
         if policy_resolution.ai_decision_source:
             metadata.setdefault("opportunity_decision_source", policy_resolution.ai_decision_source)
         if policy_resolution.ai_rejection_reason:
-            metadata.setdefault("opportunity_rejection_reason", policy_resolution.ai_rejection_reason)
+            metadata.setdefault(
+                "opportunity_rejection_reason", policy_resolution.ai_rejection_reason
+            )
         if policy_resolution.ai_degraded_reason:
             metadata.setdefault("opportunity_degraded_reason", policy_resolution.ai_degraded_reason)
         if policy_resolution.ai_shadow_record_key:
-            metadata.setdefault("opportunity_shadow_record_key", policy_resolution.ai_shadow_record_key)
+            metadata.setdefault(
+                "opportunity_shadow_record_key", policy_resolution.ai_shadow_record_key
+            )
         if policy_resolution.ai_shadow_persistence_status:
             metadata.setdefault(
                 "opportunity_shadow_persistence_status",
@@ -3496,7 +3506,6 @@ class DecisionAwareSignalSink(StrategySignalSink):
             journal.record(event)
         except Exception:  # pragma: no cover - dziennik nie powinien blokować handlu
             self._logger.debug("Nie udało się zapisać decision_evaluation", exc_info=True)
-        
 
     def _resolve_opportunity_policy(
         self,

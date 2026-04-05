@@ -6,8 +6,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bot_core.ai.repository import FilesystemModelRepository
-from bot_core.ai.trading_engine import OpportunityDecision, OpportunitySnapshot, TradingOpportunityAI
-from bot_core.ai.trading_opportunity_shadow import OpportunityOutcomeLabel, OpportunityShadowRepository
+from bot_core.ai.trading_engine import (
+    OpportunityDecision,
+    OpportunitySnapshot,
+    TradingOpportunityAI,
+)
+from bot_core.ai.trading_opportunity_shadow import (
+    OpportunityOutcomeLabel,
+    OpportunityShadowRepository,
+)
 from scripts.opportunity_lifecycle_readiness import build_opportunity_lifecycle_readiness_report
 from tests._subprocess import run_cli_utf8
 

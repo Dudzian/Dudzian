@@ -67,7 +67,9 @@ def test_evaluate_falls_back_for_legacy_artifact_without_classifier() -> None:
     engine = TradingOpportunityAI()
     artifact = engine.fit(_build_samples())
     legacy_state = {
-        key: value for key, value in dict(artifact.model_state).items() if key != "classifier_head_state"
+        key: value
+        for key, value in dict(artifact.model_state).items()
+        if key != "classifier_head_state"
     }
     legacy = type(artifact)(
         feature_names=artifact.feature_names,
@@ -168,7 +170,9 @@ def test_evaluate_reports_uncalibrated_when_calibrator_payload_is_invalid() -> N
     assert report.calibration_method == "none"
 
 
-def test_evaluate_reports_heuristic_and_no_calibration_when_classifier_missing_but_calibrator_present() -> None:
+def test_evaluate_reports_heuristic_and_no_calibration_when_classifier_missing_but_calibrator_present() -> (
+    None
+):
     engine = TradingOpportunityAI()
     artifact = engine.fit(_build_samples())
     model_state_without_classifier = {
@@ -295,7 +299,9 @@ def test_evaluate_with_model_comparison_rejects_inconsistent_feature_spec_metada
         evaluator.evaluate_with_model_comparison(latest, previous_bad_metadata, _build_samples())
 
 
-def test_evaluate_with_model_comparison_uses_common_subset_for_classifier_feature_requirements() -> None:
+def test_evaluate_with_model_comparison_uses_common_subset_for_classifier_feature_requirements() -> (
+    None
+):
     engine = TradingOpportunityAI()
     latest = engine.fit(_build_samples(scale=1.0))
     previous = engine.fit(_build_samples(scale=-1.0))
@@ -483,7 +489,9 @@ def test_detect_drift_rejects_artifact_with_inconsistent_feature_spec_metadata()
         )
 
 
-def test_normalized_mean_shift_for_constant_distributions_with_different_means_is_non_zero() -> None:
+def test_normalized_mean_shift_for_constant_distributions_with_different_means_is_non_zero() -> (
+    None
+):
     score = OpportunityTemporalEvaluator._normalized_mean_shift([1.0, 1.0, 1.0], [10.0, 10.0, 10.0])
 
     assert score > 0.0

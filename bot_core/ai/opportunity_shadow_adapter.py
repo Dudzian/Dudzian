@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Mapping, Literal
 
-from bot_core.ai.trading_engine import OpportunityCandidate, TradingOpportunityAI
+from bot_core.ai.trading_engine import (
+    OpportunityCandidate,
+    OpportunityDecision,
+    TradingOpportunityAI,
+)
 from bot_core.ai.trading_opportunity_shadow import (
     OpportunityShadowContext,
     OpportunityShadowRepository,
@@ -125,7 +129,9 @@ class OpportunityRuntimeShadowAdapter:
 
         try:
             decisions = self.engine.rank((opportunity_candidate,))
-        except Exception as exc:  # pragma: no cover - defensywnie, inference nie może zatrzymać runtime
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - defensywnie, inference nie może zatrzymać runtime
             reason = f"inference_error:{type(exc).__name__}"
             self._emit_degraded_event(
                 timestamp=timestamp_utc,
@@ -234,7 +240,7 @@ class OpportunityRuntimeShadowAdapter:
     def _persist_shadow_record(
         self,
         *,
-        decision: object,
+        decision: OpportunityDecision,
         decision_timestamp: datetime,
         candidate: OpportunityCandidate,
         strategy_name: str,

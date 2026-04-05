@@ -249,7 +249,9 @@ def _shadow_record_for_key(
     )
 
 
-def test_controller_attaches_runtime_outcome_label_for_opportunity_shadow_record(tmp_path: Path) -> None:
+def test_controller_attaches_runtime_outcome_label_for_opportunity_shadow_record(
+    tmp_path: Path,
+) -> None:
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -259,7 +261,11 @@ def test_controller_attaches_runtime_outcome_label_for_opportunity_shadow_record
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -289,7 +295,9 @@ def test_controller_attaches_runtime_outcome_label_for_opportunity_shadow_record
     assert len(labels) == 1
     assert labels[0].correlation_key == correlation_key
     assert labels[0].label_quality == "execution_proxy_pending_exit"
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events
     assert attach_events[-1]["status"] == "attached"
 
@@ -304,7 +312,11 @@ def test_controller_outcome_attach_duplicate_is_idempotent_noop(tmp_path: Path) 
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -333,7 +345,9 @@ def test_controller_outcome_attach_duplicate_is_idempotent_noop(tmp_path: Path) 
 
     labels = shadow_repo.load_outcome_labels()
     assert len(labels) == 1
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "duplicate_noop"
 
 
@@ -360,7 +374,9 @@ def test_controller_outcome_attach_rejects_missing_shadow_record(tmp_path: Path)
     controller.process_signals([signal])
 
     assert shadow_repo.load_outcome_labels() == []
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events
     assert attach_events[-1]["status"] == "missing_shadow_record"
 
@@ -375,7 +391,11 @@ def test_controller_outcome_attach_upgrades_proxy_to_final_on_exit(tmp_path: Pat
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -407,7 +427,9 @@ def test_controller_outcome_attach_upgrades_proxy_to_final_on_exit(tmp_path: Pat
     assert len(labels) == 1
     assert labels[0].label_quality == "final"
     assert labels[0].realized_return_bps == pytest.approx(1000.0, rel=1e-6)
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert any(event["status"] == "final_upgraded" for event in attach_events)
 
 

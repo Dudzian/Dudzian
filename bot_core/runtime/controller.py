@@ -1395,11 +1395,13 @@ class TradingController:
                 )
                 self._opportunity_open_outcomes.pop(str(request.symbol), None)
             elif correlation_key and side in _BUY_SIDES | _SELL_SIDES:
-                self._opportunity_open_outcomes[str(request.symbol)] = _OpportunityOpenOutcomeTracker(
-                    correlation_key=correlation_key,
-                    side=side,
-                    entry_price=avg_price,
-                    decision_timestamp=timestamp_utc,
+                self._opportunity_open_outcomes[str(request.symbol)] = (
+                    _OpportunityOpenOutcomeTracker(
+                        correlation_key=correlation_key,
+                        side=side,
+                        entry_price=avg_price,
+                        decision_timestamp=timestamp_utc,
+                    )
                 )
 
         labels_to_attach: list[OpportunityOutcomeLabel] = []
@@ -1414,7 +1416,9 @@ class TradingController:
             attach_metadata: dict[str, object] = {
                 "execution_status": normalized_status,
                 "proxy_correlation_key": correlation_key,
-                "final_correlation_key": final_label.correlation_key if final_label is not None else "",
+                "final_correlation_key": final_label.correlation_key
+                if final_label is not None
+                else "",
             }
             if attach_result.upgraded_correlation_keys:
                 attach_status = "final_upgraded"
@@ -1453,9 +1457,8 @@ class TradingController:
 
     @staticmethod
     def _is_closing_side(open_side: str, current_side: str) -> bool:
-        return (
-            (open_side in _BUY_SIDES and current_side in _SELL_SIDES)
-            or (open_side in _SELL_SIDES and current_side in _BUY_SIDES)
+        return (open_side in _BUY_SIDES and current_side in _SELL_SIDES) or (
+            open_side in _SELL_SIDES and current_side in _BUY_SIDES
         )
 
     @staticmethod

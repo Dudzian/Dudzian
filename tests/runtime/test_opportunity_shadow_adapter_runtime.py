@@ -24,12 +24,16 @@ class _CollectingJournal:
 
 class _AcceptingOrchestrator:
     def evaluate_candidate(self, candidate, _context):
-        return SimpleNamespace(accepted=True, reasons=(), risk_flags=(), stress_failures=(), latency_ms=None)
+        return SimpleNamespace(
+            accepted=True, reasons=(), risk_flags=(), stress_failures=(), latency_ms=None
+        )
 
 
 class _RejectingOrchestrator:
     def evaluate_candidate(self, candidate, _context):
-        return SimpleNamespace(accepted=False, reasons=(), risk_flags=(), stress_failures=(), latency_ms=None)
+        return SimpleNamespace(
+            accepted=False, reasons=(), risk_flags=(), stress_failures=(), latency_ms=None
+        )
 
 
 class _RiskEngine:
@@ -139,7 +143,9 @@ def test_shadow_adapter_gracefully_degrades_without_model(tmp_path: Path) -> Non
     assert event.metadata["degraded"] == "true"
 
 
-def test_shadow_adapter_persists_shadow_record_when_repository_is_configured(tmp_path: Path) -> None:
+def test_shadow_adapter_persists_shadow_record_when_repository_is_configured(
+    tmp_path: Path,
+) -> None:
     journal = _CollectingJournal()
     shadow_repository = OpportunityShadowRepository(tmp_path / "shadow")
     engine = _train_model(tmp_path / "repo")
@@ -248,7 +254,9 @@ def test_shadow_adapter_throttles_degraded_event_spam(tmp_path: Path) -> None:
     journal = _CollectingJournal()
     adapter = OpportunityRuntimeShadowAdapter(
         journal=journal,
-        engine=TradingOpportunityAI(repository=FilesystemModelRepository(tmp_path / "empty-repo-2")),
+        engine=TradingOpportunityAI(
+            repository=FilesystemModelRepository(tmp_path / "empty-repo-2")
+        ),
         model_retry_cooldown_seconds=0.0,
         degraded_event_cooldown_seconds=120.0,
     )
@@ -256,7 +264,9 @@ def test_shadow_adapter_throttles_degraded_event_spam(tmp_path: Path) -> None:
 
     for offset_seconds in (0, 1, 2, 3):
         adapter.emit_shadow_proposal(
-            candidate=SimpleNamespace(symbol="BTCUSDT", action="enter", metadata=_candidate_metadata()),
+            candidate=SimpleNamespace(
+                symbol="BTCUSDT", action="enter", metadata=_candidate_metadata()
+            ),
             signal=SimpleNamespace(side="BUY"),
             evaluation=SimpleNamespace(accepted=True),
             timestamp=base + timedelta(seconds=offset_seconds),
@@ -697,4 +707,7 @@ def test_runtime_control_plane_hot_updates_policy_without_restart() -> None:
     assert second_event.metadata["opportunity_policy_mode"] == "live"
     assert second_event.metadata["opportunity_ai_enabled"] == "false"
     assert second_event.metadata["opportunity_ai_manual_kill_switch_active"] == "true"
-    assert second_event.metadata["opportunity_ai_disabled_reason"] == "manual_kill_switch:runtime_control_plane"
+    assert (
+        second_event.metadata["opportunity_ai_disabled_reason"]
+        == "manual_kill_switch:runtime_control_plane"
+    )
