@@ -86,4 +86,3 @@ def get_opportunity_runtime_controls() -> OpportunityRuntimeControls:
     """Zwraca współdzielony runtime settings control plane."""
 
     return _GLOBAL_RUNTIME_CONTROLS
-

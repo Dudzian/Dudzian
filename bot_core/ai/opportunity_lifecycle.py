@@ -136,7 +136,9 @@ class OpportunityLifecycleService:
                 )
                 ordered = sorted(
                     [*reference_samples, *evaluation_samples],
-                    key=lambda row: row.as_of.timestamp() if row.as_of is not None else float("-inf"),
+                    key=lambda row: row.as_of.timestamp()
+                    if row.as_of is not None
+                    else float("-inf"),
                 )
                 if ordered:
                     window_start = ordered[0].as_of
@@ -168,7 +170,9 @@ class OpportunityLifecycleService:
             degraded_reasons=tuple(reasons),
             matched_outcomes={
                 "champion": champion_shadow.matched_outcomes if champion_shadow is not None else 0,
-                "challenger": challenger_shadow.matched_outcomes if challenger_shadow is not None else 0,
+                "challenger": challenger_shadow.matched_outcomes
+                if challenger_shadow is not None
+                else 0,
             },
             evaluation_window_start=window_start,
             evaluation_window_end=window_end,

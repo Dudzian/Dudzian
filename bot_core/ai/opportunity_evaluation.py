@@ -5,11 +5,15 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
 
 from .models import ModelArtifact
 from .repository import ModelRepository
 from .training import SimpleGradientBoostingModel
+
+if TYPE_CHECKING:
+    from .trading_engine import OpportunitySnapshot, _PlattSuccessCalibrator
+    from .trading_opportunity_shadow import OpportunityOutcomeLabel, OpportunityShadowRecord
 
 _ABSTAIN_REJECTION_REASONS: frozenset[str] = frozenset(
     {"abstain_uncertainty_high", "abstain_low_agreement"}
@@ -236,7 +240,9 @@ class OpportunityTemporalEvaluator:
             edge_pred = float(model.predict(features))
             edge_target = TradingOpportunityAI._target(sample)
             if classifier is not None:
-                raw_probability = TradingOpportunityAI._clip_probability(classifier.predict(features))
+                raw_probability = TradingOpportunityAI._clip_probability(
+                    classifier.predict(features)
+                )
                 probability_pred = (
                     TradingOpportunityAI._clip_probability(calibrator.apply(raw_probability))
                     if calibrator is not None
@@ -264,10 +270,13 @@ class OpportunityTemporalEvaluator:
             if (prediction >= 0 and target >= 0) or (prediction < 0 and target < 0)
         )
         directional_accuracy = directional_hits / sample_count
-        probability_brier = sum(
-            (prediction - target) ** 2
-            for prediction, target in zip(probability_predictions, probability_targets)
-        ) / sample_count
+        probability_brier = (
+            sum(
+                (prediction - target) ** 2
+                for prediction, target in zip(probability_predictions, probability_targets)
+            )
+            / sample_count
+        )
         probability_ece, reliability_summary = self._calibration_error_summary(
             probability_predictions,
             probability_targets,
@@ -321,12 +330,18 @@ class OpportunityTemporalEvaluator:
             probability_prediction = max(0.0, min(1.0, float(record.success_probability)))
             edge_target = float(label.realized_return_bps)
             probability_target = 1.0 if edge_target > 0.0 else 0.0
-            matched.append((edge_prediction, edge_target, probability_prediction, probability_target))
+            matched.append(
+                (edge_prediction, edge_target, probability_prediction, probability_target)
+            )
             if bool(record.accepted):
                 accepted_matched.append(
                     (edge_prediction, edge_target, probability_prediction, probability_target)
                 )
-            method = record.provenance.get("probability_method") if isinstance(record.provenance, Mapping) else None
+            method = (
+                record.provenance.get("probability_method")
+                if isinstance(record.provenance, Mapping)
+                else None
+            )
             if isinstance(method, str) and method.strip():
                 probability_methods.add(method.strip())
 
@@ -349,10 +364,13 @@ class OpportunityTemporalEvaluator:
             if (prediction >= 0 and target >= 0) or (prediction < 0 and target < 0)
         )
         directional_accuracy = directional_hits / sample_count
-        probability_brier = sum(
-            (prediction - target) ** 2
-            for prediction, target in zip(probability_predictions, probability_targets)
-        ) / sample_count
+        probability_brier = (
+            sum(
+                (prediction - target) ** 2
+                for prediction, target in zip(probability_predictions, probability_targets)
+            )
+            / sample_count
+        )
         probability_ece, reliability_summary = self._calibration_error_summary(
             probability_predictions,
             probability_targets,
@@ -653,7 +671,9 @@ class OpportunityTemporalEvaluator:
             len(previous_artifact.feature_names),
             8,
         )
-        known_features = set(TradingOpportunityAI._features_from_vector([0.0] * max_features).keys())
+        known_features = set(
+            TradingOpportunityAI._features_from_vector([0.0] * max_features).keys()
+        )
         for item in deduped:
             if not cls._is_scoreable_for_models(
                 sample=item,
@@ -857,8 +877,7 @@ class OpportunityTemporalEvaluator:
             ),
             OpportunityPromotionGateResult(
                 gate="min_brier_improvement",
-                passed=(-temporal.delta_success_probability_brier)
-                >= config.min_brier_improvement,
+                passed=(-temporal.delta_success_probability_brier) >= config.min_brier_improvement,
                 observed=-temporal.delta_success_probability_brier,
                 expected=config.min_brier_improvement,
                 comparator=">=",

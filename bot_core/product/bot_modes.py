@@ -43,8 +43,7 @@ def _load_payloads_from_builtin_resources() -> list[dict[str, Any]]:
     if not names or missing:
         missing_text = ", ".join(missing) if missing else "brak plików"
         raise RuntimeError(
-            "Brak kompletnego zestawu wbudowanych bot modes w zasobach pakietu: "
-            f"{missing_text}"
+            f"Brak kompletnego zestawu wbudowanych bot modes w zasobach pakietu: {missing_text}"
         )
 
     payloads: list[dict[str, Any]] = []
