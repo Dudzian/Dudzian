@@ -35,6 +35,7 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Semantyka LiveExecutionRouter (reconcile/retry + metryki + decision log)](docs/live_execution_router.md)
 - [Blueprint architektury enterprise](docs/architecture/enterprise_bot_blueprint.md)
 - [Ocena wdrożenia Stage6 (gap analysis)](docs/architecture/enterprise_gap_analysis.md)
+- [Stage6 acquisition package (technical due diligence)](docs/architecture/acquisition_package_stage6.md)
 - [Raport katalogu presetów (2025-01-15)](reports/strategy/presets_2025-01-15.md)
 - Walidacja katalogu: `python scripts/validate_marketplace_presets.py --presets config/marketplace/presets --min-count 15`
 - [Benchmark Stage6 vs CryptoHopper](docs/benchmark/cryptohopper_comparison.md)
