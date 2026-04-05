@@ -1,0 +1,11 @@
+{
+  "id": "paper_monitoring",
+  "label": "Paper-only Monitored",
+  "strategy_engine": null,
+  "execution_mode": "paper",
+  "description": "Tryb monitorowany bez live execution; wymusza paper routing.",
+  "strategy_params": {
+    "operator_review": true,
+    "decision_log": true
+  }
+}

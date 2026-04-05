@@ -1,0 +1,11 @@
+{
+  "id": "rule_auto_router",
+  "label": "Rule-based Auto Router",
+  "strategy_engine": null,
+  "execution_mode": "auto",
+  "description": "Regułowy wybór live/paper wg środowiska i guardrails execution mode policy.",
+  "strategy_params": {
+    "requires_live_enabled": true,
+    "force_paper_when_offline": true
+  }
+}

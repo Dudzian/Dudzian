@@ -1,0 +1,12 @@
+{
+  "id": "signal_grid",
+  "label": "Signal-based Grid (paper)",
+  "strategy_engine": "grid_trading",
+  "execution_mode": "paper",
+  "description": "Grid oparty o sygnał odchylenia ceny od kotwicy; egzekucja paper.",
+  "strategy_params": {
+    "anchor": "sma",
+    "band_source": "atr",
+    "signal_threshold": 0.75
+  }
+}
