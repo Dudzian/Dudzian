@@ -154,11 +154,144 @@ class OpportunityShadowRepository:
     def append_outcome_labels(self, labels: Sequence[OpportunityOutcomeLabel]) -> Path:
         return _append_ndjson(self.outcome_labels_path, (entry.to_dict() for entry in labels))
 
+    def append_outcome_labels_for_existing_records(
+        self,
+        labels: Sequence[OpportunityOutcomeLabel],
+    ) -> tuple[Path | None, tuple[str, ...]]:
+        """Append labels only when correlation keys exist in persisted shadow records."""
+
+        result = self.attach_outcome_labels_idempotent(labels)
+        if result.missing_correlation_keys:
+            return None, result.missing_correlation_keys
+        if result.conflicting_correlation_keys:
+            return None, result.conflicting_correlation_keys
+        return result.path, ()
+
+    @dataclass(slots=True, frozen=True)
+    class OutcomeAttachResult:
+        path: Path | None
+        attached_correlation_keys: tuple[str, ...]
+        upgraded_correlation_keys: tuple[str, ...]
+        duplicate_noop_correlation_keys: tuple[str, ...]
+        conflicting_correlation_keys: tuple[str, ...]
+        missing_correlation_keys: tuple[str, ...]
+
+    def attach_outcome_labels_idempotent(
+        self,
+        labels: Sequence[OpportunityOutcomeLabel],
+    ) -> "OpportunityShadowRepository.OutcomeAttachResult":
+        """Attach labels with idempotent correlation policy.
+
+        Contract:
+        - one final label per correlation_key,
+        - exact duplicate => no-op,
+        - conflicting duplicate => rejected,
+        - missing shadow correlation => rejected.
+        """
+
+        if not labels:
+            return self.OutcomeAttachResult(
+                path=None,
+                attached_correlation_keys=(),
+                upgraded_correlation_keys=(),
+                duplicate_noop_correlation_keys=(),
+                conflicting_correlation_keys=(),
+                missing_correlation_keys=(),
+            )
+
+        known_shadow_keys = {record.record_key for record in self.load_shadow_records()}
+        existing_labels = {
+            str(label.correlation_key): label
+            for label in self.load_outcome_labels()
+        }
+        pending: dict[str, OpportunityOutcomeLabel] = {}
+        attached: list[str] = []
+        upgraded: set[str] = set()
+        duplicate_noop: set[str] = set()
+        conflicting: set[str] = set()
+        missing: set[str] = set()
+
+        for label in labels:
+            correlation_key = str(label.correlation_key)
+            if correlation_key not in known_shadow_keys:
+                missing.add(correlation_key)
+                continue
+            existing = pending.get(correlation_key) or existing_labels.get(correlation_key)
+            if existing is None:
+                pending[correlation_key] = label
+                attached.append(correlation_key)
+                continue
+            if existing == label:
+                duplicate_noop.add(correlation_key)
+                continue
+            if self._can_upgrade_label(existing=existing, incoming=label):
+                pending[correlation_key] = label
+                upgraded.add(correlation_key)
+                continue
+            conflicting.add(correlation_key)
+
+        if missing or conflicting:
+            return self.OutcomeAttachResult(
+                path=None,
+                attached_correlation_keys=(),
+                upgraded_correlation_keys=tuple(sorted(upgraded)),
+                duplicate_noop_correlation_keys=tuple(sorted(duplicate_noop)),
+                conflicting_correlation_keys=tuple(sorted(conflicting)),
+                missing_correlation_keys=tuple(sorted(missing)),
+            )
+
+        path: Path | None = None
+        if pending:
+            existing_rows = self.load_outcome_labels()
+            by_key = {str(row.correlation_key): row for row in existing_rows}
+            by_key.update(pending)
+            ordered_keys = [str(row.correlation_key) for row in existing_rows if str(row.correlation_key) in by_key]
+            for key in pending:
+                if key not in ordered_keys:
+                    ordered_keys.append(key)
+            merged_rows = [by_key[key].to_dict() for key in ordered_keys]
+            path = _write_ndjson(self.outcome_labels_path, merged_rows)
+        return self.OutcomeAttachResult(
+            path=path,
+            attached_correlation_keys=tuple(attached),
+            upgraded_correlation_keys=tuple(sorted(upgraded)),
+            duplicate_noop_correlation_keys=tuple(sorted(duplicate_noop)),
+            conflicting_correlation_keys=(),
+            missing_correlation_keys=(),
+        )
+
+    @staticmethod
+    def _can_upgrade_label(
+        *,
+        existing: OpportunityOutcomeLabel,
+        incoming: OpportunityOutcomeLabel,
+    ) -> bool:
+        existing_rank = OpportunityShadowRepository._quality_rank(existing.label_quality)
+        incoming_rank = OpportunityShadowRepository._quality_rank(incoming.label_quality)
+        return incoming_rank > existing_rank
+
+    @staticmethod
+    def _quality_rank(value: str) -> int:
+        normalized = str(value or "").strip().lower()
+        if normalized.startswith("final"):
+            return 3
+        if normalized.startswith("partial"):
+            return 2
+        if normalized == "execution_proxy_pending_exit":
+            return 1
+        return 0
+
     def load_shadow_records(self) -> list[OpportunityShadowRecord]:
         return [OpportunityShadowRecord.from_dict(payload) for payload in _read_ndjson(self.shadow_records_path)]
 
     def load_outcome_labels(self) -> list[OpportunityOutcomeLabel]:
         return [OpportunityOutcomeLabel.from_dict(payload) for payload in _read_ndjson(self.outcome_labels_path)]
+
+    def load_shadow_records_for_model(self, model_version: str) -> list[OpportunityShadowRecord]:
+        normalized = str(model_version).strip()
+        if not normalized:
+            raise ValueError("model_version must be a non-empty string")
+        return [row for row in self.load_shadow_records() if row.model_version == normalized]
 
 
 def _isoformat_utc(value: datetime) -> str:
@@ -177,6 +310,15 @@ def _parse_datetime(value: object) -> datetime:
 def _append_ndjson(path: Path, rows: Iterable[dict[str, Any]]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
+            handle.write("\n")
+    return path
+
+
+def _write_ndjson(path: Path, rows: Iterable[dict[str, Any]]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
             handle.write("\n")

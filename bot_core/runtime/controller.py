@@ -36,6 +36,10 @@ except Exception:  # pragma: no cover
     flatten_explainability = lambda report, prefix="ai_explainability": {}  # type: ignore
     parse_explainability_payload = lambda payload: None  # type: ignore
 from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
+from bot_core.ai.trading_opportunity_shadow import (
+    OpportunityOutcomeLabel,
+    OpportunityShadowRepository,
+)
 
 # --- elastyczne importy (różne gałęzie mogą mieć różne ścieżki modułów) -----
 
@@ -189,6 +193,8 @@ _SIDE_ALIASES = {
 }
 _FILLED_EXECUTION_STATUSES = frozenset({"filled", "executed", "complete", "completed"})
 _PARTIAL_EXECUTION_STATUSES = frozenset({"partial", "partially_filled", "partially-filled"})
+_BUY_SIDES = frozenset({"BUY", "LONG"})
+_SELL_SIDES = frozenset({"SELL", "SHORT"})
 
 
 def _normalize_trade_side(value: object | None) -> str | None:
@@ -207,6 +213,14 @@ def _normalize_trade_side(value: object | None) -> str | None:
 def _normalize_execution_status(value: object | None) -> str:
     candidate = str(value or "").strip().lower()
     return candidate or "unknown"
+
+
+@dataclass(slots=True)
+class _OpportunityOpenOutcomeTracker:
+    correlation_key: str
+    side: str
+    entry_price: float
+    decision_timestamp: datetime
 
 
 def _extract_adjusted_quantity(
@@ -398,6 +412,7 @@ class TradingController:
     ai_signal_modes: Sequence[str] | None = None
     rules_signal_modes: Sequence[str] | None = None
     signal_mode_priorities: Mapping[str, int] | None = None
+    opportunity_shadow_repository: OpportunityShadowRepository | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -432,6 +447,16 @@ class TradingController:
     _ai_failover_active: bool = field(init=False, repr=False, default=False)
     _ai_failover_reason: str | None = field(init=False, repr=False, default=None)
     _ai_health_status: ModelHealthStatus | None = field(init=False, repr=False, default=None)
+    _opportunity_shadow_repository: OpportunityShadowRepository | None = field(
+        init=False,
+        repr=False,
+        default=None,
+    )
+    _opportunity_open_outcomes: MutableMapping[str, _OpportunityOpenOutcomeTracker] = field(
+        init=False,
+        repr=False,
+        default_factory=dict,
+    )
 
     def __post_init__(self) -> None:
         self._clock = self.clock
@@ -539,6 +564,8 @@ class TradingController:
         self._ai_failover_active = False
         self._ai_failover_reason = None
         self._ai_health_status = None
+        self._opportunity_shadow_repository = self.opportunity_shadow_repository
+        self._opportunity_open_outcomes = {}
 
     def _record_decision_event(
         self,
@@ -1265,8 +1292,181 @@ class TradingController:
                 status=normalized_status,
                 metadata=metadata,
             )
+        self._try_attach_opportunity_outcome_label(
+            signal=signal,
+            request=adjusted_request,
+            result=result,
+            normalized_status=normalized_status,
+            metadata=metadata,
+        )
         self._handle_liquidation_state(risk_result)
         return result
+
+    def _try_attach_opportunity_outcome_label(
+        self,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+        result: OrderResult,
+        normalized_status: str,
+        metadata: Mapping[str, object],
+    ) -> None:
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
+        side = str(request.side or "").upper()
+        is_filled_or_partial = (
+            normalized_status in _FILLED_EXECUTION_STATUSES
+            or normalized_status in _PARTIAL_EXECUTION_STATUSES
+        )
+        avg_price_raw = result.avg_price if result.avg_price is not None else request.price
+        avg_price: float | None = None
+        try:
+            if avg_price_raw is not None:
+                avg_price = float(avg_price_raw)
+        except (TypeError, ValueError):
+            avg_price = None
+        raw_decision_timestamp = request_metadata.get("opportunity_decision_timestamp")
+        timestamp = self._clock()
+        if isinstance(raw_decision_timestamp, str) and raw_decision_timestamp.strip():
+            try:
+                timestamp = datetime.fromisoformat(raw_decision_timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        timestamp_utc = timestamp.astimezone(timezone.utc)
+        proxy_label: OpportunityOutcomeLabel | None = None
+        if correlation_key:
+            proxy_label = OpportunityOutcomeLabel(
+                symbol=request.symbol,
+                decision_timestamp=timestamp_utc,
+                correlation_key=correlation_key,
+                horizon_minutes=0,
+                realized_return_bps=0.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "source": "trading_controller_execution_result",
+                    "environment": self.environment,
+                    "portfolio": self.portfolio_id,
+                    "order_id": result.order_id or "",
+                    "execution_status": normalized_status,
+                    "filled_quantity": str(metadata.get("filled_quantity", "")),
+                    "avg_price": str(metadata.get("avg_price", "")),
+                },
+                label_quality="execution_proxy_pending_exit",
+            )
+
+        final_label: OpportunityOutcomeLabel | None = None
+        if is_filled_or_partial and avg_price is not None:
+            tracked = self._opportunity_open_outcomes.get(str(request.symbol))
+            if tracked is not None and self._is_closing_side(tracked.side, side):
+                realized_return_bps = self._realized_return_bps(
+                    entry_side=tracked.side,
+                    entry_price=tracked.entry_price,
+                    exit_price=avg_price,
+                )
+                horizon_minutes = max(
+                    0,
+                    int((timestamp_utc - tracked.decision_timestamp).total_seconds() / 60),
+                )
+                final_label = OpportunityOutcomeLabel(
+                    symbol=request.symbol,
+                    decision_timestamp=tracked.decision_timestamp,
+                    correlation_key=tracked.correlation_key,
+                    horizon_minutes=horizon_minutes,
+                    realized_return_bps=realized_return_bps,
+                    max_favorable_excursion_bps=0.0,
+                    max_adverse_excursion_bps=0.0,
+                    provenance={
+                        "source": "trading_controller_exit_result",
+                        "environment": self.environment,
+                        "portfolio": self.portfolio_id,
+                        "entry_price": f"{tracked.entry_price:.8f}",
+                        "exit_price": f"{avg_price:.8f}",
+                        "order_id": result.order_id or "",
+                        "execution_status": normalized_status,
+                        "excursion_metrics": "unavailable_in_runtime_controller_flow",
+                    },
+                    label_quality="final",
+                )
+                self._opportunity_open_outcomes.pop(str(request.symbol), None)
+            elif correlation_key and side in _BUY_SIDES | _SELL_SIDES:
+                self._opportunity_open_outcomes[str(request.symbol)] = _OpportunityOpenOutcomeTracker(
+                    correlation_key=correlation_key,
+                    side=side,
+                    entry_price=avg_price,
+                    decision_timestamp=timestamp_utc,
+                )
+
+        labels_to_attach: list[OpportunityOutcomeLabel] = []
+        if proxy_label is not None:
+            labels_to_attach.append(proxy_label)
+        if final_label is not None:
+            labels_to_attach.append(final_label)
+        if not labels_to_attach:
+            return
+        try:
+            attach_result = repository.attach_outcome_labels_idempotent(labels_to_attach)
+            attach_metadata: dict[str, object] = {
+                "execution_status": normalized_status,
+                "proxy_correlation_key": correlation_key,
+                "final_correlation_key": final_label.correlation_key if final_label is not None else "",
+            }
+            if attach_result.upgraded_correlation_keys:
+                attach_status = "final_upgraded"
+                attach_metadata["upgraded"] = ";".join(attach_result.upgraded_correlation_keys)
+            elif attach_result.attached_correlation_keys:
+                attach_status = "attached"
+            elif attach_result.duplicate_noop_correlation_keys:
+                attach_status = "duplicate_noop"
+            elif attach_result.conflicting_correlation_keys:
+                attach_status = "conflict_rejected"
+                attach_metadata["conflicts"] = ";".join(attach_result.conflicting_correlation_keys)
+            elif attach_result.missing_correlation_keys:
+                attach_status = "missing_shadow_record"
+                attach_metadata["missing"] = ";".join(attach_result.missing_correlation_keys)
+            else:
+                attach_status = "skipped"
+            self._record_decision_event(
+                "opportunity_outcome_attach",
+                signal=signal,
+                request=request,
+                status=attach_status,
+                metadata=attach_metadata,
+            )
+        except Exception:  # pragma: no cover - diagnostic only, no runtime interruption
+            _LOGGER.debug("Nie udało się dopiąć Opportunity outcome label", exc_info=True)
+            self._record_decision_event(
+                "opportunity_outcome_attach",
+                signal=signal,
+                request=request,
+                status="attach_error",
+                metadata={
+                    "proxy_correlation_key": correlation_key,
+                    "execution_status": normalized_status,
+                },
+            )
+
+    @staticmethod
+    def _is_closing_side(open_side: str, current_side: str) -> bool:
+        return (
+            (open_side in _BUY_SIDES and current_side in _SELL_SIDES)
+            or (open_side in _SELL_SIDES and current_side in _BUY_SIDES)
+        )
+
+    @staticmethod
+    def _realized_return_bps(*, entry_side: str, entry_price: float, exit_price: float) -> float:
+        if entry_price <= 0:
+            return 0.0
+        if entry_side in _BUY_SIDES:
+            return ((exit_price - entry_price) / entry_price) * 10_000.0
+        if entry_side in _SELL_SIDES:
+            return ((entry_price - exit_price) / entry_price) * 10_000.0
+        return 0.0
 
     def _maybe_reverse_position(
         self,

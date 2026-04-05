@@ -197,6 +197,18 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
         ".trading_opportunity_shadow",
         "OpportunityShadowRepository",
     ),
+    "OpportunityActivationReadiness": (
+        ".opportunity_lifecycle",
+        "OpportunityActivationReadiness",
+    ),
+    "OpportunityPersistedPromotionReadinessReport": (
+        ".opportunity_lifecycle",
+        "OpportunityPersistedPromotionReadinessReport",
+    ),
+    "OpportunityLifecycleService": (
+        ".opportunity_lifecycle",
+        "OpportunityLifecycleService",
+    ),
 }
 
 _PIPELINE_MONITORING_EXPORTS: Dict[str, Tuple[str, str]] = {
