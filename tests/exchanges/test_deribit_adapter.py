@@ -93,6 +93,20 @@ class _TickerClient:
         return {"symbol": symbol}
 
 
+class _PublicDataClient:
+    def __init__(self) -> None:
+        self.order_book_calls: list[tuple[str, dict[str, object]]] = []
+        self.trade_calls: list[tuple[str, dict[str, object]]] = []
+
+    def fetch_order_book(self, symbol: str, **kwargs: object) -> dict[str, object]:
+        self.order_book_calls.append((symbol, dict(kwargs)))
+        return {"symbol": symbol, "bids": []}
+
+    def fetch_my_trades(self, symbol: str, **kwargs: object) -> list[dict[str, object]]:
+        self.trade_calls.append((symbol, dict(kwargs)))
+        return [{"symbol": symbol}]
+
+
 def test_deribit_futures_fetch_ticker_omits_none_params_in_ccxt_call() -> None:
     client = _TickerClient()
     adapter = DeribitFuturesAdapter(
@@ -105,6 +119,88 @@ def test_deribit_futures_fetch_ticker_omits_none_params_in_ccxt_call() -> None:
     adapter.fetch_ticker("BTC-PERPETUAL")
 
     assert client.calls == [("BTC-PERPETUAL", {})]
+
+
+def test_deribit_futures_fetch_ticker_passes_mapping_params_to_ccxt_call() -> None:
+    client = _TickerClient()
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.fetch_ticker("BTC-PERPETUAL", params={"foo": "bar"})
+
+    assert client.calls == [("BTC-PERPETUAL", {"params": {"foo": "bar"}})]
+
+
+def test_deribit_futures_fetch_ticker_treats_empty_params_like_missing_params() -> None:
+    client = _TickerClient()
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    adapter.fetch_ticker("BTC-PERPETUAL", params={})
+
+    assert client.calls == [("BTC-PERPETUAL", {})]
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_kwargs"),
+    [
+        (None, {"limit": 10}),
+        ({}, {"limit": 10}),
+        ({"foo": "bar"}, {"limit": 10, "params": {"foo": "bar"}}),
+    ],
+)
+def test_deribit_futures_fetch_order_book_params_contract(
+    params: dict[str, str] | None, expected_kwargs: dict[str, object]
+) -> None:
+    client = _PublicDataClient()
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    if params is None:
+        adapter.fetch_order_book("BTC-PERPETUAL", limit=10)
+    else:
+        adapter.fetch_order_book("BTC-PERPETUAL", limit=10, params=params)
+
+    assert client.order_book_calls == [("BTC-PERPETUAL", expected_kwargs)]
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_kwargs"),
+    [
+        (None, {"since": 123, "limit": 5}),
+        ({}, {"since": 123, "limit": 5}),
+        ({"foo": "bar"}, {"since": 123, "limit": 5, "params": {"foo": "bar"}}),
+    ],
+)
+def test_deribit_futures_fetch_my_trades_params_contract(
+    params: dict[str, str] | None, expected_kwargs: dict[str, object]
+) -> None:
+    client = _PublicDataClient()
+    adapter = DeribitFuturesAdapter(
+        _credentials(Environment.TESTNET),
+        environment=Environment.TESTNET,
+        client=client,
+    )
+    adapter.configure_network(ip_allowlist=())
+
+    if params is None:
+        adapter.fetch_my_trades("BTC-PERPETUAL", since=123, limit=5)
+    else:
+        adapter.fetch_my_trades("BTC-PERPETUAL", since=123, limit=5, params=params)
+
+    assert client.trade_calls == [("BTC-PERPETUAL", expected_kwargs)]
 
 
 def test_deribit_futures_maps_auth_errors() -> None:
