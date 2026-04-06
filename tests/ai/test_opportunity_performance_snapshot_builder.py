@@ -275,7 +275,9 @@ def test_snapshot_builder_scope_filters_by_environment_and_portfolio(tmp_path: P
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 2
     assert snapshot.recent_realized_return_bps_sum == 11.0
@@ -283,7 +285,9 @@ def test_snapshot_builder_scope_filters_by_environment_and_portfolio(tmp_path: P
     assert diagnostics.excluded_label_count == 2
 
 
-def test_snapshot_builder_scope_requires_provenance_and_excludes_unscoped_labels(tmp_path: Path) -> None:
+def test_snapshot_builder_scope_requires_provenance_and_excludes_unscoped_labels(
+    tmp_path: Path,
+) -> None:
     repository = OpportunityShadowRepository(tmp_path)
     repository.append_outcome_labels(
         [
@@ -306,7 +310,9 @@ def test_snapshot_builder_scope_requires_provenance_and_excludes_unscoped_labels
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 1
     assert snapshot.recent_realized_return_bps_sum == 5.0
@@ -470,7 +476,9 @@ def test_snapshot_builder_scope_filters_by_model_version(tmp_path: Path) -> None
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 2
     assert snapshot.recent_realized_return_bps_sum == 11.0
@@ -1133,7 +1141,9 @@ def test_snapshot_builder_scope_filters_by_decision_source_and_counts_missing_li
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 1
     assert snapshot.recent_realized_return_bps_sum == 6.0

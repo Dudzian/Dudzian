@@ -254,7 +254,9 @@ class OpportunityPerformanceSnapshotBuilder:
     def build_recent_performance_snapshot_with_scope_diagnostics(
         self,
         labels: Sequence[OpportunityOutcomeLabel],
-    ) -> tuple[OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics]:
+    ) -> tuple[
+        OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics
+    ]:
         if self._config.recent_final_window_size <= 0:
             raise ValueError("recent_final_window_size_must_be_positive")
         if self._config.max_scan_labels <= 0:
@@ -265,8 +267,8 @@ class OpportunityPerformanceSnapshotBuilder:
         missing_scope_provenance_count = 0
         missing_lineage_provenance_count = 0
         for label in observed:
-            in_scope, missing_scope_provenance, missing_lineage_provenance = self._is_label_in_scope(
-                label
+            in_scope, missing_scope_provenance, missing_lineage_provenance = (
+                self._is_label_in_scope(label)
             )
             if missing_scope_provenance:
                 missing_scope_provenance_count += 1
@@ -333,7 +335,9 @@ class OpportunityPerformanceSnapshotBuilder:
     def load_recent_performance_snapshot_with_scope_diagnostics(
         self,
         repository: OpportunityShadowRepository,
-    ) -> tuple[OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics]:
+    ) -> tuple[
+        OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics
+    ]:
         return self.build_recent_performance_snapshot_with_scope_diagnostics(
             repository.load_outcome_labels()
         )
@@ -950,7 +954,9 @@ class OpportunityLifecycleService:
         *,
         shadow_repository: OpportunityShadowRepository,
         snapshot_config: OpportunityPerformanceSnapshotConfig | None = None,
-    ) -> tuple[OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics]:
+    ) -> tuple[
+        OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics
+    ]:
         builder = OpportunityPerformanceSnapshotBuilder(config=snapshot_config)
         return builder.load_recent_performance_snapshot_with_scope_diagnostics(shadow_repository)
 

@@ -445,7 +445,9 @@ def _autonomy_shadow_repository_with_mixed_lineage_outcomes(
             },
             label_quality="final",
         )
-        for index, (value, environment, portfolio_id, model_version, decision_source) in enumerate(rows)
+        for index, (value, environment, portfolio_id, model_version, decision_source) in enumerate(
+            rows
+        )
     ]
     if labels:
         repository.append_outcome_labels(labels)
@@ -787,7 +789,9 @@ def test_opportunity_autonomy_runtime_local_snapshot_good_outcomes_allow_executi
     assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
 
 
-def test_opportunity_autonomy_runtime_local_snapshot_soft_breach_downgrades_and_blocks_live() -> None:
+def test_opportunity_autonomy_runtime_local_snapshot_soft_breach_downgrades_and_blocks_live() -> (
+    None
+):
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
         opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
@@ -806,7 +810,9 @@ def test_opportunity_autonomy_runtime_local_snapshot_soft_breach_downgrades_and_
     assert event["autonomy_mode"] == "live_assisted"
     assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
     assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
-    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert (
+        event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    )
     assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
 
 
@@ -862,7 +868,9 @@ def test_opportunity_autonomy_runtime_no_final_outcomes_uses_conservative_behavi
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
     assert event["autonomy_mode"] == "live_assisted"
-    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert (
+        event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    )
 
 
 def test_opportunity_autonomy_runtime_local_guard_has_priority_over_payload_guard() -> None:
@@ -896,7 +904,9 @@ def test_opportunity_autonomy_runtime_local_guard_has_priority_over_payload_guar
     assert event["performance_guard_blocked"] == "true"
 
 
-def test_opportunity_autonomy_runtime_no_breach_ignores_payload_performance_guard_downgrade() -> None:
+def test_opportunity_autonomy_runtime_no_breach_ignores_payload_performance_guard_downgrade() -> (
+    None
+):
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
         opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
@@ -1020,7 +1030,9 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_portfolio_la
     assert event["performance_guard_effective_mode"] == "live_autonomous"
 
 
-def test_opportunity_autonomy_runtime_scoped_snapshot_insufficient_local_evidence_is_conservative() -> None:
+def test_opportunity_autonomy_runtime_scoped_snapshot_insufficient_local_evidence_is_conservative() -> (
+    None
+):
     repository = _autonomy_shadow_repository_with_mixed_scope_outcomes(
         [
             (5.0, "live", "live-1"),
@@ -1789,7 +1801,9 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_decision_sou
     assert event["performance_guard_excluded_label_count"] == "3"
 
 
-def test_opportunity_autonomy_runtime_scoped_snapshot_missing_lineage_provenance_is_conservative() -> None:
+def test_opportunity_autonomy_runtime_scoped_snapshot_missing_lineage_provenance_is_conservative() -> (
+    None
+):
     repository = _autonomy_shadow_repository_with_mixed_scope_outcomes(
         [
             (5.0, "live", "live-1"),
@@ -2607,12 +2621,17 @@ def test_controller_attach_lineage_request_payload_precedes_signal_payload(tmp_p
     assert label.provenance.get("decision_source") == "request-source"
 
 
-def test_controller_attach_lineage_request_payload_precedes_restored_tracker(tmp_path: Path) -> None:
+def test_controller_attach_lineage_request_payload_precedes_restored_tracker(
+    tmp_path: Path,
+) -> None:
     label = _attach_proxy_label_with_lineage_inputs(
         tmp_path=tmp_path,
         request_payload={"model_version": "request-v1", "decision_source": "request-source"},
         signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
-        restored_tracker_lineage={"model_version": "tracker-v1", "decision_source": "tracker-source"},
+        restored_tracker_lineage={
+            "model_version": "tracker-v1",
+            "decision_source": "tracker-source",
+        },
         request_side="SELL",
     )
 
@@ -2641,7 +2660,10 @@ def test_controller_attach_lineage_signal_payload_precedes_restored_tracker_when
         tmp_path=tmp_path,
         request_payload={"mode": "live_autonomous"},
         signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
-        restored_tracker_lineage={"model_version": "tracker-v1", "decision_source": "tracker-source"},
+        restored_tracker_lineage={
+            "model_version": "tracker-v1",
+            "decision_source": "tracker-source",
+        },
         request_side="SELL",
     )
 
@@ -2695,7 +2717,9 @@ def test_controller_attach_lineage_metadata_fallback_applies_after_payloads(tmp_
     assert label.provenance.get("decision_source") == "request-meta-source"
 
 
-def test_controller_attach_lineage_restored_tracker_precedes_request_metadata(tmp_path: Path) -> None:
+def test_controller_attach_lineage_restored_tracker_precedes_request_metadata(
+    tmp_path: Path,
+) -> None:
     label = _attach_proxy_label_with_lineage_inputs(
         tmp_path=tmp_path,
         request_payload=None,
@@ -2704,7 +2728,10 @@ def test_controller_attach_lineage_restored_tracker_precedes_request_metadata(tm
             "opportunity_model_version": "request-meta-v1",
             "opportunity_decision_source": "request-meta-source",
         },
-        restored_tracker_lineage={"model_version": "tracker-v1", "decision_source": "tracker-source"},
+        restored_tracker_lineage={
+            "model_version": "tracker-v1",
+            "decision_source": "tracker-source",
+        },
         request_side="SELL",
     )
 
@@ -2713,7 +2740,9 @@ def test_controller_attach_lineage_restored_tracker_precedes_request_metadata(tm
     assert label.provenance.get("decision_source") == "tracker-source"
 
 
-def test_controller_attach_lineage_restored_tracker_precedes_signal_metadata(tmp_path: Path) -> None:
+def test_controller_attach_lineage_restored_tracker_precedes_signal_metadata(
+    tmp_path: Path,
+) -> None:
     label = _attach_proxy_label_with_lineage_inputs(
         tmp_path=tmp_path,
         request_payload=None,
@@ -2722,7 +2751,10 @@ def test_controller_attach_lineage_restored_tracker_precedes_signal_metadata(tmp
             "opportunity_model_version": "signal-meta-v1",
             "opportunity_decision_source": "signal-meta-source",
         },
-        restored_tracker_lineage={"model_version": "tracker-v1", "decision_source": "tracker-source"},
+        restored_tracker_lineage={
+            "model_version": "tracker-v1",
+            "decision_source": "tracker-source",
+        },
         request_side="SELL",
     )
 

@@ -622,7 +622,9 @@ class TradingController:
             restored_environment_raw = restored_provenance.get("environment")
             restored_portfolio_raw = restored_provenance.get("portfolio")
             restored_environment = (
-                str(restored_environment_raw).strip() if restored_environment_raw is not None else ""
+                str(restored_environment_raw).strip()
+                if restored_environment_raw is not None
+                else ""
             )
             restored_portfolio = (
                 str(restored_portfolio_raw).strip() if restored_portfolio_raw is not None else ""
@@ -679,7 +681,9 @@ class TradingController:
                         **(
                             {"scope_continuity": "missing_from_restored_open_outcome"}
                             if tracker.restored_from_repository
-                            and (tracker.environment_scope is None or tracker.portfolio_scope is None)
+                            and (
+                                tracker.environment_scope is None or tracker.portfolio_scope is None
+                            )
                             else {}
                         ),
                         **(
@@ -1529,7 +1533,9 @@ class TradingController:
             else None
         )
         signal_decision_payload = (
-            signal_decision_payload_raw if isinstance(signal_decision_payload_raw, Mapping) else None
+            signal_decision_payload_raw
+            if isinstance(signal_decision_payload_raw, Mapping)
+            else None
         )
         decision_payload = (
             request_decision_payload
@@ -1625,7 +1631,9 @@ class TradingController:
             else None
         )
         signal_decision_payload = (
-            signal_decision_payload_raw if isinstance(signal_decision_payload_raw, Mapping) else None
+            signal_decision_payload_raw
+            if isinstance(signal_decision_payload_raw, Mapping)
+            else None
         )
         decision_payload = (
             request_decision_payload
@@ -1723,7 +1731,9 @@ class TradingController:
                         )
                         diagnostics["performance_guard_block_enforced"] = True
                     diagnostics["fallback_autonomy_mode"] = fallback_permission.autonomy_mode.value
-                    diagnostics["fallback_autonomy_primary_reason"] = fallback_permission.primary_reason
+                    diagnostics["fallback_autonomy_primary_reason"] = (
+                        fallback_permission.primary_reason
+                    )
                 except Exception as fallback_exc:  # noqa: BLE001
                     diagnostics["fallback_permission_error"] = str(fallback_exc)
                 return None, {
@@ -1736,18 +1746,20 @@ class TradingController:
                 }
             try:
                 lifecycle = OpportunityLifecycleService()
-                snapshot, scope_diagnostics = lifecycle.load_recent_performance_snapshot_with_scope_diagnostics(
-                    shadow_repository=repository,
-                    snapshot_config=OpportunityPerformanceSnapshotConfig(
-                        scope_environment=self.environment,
-                        scope_portfolio=self.portfolio_id,
-                        scope_model_version=scope_model_version,
-                        scope_decision_source=scope_decision_source,
-                        require_scope_provenance=True,
-                        require_lineage_provenance=(
-                            scope_model_version is not None or scope_decision_source is not None
+                snapshot, scope_diagnostics = (
+                    lifecycle.load_recent_performance_snapshot_with_scope_diagnostics(
+                        shadow_repository=repository,
+                        snapshot_config=OpportunityPerformanceSnapshotConfig(
+                            scope_environment=self.environment,
+                            scope_portfolio=self.portfolio_id,
+                            scope_model_version=scope_model_version,
+                            scope_decision_source=scope_decision_source,
+                            require_scope_provenance=True,
+                            require_lineage_provenance=(
+                                scope_model_version is not None or scope_decision_source is not None
+                            ),
                         ),
-                    ),
+                    )
                 )
             except Exception as exc:  # noqa: BLE001
                 diagnostics["performance_guard_source"] = "local_snapshot_source_of_truth_failed"
@@ -1776,7 +1788,9 @@ class TradingController:
                         )
                         diagnostics["performance_guard_block_enforced"] = True
                     diagnostics["fallback_autonomy_mode"] = fallback_permission.autonomy_mode.value
-                    diagnostics["fallback_autonomy_primary_reason"] = fallback_permission.primary_reason
+                    diagnostics["fallback_autonomy_primary_reason"] = (
+                        fallback_permission.primary_reason
+                    )
                 except Exception as fallback_exc:  # noqa: BLE001
                     diagnostics["fallback_permission_error"] = str(fallback_exc)
                 return None, {
@@ -2205,8 +2219,8 @@ class TradingController:
                             tracked.correlation_key,
                             tracker_hint=tracked,
                         )
-                        scope_environment, scope_portfolio, scope_resolution = _resolve_runtime_scope(
-                            tracked
+                        scope_environment, scope_portfolio, scope_resolution = (
+                            _resolve_runtime_scope(tracked)
                         )
                         tracked.model_version = model_version
                         tracked.decision_source = decision_source
@@ -2311,7 +2325,9 @@ class TradingController:
                 correlation_key,
                 tracker_hint=proxy_tracker,
             )
-            scope_environment, scope_portfolio, scope_resolution = _resolve_runtime_scope(proxy_tracker)
+            scope_environment, scope_portfolio, scope_resolution = _resolve_runtime_scope(
+                proxy_tracker
+            )
             proxy_label = OpportunityOutcomeLabel(
                 symbol=request.symbol,
                 decision_timestamp=timestamp_utc,
