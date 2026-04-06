@@ -208,6 +208,12 @@ class OpportunityPerformanceSnapshotConfig:
     max_scan_labels: int = 512
     allowed_final_prefixes: tuple[str, ...] = _FINAL_LABEL_PREFIXES
     allowed_partial_prefixes: tuple[str, ...] = _PARTIAL_LABEL_PREFIXES
+    scope_environment: str | None = None
+    scope_portfolio: str | None = None
+    scope_model_version: str | None = None
+    scope_decision_source: str | None = None
+    require_scope_provenance: bool = False
+    require_lineage_provenance: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -216,6 +222,16 @@ class OpportunityRecentPerformanceWindow:
     recent_final_outcomes_count: int
     recent_partial_only_count: int
     window_label: str
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityPerformanceSnapshotScopeDiagnostics:
+    scope_environment: str | None
+    scope_portfolio: str | None
+    scoped_label_count: int
+    excluded_label_count: int
+    missing_scope_provenance_count: int
+    missing_lineage_provenance_count: int
 
 
 class OpportunityPerformanceSnapshotBuilder:
@@ -232,13 +248,34 @@ class OpportunityPerformanceSnapshotBuilder:
         self,
         labels: Sequence[OpportunityOutcomeLabel],
     ) -> OpportunityAutonomyPerformanceSnapshot:
+        snapshot, _ = self.build_recent_performance_snapshot_with_scope_diagnostics(labels)
+        return snapshot
+
+    def build_recent_performance_snapshot_with_scope_diagnostics(
+        self,
+        labels: Sequence[OpportunityOutcomeLabel],
+    ) -> tuple[OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics]:
         if self._config.recent_final_window_size <= 0:
             raise ValueError("recent_final_window_size_must_be_positive")
         if self._config.max_scan_labels <= 0:
             raise ValueError("max_scan_labels_must_be_positive")
 
         observed = list(labels)[-self._config.max_scan_labels :]
-        recent_span = self._build_recent_span(observed)
+        scoped_observed: list[OpportunityOutcomeLabel] = []
+        missing_scope_provenance_count = 0
+        missing_lineage_provenance_count = 0
+        for label in observed:
+            in_scope, missing_scope_provenance, missing_lineage_provenance = self._is_label_in_scope(
+                label
+            )
+            if missing_scope_provenance:
+                missing_scope_provenance_count += 1
+            if missing_lineage_provenance:
+                missing_lineage_provenance_count += 1
+            if in_scope:
+                scoped_observed.append(label)
+        excluded_count = len(observed) - len(scoped_observed)
+        recent_span = self._build_recent_span(scoped_observed)
         final_window = [
             label
             for label in recent_span
@@ -266,15 +303,25 @@ class OpportunityPerformanceSnapshotBuilder:
             recent_partial_only_count=partial_only_count,
             window_label=f"last_{self._config.recent_final_window_size}_final_outcomes",
         )
-        return OpportunityAutonomyPerformanceSnapshot(
-            recent_final_outcomes_count=window.recent_final_outcomes_count,
-            recent_loss_streak=loss_streak,
-            recent_realized_return_bps_sum=return_sum,
-            recent_avg_realized_return_bps=avg_return,
-            recent_worst_realized_return_bps=worst_return,
-            recent_negative_outcomes_count=negative_count,
-            recent_partial_only_count=window.recent_partial_only_count,
-            recent_window_label=window.window_label,
+        return (
+            OpportunityAutonomyPerformanceSnapshot(
+                recent_final_outcomes_count=window.recent_final_outcomes_count,
+                recent_loss_streak=loss_streak,
+                recent_realized_return_bps_sum=return_sum,
+                recent_avg_realized_return_bps=avg_return,
+                recent_worst_realized_return_bps=worst_return,
+                recent_negative_outcomes_count=negative_count,
+                recent_partial_only_count=window.recent_partial_only_count,
+                recent_window_label=window.window_label,
+            ),
+            OpportunityPerformanceSnapshotScopeDiagnostics(
+                scope_environment=self._normalize_scope_value(self._config.scope_environment),
+                scope_portfolio=self._normalize_scope_value(self._config.scope_portfolio),
+                scoped_label_count=len(scoped_observed),
+                excluded_label_count=excluded_count,
+                missing_scope_provenance_count=missing_scope_provenance_count,
+                missing_lineage_provenance_count=missing_lineage_provenance_count,
+            ),
         )
 
     def load_recent_performance_snapshot(
@@ -282,6 +329,14 @@ class OpportunityPerformanceSnapshotBuilder:
         repository: OpportunityShadowRepository,
     ) -> OpportunityAutonomyPerformanceSnapshot:
         return self.build_recent_performance_snapshot(repository.load_outcome_labels())
+
+    def load_recent_performance_snapshot_with_scope_diagnostics(
+        self,
+        repository: OpportunityShadowRepository,
+    ) -> tuple[OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics]:
+        return self.build_recent_performance_snapshot_with_scope_diagnostics(
+            repository.load_outcome_labels()
+        )
 
     @property
     def _final_prefixes(self) -> tuple[str, ...]:
@@ -333,6 +388,63 @@ class OpportunityPerformanceSnapshotBuilder:
         else:
             return list(observed)
         return list(observed[cutoff_index:])
+
+    def _is_label_in_scope(self, label: OpportunityOutcomeLabel) -> tuple[bool, bool, bool]:
+        scope_environment = self._normalize_scope_value(self._config.scope_environment)
+        scope_portfolio = self._normalize_scope_value(self._config.scope_portfolio)
+        scope_model_version = self._normalize_scope_value(self._config.scope_model_version)
+        scope_decision_source = self._normalize_scope_value(self._config.scope_decision_source)
+        if (
+            scope_environment is None
+            and scope_portfolio is None
+            and scope_model_version is None
+            and scope_decision_source is None
+        ):
+            return True, False, False
+        provenance = (
+            dict(label.provenance)
+            if isinstance(getattr(label, "provenance", None), Mapping)
+            else {}
+        )
+        raw_environment = provenance.get("environment")
+        raw_portfolio = provenance.get("portfolio_id")
+        if raw_portfolio is None:
+            raw_portfolio = provenance.get("portfolio")
+        raw_model_version = provenance.get("model_version")
+        raw_decision_source = provenance.get("decision_source")
+        label_environment = self._normalize_scope_value(raw_environment)
+        label_portfolio = self._normalize_scope_value(raw_portfolio)
+        label_model_version = self._normalize_scope_value(raw_model_version)
+        label_decision_source = self._normalize_scope_value(raw_decision_source)
+        missing_provenance = False
+        missing_lineage_provenance = False
+        if scope_environment is not None and label_environment is None:
+            missing_provenance = True
+        if scope_portfolio is not None and label_portfolio is None:
+            missing_provenance = True
+        if scope_model_version is not None and label_model_version is None:
+            missing_lineage_provenance = True
+        if scope_decision_source is not None and label_decision_source is None:
+            missing_lineage_provenance = True
+        if missing_provenance and self._config.require_scope_provenance:
+            return False, True, missing_lineage_provenance
+        if missing_lineage_provenance and self._config.require_lineage_provenance:
+            return False, missing_provenance, True
+        if scope_environment is not None and label_environment != scope_environment:
+            return False, missing_provenance, missing_lineage_provenance
+        if scope_portfolio is not None and label_portfolio != scope_portfolio:
+            return False, missing_provenance, missing_lineage_provenance
+        if scope_model_version is not None and label_model_version != scope_model_version:
+            return False, missing_provenance, missing_lineage_provenance
+        if scope_decision_source is not None and label_decision_source != scope_decision_source:
+            return False, missing_provenance, missing_lineage_provenance
+        return True, missing_provenance, missing_lineage_provenance
+
+    def _normalize_scope_value(self, value: object | None) -> str | None:
+        if value is None:
+            return None
+        candidate = str(value).strip()
+        return candidate or None
 
 
 @dataclass(slots=True, frozen=True)
@@ -828,6 +940,15 @@ class OpportunityLifecycleService:
     ) -> OpportunityAutonomyPerformanceSnapshot:
         builder = OpportunityPerformanceSnapshotBuilder(config=snapshot_config)
         return builder.load_recent_performance_snapshot(shadow_repository)
+
+    def load_recent_performance_snapshot_with_scope_diagnostics(
+        self,
+        *,
+        shadow_repository: OpportunityShadowRepository,
+        snapshot_config: OpportunityPerformanceSnapshotConfig | None = None,
+    ) -> tuple[OpportunityAutonomyPerformanceSnapshot, OpportunityPerformanceSnapshotScopeDiagnostics]:
+        builder = OpportunityPerformanceSnapshotBuilder(config=snapshot_config)
+        return builder.load_recent_performance_snapshot_with_scope_diagnostics(shadow_repository)
 
     def build_persisted_promotion_readiness(
         self,

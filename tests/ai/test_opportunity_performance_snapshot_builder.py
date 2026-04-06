@@ -227,7 +227,197 @@ def test_performance_guard_accepts_snapshot_from_builder_without_transform(tmp_p
     assert "insufficient_recent_final_outcomes_for_live" in decision.reasons
 
 
-def _label(index: int, *, realized_return_bps: float, label_quality: str) -> OpportunityOutcomeLabel:
+def test_snapshot_builder_scope_filters_by_environment_and_portfolio(tmp_path: Path) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={"environment": "live", "portfolio_id": "live-1"},
+            ),
+            _label(
+                1,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={"environment": "live", "portfolio_id": "live-1"},
+            ),
+            _label(
+                2,
+                realized_return_bps=-20.0,
+                label_quality="final",
+                provenance={"environment": "paper", "portfolio_id": "paper-1"},
+            ),
+            _label(
+                3,
+                realized_return_bps=-18.0,
+                label_quality="final",
+                provenance={"environment": "live", "portfolio_id": "live-2"},
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            recent_final_window_size=8,
+            scope_environment="live",
+            scope_portfolio="live-1",
+            require_scope_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 2
+    assert snapshot.recent_realized_return_bps_sum == 11.0
+    assert diagnostics.scoped_label_count == 2
+    assert diagnostics.excluded_label_count == 2
+
+
+def test_snapshot_builder_scope_requires_provenance_and_excludes_unscoped_labels(tmp_path: Path) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(0, realized_return_bps=7.0, label_quality="final"),
+            _label(1, realized_return_bps=6.0, label_quality="final"),
+            _label(
+                2,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={"environment": "live", "portfolio_id": "live-1"},
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            recent_final_window_size=8,
+            scope_environment="live",
+            scope_portfolio="live-1",
+            require_scope_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 1
+    assert snapshot.recent_realized_return_bps_sum == 5.0
+    assert diagnostics.scoped_label_count == 1
+    assert diagnostics.excluded_label_count == 2
+    assert diagnostics.missing_scope_provenance_count == 2
+
+
+def test_snapshot_builder_scope_filters_by_model_version(tmp_path: Path) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+            ),
+            _label(
+                1,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+            ),
+            _label(
+                2,
+                realized_return_bps=-20.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "B",
+                },
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 2
+    assert snapshot.recent_realized_return_bps_sum == 11.0
+    assert diagnostics.scoped_label_count == 2
+    assert diagnostics.excluded_label_count == 1
+
+
+def test_snapshot_builder_scope_filters_by_decision_source_and_counts_missing_lineage(tmp_path: Path) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                1,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={"environment": "live", "portfolio_id": "live-1"},
+            ),
+            _label(
+                2,
+                realized_return_bps=-20.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "decision_source": "other_source",
+                },
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 1
+    assert snapshot.recent_realized_return_bps_sum == 6.0
+    assert diagnostics.scoped_label_count == 1
+    assert diagnostics.excluded_label_count == 2
+    assert diagnostics.missing_lineage_provenance_count == 1
+
+
+def _label(
+    index: int,
+    *,
+    realized_return_bps: float,
+    label_quality: str,
+    provenance: dict[str, object] | None = None,
+) -> OpportunityOutcomeLabel:
     return OpportunityOutcomeLabel(
         symbol="BTCUSDT",
         decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index),
@@ -236,5 +426,6 @@ def _label(index: int, *, realized_return_bps: float, label_quality: str) -> Opp
         realized_return_bps=realized_return_bps,
         max_favorable_excursion_bps=max(realized_return_bps, 0.0),
         max_adverse_excursion_bps=min(realized_return_bps, 0.0),
+        provenance=dict(provenance or {}),
         label_quality=label_quality,
     )
