@@ -355,7 +355,9 @@ def test_cleanup_long_poll_runtime_calls_both_shutdown_hooks(
     import bot_core.exchanges as exchanges_pkg
 
     exchange_http_client = types.ModuleType("bot_core.exchanges.http_client")
-    setattr(exchange_http_client, "_shutdown_client_cache", lambda: calls.append("http_client_cache"))
+    setattr(
+        exchange_http_client, "_shutdown_client_cache", lambda: calls.append("http_client_cache")
+    )
     network_sync = types.ModuleType("core.network.sync")
     setattr(network_sync, "_shutdown_portal", lambda: calls.append("network_portal"))
     network_pkg = types.ModuleType("core.network")

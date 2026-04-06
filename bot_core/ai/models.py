@@ -17,6 +17,7 @@ from typing import (
     Mapping,
     MutableMapping,
     Optional,
+    Protocol,
     Sequence,
     TYPE_CHECKING,
 )
@@ -32,10 +33,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_signing_helpers() -> tuple[
-    Callable[[Mapping[str, object], bytes, str | None], Mapping[str, object]],
-    Callable[[Mapping[str, object], Mapping[str, object], bytes], Sequence[str]],
-]:
+class _BuildHmacSignature(Protocol):
+    def __call__(
+        self,
+        payload: Mapping[str, object],
+        *,
+        key: bytes,
+        key_id: str | None = None,
+    ) -> Mapping[str, object]: ...
+
+
+class _ValidateHmacSignature(Protocol):
+    def __call__(
+        self,
+        payload: Mapping[str, object],
+        signature_doc: Mapping[str, object],
+        *,
+        key: bytes,
+    ) -> Sequence[str]: ...
+
+
+def _get_signing_helpers() -> tuple[_BuildHmacSignature, _ValidateHmacSignature]:
     """Load HMAC signing helpers only when a signing path is actually used."""
 
     try:
