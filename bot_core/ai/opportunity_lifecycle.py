@@ -112,6 +112,75 @@ class OpportunityAutonomyDecision:
         }
 
 
+@dataclass(slots=True, frozen=True)
+class OpportunityExecutionPermission:
+    environment: str
+    autonomy_mode: OpportunityAutonomyMode
+    autonomous_execution_allowed: bool
+    assisted_override_required: bool
+    assisted_override_used: bool
+    primary_reason: str
+    denial_reason: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "environment": self.environment,
+            "autonomy_mode": self.autonomy_mode.value,
+            "autonomous_execution_allowed": self.autonomous_execution_allowed,
+            "assisted_override_required": self.assisted_override_required,
+            "assisted_override_used": self.assisted_override_used,
+            "primary_reason": self.primary_reason,
+            "denial_reason": self.denial_reason,
+        }
+
+
+def evaluate_opportunity_execution_permission(
+    *,
+    decision: OpportunityAutonomyDecision,
+    environment: str,
+    assisted_approval: bool = False,
+) -> OpportunityExecutionPermission:
+    normalized_environment = str(environment or "").strip().lower()
+    is_live_environment = normalized_environment in {"live", "prod", "production"}
+    mode = decision.mode
+    assisted_override_required = mode is OpportunityAutonomyMode.LIVE_ASSISTED and is_live_environment
+    assisted_override_used = assisted_override_required and bool(assisted_approval)
+    denial_reason: str | None = None
+    allowed = False
+
+    if mode is OpportunityAutonomyMode.DENIED:
+        denial_reason = "autonomy_mode_denied"
+    elif mode is OpportunityAutonomyMode.SHADOW_ONLY:
+        denial_reason = "autonomy_mode_shadow_only_blocks_order_execution"
+    elif mode is OpportunityAutonomyMode.PAPER_AUTONOMOUS:
+        if is_live_environment:
+            denial_reason = "paper_autonomy_blocks_live_environment"
+        else:
+            allowed = True
+    elif mode is OpportunityAutonomyMode.LIVE_ASSISTED:
+        if is_live_environment:
+            if assisted_override_used:
+                allowed = True
+            else:
+                denial_reason = "live_assisted_requires_explicit_approval"
+        else:
+            allowed = True
+    elif mode is OpportunityAutonomyMode.LIVE_AUTONOMOUS:
+        allowed = True
+    else:  # pragma: no cover - defensywny fallback na nieznany enum
+        denial_reason = "unsupported_autonomy_mode"
+
+    return OpportunityExecutionPermission(
+        environment=normalized_environment,
+        autonomy_mode=mode,
+        autonomous_execution_allowed=allowed,
+        assisted_override_required=assisted_override_required,
+        assisted_override_used=assisted_override_used,
+        primary_reason=decision.primary_reason,
+        denial_reason=denial_reason,
+    )
+
+
 class OpportunityLifecycleService:
     """Bridge runtime persisted shadow/outcome data with evaluator/promotion readiness."""
 
@@ -509,6 +578,8 @@ __all__ = [
     "OpportunityAutonomyDecision",
     "OpportunityAutonomyGateConfig",
     "OpportunityAutonomyMode",
+    "OpportunityExecutionPermission",
+    "evaluate_opportunity_execution_permission",
     "OpportunityActivationReadiness",
     "OpportunityLifecycleService",
     "OpportunityPersistedPromotionReadinessReport",

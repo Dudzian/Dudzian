@@ -36,6 +36,12 @@ except Exception:  # pragma: no cover
     flatten_explainability = lambda report, prefix="ai_explainability": {}  # type: ignore
     parse_explainability_payload = lambda payload: None  # type: ignore
 from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
+from bot_core.ai.opportunity_lifecycle import (
+    OpportunityAutonomyDecision,
+    OpportunityAutonomyMode,
+    OpportunityExecutionPermission,
+    evaluate_opportunity_execution_permission,
+)
 from bot_core.ai.trading_opportunity_shadow import (
     OpportunityOutcomeLabel,
     OpportunityShadowRepository,
@@ -356,6 +362,17 @@ def _normalize_optional_request_string(value: object | None) -> str | None:
         return None
     candidate = str(value).strip()
     return candidate or None
+
+
+def _as_bool(value: object | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    normalized = str(value).strip().lower()
+    return normalized in {"1", "true", "t", "yes", "y", "on"}
 
 
 def _normalize_optional_request_float(value: object | None, *, field_name: str) -> float | None:
@@ -1181,6 +1198,34 @@ class TradingController:
                 return None
 
         request = self._build_order_request(signal, extra_metadata=decision_metadata)
+        if self._is_opportunity_autonomy_enforced(signal, request):
+            permission, diagnostics = self._evaluate_opportunity_execution_permission(
+                signal=signal,
+                request=request,
+            )
+            metadata: dict[str, object] = {
+                "environment": self.environment,
+                **dict(diagnostics),
+            }
+            if permission is not None:
+                metadata.update(permission.to_dict())
+                metadata["execution_permission"] = (
+                    "allowed" if permission.autonomous_execution_allowed else "blocked"
+                )
+                metadata["autonomy_primary_reason"] = permission.primary_reason
+                if permission.denial_reason:
+                    metadata["blocking_reason"] = permission.denial_reason
+            blocked = permission is None or not permission.autonomous_execution_allowed
+            self._record_decision_event(
+                "opportunity_autonomy_enforcement",
+                signal=signal,
+                request=request,
+                status="blocked" if blocked else "allowed",
+                metadata=metadata,
+            )
+            if blocked:
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return None
         account = self.account_snapshot_provider()
         risk_result = self.risk_engine.apply_pre_trade_checks(
             request,
@@ -1387,6 +1432,86 @@ class TradingController:
         )
         self._handle_liquidation_state(risk_result)
         return result
+
+    def _is_opportunity_autonomy_enforced(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ) -> bool:
+        signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        keys = (
+            "opportunity_autonomy_mode",
+            "opportunity_autonomy_decision",
+        )
+        return any(key in signal_metadata or key in request_metadata for key in keys)
+
+    def _extract_opportunity_autonomy_decision(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ) -> OpportunityAutonomyDecision:
+        signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
+        if decision_payload_raw is None:
+            decision_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
+        decision_payload = (
+            decision_payload_raw if isinstance(decision_payload_raw, Mapping) else None
+        )
+        mode_raw = request_metadata.get("opportunity_autonomy_mode")
+        if mode_raw is None:
+            mode_raw = signal_metadata.get("opportunity_autonomy_mode")
+        if mode_raw is None and decision_payload is not None:
+            mode_raw = decision_payload.get("mode")
+        if mode_raw is None:
+            raise ValueError("missing_autonomy_mode")
+        mode = OpportunityAutonomyMode(str(mode_raw).strip().lower())
+        primary_reason_raw = request_metadata.get("opportunity_autonomy_primary_reason")
+        if primary_reason_raw is None:
+            primary_reason_raw = signal_metadata.get("opportunity_autonomy_primary_reason")
+        if primary_reason_raw is None and decision_payload is not None:
+            primary_reason_raw = decision_payload.get("primary_reason")
+        primary_reason = str(primary_reason_raw or "").strip() or "unspecified_primary_reason"
+        return OpportunityAutonomyDecision(
+            mode=mode,
+            primary_reason=primary_reason,
+            reasons=(primary_reason,),
+            blocking_reasons=(),
+            warnings=(),
+            evidence_summary={},
+        )
+
+    def _evaluate_opportunity_execution_permission(
+        self,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ) -> tuple[OpportunityExecutionPermission | None, Mapping[str, object]]:
+        signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        assisted_flag_raw = request_metadata.get("autonomy_assisted_approval")
+        if assisted_flag_raw is None:
+            assisted_flag_raw = signal_metadata.get("autonomy_assisted_approval")
+        assisted_approval = _as_bool(assisted_flag_raw)
+        try:
+            decision = self._extract_opportunity_autonomy_decision(signal, request)
+            permission = evaluate_opportunity_execution_permission(
+                decision=decision,
+                environment=self.environment,
+                assisted_approval=assisted_approval,
+            )
+            return permission, {"autonomy_assisted_approval_supplied": assisted_approval}
+        except Exception as exc:  # noqa: BLE001
+            return None, {
+                "execution_permission": "blocked",
+                "autonomy_mode": "unavailable",
+                "autonomous_execution_allowed": False,
+                "autonomy_primary_reason": "autonomy_permission_evaluation_failed",
+                "blocking_reason": "autonomy_permission_evaluation_failed",
+                "autonomy_permission_error": str(exc),
+                "autonomy_assisted_approval_supplied": assisted_approval,
+            }
 
     def _try_attach_opportunity_outcome_label(
         self,
