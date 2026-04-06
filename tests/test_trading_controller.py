@@ -2378,6 +2378,104 @@ def test_opportunity_autonomy_governance_missing_requested_and_downgrade_fields_
     assert "upstream_autonomy_downgraded" not in event
 
 
+def test_opportunity_autonomy_downgrade_chain_upstream_downgrade_without_local_breach() -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                assisted_approval=True,
+                include_decision_payload=True,
+                decision_effective_mode="live_assisted",
+                decision_primary_reason="upstream_downgraded_to_assisted",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert len(execution.requests) == 1
+    assert event["autonomy_requested_mode"] == "live_autonomous"
+    assert event["autonomy_upstream_effective_mode"] == "live_assisted"
+    assert event["autonomy_local_guard_effective_mode"] == "live_assisted"
+    assert event["autonomy_final_mode"] == "live_assisted"
+    assert event["autonomy_decisive_stage"] == "upstream_governance"
+    assert event["autonomy_decisive_reason"] == "upstream_downgraded_to_assisted"
+
+
+def test_opportunity_autonomy_downgrade_chain_local_guard_downgrade_with_permissive_upstream() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [1.0, -2.0], environment="live", portfolio_id="live-1"
+        ),
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                assisted_approval=True,
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="upstream_permissive",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_requested_mode"] == "live_autonomous"
+    assert event["autonomy_upstream_effective_mode"] == "live_autonomous"
+    assert event["autonomy_local_guard_effective_mode"] == "live_assisted"
+    assert event["autonomy_final_mode"] == "live_assisted"
+    assert event["autonomy_decisive_stage"] == "local_guard"
+    assert event["autonomy_decisive_reason"] == "insufficient_recent_final_outcomes_for_live"
+
+
+def test_opportunity_autonomy_downgrade_chain_fail_closed_branch_is_explicit() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_requested_mode"] == "live_autonomous"
+    assert event["autonomy_upstream_effective_mode"] == "live_autonomous"
+    assert event["autonomy_local_guard_effective_mode"] == "live_autonomous"
+    assert event["autonomy_final_mode"] == "unavailable"
+    assert event["autonomy_decisive_stage"] == "fail_closed"
+    assert event["autonomy_decisive_reason"] == "performance_guard_snapshot_source_unavailable"
+
+
+def test_opportunity_autonomy_downgrade_chain_fully_allowed_branch_has_no_downgrade_stage() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+        ),
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_requested_mode"] == "live_autonomous"
+    assert event["autonomy_upstream_effective_mode"] == "live_autonomous"
+    assert event["autonomy_local_guard_effective_mode"] == "live_autonomous"
+    assert event["autonomy_final_mode"] == "live_autonomous"
+    assert event["autonomy_decisive_stage"] == "none"
+    assert event["autonomy_decisive_reason"] == "reason:live_autonomous"
+
+
 def test_opportunity_autonomy_runtime_lineage_falls_back_to_signal_metadata_when_payload_lacks_lineage() -> (
     None
 ):

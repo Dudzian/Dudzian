@@ -1312,6 +1312,7 @@ class TradingController:
                 metadata["autonomy_primary_reason"] = permission.primary_reason
                 if permission.denial_reason:
                     metadata["blocking_reason"] = permission.denial_reason
+            self._attach_opportunity_autonomy_downgrade_chain_metadata(metadata)
             blocked = permission is None or not permission.autonomous_execution_allowed
             self._record_decision_event(
                 "opportunity_autonomy_enforcement",
@@ -1696,6 +1697,90 @@ class TradingController:
             metadata["upstream_autonomy_evidence_summary"] = evidence_summary
         return metadata
 
+    def _attach_opportunity_autonomy_downgrade_chain_metadata(
+        self, metadata: MutableMapping[str, object]
+    ) -> None:
+        def _as_non_empty_string(value: object | None) -> str | None:
+            if value is None:
+                return None
+            candidate = str(value).strip()
+            return candidate or None
+
+        requested_mode = _as_non_empty_string(
+            metadata.get("upstream_autonomy_requested_mode") or metadata.get("autonomy_requested_mode")
+        )
+        upstream_effective_mode = _as_non_empty_string(
+            metadata.get("upstream_autonomy_effective_mode")
+            or metadata.get("upstream_autonomy_requested_mode")
+            or metadata.get("autonomy_requested_mode")
+        )
+        local_guard_effective_mode = _as_non_empty_string(
+            metadata.get("performance_guard_effective_mode") or upstream_effective_mode
+        )
+        final_mode = _as_non_empty_string(metadata.get("autonomy_mode"))
+
+        if requested_mode is not None:
+            metadata["autonomy_requested_mode"] = requested_mode
+        if upstream_effective_mode is not None:
+            metadata["autonomy_upstream_effective_mode"] = upstream_effective_mode
+        if local_guard_effective_mode is not None:
+            metadata["autonomy_local_guard_effective_mode"] = local_guard_effective_mode
+        if final_mode is not None:
+            metadata["autonomy_final_mode"] = final_mode
+
+        blocking_reason = _as_non_empty_string(metadata.get("blocking_reason"))
+        primary_reason = _as_non_empty_string(metadata.get("autonomy_primary_reason"))
+        upstream_primary_reason = _as_non_empty_string(metadata.get("upstream_autonomy_primary_reason"))
+        guard_primary_reason = _as_non_empty_string(metadata.get("performance_guard_primary_reason"))
+
+        if blocking_reason in {
+            "performance_guard_snapshot_source_unavailable",
+            "performance_guard_snapshot_load_failed",
+            "autonomy_permission_evaluation_failed_after_local_guard",
+            "autonomy_permission_evaluation_failed",
+        }:
+            metadata["autonomy_decisive_stage"] = "fail_closed"
+            metadata["autonomy_decisive_reason"] = blocking_reason
+            return
+        if _as_bool(metadata.get("performance_guard_block_enforced")):
+            metadata["autonomy_decisive_stage"] = "local_guard"
+            metadata["autonomy_decisive_reason"] = (
+                guard_primary_reason or blocking_reason or "performance_guard_local_kill_switch"
+            )
+            return
+        if (
+            local_guard_effective_mode is not None
+            and upstream_effective_mode is not None
+            and local_guard_effective_mode != upstream_effective_mode
+        ):
+            metadata["autonomy_decisive_stage"] = "local_guard"
+            metadata["autonomy_decisive_reason"] = (
+                guard_primary_reason or primary_reason or "local_guard_effective_mode_changed"
+            )
+            return
+        if (
+            final_mode is not None
+            and local_guard_effective_mode is not None
+            and final_mode != local_guard_effective_mode
+        ):
+            metadata["autonomy_decisive_stage"] = "permission_engine"
+            metadata["autonomy_decisive_reason"] = (
+                blocking_reason or primary_reason or "permission_engine_adjustment"
+            )
+            return
+        if (
+            requested_mode is not None
+            and upstream_effective_mode is not None
+            and requested_mode != upstream_effective_mode
+        ):
+            metadata["autonomy_decisive_stage"] = "upstream_governance"
+            metadata["autonomy_decisive_reason"] = (
+                upstream_primary_reason or primary_reason or "upstream_effective_mode_changed"
+            )
+            return
+        metadata["autonomy_decisive_stage"] = "none"
+        metadata["autonomy_decisive_reason"] = primary_reason or "autonomy_chain_no_downgrade"
+
     def _extract_opportunity_autonomy_decision(
         self,
         signal: StrategySignal,
@@ -1798,11 +1883,17 @@ class TradingController:
     ) -> tuple[OpportunityExecutionPermission | None, Mapping[str, object]]:
         signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        diagnostics: dict[str, object] = {}
+        requested_mode_raw = request_metadata.get("opportunity_autonomy_mode")
+        if requested_mode_raw is None:
+            requested_mode_raw = signal_metadata.get("opportunity_autonomy_mode")
+        if requested_mode_raw is not None:
+            diagnostics["autonomy_requested_mode"] = str(requested_mode_raw).strip().lower()
         assisted_flag_raw = request_metadata.get("autonomy_assisted_approval")
         if assisted_flag_raw is None:
             assisted_flag_raw = signal_metadata.get("autonomy_assisted_approval")
         assisted_approval = _as_bool(assisted_flag_raw)
-        diagnostics: dict[str, object] = {"autonomy_assisted_approval_supplied": assisted_approval}
+        diagnostics["autonomy_assisted_approval_supplied"] = assisted_approval
         request_decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
         signal_decision_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
         request_decision_payload = (
