@@ -2004,16 +2004,21 @@ class TradingController:
                     if tracker_hint.portfolio_scope is not None
                     else ""
                 )
-                if tracker_environment:
+                if tracker_hint.restored_from_repository:
                     scope_environment = tracker_environment
-                if tracker_portfolio:
                     scope_portfolio = tracker_portfolio
-                if tracker_environment and tracker_portfolio:
-                    scope_resolution = "restored_tracker"
-                elif tracker_hint.restored_from_repository:
-                    scope_environment = ""
-                    scope_portfolio = ""
-                    scope_resolution = "restored_tracker_scope_missing"
+                    scope_resolution = (
+                        "restored_tracker"
+                        if tracker_environment and tracker_portfolio
+                        else "restored_tracker_scope_missing"
+                    )
+                else:
+                    if tracker_environment:
+                        scope_environment = tracker_environment
+                    if tracker_portfolio:
+                        scope_portfolio = tracker_portfolio
+                    if tracker_environment and tracker_portfolio:
+                        scope_resolution = "restored_tracker"
             return scope_environment, scope_portfolio, scope_resolution
 
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()

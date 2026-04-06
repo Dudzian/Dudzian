@@ -315,6 +315,115 @@ def test_snapshot_builder_scope_requires_provenance_and_excludes_unscoped_labels
     assert diagnostics.missing_scope_provenance_count == 2
 
 
+def test_snapshot_builder_scope_excludes_environment_only_partial_scope_as_missing_provenance(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=7.0,
+                label_quality="final",
+                provenance={"environment": "live"},
+            )
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            require_scope_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 0
+    assert diagnostics.scoped_label_count == 0
+    assert diagnostics.excluded_label_count == 1
+    assert diagnostics.missing_scope_provenance_count == 1
+
+
+def test_snapshot_builder_scope_excludes_portfolio_only_partial_scope_as_missing_provenance(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=7.0,
+                label_quality="final",
+                provenance={"portfolio_id": "live-1"},
+            )
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            require_scope_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 0
+    assert diagnostics.scoped_label_count == 0
+    assert diagnostics.excluded_label_count == 1
+    assert diagnostics.missing_scope_provenance_count == 1
+
+
+def test_snapshot_builder_scope_diagnostics_distinguish_full_partial_and_wrong_scope(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=7.0,
+                label_quality="final",
+                provenance={"environment": "live", "portfolio_id": "live-1"},
+            ),
+            _label(
+                1,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={"environment": "live"},
+            ),
+            _label(
+                2,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={"portfolio_id": "live-1"},
+            ),
+            _label(
+                3,
+                realized_return_bps=-20.0,
+                label_quality="final",
+                provenance={"environment": "paper", "portfolio_id": "paper-1"},
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            require_scope_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 1
+    assert snapshot.recent_realized_return_bps_sum == 7.0
+    assert diagnostics.scoped_label_count == 1
+    assert diagnostics.excluded_label_count == 3
+    assert diagnostics.missing_scope_provenance_count == 2
+
+
 def test_snapshot_builder_scope_filters_by_model_version(tmp_path: Path) -> None:
     repository = OpportunityShadowRepository(tmp_path)
     repository.append_outcome_labels(
@@ -367,6 +476,619 @@ def test_snapshot_builder_scope_filters_by_model_version(tmp_path: Path) -> None
     assert snapshot.recent_realized_return_bps_sum == 11.0
     assert diagnostics.scoped_label_count == 2
     assert diagnostics.excluded_label_count == 1
+
+
+def test_snapshot_builder_scope_excludes_missing_decision_source_as_missing_lineage_provenance(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+            )
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 0
+    assert diagnostics.scoped_label_count == 0
+    assert diagnostics.excluded_label_count == 1
+    assert diagnostics.missing_lineage_provenance_count == 1
+
+
+def test_snapshot_builder_scope_excludes_missing_model_version_as_missing_lineage_provenance(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            )
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 0
+    assert diagnostics.scoped_label_count == 0
+    assert diagnostics.excluded_label_count == 1
+    assert diagnostics.missing_lineage_provenance_count == 1
+
+
+def test_snapshot_builder_scope_diagnostics_distinguish_full_partial_and_wrong_lineage(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=7.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                1,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+            ),
+            _label(
+                2,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                3,
+                realized_return_bps=-20.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 1
+    assert snapshot.recent_realized_return_bps_sum == 7.0
+    assert diagnostics.scoped_label_count == 1
+    assert diagnostics.excluded_label_count == 3
+    assert diagnostics.missing_lineage_provenance_count == 2
+
+
+def test_snapshot_builder_scope_excludes_combined_partial_scope_and_lineage_as_both_missing(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "model_version": "A",
+                },
+            )
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 0
+    assert diagnostics.scoped_label_count == 0
+    assert diagnostics.excluded_label_count == 1
+    assert diagnostics.missing_scope_provenance_count == 1
+    assert diagnostics.missing_lineage_provenance_count == 1
+
+
+def test_snapshot_builder_scope_excludes_mirrored_combined_partial_scope_and_lineage_as_both_missing(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "portfolio_id": "live-1",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            )
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 0
+    assert diagnostics.scoped_label_count == 0
+    assert diagnostics.excluded_label_count == 1
+    assert diagnostics.missing_scope_provenance_count == 1
+    assert diagnostics.missing_lineage_provenance_count == 1
+
+
+def test_snapshot_builder_scope_diagnostics_distinguish_full_combined_partial_scope_partial_lineage_and_wrong(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=7.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                1,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "model_version": "A",
+                },
+            ),
+            _label(
+                2,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                3,
+                realized_return_bps=4.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+            ),
+            _label(
+                4,
+                realized_return_bps=-20.0,
+                label_quality="final",
+                provenance={
+                    "environment": "paper",
+                    "portfolio_id": "paper-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 1
+    assert snapshot.recent_realized_return_bps_sum == 7.0
+    assert diagnostics.scoped_label_count == 1
+    assert diagnostics.excluded_label_count == 4
+    assert diagnostics.missing_scope_provenance_count == 2
+    assert diagnostics.missing_lineage_provenance_count == 2
+
+
+def test_snapshot_builder_scope_respects_max_scan_labels_and_does_not_pull_older_full_labels(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=9.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                1,
+                realized_return_bps=8.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                2,
+                realized_return_bps=7.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                3,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                4,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={"environment": "live", "model_version": "A"},
+            ),
+            _label(
+                5,
+                realized_return_bps=4.0,
+                label_quality="partial_exit",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                6,
+                realized_return_bps=-20.0,
+                label_quality="final",
+                provenance={
+                    "environment": "paper",
+                    "portfolio_id": "paper-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            recent_final_window_size=4,
+            max_scan_labels=3,
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 0
+    assert snapshot.recent_realized_return_bps_sum == 0.0
+    assert diagnostics.scoped_label_count == 1
+    assert diagnostics.excluded_label_count == 2
+    assert diagnostics.missing_scope_provenance_count == 1
+    assert diagnostics.missing_lineage_provenance_count == 1
+
+
+def test_snapshot_builder_scope_recent_final_window_uses_only_filtered_scoped_finals_with_interleaved_excluded_and_partial(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=10.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                1,
+                realized_return_bps=-30.0,
+                label_quality="final",
+                provenance={
+                    "environment": "paper",
+                    "portfolio_id": "paper-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+            ),
+            _label(
+                2,
+                realized_return_bps=1.0,
+                label_quality="partial_exit",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                3,
+                realized_return_bps=7.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                4,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={"environment": "live", "model_version": "A"},
+            ),
+            _label(
+                5,
+                realized_return_bps=-1.0,
+                label_quality="partial_exit",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                6,
+                realized_return_bps=5.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            recent_final_window_size=2,
+            max_scan_labels=32,
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 2
+    assert snapshot.recent_realized_return_bps_sum == 12.0
+    assert snapshot.recent_partial_only_count == 1
+    assert diagnostics.scoped_label_count == 5
+    assert diagnostics.excluded_label_count == 2
+    assert diagnostics.missing_scope_provenance_count == 1
+    assert diagnostics.missing_lineage_provenance_count == 1
+
+
+def test_snapshot_builder_scope_diagnostics_stay_consistent_with_mixed_labels_under_scan_limit(
+    tmp_path: Path,
+) -> None:
+    repository = OpportunityShadowRepository(tmp_path)
+    repository.append_outcome_labels(
+        [
+            _label(
+                0,
+                realized_return_bps=11.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                1,
+                realized_return_bps=8.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                2,
+                realized_return_bps=7.0,
+                label_quality="final",
+                provenance={"environment": "live", "model_version": "A"},
+            ),
+            _label(
+                3,
+                realized_return_bps=6.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+            ),
+            _label(
+                4,
+                realized_return_bps=5.0,
+                label_quality="partial_exit",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+            _label(
+                5,
+                realized_return_bps=-15.0,
+                label_quality="final",
+                provenance={
+                    "environment": "paper",
+                    "portfolio_id": "paper-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+            ),
+            _label(
+                6,
+                realized_return_bps=4.0,
+                label_quality="final",
+                provenance={"portfolio_id": "live-1", "decision_source": "opportunity_ai_shadow"},
+            ),
+            _label(
+                7,
+                realized_return_bps=3.0,
+                label_quality="final",
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+            ),
+        ]
+    )
+    builder = OpportunityPerformanceSnapshotBuilder(
+        OpportunityPerformanceSnapshotConfig(
+            recent_final_window_size=3,
+            max_scan_labels=6,
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        )
+    )
+
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+
+    assert snapshot.recent_final_outcomes_count == 1
+    assert snapshot.recent_realized_return_bps_sum == 3.0
+    assert diagnostics.scoped_label_count == 2
+    assert diagnostics.excluded_label_count == 4
+    assert diagnostics.missing_scope_provenance_count == 2
+    assert diagnostics.missing_lineage_provenance_count == 3
 
 
 def test_snapshot_builder_scope_filters_by_decision_source_and_counts_missing_lineage(tmp_path: Path) -> None:

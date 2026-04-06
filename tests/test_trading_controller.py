@@ -17,6 +17,10 @@ from bot_core.execution import ExecutionService
 from bot_core.observability import MetricsRegistry
 from bot_core.ui.api import build_explainability_feed
 
+from bot_core.ai.opportunity_lifecycle import (
+    OpportunityLifecycleService,
+    OpportunityPerformanceSnapshotConfig,
+)
 from bot_core.ai.trading_opportunity_shadow import (
     OpportunityOutcomeLabel,
     OpportunityShadowContext,
@@ -1041,6 +1045,87 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_insufficient_local_evidenc
     assert event["performance_guard_excluded_label_count"] == "3"
 
 
+def test_opportunity_autonomy_runtime_scoped_snapshot_excludes_partial_scope_and_reports_missing_scope_provenance() -> None:
+    repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-partial-scope-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                correlation_key="scope-full-1",
+                horizon_minutes=15,
+                realized_return_bps=5.0,
+                max_favorable_excursion_bps=5.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={"environment": "live", "portfolio_id": "live-1"},
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                correlation_key="scope-full-2",
+                horizon_minutes=15,
+                realized_return_bps=4.0,
+                max_favorable_excursion_bps=4.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={"environment": "live", "portfolio_id": "live-1"},
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc),
+                correlation_key="scope-env-only",
+                horizon_minutes=15,
+                realized_return_bps=3.0,
+                max_favorable_excursion_bps=3.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={"environment": "live"},
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 3, tzinfo=timezone.utc),
+                correlation_key="scope-portfolio-only",
+                horizon_minutes=15,
+                realized_return_bps=2.0,
+                max_favorable_excursion_bps=2.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={"portfolio_id": "live-1"},
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 4, tzinfo=timezone.utc),
+                correlation_key="scope-wrong",
+                horizon_minutes=15,
+                realized_return_bps=-20.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=-20.0,
+                provenance={"environment": "paper", "portfolio_id": "paper-1"},
+                label_quality="final",
+            ),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["performance_guard_scoped_label_count"] == "2"
+    assert event["performance_guard_excluded_label_count"] == "3"
+    assert event["performance_guard_missing_scope_provenance_count"] == "2"
+    assert event["performance_guard_scope_environment"] == "live"
+    assert event["performance_guard_scope_portfolio"] == "live-1"
+
+
 def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_model_version() -> None:
     repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
         [
@@ -1735,6 +1820,576 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_missing_lineage_provenance
     assert event["performance_guard_scoped_label_count"] == "0"
     assert event["performance_guard_excluded_label_count"] == "4"
     assert event["performance_guard_missing_lineage_provenance_count"] == "4"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_excludes_partial_lineage_and_reports_missing_lineage_provenance() -> (
+    None
+):
+    repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-partial-lineage-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                correlation_key="lineage-full-1",
+                horizon_minutes=15,
+                realized_return_bps=5.0,
+                max_favorable_excursion_bps=5.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                correlation_key="lineage-full-2",
+                horizon_minutes=15,
+                realized_return_bps=4.0,
+                max_favorable_excursion_bps=4.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc),
+                correlation_key="lineage-model-only",
+                horizon_minutes=15,
+                realized_return_bps=3.0,
+                max_favorable_excursion_bps=3.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 3, tzinfo=timezone.utc),
+                correlation_key="lineage-source-only",
+                horizon_minutes=15,
+                realized_return_bps=2.0,
+                max_favorable_excursion_bps=2.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 4, tzinfo=timezone.utc),
+                correlation_key="lineage-wrong",
+                horizon_minutes=15,
+                realized_return_bps=-20.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=-20.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+                label_quality="final",
+            ),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="A",
+                decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_scoped_label_count"] == "2"
+    assert event["performance_guard_excluded_label_count"] == "3"
+    assert event["performance_guard_missing_lineage_provenance_count"] == "2"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_excludes_combined_partial_scope_and_lineage_and_reports_both_missing_counters() -> (
+    None
+):
+    repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-combined-partial-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                correlation_key="combined-full-1",
+                horizon_minutes=15,
+                realized_return_bps=5.0,
+                max_favorable_excursion_bps=5.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                correlation_key="combined-full-2",
+                horizon_minutes=15,
+                realized_return_bps=4.0,
+                max_favorable_excursion_bps=4.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc),
+                correlation_key="combined-partial-both",
+                horizon_minutes=15,
+                realized_return_bps=3.0,
+                max_favorable_excursion_bps=3.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={"environment": "live", "model_version": "A"},
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 3, tzinfo=timezone.utc),
+                correlation_key="combined-partial-scope-only",
+                horizon_minutes=15,
+                realized_return_bps=2.0,
+                max_favorable_excursion_bps=2.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 4, tzinfo=timezone.utc),
+                correlation_key="combined-partial-lineage-only",
+                horizon_minutes=15,
+                realized_return_bps=1.0,
+                max_favorable_excursion_bps=1.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc),
+                correlation_key="combined-wrong-full",
+                horizon_minutes=15,
+                realized_return_bps=-20.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=-20.0,
+                provenance={
+                    "environment": "paper",
+                    "portfolio_id": "paper-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+                label_quality="final",
+            ),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="A",
+                decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_scoped_label_count"] == "2"
+    assert event["performance_guard_excluded_label_count"] == "4"
+    assert event["performance_guard_missing_scope_provenance_count"] == "2"
+    assert event["performance_guard_missing_lineage_provenance_count"] == "2"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_mixed_dataset_keeps_builder_diagnostics_parity_and_conservative_mode() -> (
+    None
+):
+    repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-mixed-guard-parity-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                correlation_key="parity-full-1",
+                horizon_minutes=15,
+                realized_return_bps=5.0,
+                max_favorable_excursion_bps=5.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                correlation_key="parity-full-2",
+                horizon_minutes=15,
+                realized_return_bps=4.0,
+                max_favorable_excursion_bps=4.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc),
+                correlation_key="parity-combined-partial",
+                horizon_minutes=15,
+                realized_return_bps=3.0,
+                max_favorable_excursion_bps=3.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={"environment": "live", "model_version": "A"},
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 3, tzinfo=timezone.utc),
+                correlation_key="parity-scope-partial",
+                horizon_minutes=15,
+                realized_return_bps=2.0,
+                max_favorable_excursion_bps=2.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 4, tzinfo=timezone.utc),
+                correlation_key="parity-lineage-partial",
+                horizon_minutes=15,
+                realized_return_bps=1.0,
+                max_favorable_excursion_bps=1.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc),
+                correlation_key="parity-wrong-full",
+                horizon_minutes=15,
+                realized_return_bps=-20.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=-20.0,
+                provenance={
+                    "environment": "paper",
+                    "portfolio_id": "paper-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 6, tzinfo=timezone.utc),
+                correlation_key="parity-partial-only",
+                horizon_minutes=15,
+                realized_return_bps=0.5,
+                max_favorable_excursion_bps=0.5,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="partial_exit",
+            ),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="A",
+                decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_scoped_label_count"] == "3"
+    assert event["performance_guard_excluded_label_count"] == "4"
+    assert event["performance_guard_missing_scope_provenance_count"] == "2"
+    assert event["performance_guard_missing_lineage_provenance_count"] == "2"
+    assert event["performance_guard_effective_mode"] == "live_assisted"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_parity_with_scan_and_window_limits_via_lifecycle_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-mixed-scan-window-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                correlation_key="trimmed-old-full-1",
+                horizon_minutes=15,
+                realized_return_bps=10.0,
+                max_favorable_excursion_bps=10.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                correlation_key="trimmed-old-full-2",
+                horizon_minutes=15,
+                realized_return_bps=9.0,
+                max_favorable_excursion_bps=9.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc),
+                correlation_key="limited-combined-partial",
+                horizon_minutes=15,
+                realized_return_bps=3.0,
+                max_favorable_excursion_bps=3.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={"environment": "live", "model_version": "A"},
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 3, tzinfo=timezone.utc),
+                correlation_key="limited-scope-partial",
+                horizon_minutes=15,
+                realized_return_bps=2.0,
+                max_favorable_excursion_bps=2.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 4, tzinfo=timezone.utc),
+                correlation_key="limited-lineage-partial",
+                horizon_minutes=15,
+                realized_return_bps=1.0,
+                max_favorable_excursion_bps=1.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc),
+                correlation_key="limited-wrong-full",
+                horizon_minutes=15,
+                realized_return_bps=-20.0,
+                max_favorable_excursion_bps=0.0,
+                max_adverse_excursion_bps=-20.0,
+                provenance={
+                    "environment": "paper",
+                    "portfolio_id": "paper-1",
+                    "model_version": "B",
+                    "decision_source": "other_source",
+                },
+                label_quality="final",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 6, tzinfo=timezone.utc),
+                correlation_key="limited-partial-only",
+                horizon_minutes=15,
+                realized_return_bps=0.5,
+                max_favorable_excursion_bps=0.5,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="partial_exit",
+            ),
+            OpportunityOutcomeLabel(
+                symbol="BTCUSDT",
+                decision_timestamp=datetime(2026, 1, 1, 0, 7, tzinfo=timezone.utc),
+                correlation_key="limited-full-in-scope",
+                horizon_minutes=15,
+                realized_return_bps=6.0,
+                max_favorable_excursion_bps=6.0,
+                max_adverse_excursion_bps=0.0,
+                provenance={
+                    "environment": "live",
+                    "portfolio_id": "live-1",
+                    "model_version": "A",
+                    "decision_source": "opportunity_ai_shadow",
+                },
+                label_quality="final",
+            ),
+        ]
+    )
+
+    original = OpportunityLifecycleService.load_recent_performance_snapshot_with_scope_diagnostics
+
+    def _limited_snapshot_loader(
+        self: OpportunityLifecycleService,
+        *,
+        shadow_repository: OpportunityShadowRepository,
+        snapshot_config: OpportunityPerformanceSnapshotConfig,
+    ):
+        limited_config = OpportunityPerformanceSnapshotConfig(
+            recent_final_window_size=2,
+            max_scan_labels=6,
+            scope_environment=snapshot_config.scope_environment,
+            scope_portfolio=snapshot_config.scope_portfolio,
+            scope_model_version=snapshot_config.scope_model_version,
+            scope_decision_source=snapshot_config.scope_decision_source,
+            require_scope_provenance=snapshot_config.require_scope_provenance,
+            require_lineage_provenance=snapshot_config.require_lineage_provenance,
+        )
+        return original(
+            self,
+            shadow_repository=shadow_repository,
+            snapshot_config=limited_config,
+        )
+
+    monkeypatch.setattr(
+        OpportunityLifecycleService,
+        "load_recent_performance_snapshot_with_scope_diagnostics",
+        _limited_snapshot_loader,
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="A",
+                decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["performance_guard_scoped_label_count"] == "2"
+    assert event["performance_guard_excluded_label_count"] == "4"
+    assert event["performance_guard_missing_scope_provenance_count"] == "2"
+    assert event["performance_guard_missing_lineage_provenance_count"] == "2"
+    assert event["performance_guard_effective_mode"] == "live_assisted"
 
 
 def _shadow_record_for_key(
@@ -2528,6 +3183,501 @@ def test_controller_final_close_after_restart_with_legacy_scope_gap_is_auditable
     assert labels[0].provenance.get("model_version") == "legacy-v1"
     assert labels[0].provenance.get("decision_source") == "legacy-source"
     assert shadow_repo.load_open_outcomes() == []
+
+
+def _legacy_partial_scope_provenance(
+    *, scope_variant: str, model_version: str = "legacy-v1", decision_source: str = "legacy-source"
+) -> dict[str, object]:
+    if scope_variant == "environment_only":
+        return {
+            "source": "legacy_partial_scope",
+            "environment": "paper",
+            "model_version": model_version,
+            "decision_source": decision_source,
+        }
+    if scope_variant == "portfolio_only":
+        return {
+            "source": "legacy_partial_scope",
+            "portfolio": "paper-1",
+            "model_version": model_version,
+            "decision_source": decision_source,
+        }
+    raise ValueError(f"Unsupported scope_variant={scope_variant!r}")
+
+
+@pytest.mark.parametrize(
+    ("scope_variant", "execution_status", "filled_quantity", "avg_price", "expected_label_quality"),
+    [
+        ("environment_only", "partially_filled", 0.4, 110.0, "partial_exit_unconfirmed"),
+        ("environment_only", "filled", 1.0, 110.0, "final"),
+        ("portfolio_only", "partially_filled", 0.4, 110.0, "partial_exit_unconfirmed"),
+        ("portfolio_only", "filled", 1.0, 110.0, "final"),
+    ],
+)
+def test_controller_restored_partial_scope_close_paths_preserve_known_scope_without_fallback(
+    tmp_path: Path,
+    scope_variant: str,
+    execution_status: str,
+    filled_quantity: float,
+    avg_price: float,
+    expected_label_quality: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance=_legacy_partial_scope_provenance(scope_variant=scope_variant),
+        )
+    )
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status=execution_status,
+            filled_quantity=filled_quantity,
+            avg_price=avg_price,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-after-restart",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=avg_price)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == expected_label_quality
+    if scope_variant == "environment_only":
+        assert labels[0].provenance.get("environment") == "paper"
+        assert "portfolio" not in labels[0].provenance
+    else:
+        assert labels[0].provenance.get("portfolio") == "paper-1"
+        assert "environment" not in labels[0].provenance
+    assert labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+    assert labels[0].provenance.get("model_version") == "legacy-v1"
+    assert labels[0].provenance.get("decision_source") == "legacy-source"
+
+
+@pytest.mark.parametrize("scope_variant", ["environment_only", "portfolio_only"])
+def test_controller_restored_partial_scope_proxy_attach_preserves_known_scope_without_fallback(
+    tmp_path: Path,
+    scope_variant: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance=_legacy_partial_scope_provenance(scope_variant=scope_variant),
+        )
+    )
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="rejected",
+            filled_quantity=0.0,
+            avg_price=None,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-after-restart",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _signal("BUY", price=99.0)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller.process_signals([signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    if scope_variant == "environment_only":
+        assert labels[0].provenance.get("environment") == "paper"
+        assert "portfolio" not in labels[0].provenance
+    else:
+        assert labels[0].provenance.get("portfolio") == "paper-1"
+        assert "environment" not in labels[0].provenance
+    assert labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+    assert labels[0].provenance.get("model_version") == "legacy-v1"
+    assert labels[0].provenance.get("decision_source") == "legacy-source"
+
+
+@pytest.mark.parametrize("scope_variant", ["environment_only", "portfolio_only"])
+def test_controller_restored_partial_scope_multihop_partial_restart_final_preserves_known_scope(
+    tmp_path: Path,
+    scope_variant: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance=_legacy_partial_scope_provenance(scope_variant=scope_variant),
+        )
+    )
+
+    controller_partial = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="partially_filled",
+            filled_quantity=0.4,
+            avg_price=110.0,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-hop-1",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    partial_signal = _signal("SELL", price=110.0)
+    partial_signal.metadata = {
+        **dict(partial_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller_partial.process_signals([partial_signal])
+
+    partial_labels = shadow_repo.load_outcome_labels()
+    assert len(partial_labels) == 1
+    assert partial_labels[0].label_quality == "partial_exit_unconfirmed"
+    if scope_variant == "environment_only":
+        assert partial_labels[0].provenance.get("environment") == "paper"
+        assert "portfolio" not in partial_labels[0].provenance
+    else:
+        assert partial_labels[0].provenance.get("portfolio") == "paper-1"
+        assert "environment" not in partial_labels[0].provenance
+    assert partial_labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+
+    open_rows_after_partial = shadow_repo.load_open_outcomes()
+    assert len(open_rows_after_partial) == 1
+    if scope_variant == "environment_only":
+        assert open_rows_after_partial[0].provenance.get("environment") == "paper"
+        assert "portfolio" not in open_rows_after_partial[0].provenance
+    else:
+        assert open_rows_after_partial[0].provenance.get("portfolio") == "paper-1"
+        assert "environment" not in open_rows_after_partial[0].provenance
+    assert (
+        open_rows_after_partial[0].provenance.get("scope_continuity")
+        == "missing_from_restored_open_outcome"
+    )
+
+    controller_final = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="filled",
+            filled_quantity=0.6,
+            avg_price=112.0,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-hop-2",
+        environment="staging",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    final_signal = _signal("SELL", price=112.0)
+    final_signal.metadata = {
+        **dict(final_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller_final.process_signals([final_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    if scope_variant == "environment_only":
+        assert labels[0].provenance.get("environment") == "paper"
+        assert "portfolio" not in labels[0].provenance
+    else:
+        assert labels[0].provenance.get("portfolio") == "paper-1"
+        assert "environment" not in labels[0].provenance
+    assert labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+    assert labels[0].provenance.get("model_version") == "legacy-v1"
+    assert labels[0].provenance.get("decision_source") == "legacy-source"
+    assert shadow_repo.load_open_outcomes() == []
+
+
+@pytest.mark.parametrize(
+    ("scope_variant", "close_status", "close_filled_quantity", "close_avg_price", "expected_label_quality"),
+    [
+        ("environment_only", "partially_filled", 0.4, 109.0, "partial_exit_unconfirmed"),
+        ("environment_only", "filled", 1.0, 112.0, "final"),
+        ("portfolio_only", "partially_filled", 0.4, 109.0, "partial_exit_unconfirmed"),
+        ("portfolio_only", "filled", 1.0, 112.0, "final"),
+    ],
+)
+def test_controller_restored_partial_scope_multihop_proxy_restart_close_preserves_contract(
+    tmp_path: Path,
+    scope_variant: str,
+    close_status: str,
+    close_filled_quantity: float,
+    close_avg_price: float,
+    expected_label_quality: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance=_legacy_partial_scope_provenance(scope_variant=scope_variant),
+        )
+    )
+
+    controller_proxy = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="rejected",
+            filled_quantity=0.0,
+            avg_price=None,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-proxy-hop",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    proxy_signal = _signal("BUY", price=99.0)
+    proxy_signal.metadata = {
+        **dict(proxy_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller_proxy.process_signals([proxy_signal])
+
+    proxy_labels = shadow_repo.load_outcome_labels()
+    assert len(proxy_labels) == 1
+    assert proxy_labels[0].label_quality == "execution_proxy_pending_exit"
+    if scope_variant == "environment_only":
+        assert proxy_labels[0].provenance.get("environment") == "paper"
+        assert "portfolio" not in proxy_labels[0].provenance
+    else:
+        assert proxy_labels[0].provenance.get("portfolio") == "paper-1"
+        assert "environment" not in proxy_labels[0].provenance
+    assert proxy_labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+    assert proxy_labels[0].provenance.get("model_version") == "legacy-v1"
+    assert proxy_labels[0].provenance.get("decision_source") == "legacy-source"
+
+    open_rows_after_proxy = shadow_repo.load_open_outcomes()
+    assert len(open_rows_after_proxy) == 1
+    if scope_variant == "environment_only":
+        assert open_rows_after_proxy[0].provenance.get("environment") == "paper"
+        assert "portfolio" not in open_rows_after_proxy[0].provenance
+    else:
+        assert open_rows_after_proxy[0].provenance.get("portfolio") == "paper-1"
+        assert "environment" not in open_rows_after_proxy[0].provenance
+
+    controller_close = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status=close_status,
+            filled_quantity=close_filled_quantity,
+            avg_price=close_avg_price,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-close-hop",
+        environment="staging",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=close_avg_price)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller_close.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == expected_label_quality
+    if scope_variant == "environment_only":
+        assert labels[0].provenance.get("environment") == "paper"
+        assert "portfolio" not in labels[0].provenance
+    else:
+        assert labels[0].provenance.get("portfolio") == "paper-1"
+        assert "environment" not in labels[0].provenance
+    assert labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+    assert labels[0].provenance.get("model_version") == "legacy-v1"
+    assert labels[0].provenance.get("decision_source") == "legacy-source"
+
+    open_rows_after_close = shadow_repo.load_open_outcomes()
+    if expected_label_quality == "final":
+        assert open_rows_after_close == []
+    else:
+        assert len(open_rows_after_close) == 1
+        if scope_variant == "environment_only":
+            assert open_rows_after_close[0].provenance.get("environment") == "paper"
+            assert "portfolio" not in open_rows_after_close[0].provenance
+        else:
+            assert open_rows_after_close[0].provenance.get("portfolio") == "paper-1"
+            assert "environment" not in open_rows_after_close[0].provenance
+        assert (
+            open_rows_after_close[0].provenance.get("scope_continuity")
+            == "missing_from_restored_open_outcome"
+        )
+
+
+def test_controller_proxy_attach_after_restart_with_legacy_scope_gap_is_auditable(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "source": "legacy_without_scope",
+                "model_version": "legacy-v1",
+                "decision_source": "legacy-source",
+            },
+        )
+    )
+
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="rejected",
+            filled_quantity=0.0,
+            avg_price=None,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-after-restart",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _signal("BUY", price=99.0)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller.process_signals([signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    assert "environment" not in labels[0].provenance
+    assert "portfolio" not in labels[0].provenance
+    assert labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+    assert labels[0].provenance.get("model_version") == "legacy-v1"
+    assert labels[0].provenance.get("decision_source") == "legacy-source"
 
 
 def test_controller_multihop_restart_partial_then_final_persists_recovered_lineage(
