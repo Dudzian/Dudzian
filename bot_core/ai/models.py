@@ -893,7 +893,7 @@ def load_model_artifact_bundle(
             errors = validate_hmac_signature(
                 artifact_payload,
                 signature_doc,
-                key_material,
+                key=key_material,
             )
             if errors:
                 logger.error(
@@ -1013,8 +1013,8 @@ def generate_model_artifact_bundle(
             "signed_at": datetime.now(timezone.utc).isoformat(),
             "signature": build_hmac_signature(
                 artifact_payload,
-                signing_key,
-                signing_key_id,
+                key=signing_key,
+                key_id=signing_key_id,
             ),
         }
         signature_path = signature_path or output_path / f"{base_name}.sig"
