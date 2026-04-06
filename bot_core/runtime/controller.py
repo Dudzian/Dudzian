@@ -40,6 +40,9 @@ from bot_core.ai.opportunity_lifecycle import (
     OpportunityAutonomyDecision,
     OpportunityAutonomyMode,
     OpportunityExecutionPermission,
+    OpportunityLifecycleService,
+    OpportunityPerformanceSnapshotConfig,
+    evaluate_autonomy_performance_guard,
     evaluate_opportunity_execution_permission,
 )
 from bot_core.ai.trading_opportunity_shadow import (
@@ -1450,17 +1453,28 @@ class TradingController:
         self,
         signal: StrategySignal,
         request: OrderRequest,
+        *,
+        include_performance_guard_payload: bool = True,
     ) -> OpportunityAutonomyDecision:
         signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
-        decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
-        if decision_payload_raw is None:
-            decision_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
+        request_decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
+        signal_decision_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
+        request_decision_payload = (
+            request_decision_payload_raw
+            if isinstance(request_decision_payload_raw, Mapping)
+            else None
+        )
+        signal_decision_payload = (
+            signal_decision_payload_raw if isinstance(signal_decision_payload_raw, Mapping) else None
+        )
         decision_payload = (
-            decision_payload_raw if isinstance(decision_payload_raw, Mapping) else None
+            request_decision_payload
+            if request_decision_payload is not None
+            else signal_decision_payload
         )
         performance_guard_payload = None
-        if decision_payload is not None:
+        if include_performance_guard_payload and decision_payload is not None:
             performance_guard_raw = decision_payload.get("performance_guard")
             if isinstance(performance_guard_raw, Mapping):
                 performance_guard_payload = performance_guard_raw
@@ -1476,7 +1490,7 @@ class TradingController:
                 mode_candidates.append(
                     OpportunityAutonomyMode(str(effective_mode_raw).strip().lower())
                 )
-        if performance_guard_payload is not None:
+        if include_performance_guard_payload and performance_guard_payload is not None:
             performance_effective_mode_raw = performance_guard_payload.get("effective_mode")
             if performance_effective_mode_raw is not None:
                 mode_candidates.append(
@@ -1509,7 +1523,7 @@ class TradingController:
             payload_primary_reason = decision_payload.get("primary_reason")
             if payload_primary_reason is not None:
                 primary_reason_raw = payload_primary_reason
-        if performance_guard_payload is not None:
+        if include_performance_guard_payload and performance_guard_payload is not None:
             guard_reason = performance_guard_payload.get("primary_reason")
             if guard_reason is not None:
                 primary_reason_raw = guard_reason
@@ -1540,12 +1554,60 @@ class TradingController:
             assisted_flag_raw = signal_metadata.get("autonomy_assisted_approval")
         assisted_approval = _as_bool(assisted_flag_raw)
         diagnostics: dict[str, object] = {"autonomy_assisted_approval_supplied": assisted_approval}
-        decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
-        if decision_payload_raw is None:
-            decision_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
-        decision_payload = (
-            decision_payload_raw if isinstance(decision_payload_raw, Mapping) else None
+        request_decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
+        signal_decision_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
+        request_decision_payload = (
+            request_decision_payload_raw
+            if isinstance(request_decision_payload_raw, Mapping)
+            else None
         )
+        signal_decision_payload = (
+            signal_decision_payload_raw if isinstance(signal_decision_payload_raw, Mapping) else None
+        )
+        decision_payload = (
+            request_decision_payload
+            if request_decision_payload is not None
+            else signal_decision_payload
+        )
+        scope_model_version: str | None = None
+        scope_decision_source: str | None = None
+        for payload in (request_decision_payload, signal_decision_payload):
+            if payload is None:
+                continue
+            if scope_model_version is None:
+                payload_model_raw = payload.get("model_version")
+                if payload_model_raw is not None:
+                    candidate = str(payload_model_raw).strip()
+                    if candidate:
+                        scope_model_version = candidate
+            if scope_decision_source is None:
+                payload_source_raw = payload.get("decision_source")
+                if payload_source_raw is not None:
+                    candidate = str(payload_source_raw).strip()
+                    if candidate:
+                        scope_decision_source = candidate
+        for metadata in (request_metadata, signal_metadata):
+            if scope_model_version is None:
+                model_raw = metadata.get("opportunity_model_version")
+                if model_raw is None:
+                    model_raw = metadata.get("model_version")
+                if model_raw is not None:
+                    candidate = str(model_raw).strip()
+                    if candidate:
+                        scope_model_version = candidate
+            if scope_decision_source is None:
+                source_raw = metadata.get("opportunity_decision_source")
+                if source_raw is None:
+                    source_raw = metadata.get("decision_source")
+                if source_raw is not None:
+                    candidate = str(source_raw).strip()
+                    if candidate:
+                        scope_decision_source = candidate
+        if scope_model_version is not None:
+            diagnostics["performance_guard_scope_model_version"] = scope_model_version
+        if scope_decision_source is not None:
+            diagnostics["performance_guard_scope_decision_source"] = scope_decision_source
+        local_guard_applied = False
         if decision_payload is not None:
             performance_guard_payload = decision_payload.get("performance_guard")
             if isinstance(performance_guard_payload, Mapping):
@@ -1565,7 +1627,159 @@ class TradingController:
                 if guard_effective_mode is not None:
                     diagnostics["performance_guard_effective_mode"] = str(guard_effective_mode)
         try:
-            decision = self._extract_opportunity_autonomy_decision(signal, request)
+            decision = self._extract_opportunity_autonomy_decision(
+                signal,
+                request,
+                include_performance_guard_payload=False,
+            )
+            repository = self._opportunity_shadow_repository
+            if repository is None:
+                diagnostics["performance_guard_source"] = "missing_repository_fail_closed"
+                try:
+                    fallback_decision = self._extract_opportunity_autonomy_decision(
+                        signal,
+                        request,
+                        include_performance_guard_payload=True,
+                    )
+                    fallback_permission = evaluate_opportunity_execution_permission(
+                        decision=fallback_decision,
+                        environment=self.environment,
+                        assisted_approval=assisted_approval,
+                    )
+                    if _as_bool(diagnostics.get("performance_guard_blocked")):
+                        guard_primary_reason = diagnostics.get("performance_guard_primary_reason")
+                        fallback_permission = replace(
+                            fallback_permission,
+                            autonomous_execution_allowed=False,
+                            primary_reason=(
+                                str(guard_primary_reason).strip()
+                                if guard_primary_reason is not None
+                                else "performance_guard_local_kill_switch"
+                            ),
+                            denial_reason="performance_guard_local_kill_switch",
+                        )
+                        diagnostics["performance_guard_block_enforced"] = True
+                    diagnostics["fallback_autonomy_mode"] = fallback_permission.autonomy_mode.value
+                    diagnostics["fallback_autonomy_primary_reason"] = fallback_permission.primary_reason
+                except Exception as fallback_exc:  # noqa: BLE001
+                    diagnostics["fallback_permission_error"] = str(fallback_exc)
+                return None, {
+                    "execution_permission": "blocked",
+                    "autonomy_mode": "unavailable",
+                    "autonomous_execution_allowed": False,
+                    "autonomy_primary_reason": "performance_guard_snapshot_source_unavailable",
+                    "blocking_reason": "performance_guard_snapshot_source_unavailable",
+                    **diagnostics,
+                }
+            try:
+                lifecycle = OpportunityLifecycleService()
+                snapshot, scope_diagnostics = lifecycle.load_recent_performance_snapshot_with_scope_diagnostics(
+                    shadow_repository=repository,
+                    snapshot_config=OpportunityPerformanceSnapshotConfig(
+                        scope_environment=self.environment,
+                        scope_portfolio=self.portfolio_id,
+                        scope_model_version=scope_model_version,
+                        scope_decision_source=scope_decision_source,
+                        require_scope_provenance=True,
+                        require_lineage_provenance=(
+                            scope_model_version is not None or scope_decision_source is not None
+                        ),
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                diagnostics["performance_guard_source"] = "local_snapshot_source_of_truth_failed"
+                try:
+                    fallback_decision = self._extract_opportunity_autonomy_decision(
+                        signal,
+                        request,
+                        include_performance_guard_payload=True,
+                    )
+                    fallback_permission = evaluate_opportunity_execution_permission(
+                        decision=fallback_decision,
+                        environment=self.environment,
+                        assisted_approval=assisted_approval,
+                    )
+                    if _as_bool(diagnostics.get("performance_guard_blocked")):
+                        guard_primary_reason = diagnostics.get("performance_guard_primary_reason")
+                        fallback_permission = replace(
+                            fallback_permission,
+                            autonomous_execution_allowed=False,
+                            primary_reason=(
+                                str(guard_primary_reason).strip()
+                                if guard_primary_reason is not None
+                                else "performance_guard_local_kill_switch"
+                            ),
+                            denial_reason="performance_guard_local_kill_switch",
+                        )
+                        diagnostics["performance_guard_block_enforced"] = True
+                    diagnostics["fallback_autonomy_mode"] = fallback_permission.autonomy_mode.value
+                    diagnostics["fallback_autonomy_primary_reason"] = fallback_permission.primary_reason
+                except Exception as fallback_exc:  # noqa: BLE001
+                    diagnostics["fallback_permission_error"] = str(fallback_exc)
+                return None, {
+                    "execution_permission": "blocked",
+                    "autonomy_mode": "unavailable",
+                    "autonomous_execution_allowed": False,
+                    "autonomy_primary_reason": "performance_guard_snapshot_load_failed",
+                    "blocking_reason": "performance_guard_snapshot_load_failed",
+                    "autonomy_permission_error": str(exc),
+                    **diagnostics,
+                }
+            guard_decision = evaluate_autonomy_performance_guard(
+                requested_mode=decision.mode,
+                input_effective_mode=decision.mode,
+                snapshot=snapshot,
+            )
+            diagnostics["performance_guard_source"] = "local_snapshot_source_of_truth"
+            diagnostics["performance_guard_snapshot_window"] = snapshot.recent_window_label
+            diagnostics["performance_guard_scope_environment"] = (
+                scope_diagnostics.scope_environment or self.environment
+            )
+            diagnostics["performance_guard_scope_portfolio"] = (
+                scope_diagnostics.scope_portfolio or self.portfolio_id
+            )
+            if scope_model_version is not None:
+                diagnostics["performance_guard_scope_model_version"] = scope_model_version
+            if scope_decision_source is not None:
+                diagnostics["performance_guard_scope_decision_source"] = scope_decision_source
+            diagnostics["performance_guard_scoped_label_count"] = (
+                scope_diagnostics.scoped_label_count
+            )
+            diagnostics["performance_guard_excluded_label_count"] = (
+                scope_diagnostics.excluded_label_count
+            )
+            diagnostics["performance_guard_missing_scope_provenance_count"] = (
+                scope_diagnostics.missing_scope_provenance_count
+            )
+            diagnostics["performance_guard_missing_lineage_provenance_count"] = (
+                scope_diagnostics.missing_lineage_provenance_count
+            )
+            diagnostics["performance_guard_applied"] = guard_decision.performance_guard_applied
+            diagnostics["performance_guard_hard_breach"] = guard_decision.hard_breach
+            diagnostics["performance_guard_blocked"] = guard_decision.blocked
+            diagnostics["performance_guard_primary_reason"] = guard_decision.primary_reason
+            diagnostics["performance_guard_effective_mode"] = guard_decision.effective_mode.value
+            diagnostics["performance_guard_requested_mode"] = guard_decision.requested_mode.value
+            diagnostics["performance_guard_input_effective_mode"] = (
+                guard_decision.input_effective_mode.value
+            )
+            local_guard_applied = True
+            guard_changed_effective_mode = guard_decision.effective_mode is not decision.mode
+            guard_forces_block = guard_decision.blocked
+            if guard_changed_effective_mode or guard_forces_block:
+                decision = replace(
+                    decision,
+                    mode=guard_decision.effective_mode,
+                    primary_reason=guard_decision.primary_reason,
+                    reasons=guard_decision.reasons,
+                    warnings=guard_decision.warnings,
+                    evidence_summary=guard_decision.evidence_summary,
+                )
+            else:
+                decision = replace(
+                    decision,
+                    mode=guard_decision.effective_mode,
+                )
             permission = evaluate_opportunity_execution_permission(
                 decision=decision,
                 environment=self.environment,
@@ -1586,6 +1800,16 @@ class TradingController:
                 diagnostics["performance_guard_block_enforced"] = True
             return permission, diagnostics
         except Exception as exc:  # noqa: BLE001
+            if local_guard_applied:
+                return None, {
+                    "execution_permission": "blocked",
+                    "autonomy_mode": "unavailable",
+                    "autonomous_execution_allowed": False,
+                    "autonomy_primary_reason": "autonomy_permission_evaluation_failed_after_local_guard",
+                    "blocking_reason": "autonomy_permission_evaluation_failed_after_local_guard",
+                    "autonomy_permission_error": str(exc),
+                    **diagnostics,
+                }
             if _as_bool(diagnostics.get("performance_guard_blocked")):
                 return None, {
                     "execution_permission": "blocked",

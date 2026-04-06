@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import tempfile
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +18,7 @@ from bot_core.observability import MetricsRegistry
 from bot_core.ui.api import build_explainability_feed
 
 from bot_core.ai.trading_opportunity_shadow import (
+    OpportunityOutcomeLabel,
     OpportunityShadowContext,
     OpportunityShadowRecord,
     OpportunityShadowRepository,
@@ -225,6 +228,10 @@ def _opportunity_autonomy_signal(
     performance_guard_primary_reason: str | None = None,
     performance_guard_hard_breach: bool | None = None,
     performance_guard_blocked: bool | None = None,
+    model_version: str | None = None,
+    decision_source: str | None = None,
+    decision_payload_model_version: str | None = None,
+    decision_payload_decision_source: str | None = None,
 ) -> StrategySignal:
     signal = _signal(side=side)
     metadata: dict[str, object] = dict(signal.metadata)
@@ -244,6 +251,18 @@ def _opportunity_autonomy_signal(
         if not isinstance(decision_payload, dict):
             decision_payload = {}
         decision_payload["primary_reason"] = decision_primary_reason
+        metadata["opportunity_autonomy_decision"] = decision_payload
+    if decision_payload_model_version is not None:
+        decision_payload = metadata.get("opportunity_autonomy_decision")
+        if not isinstance(decision_payload, dict):
+            decision_payload = {}
+        decision_payload["model_version"] = decision_payload_model_version
+        metadata["opportunity_autonomy_decision"] = decision_payload
+    if decision_payload_decision_source is not None:
+        decision_payload = metadata.get("opportunity_autonomy_decision")
+        if not isinstance(decision_payload, dict):
+            decision_payload = {}
+        decision_payload["decision_source"] = decision_payload_decision_source
         metadata["opportunity_autonomy_decision"] = decision_payload
     if (
         performance_guard_effective_mode is not None
@@ -272,6 +291,10 @@ def _opportunity_autonomy_signal(
     metadata["opportunity_autonomy_primary_reason"] = f"reason:{mode}"
     if assisted_approval is not None:
         metadata["autonomy_assisted_approval"] = assisted_approval
+    if model_version is not None:
+        metadata["opportunity_model_version"] = model_version
+    if decision_source is not None:
+        metadata["opportunity_decision_source"] = decision_source
     signal.metadata = metadata
     return signal
 
@@ -321,7 +344,10 @@ def test_controller_emits_alert_on_buy_signal() -> None:
 
 
 def _build_autonomy_controller(
-    *, environment: str
+    *,
+    environment: str,
+    opportunity_shadow_repository: OpportunityShadowRepository | None = None,
+    order_metadata_defaults: Mapping[str, object] | None = None,
 ) -> tuple[TradingController, DummyExecutionService, CollectingDecisionJournal]:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -335,13 +361,100 @@ def _build_autonomy_controller(
         portfolio_id=f"{environment}-1",
         environment=environment,
         risk_profile="balanced",
+        order_metadata_defaults=order_metadata_defaults,
         decision_journal=journal,
+        opportunity_shadow_repository=opportunity_shadow_repository,
     )
     return controller, execution, journal
 
 
+def _autonomy_shadow_repository_with_final_outcomes(
+    realized_return_bps: Sequence[float],
+    *,
+    environment: str,
+    portfolio_id: str,
+) -> OpportunityShadowRepository:
+    repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    labels = [
+        OpportunityOutcomeLabel(
+            symbol="BTCUSDT",
+            decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index),
+            correlation_key=f"perf-{index}",
+            horizon_minutes=15,
+            realized_return_bps=value,
+            max_favorable_excursion_bps=max(value, 0.0),
+            max_adverse_excursion_bps=min(value, 0.0),
+            provenance={"environment": environment, "portfolio_id": portfolio_id},
+            label_quality="final",
+        )
+        for index, value in enumerate(realized_return_bps)
+    ]
+    if labels:
+        repository.append_outcome_labels(labels)
+    return repository
+
+
+def _autonomy_shadow_repository_with_mixed_scope_outcomes(
+    rows: Sequence[tuple[float, str, str]],
+) -> OpportunityShadowRepository:
+    repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-scope-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    labels = [
+        OpportunityOutcomeLabel(
+            symbol="BTCUSDT",
+            decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index),
+            correlation_key=f"scope-{index}",
+            horizon_minutes=15,
+            realized_return_bps=value,
+            max_favorable_excursion_bps=max(value, 0.0),
+            max_adverse_excursion_bps=min(value, 0.0),
+            provenance={"environment": environment, "portfolio_id": portfolio_id},
+            label_quality="final",
+        )
+        for index, (value, environment, portfolio_id) in enumerate(rows)
+    ]
+    if labels:
+        repository.append_outcome_labels(labels)
+    return repository
+
+
+def _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+    rows: Sequence[tuple[float, str, str, str, str]],
+) -> OpportunityShadowRepository:
+    repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-lineage-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    labels = [
+        OpportunityOutcomeLabel(
+            symbol="BTCUSDT",
+            decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index),
+            correlation_key=f"lineage-{index}",
+            horizon_minutes=15,
+            realized_return_bps=value,
+            max_favorable_excursion_bps=max(value, 0.0),
+            max_adverse_excursion_bps=min(value, 0.0),
+            provenance={
+                "environment": environment,
+                "portfolio_id": portfolio_id,
+                "model_version": model_version,
+                "decision_source": decision_source,
+            },
+            label_quality="final",
+        )
+        for index, (value, environment, portfolio_id, model_version, decision_source) in enumerate(rows)
+    ]
+    if labels:
+        repository.append_outcome_labels(labels)
+    return repository
+
+
 def test_opportunity_autonomy_denied_blocks_execution() -> None:
-    controller, execution, journal = _build_autonomy_controller(environment="paper")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+        ),
+    )
     result = controller.process_signals([_opportunity_autonomy_signal("denied")])
     assert result == []
     assert execution.requests == []
@@ -353,7 +466,14 @@ def test_opportunity_autonomy_denied_blocks_execution() -> None:
 
 def test_opportunity_autonomy_shadow_only_blocks_paper_and_live() -> None:
     for environment in ("paper", "live"):
-        controller, execution, journal = _build_autonomy_controller(environment=environment)
+        controller, execution, journal = _build_autonomy_controller(
+            environment=environment,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+                [4.0, 3.0],
+                environment=environment,
+                portfolio_id=f"{environment}-1",
+            ),
+        )
         result = controller.process_signals([_opportunity_autonomy_signal("shadow_only")])
         assert result == []
         assert execution.requests == []
@@ -365,7 +485,10 @@ def test_opportunity_autonomy_shadow_only_blocks_paper_and_live() -> None:
 
 def test_opportunity_autonomy_paper_autonomous_allows_paper_but_blocks_live() -> None:
     paper_controller, paper_execution, paper_journal = _build_autonomy_controller(
-        environment="paper"
+        environment="paper",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+        ),
     )
     paper_result = paper_controller.process_signals(
         [_opportunity_autonomy_signal("paper_autonomous")]
@@ -376,7 +499,12 @@ def test_opportunity_autonomy_paper_autonomous_allows_paper_but_blocks_live() ->
     assert paper_event["status"] == "allowed"
     assert paper_event["execution_permission"] == "allowed"
 
-    live_controller, live_execution, live_journal = _build_autonomy_controller(environment="live")
+    live_controller, live_execution, live_journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="live", portfolio_id="live-1"
+        ),
+    )
     live_result = live_controller.process_signals(
         [_opportunity_autonomy_signal("paper_autonomous")]
     )
@@ -388,7 +516,14 @@ def test_opportunity_autonomy_paper_autonomous_allows_paper_but_blocks_live() ->
 
 
 def test_opportunity_autonomy_live_assisted_blocks_live_without_approval() -> None:
-    controller, execution, journal = _build_autonomy_controller(environment="live")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [16.0, 14.0, 12.0, 10.0, 8.0, 6.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
     result = controller.process_signals(
         [_opportunity_autonomy_signal("live_assisted", assisted_approval=False)]
     )
@@ -401,7 +536,14 @@ def test_opportunity_autonomy_live_assisted_blocks_live_without_approval() -> No
 
 
 def test_opportunity_autonomy_live_assisted_allows_live_with_approval() -> None:
-    controller, execution, journal = _build_autonomy_controller(environment="live")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [16.0, 14.0, 12.0, 10.0, 8.0, 6.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
     result = controller.process_signals(
         [_opportunity_autonomy_signal("live_assisted", assisted_approval=True)]
     )
@@ -413,14 +555,28 @@ def test_opportunity_autonomy_live_assisted_allows_live_with_approval() -> None:
 
 
 def test_opportunity_autonomy_live_autonomous_allows_live_execution() -> None:
-    controller, execution, _journal = _build_autonomy_controller(environment="live")
+    controller, execution, _journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
     result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
     assert len(result) == 1
     assert len(execution.requests) == 1
 
 
 def test_opportunity_autonomy_enforcement_uses_effective_mode_from_decision_payload() -> None:
-    controller, execution, journal = _build_autonomy_controller(environment="live")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
     result = controller.process_signals(
         [
             _opportunity_autonomy_signal(
@@ -441,7 +597,14 @@ def test_opportunity_autonomy_enforcement_uses_effective_mode_from_decision_payl
 def test_opportunity_autonomy_enforcement_prefers_payload_primary_reason_for_effective_mode() -> (
     None
 ):
-    controller, execution, journal = _build_autonomy_controller(environment="live")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
     result = controller.process_signals(
         [
             _opportunity_autonomy_signal(
@@ -457,13 +620,21 @@ def test_opportunity_autonomy_enforcement_prefers_payload_primary_reason_for_eff
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_mode"] == "paper_autonomous"
     assert event["autonomy_primary_reason"] == "downgraded_to_paper_due_to_quality"
-    assert event["autonomy_primary_reason"] != "reason:live_autonomous"
+    assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
 
 
 def test_opportunity_autonomy_enforcement_prefers_more_conservative_performance_guard_mode() -> (
     None
 ):
-    controller, execution, journal = _build_autonomy_controller(environment="live")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
     result = controller.process_signals(
         [
             _opportunity_autonomy_signal(
@@ -480,24 +651,34 @@ def test_opportunity_autonomy_enforcement_prefers_more_conservative_performance_
     assert result == []
     assert execution.requests == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
-    assert event["autonomy_mode"] == "paper_autonomous"
-    assert event["autonomy_primary_reason"] == "performance_soft_breach"
-    assert event["performance_guard_applied"] == "true"
-    assert event["performance_guard_effective_mode"] == "paper_autonomous"
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "downgrade_governance"
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+    assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
+    assert event["performance_guard_applied"] == "false"
+    assert event["performance_guard_effective_mode"] == "live_assisted"
+    assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
 
 
 def test_opportunity_autonomy_enforcement_blocks_when_performance_guard_sets_blocked_true() -> None:
-    controller, execution, journal = _build_autonomy_controller(environment="paper")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [-12.0, -11.0, -10.0, -9.0, -8.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
     result = controller.process_signals(
         [
             _opportunity_autonomy_signal(
                 "live_autonomous",
                 include_decision_payload=True,
                 decision_effective_mode="live_assisted",
-                performance_guard_effective_mode="live_assisted",
-                performance_guard_primary_reason="runtime_performance_kill_switch",
-                performance_guard_hard_breach=True,
-                performance_guard_blocked=True,
+                performance_guard_effective_mode="live_autonomous",
+                performance_guard_primary_reason="manual_payload_should_not_override_local_guard",
+                performance_guard_hard_breach=False,
+                performance_guard_blocked=False,
                 assisted_approval=True,
             )
         ]
@@ -511,12 +692,17 @@ def test_opportunity_autonomy_enforcement_blocks_when_performance_guard_sets_blo
     assert event["performance_guard_blocked"] == "true"
     assert event["performance_guard_block_enforced"] == "true"
     assert event["performance_guard_hard_breach"] == "true"
-    assert event["performance_guard_primary_reason"] == "runtime_performance_kill_switch"
+    assert event["performance_guard_primary_reason"] == "hard_performance_breach_detected"
     assert event["execution_permission"] == "blocked"
 
 
 def test_opportunity_shadow_key_without_autonomy_contract_does_not_trigger_enforcement() -> None:
-    controller, execution, journal = _build_autonomy_controller(environment="paper")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+        ),
+    )
     result = controller.process_signals(
         [_opportunity_autonomy_signal("live_autonomous", include_mode=False)]
     )
@@ -531,7 +717,12 @@ def test_opportunity_shadow_key_without_autonomy_contract_does_not_trigger_enfor
 
 
 def test_opportunity_autonomy_permission_failure_fails_closed() -> None:
-    controller, execution, journal = _build_autonomy_controller(environment="live")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="live", portfolio_id="live-1"
+        ),
+    )
     result = controller.process_signals(
         [
             _opportunity_autonomy_signal(
@@ -550,7 +741,14 @@ def test_opportunity_autonomy_permission_failure_fails_closed() -> None:
 
 
 def test_opportunity_autonomy_enforcement_metadata_shape_is_stable() -> None:
-    controller, _execution, journal = _build_autonomy_controller(environment="live")
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [16.0, 14.0, 12.0, 10.0, 8.0, 6.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
     controller.process_signals(
         [_opportunity_autonomy_signal("live_assisted", assisted_approval=False)]
     )
@@ -558,9 +756,985 @@ def test_opportunity_autonomy_enforcement_metadata_shape_is_stable() -> None:
     assert event["autonomy_mode"] == "live_assisted"
     assert event["autonomous_execution_allowed"] == "false"
     assert event["autonomy_primary_reason"] == "reason:live_assisted"
+    assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
     assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
     assert event["environment"] == "live"
     assert event["assisted_override_used"] == "false"
+
+
+def test_opportunity_autonomy_runtime_local_snapshot_good_outcomes_allow_execution() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "allowed"
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+    assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
+
+
+def test_opportunity_autonomy_runtime_local_snapshot_soft_breach_downgrades_and_blocks_live() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [1.0, -2.0], environment="live", portfolio_id="live-1"
+        ),
+    )
+
+    result = controller.process_signals(
+        [_opportunity_autonomy_signal("live_autonomous", assisted_approval=False)]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
+
+
+def test_opportunity_autonomy_runtime_local_snapshot_hard_breach_blocks_without_payload() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [-30.0, -20.0, -15.0, -11.0, -10.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    assert event["performance_guard_hard_breach"] == "true"
+    assert event["performance_guard_blocked"] == "true"
+    assert event["blocking_reason"] == "performance_guard_local_kill_switch"
+
+
+def test_opportunity_autonomy_runtime_missing_repository_fails_closed_with_audit_reason() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
+    assert event["performance_guard_source"] == "missing_repository_fail_closed"
+
+
+def test_opportunity_autonomy_runtime_no_final_outcomes_uses_conservative_behavior() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [], environment="live", portfolio_id="live-1"
+        ),
+    )
+
+    result = controller.process_signals(
+        [_opportunity_autonomy_signal("live_autonomous", assisted_approval=False)]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+
+
+def test_opportunity_autonomy_runtime_local_guard_has_priority_over_payload_guard() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [-30.0, -20.0, -15.0, -11.0, -10.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                performance_guard_effective_mode="live_autonomous",
+                performance_guard_primary_reason="payload_allows_live",
+                performance_guard_hard_breach=False,
+                performance_guard_blocked=False,
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+    assert event["performance_guard_primary_reason"] == "hard_performance_breach_detected"
+    assert event["performance_guard_blocked"] == "true"
+
+
+def test_opportunity_autonomy_runtime_no_breach_ignores_payload_performance_guard_downgrade() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                performance_guard_effective_mode="paper_autonomous",
+                performance_guard_primary_reason="payload_downgrade_should_be_ignored_when_local_guard_works",
+                performance_guard_hard_breach=False,
+                performance_guard_blocked=False,
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "allowed"
+    assert event["autonomy_mode"] == "live_autonomous"
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+    assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_runtime_missing_repository_allows_payload_guard_only_as_fallback_metadata() -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(environment="paper")
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                performance_guard_effective_mode="shadow_only",
+                performance_guard_primary_reason="payload_block_fallback",
+                performance_guard_hard_breach=True,
+                performance_guard_blocked=True,
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
+    assert event["performance_guard_source"] == "missing_repository_fail_closed"
+    assert event["performance_guard_block_enforced"] == "true"
+    assert event["fallback_autonomy_mode"] == "shadow_only"
+    assert event["fallback_autonomy_primary_reason"] == "payload_block_fallback"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_environment_labels() -> None:
+    repository = _autonomy_shadow_repository_with_mixed_scope_outcomes(
+        [
+            (8.0, "live", "live-1"),
+            (7.0, "live", "live-1"),
+            (6.0, "live", "live-1"),
+            (5.0, "live", "live-1"),
+            (4.0, "live", "live-1"),
+            (3.0, "live", "live-1"),
+            (-40.0, "paper", "paper-1"),
+            (-30.0, "paper", "paper-1"),
+            (-20.0, "paper", "paper-1"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+    assert event["performance_guard_scope_environment"] == "live"
+    assert event["performance_guard_scope_portfolio"] == "live-1"
+    assert event["performance_guard_scoped_label_count"] == "6"
+    assert event["performance_guard_excluded_label_count"] == "3"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_portfolio_labels() -> None:
+    repository = _autonomy_shadow_repository_with_mixed_scope_outcomes(
+        [
+            (8.0, "live", "live-1"),
+            (7.0, "live", "live-1"),
+            (6.0, "live", "live-1"),
+            (5.0, "live", "live-1"),
+            (4.0, "live", "live-1"),
+            (3.0, "live", "live-1"),
+            (-35.0, "live", "live-2"),
+            (-25.0, "live", "live-2"),
+            (-15.0, "live", "live-2"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_environment"] == "live"
+    assert event["performance_guard_scope_portfolio"] == "live-1"
+    assert event["performance_guard_scoped_label_count"] == "6"
+    assert event["performance_guard_excluded_label_count"] == "3"
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_insufficient_local_evidence_is_conservative() -> None:
+    repository = _autonomy_shadow_repository_with_mixed_scope_outcomes(
+        [
+            (5.0, "live", "live-1"),
+            (-20.0, "paper", "paper-1"),
+            (-18.0, "paper", "paper-1"),
+            (-16.0, "paper", "paper-1"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["performance_guard_scoped_label_count"] == "1"
+    assert event["performance_guard_excluded_label_count"] == "3"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_model_version() -> None:
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (8.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (7.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (6.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (5.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (4.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (3.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (-35.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-25.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-15.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="A",
+                decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_scoped_label_count"] == "6"
+    assert event["performance_guard_excluded_label_count"] == "3"
+
+
+def test_opportunity_autonomy_runtime_lineage_payload_precedes_stale_request_metadata() -> None:
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (8.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (7.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (6.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (5.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (4.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (3.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (-35.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-25.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-15.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+        order_metadata_defaults={
+            "opportunity_model_version": "B",
+            "opportunity_decision_source": "opportunity_ai_shadow",
+        },
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_payload_model_version="A",
+                decision_payload_decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_runtime_lineage_payload_precedes_stale_signal_metadata() -> None:
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (8.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (7.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (6.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (5.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (4.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (3.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (-35.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-25.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-15.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="B",
+                decision_source="opportunity_ai_shadow",
+                include_decision_payload=True,
+                decision_payload_model_version="A",
+                decision_payload_decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_runtime_lineage_request_payload_precedes_signal_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (8.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (7.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (6.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (5.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (4.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (3.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (-35.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-25.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-15.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_request_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "effective_mode": "live_autonomous",
+            "primary_reason": "request_payload_lineage_A",
+            "model_version": "A",
+            "decision_source": "opportunity_ai_shadow",
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_request_payload,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_payload_model_version="B",
+                decision_payload_decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_runtime_lineage_uses_signal_payload_when_request_payload_has_no_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (8.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (7.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (6.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (5.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (4.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (3.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (-35.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-25.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-15.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_request_payload_without_lineage(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "effective_mode": "live_autonomous",
+            "primary_reason": "request_payload_without_lineage",
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_request_payload_without_lineage,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_payload_model_version="A",
+                decision_payload_decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_runtime_lineage_fallback_missing_repository_prefers_request_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_request_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "effective_mode": "live_autonomous",
+            "primary_reason": "request_payload_lineage_A",
+            "model_version": "A",
+            "decision_source": "opportunity_ai_shadow",
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_request_payload,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_payload_model_version="B",
+                decision_payload_decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert len(result) == 0
+    assert len(execution.requests) == 0
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_source"] == "missing_repository_fail_closed"
+    assert event["autonomy_primary_reason"] == "performance_guard_snapshot_source_unavailable"
+    assert event["fallback_autonomy_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_malformed_request_payload_does_not_mask_signal_payload_effective_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_malformed_request_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = "broken"
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_malformed_request_payload,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+            )
+        ]
+    )
+
+    assert len(result) == 0
+    assert len(execution.requests) == 0
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "paper_autonomous"
+    assert event["autonomous_execution_allowed"] == "false"
+
+
+def test_opportunity_autonomy_empty_request_mapping_does_not_fall_through_to_signal_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_empty_request_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {}
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_empty_request_payload,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_autonomous"
+    assert event["autonomous_execution_allowed"] == "true"
+
+
+def test_opportunity_autonomy_empty_request_mapping_still_has_precedence_over_signal_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_empty_request_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {}
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_empty_request_payload,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="signal_payload_reason_that_should_not_win",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_autonomous"
+    assert event["autonomy_primary_reason"] == "reason:live_autonomous"
+
+
+def test_opportunity_autonomy_malformed_request_payload_does_not_mask_signal_payload_primary_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_malformed_request_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = ["broken"]
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_malformed_request_payload,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="signal_payload_primary_reason",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_primary_reason"] == "signal_payload_primary_reason"
+
+
+def test_opportunity_autonomy_malformed_request_payload_does_not_mask_signal_payload_performance_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_malformed_request_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = 123
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_malformed_request_payload,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                performance_guard_effective_mode="assisted",
+                performance_guard_primary_reason="signal_payload_performance_guard_reason",
+                performance_guard_blocked=True,
+            )
+        ]
+    )
+
+    assert len(result) == 0
+    assert len(execution.requests) == 0
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_source"] == "missing_repository_fail_closed"
+    assert event["performance_guard_effective_mode"] == "assisted"
+    assert event["performance_guard_primary_reason"] == "signal_payload_performance_guard_reason"
+    assert event["performance_guard_blocked"] == "true"
+
+
+def test_opportunity_autonomy_valid_request_payload_still_precedes_valid_signal_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_valid_request_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "effective_mode": "live_autonomous",
+            "primary_reason": "request_payload_reason",
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_valid_request_payload,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="signal_payload_reason",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+    assert event["autonomy_primary_reason"] == "request_payload_reason"
+
+
+def test_opportunity_autonomy_runtime_lineage_falls_back_to_signal_metadata_when_payload_lacks_lineage() -> (
+    None
+):
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (8.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (7.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (6.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (5.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (4.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (3.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (-35.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-25.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+            (-15.0, "live", "live-1", "B", "opportunity_ai_shadow"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="A",
+                decision_source="opportunity_ai_shadow",
+                include_decision_payload=True,
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_effective_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_decision_source() -> None:
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (8.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (7.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (6.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (5.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (4.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (3.0, "live", "live-1", "A", "opportunity_ai_shadow"),
+            (-35.0, "live", "live-1", "A", "other_source"),
+            (-25.0, "live", "live-1", "A", "other_source"),
+            (-15.0, "live", "live-1", "A", "other_source"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="A",
+                decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_scope_model_version"] == "A"
+    assert event["performance_guard_scope_decision_source"] == "opportunity_ai_shadow"
+    assert event["performance_guard_scoped_label_count"] == "6"
+    assert event["performance_guard_excluded_label_count"] == "3"
+
+
+def test_opportunity_autonomy_runtime_scoped_snapshot_missing_lineage_provenance_is_conservative() -> None:
+    repository = _autonomy_shadow_repository_with_mixed_scope_outcomes(
+        [
+            (5.0, "live", "live-1"),
+            (4.0, "live", "live-1"),
+            (3.0, "live", "live-1"),
+            (2.0, "live", "live-1"),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                model_version="A",
+                decision_source="opportunity_ai_shadow",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["performance_guard_scoped_label_count"] == "0"
+    assert event["performance_guard_excluded_label_count"] == "4"
+    assert event["performance_guard_missing_lineage_provenance_count"] == "4"
 
 
 def _shadow_record_for_key(
