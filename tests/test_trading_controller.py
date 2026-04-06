@@ -292,7 +292,9 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     assert any(event["event"] == "order_executed" for event in journal.export())
 
 
-def _build_autonomy_controller(*, environment: str) -> tuple[TradingController, DummyExecutionService, CollectingDecisionJournal]:
+def _build_autonomy_controller(
+    *, environment: str
+) -> tuple[TradingController, DummyExecutionService, CollectingDecisionJournal]:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     router, _channel, _audit = _router_with_channel()
@@ -330,14 +332,16 @@ def test_opportunity_autonomy_shadow_only_blocks_paper_and_live() -> None:
         event = _last_event(journal, "opportunity_autonomy_enforcement")
         assert event["status"] == "blocked"
         assert event["autonomy_mode"] == "shadow_only"
-        assert (
-            event["blocking_reason"] == "autonomy_mode_shadow_only_blocks_order_execution"
-        )
+        assert event["blocking_reason"] == "autonomy_mode_shadow_only_blocks_order_execution"
 
 
 def test_opportunity_autonomy_paper_autonomous_allows_paper_but_blocks_live() -> None:
-    paper_controller, paper_execution, paper_journal = _build_autonomy_controller(environment="paper")
-    paper_result = paper_controller.process_signals([_opportunity_autonomy_signal("paper_autonomous")])
+    paper_controller, paper_execution, paper_journal = _build_autonomy_controller(
+        environment="paper"
+    )
+    paper_result = paper_controller.process_signals(
+        [_opportunity_autonomy_signal("paper_autonomous")]
+    )
     assert len(paper_result) == 1
     assert len(paper_execution.requests) == 1
     paper_event = _last_event(paper_journal, "opportunity_autonomy_enforcement")
@@ -345,7 +349,9 @@ def test_opportunity_autonomy_paper_autonomous_allows_paper_but_blocks_live() ->
     assert paper_event["execution_permission"] == "allowed"
 
     live_controller, live_execution, live_journal = _build_autonomy_controller(environment="live")
-    live_result = live_controller.process_signals([_opportunity_autonomy_signal("paper_autonomous")])
+    live_result = live_controller.process_signals(
+        [_opportunity_autonomy_signal("paper_autonomous")]
+    )
     assert live_result == []
     assert live_execution.requests == []
     live_event = _last_event(live_journal, "opportunity_autonomy_enforcement")
@@ -432,7 +438,9 @@ def test_opportunity_shadow_key_without_autonomy_contract_does_not_trigger_enfor
     assert len(result) == 1
     assert len(execution.requests) == 1
     autonomy_events = [
-        event for event in journal.export() if event.get("event") == "opportunity_autonomy_enforcement"
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
     ]
     assert autonomy_events == []
 
