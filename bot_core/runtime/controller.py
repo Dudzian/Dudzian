@@ -1724,6 +1724,20 @@ class TradingController:
                 request,
                 include_performance_guard_payload=False,
             )
+            performance_guard_recent_final_window_size = (
+                self.performance_guard_recent_final_window_size
+                if self.performance_guard_recent_final_window_size is not None
+                else 20
+            )
+            performance_guard_max_scan_labels = (
+                self.performance_guard_max_scan_labels
+                if self.performance_guard_max_scan_labels is not None
+                else 256
+            )
+            diagnostics["performance_guard_recent_final_window_size"] = (
+                performance_guard_recent_final_window_size
+            )
+            diagnostics["performance_guard_max_scan_labels"] = performance_guard_max_scan_labels
             repository = self._opportunity_shadow_repository
             if repository is None:
                 diagnostics["performance_guard_source"] = "missing_repository_fail_closed"
@@ -1771,16 +1785,8 @@ class TradingController:
                     lifecycle.load_recent_performance_snapshot_with_scope_diagnostics(
                         shadow_repository=repository,
                         snapshot_config=OpportunityPerformanceSnapshotConfig(
-                            recent_final_window_size=(
-                                self.performance_guard_recent_final_window_size
-                                if self.performance_guard_recent_final_window_size is not None
-                                else 20
-                            ),
-                            max_scan_labels=(
-                                self.performance_guard_max_scan_labels
-                                if self.performance_guard_max_scan_labels is not None
-                                else 256
-                            ),
+                            recent_final_window_size=performance_guard_recent_final_window_size,
+                            max_scan_labels=performance_guard_max_scan_labels,
                             scope_environment=self.environment,
                             scope_portfolio=self.portfolio_id,
                             scope_model_version=scope_model_version,
