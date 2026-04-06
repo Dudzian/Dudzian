@@ -1298,6 +1298,12 @@ class TradingController:
                 "environment": self.environment,
                 **dict(diagnostics),
             }
+            metadata.update(
+                self._extract_upstream_autonomy_governance_metadata(
+                    signal=signal,
+                    request=request,
+                )
+            )
             if permission is not None:
                 metadata.update(permission.to_dict())
                 metadata["execution_permission"] = (
@@ -1536,6 +1542,157 @@ class TradingController:
             "opportunity_autonomy_decision",
         )
         return any(key in signal_metadata or key in request_metadata for key in keys)
+
+    def _select_opportunity_autonomy_payload(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ) -> tuple[Mapping[str, object], str] | None:
+        signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        request_decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
+        signal_decision_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
+
+        def _as_non_empty_string(value: object | None) -> str | None:
+            if value is None:
+                return None
+            candidate = str(value).strip()
+            return candidate or None
+
+        def _normalize_reason_sequence(value: object | None) -> tuple[str, ...] | None:
+            if not isinstance(value, SequenceABC) or isinstance(value, (str, bytes, bytearray)):
+                return None
+            normalized: list[str] = []
+            for item in value:
+                candidate = _as_non_empty_string(item)
+                if candidate is not None:
+                    normalized.append(candidate)
+            return tuple(normalized)
+
+        def _normalize_evidence_summary(value: object | None) -> Mapping[str, object] | None:
+            if not isinstance(value, Mapping):
+                return None
+            normalized: dict[str, object] = {}
+            for key, entry in sorted(value.items(), key=lambda item: str(item[0])):
+                normalized[str(key)] = entry
+            return normalized
+
+        def _has_useful_governance_envelope(payload: Mapping[str, object]) -> bool:
+            requested_mode = _as_non_empty_string(payload.get("requested_mode"))
+            effective_mode = _as_non_empty_string(payload.get("effective_mode"))
+            downgraded_raw = payload.get("downgraded")
+            primary_reason = _as_non_empty_string(payload.get("primary_reason"))
+            downgrade_source = _as_non_empty_string(payload.get("downgrade_source"))
+            downgrade_step_count_raw = payload.get("downgrade_step_count")
+            blocking_reasons = _normalize_reason_sequence(payload.get("blocking_reasons"))
+            warnings = _normalize_reason_sequence(payload.get("warnings"))
+            evidence_summary = _normalize_evidence_summary(payload.get("evidence_summary"))
+            return any(
+                (
+                    requested_mode is not None,
+                    effective_mode is not None,
+                    isinstance(downgraded_raw, bool),
+                    primary_reason is not None,
+                    downgrade_source is not None,
+                    (
+                        isinstance(downgrade_step_count_raw, int)
+                        and not isinstance(downgrade_step_count_raw, bool)
+                    ),
+                    blocking_reasons is not None and len(blocking_reasons) > 0,
+                    warnings is not None and len(warnings) > 0,
+                    evidence_summary is not None and len(evidence_summary) > 0,
+                )
+            )
+
+        request_payload = (
+            request_decision_payload_raw
+            if isinstance(request_decision_payload_raw, Mapping)
+            else None
+        )
+        signal_payload = (
+            signal_decision_payload_raw
+            if isinstance(signal_decision_payload_raw, Mapping)
+            else None
+        )
+        if request_payload is not None and _has_useful_governance_envelope(request_payload):
+            return request_payload, "request"
+        if signal_payload is not None and _has_useful_governance_envelope(signal_payload):
+            return signal_payload, "signal"
+        return None
+
+    def _extract_upstream_autonomy_governance_metadata(
+        self,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ) -> Mapping[str, object]:
+        selected_payload = self._select_opportunity_autonomy_payload(signal, request)
+        if selected_payload is None:
+            return {}
+        payload, payload_source = selected_payload
+
+        def _as_non_empty_string(value: object | None) -> str | None:
+            if value is None:
+                return None
+            candidate = str(value).strip()
+            return candidate or None
+
+        def _normalize_reason_sequence(value: object | None) -> tuple[str, ...] | None:
+            if not isinstance(value, SequenceABC) or isinstance(value, (str, bytes, bytearray)):
+                return None
+            normalized: list[str] = []
+            for item in value:
+                candidate = _as_non_empty_string(item)
+                if candidate is not None:
+                    normalized.append(candidate)
+            return tuple(normalized)
+
+        def _normalize_evidence_summary(value: object | None) -> Mapping[str, object] | None:
+            if not isinstance(value, Mapping):
+                return None
+            normalized: dict[str, object] = {}
+            for key, entry in sorted(value.items(), key=lambda item: str(item[0])):
+                normalized[str(key)] = entry
+            return normalized
+
+        metadata: dict[str, object] = {}
+        metadata["upstream_autonomy_payload_source"] = payload_source
+        requested_mode = _as_non_empty_string(payload.get("requested_mode"))
+        if requested_mode is not None:
+            metadata["upstream_autonomy_requested_mode"] = requested_mode
+
+        effective_mode = _as_non_empty_string(payload.get("effective_mode"))
+        if effective_mode is not None:
+            metadata["upstream_autonomy_effective_mode"] = effective_mode
+
+        downgraded_raw = payload.get("downgraded")
+        if isinstance(downgraded_raw, bool):
+            metadata["upstream_autonomy_downgraded"] = downgraded_raw
+
+        primary_reason = _as_non_empty_string(payload.get("primary_reason"))
+        if primary_reason is not None:
+            metadata["upstream_autonomy_primary_reason"] = primary_reason
+
+        downgrade_source = _as_non_empty_string(payload.get("downgrade_source"))
+        if downgrade_source is not None:
+            metadata["upstream_autonomy_downgrade_source"] = downgrade_source
+
+        downgrade_step_count_raw = payload.get("downgrade_step_count")
+        if isinstance(downgrade_step_count_raw, int) and not isinstance(downgrade_step_count_raw, bool):
+            metadata["upstream_autonomy_downgrade_step_count"] = downgrade_step_count_raw
+
+        blocking_reasons = _normalize_reason_sequence(payload.get("blocking_reasons"))
+        if blocking_reasons is not None:
+            metadata["upstream_autonomy_blocking_reasons"] = blocking_reasons
+
+        warnings = _normalize_reason_sequence(payload.get("warnings"))
+        if warnings is not None:
+            metadata["upstream_autonomy_warnings"] = warnings
+
+        evidence_summary = _normalize_evidence_summary(payload.get("evidence_summary"))
+        if evidence_summary is not None:
+            metadata["upstream_autonomy_evidence_summary"] = evidence_summary
+        return metadata
 
     def _extract_opportunity_autonomy_decision(
         self,

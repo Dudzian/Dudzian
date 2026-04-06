@@ -303,6 +303,40 @@ def _opportunity_autonomy_signal(
     return signal
 
 
+def _upstream_governance_envelope(
+    *,
+    requested_mode: str | None = "live_autonomous",
+    effective_mode: str | None = "live_assisted",
+    downgraded: bool | None = True,
+    primary_reason: str | None = "upstream_downgrade",
+    downgrade_source: str | None = "governance",
+    downgrade_step_count: int | None = 2,
+    blocking_reasons: object | None = None,
+    warnings: object | None = None,
+    evidence_summary: object | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if requested_mode is not None:
+        payload["requested_mode"] = requested_mode
+    if effective_mode is not None:
+        payload["effective_mode"] = effective_mode
+    if downgraded is not None:
+        payload["downgraded"] = downgraded
+    if primary_reason is not None:
+        payload["primary_reason"] = primary_reason
+    if downgrade_source is not None:
+        payload["downgrade_source"] = downgrade_source
+    if downgrade_step_count is not None:
+        payload["downgrade_step_count"] = downgrade_step_count
+    if blocking_reasons is not None:
+        payload["blocking_reasons"] = blocking_reasons
+    if warnings is not None:
+        payload["warnings"] = warnings
+    if evidence_summary is not None:
+        payload["evidence_summary"] = evidence_summary
+    return payload
+
+
 def _last_event(journal: CollectingDecisionJournal, event_type: str) -> Mapping[str, str]:
     events = [event for event in journal.export() if event.get("event") == event_type]
     assert events, f"Missing event {event_type}"
@@ -1889,6 +1923,458 @@ def test_opportunity_autonomy_valid_request_payload_still_precedes_valid_signal_
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["performance_guard_effective_mode"] == "live_autonomous"
     assert event["autonomy_primary_reason"] == "request_payload_reason"
+
+
+def test_opportunity_autonomy_enforcement_emits_upstream_governance_fields_from_request_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+    request_payload = _upstream_governance_envelope(
+        blocking_reasons=["guard_block", "risk_limit"],
+        warnings=["warn_a", "warn_b"],
+        evidence_summary={"zeta": 9, "alpha": {"sample": "ok"}},
+    )
+
+    def _build_order_request_with_request_governance_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = request_payload
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_request_governance_payload,
+    )
+
+    controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert len(execution.requests) == 0
+    assert event["upstream_autonomy_payload_source"] == "request"
+    assert event["upstream_autonomy_requested_mode"] == "live_autonomous"
+    assert event["upstream_autonomy_effective_mode"] == "live_assisted"
+    assert event["upstream_autonomy_downgraded"] == "true"
+    assert event["upstream_autonomy_primary_reason"] == "upstream_downgrade"
+    assert event["upstream_autonomy_downgrade_source"] == "governance"
+    assert event["upstream_autonomy_downgrade_step_count"] == "2"
+    assert event["upstream_autonomy_blocking_reasons"] == '["guard_block","risk_limit"]'
+    assert event["upstream_autonomy_warnings"] == '["warn_a","warn_b"]'
+    assert (
+        event["upstream_autonomy_evidence_summary"]
+        == '{"alpha":{"sample":"ok"},"zeta":9}'
+    )
+
+
+def test_opportunity_autonomy_governance_uses_signal_payload_when_request_has_no_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_without_governance_envelope(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "performance_guard": {"effective_mode": "live_autonomous"}
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_without_governance_envelope,
+    )
+
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="signal_reason",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_payload_source"] == "signal"
+    assert event["upstream_autonomy_effective_mode"] == "paper_autonomous"
+    assert event["upstream_autonomy_primary_reason"] == "signal_reason"
+
+
+def test_opportunity_autonomy_request_with_empty_governance_values_does_not_mask_signal_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_empty_governance_values(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "requested_mode": "  ",
+            "effective_mode": "",
+            "primary_reason": "   ",
+            "downgrade_source": "",
+            "downgrade_step_count": True,
+            "blocking_reasons": [],
+            "warnings": tuple(),
+            "evidence_summary": {},
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_empty_governance_values,
+    )
+
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="signal_reason",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_payload_source"] == "signal"
+    assert event["upstream_autonomy_effective_mode"] == "paper_autonomous"
+    assert event["upstream_autonomy_primary_reason"] == "signal_reason"
+
+
+def test_opportunity_autonomy_malformed_request_payload_uses_signal_governance_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_malformed_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = "broken"
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_malformed_payload,
+    )
+
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="signal_reason_malformed_fallback",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_payload_source"] == "signal"
+    assert event["upstream_autonomy_effective_mode"] == "paper_autonomous"
+    assert event["upstream_autonomy_primary_reason"] == "signal_reason_malformed_fallback"
+
+
+def test_opportunity_autonomy_partial_request_governance_envelope_wins_over_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_partial_useful_governance(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "primary_reason": "request_partial_reason",
+            "effective_mode": "  ",
+            "blocking_reasons": [],
+            "warnings": [],
+            "evidence_summary": {},
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_partial_useful_governance,
+    )
+
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="signal_reason",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_payload_source"] == "request"
+    assert event["upstream_autonomy_primary_reason"] == "request_partial_reason"
+    assert "upstream_autonomy_effective_mode" not in event
+
+
+def test_opportunity_autonomy_missing_useful_governance_envelope_emits_no_payload_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_without_useful_governance(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "requested_mode": " ",
+            "effective_mode": "",
+            "downgraded": None,
+            "primary_reason": "\t",
+            "downgrade_source": "",
+            "downgrade_step_count": False,
+            "blocking_reasons": [],
+            "warnings": [],
+            "evidence_summary": {},
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_without_useful_governance,
+    )
+
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "paper_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode=" ",
+                decision_primary_reason="",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert "upstream_autonomy_payload_source" not in event
+    assert "upstream_autonomy_effective_mode" not in event
+    assert "upstream_autonomy_primary_reason" not in event
+
+
+def test_opportunity_autonomy_local_guard_block_keeps_upstream_governance_fields() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="upstream_still_visible",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert len(execution.requests) == 0
+    assert event["performance_guard_source"] == "missing_repository_fail_closed"
+    assert event["upstream_autonomy_effective_mode"] == "live_autonomous"
+    assert event["upstream_autonomy_primary_reason"] == "upstream_still_visible"
+
+
+def test_opportunity_autonomy_local_guard_no_breach_keeps_upstream_governance_fields() -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="upstream_no_breach_visible",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert len(execution.requests) == 1
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+    assert event["upstream_autonomy_effective_mode"] == "live_autonomous"
+    assert event["upstream_autonomy_primary_reason"] == "upstream_no_breach_visible"
+
+
+def test_opportunity_autonomy_governance_collections_are_serialized_stably(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_serialization_probe_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = _upstream_governance_envelope(
+            blocking_reasons=("b", "a"),
+            warnings=["warn_2", "warn_1"],
+            evidence_summary={"k2": {"y": 2, "x": 1}, "k1": [2, 1]},
+        )
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_serialization_probe_payload,
+    )
+
+    controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_blocking_reasons"] == '["b","a"]'
+    assert event["upstream_autonomy_warnings"] == '["warn_2","warn_1"]'
+    assert event["upstream_autonomy_evidence_summary"] == '{"k1":[2,1],"k2":{"x":1,"y":2}}'
+
+
+def test_opportunity_autonomy_governance_missing_requested_and_downgrade_fields_keeps_existing_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_without_requested_or_downgrade_fields(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = _upstream_governance_envelope(
+            requested_mode=None,
+            downgraded=None,
+            downgrade_source=None,
+            downgrade_step_count=None,
+            effective_mode="paper_autonomous",
+            primary_reason="paper_allow",
+            blocking_reasons=["none"],
+        )
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_without_requested_or_downgrade_fields,
+    )
+
+    controller.process_signals([_opportunity_autonomy_signal("paper_autonomous")])
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert len(execution.requests) == 1
+    assert event["upstream_autonomy_effective_mode"] == "paper_autonomous"
+    assert event["upstream_autonomy_primary_reason"] == "paper_allow"
+    assert "upstream_autonomy_requested_mode" not in event
+    assert "upstream_autonomy_downgraded" not in event
 
 
 def test_opportunity_autonomy_runtime_lineage_falls_back_to_signal_metadata_when_payload_lacks_lineage() -> (
