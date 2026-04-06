@@ -1107,7 +1107,9 @@ def test_opportunity_autonomy_enforcement_contract_keys_present_for_fail_closed_
         performance_guard_recent_final_window_size=2,
         performance_guard_max_scan_labels=6,
     )
-    result_missing = controller_missing.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    result_missing = controller_missing.process_signals(
+        [_opportunity_autonomy_signal("live_autonomous")]
+    )
     assert result_missing == []
     assert execution_missing.requests == []
     event_missing = _last_event(journal_missing, "opportunity_autonomy_enforcement")
@@ -1131,7 +1133,9 @@ def test_opportunity_autonomy_enforcement_contract_keys_present_for_fail_closed_
         "load_recent_performance_snapshot_with_scope_diagnostics",
         _raise_snapshot_failure,
     )
-    result_failure = controller_failure.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    result_failure = controller_failure.process_signals(
+        [_opportunity_autonomy_signal("live_autonomous")]
+    )
     assert result_failure == []
     assert execution_failure.requests == []
     event_failure = _last_event(journal_failure, "opportunity_autonomy_enforcement")
@@ -1973,10 +1977,7 @@ def test_opportunity_autonomy_enforcement_emits_upstream_governance_fields_from_
     assert event["upstream_autonomy_downgrade_step_count"] == "2"
     assert event["upstream_autonomy_blocking_reasons"] == '["guard_block","risk_limit"]'
     assert event["upstream_autonomy_warnings"] == '["warn_a","warn_b"]'
-    assert (
-        event["upstream_autonomy_evidence_summary"]
-        == '{"alpha":{"sample":"ok"},"zeta":9}'
-    )
+    assert event["upstream_autonomy_evidence_summary"] == '{"alpha":{"sample":"ok"},"zeta":9}'
 
 
 def test_opportunity_autonomy_governance_uses_signal_payload_when_request_has_no_envelope(

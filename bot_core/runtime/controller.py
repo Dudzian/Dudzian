@@ -1678,7 +1678,9 @@ class TradingController:
             metadata["upstream_autonomy_downgrade_source"] = downgrade_source
 
         downgrade_step_count_raw = payload.get("downgrade_step_count")
-        if isinstance(downgrade_step_count_raw, int) and not isinstance(downgrade_step_count_raw, bool):
+        if isinstance(downgrade_step_count_raw, int) and not isinstance(
+            downgrade_step_count_raw, bool
+        ):
             metadata["upstream_autonomy_downgrade_step_count"] = downgrade_step_count_raw
 
         blocking_reasons = _normalize_reason_sequence(payload.get("blocking_reasons"))
