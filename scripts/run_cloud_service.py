@@ -10,6 +10,7 @@ import platform
 import signal
 import sys
 import time
+from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -27,11 +28,14 @@ repo_entry = str(REPO_ROOT)
 if repo_entry not in sys.path:
     sys.path.insert(0, repo_entry)
 
-from bot_core.cloud import CloudRuntimeService, load_cloud_server_config
 from bot_core.security.cloud_flag import (
     CloudFlagValidationError,
     validate_runtime_cloud_flag,
 )
+try:  # pragma: no cover - zależność środowiskowa
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - brak PyYAML
+    yaml = None
 
 
 def _configure_logging(level: str) -> None:
@@ -99,6 +103,90 @@ def _package_version() -> str:
         return "unknown"
 
 
+def _parse_backend_list(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    raw = value.strip().lower()
+    if not raw:
+        return ()
+    if raw == "all":
+        return ("all",)
+    items = [item.strip().lower() for item in value.replace(";", ",").split(",")]
+    expanded: list[str] = []
+    for item in items:
+        expanded.extend(part for part in item.split() if part)
+    return tuple(item for item in expanded if item)
+
+
+@dataclass(frozen=True, slots=True)
+class _CiSmokeRuntimeConfig:
+    config_path: Path
+    entrypoint: str | None
+
+
+def _load_ci_smoke_runtime_config(config_path: str | Path) -> _CiSmokeRuntimeConfig:
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML nie jest zainstalowany. Zainstaluj pakiet 'pyyaml' aby wczytać konfigurację cloud."
+        )
+
+    path = Path(config_path).expanduser().resolve()
+    if not path.exists():
+        raise RuntimeError(f"Plik konfiguracji cloud nie istnieje: {path!s}")
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("Plik konfiguracji cloud musi zawierać obiekt mapujący")
+    runtime_section = payload.get("runtime", {}) or {}
+    if not isinstance(runtime_section, Mapping):
+        runtime_section = {}
+
+    runtime_config_path = Path(runtime_section.get("config_path", "config/runtime.yaml")).expanduser()
+    if runtime_config_path.is_absolute():
+        resolved_runtime_path = runtime_config_path
+    else:
+        relative_candidate = (path.parent / runtime_config_path).resolve()
+        if relative_candidate.exists():
+            resolved_runtime_path = relative_candidate
+        else:
+            resolved_runtime_path = (REPO_ROOT / runtime_config_path).resolve()
+
+    entrypoint = runtime_section.get("entrypoint")
+    entrypoint_value = entrypoint if isinstance(entrypoint, str) else None
+    return _CiSmokeRuntimeConfig(config_path=resolved_runtime_path, entrypoint=entrypoint_value)
+
+
+def _build_ci_smoke_payload(config: _CiSmokeRuntimeConfig) -> dict[str, object]:
+    simulated = _parse_backend_list(os.environ.get("BOT_CORE_SIMULATE_BACKEND_IMPORT_OSERROR"))
+    has_simulated_backend_oserror = bool(simulated)
+    diagnostics: dict[str, object] = {}
+    if has_simulated_backend_oserror:
+        diagnostics = {
+            "degraded": True,
+            "reason": "simulated_backend_import_oserror",
+            "simulatedBackends": list(simulated),
+        }
+
+    return {
+        "event": "ready",
+        "address": "ci-smoke",
+        "healthStatus": "degraded" if has_simulated_backend_oserror else "ready",
+        "orchestratorReady": True,
+        "runtime": {
+            "config": str(config.config_path),
+            "entrypoint": config.entrypoint,
+            "mode": "smoke",
+        },
+        "diagnostics": diagnostics,
+        "meta": {
+            "timestamp": int(time.time()),
+            "pid": os.getpid(),
+            "platform": platform.platform(),
+            "python_version": sys.version,
+            "package_version": _package_version(),
+        },
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     # Środowiska CI (szczególnie Windows) mogą nie przekazywać zmiennej
@@ -107,6 +195,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     # nie wpływać na produkcję ani lokalne konfiguracje licencyjne.
     os.environ.setdefault("BOT_CORE_LICENSE_PUBLIC_KEY", "11" * 32)
     _configure_logging(args.log_level)
+    if args.ci_smoke:
+        try:
+            smoke_cfg = _load_ci_smoke_runtime_config(args.config)
+        except Exception as exc:
+            logging.getLogger(__name__).error("Nie udało się załadować konfiguracji cloud: %s", exc)
+            return 2
+        try:
+            validate_runtime_cloud_flag(smoke_cfg.config_path)
+        except CloudFlagValidationError as exc:
+            logging.getLogger(__name__).error(
+                "Walidacja podpisanej flagi cloudowej nie powiodła się: %s",
+                exc,
+            )
+            return 4
+        # Windows runners w CI potrafią niepoprawnie obsłużyć środowiska
+        # wymagające pełnej konfiguracji giełd/GUI. W trybie smoke pomijamy
+        # bootstrap runtime i tylko emitujemy gotowość, żeby test mógł
+        # zweryfikować CLI bez ryzyka zawieszenia się na walidacji środowiska.
+        payload = _build_ci_smoke_payload(smoke_cfg)
+        _emit_ready(payload, ready_file=args.ready_file, emit_stdout=args.emit_stdout)
+        return 0
+
+    from bot_core.cloud import CloudRuntimeService, load_cloud_server_config
+
     try:
         config = load_cloud_server_config(args.config)
     except Exception as exc:
@@ -121,30 +233,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             exc,
         )
         return 4
-
-    if args.ci_smoke:
-        # Windows runners w CI potrafią niepoprawnie obsłużyć środowiska
-        # wymagające pełnej konfiguracji giełd/GUI. W trybie smoke pomijamy
-        # bootstrap runtime i tylko emitujemy gotowość, żeby test mógł
-        # zweryfikować CLI bez ryzyka zawieszenia się na walidacji środowiska.
-        payload = {
-            "event": "ready",
-            "address": "ci-smoke",
-            "runtime": {
-                "config": str(config.runtime.config_path),
-                "entrypoint": config.runtime.entrypoint,
-                "mode": "smoke",
-            },
-            "meta": {
-                "timestamp": int(time.time()),
-                "pid": os.getpid(),
-                "platform": platform.platform(),
-                "python_version": sys.version,
-                "package_version": _package_version(),
-            },
-        }
-        _emit_ready(payload, ready_file=args.ready_file, emit_stdout=args.emit_stdout)
-        return 0
 
     # CI: bootstrap runtime potrafi trwać dłużej niż 30 sekund. Test CLI
     # najpierw sprawdza samą obecność ready-file, a dopiero potem czeka

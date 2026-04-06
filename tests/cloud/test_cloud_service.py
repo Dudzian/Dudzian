@@ -275,6 +275,43 @@ def test_cloud_cli_smoke_ready_handles_lightgbm_oserror(
         extra_env={"BOT_CORE_SIMULATE_BACKEND_IMPORT_OSERROR": "lightgbm"},
     )
     assert data["runtime"]["mode"] == "smoke"
+    assert data["healthStatus"] == "degraded"
+    assert data["orchestratorReady"] is True
+    diagnostics = data.get("diagnostics", {})
+    assert diagnostics.get("reason") == "simulated_backend_import_oserror"
+    assert "lightgbm" in diagnostics.get("simulatedBackends", [])
+
+
+def test_cloud_cli_smoke_ready_does_not_import_bot_core_cloud(tmp_path: Path) -> None:
+    guard_dir = tmp_path / "import_guard"
+    guard_dir.mkdir(parents=True, exist_ok=True)
+    (guard_dir / "sitecustomize.py").write_text(
+        "\n".join(
+            [
+                "import builtins",
+                "_orig_import = builtins.__import__",
+                "def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):",
+                "    if name == 'bot_core.cloud' or name.startswith('bot_core.cloud.'):",
+                "        raise RuntimeError('bot_core.cloud import forbidden in ci-smoke')",
+                "    return _orig_import(name, globals, locals, fromlist, level)",
+                "builtins.__import__ = _guarded_import",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    pythonpath = str(guard_dir)
+    existing_pythonpath = os.environ.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath = f"{pythonpath}{os.pathsep}{existing_pythonpath}"
+
+    data = _invoke_cloud_cli(
+        tmp_path,
+        ci_smoke=True,
+        expect_mode="smoke",
+        extra_env={"PYTHONPATH": pythonpath},
+    )
+    assert data["event"] == "ready"
+    assert data["runtime"]["mode"] == "smoke"
 
 
 @pytest.mark.integration
