@@ -7,7 +7,7 @@ import logging
 import math
 import uuid
 from collections.abc import Sequence as SequenceABC
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import (
