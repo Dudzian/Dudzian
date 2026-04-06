@@ -1061,7 +1061,9 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_insufficient_local_evidenc
     assert event["performance_guard_excluded_label_count"] == "3"
 
 
-def test_opportunity_autonomy_runtime_scoped_snapshot_excludes_partial_scope_and_reports_missing_scope_provenance() -> None:
+def test_opportunity_autonomy_runtime_scoped_snapshot_excludes_partial_scope_and_reports_missing_scope_provenance() -> (
+    None
+):
     repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-partial-scope-"))
     repository = OpportunityShadowRepository(repo_dir)
     repository.append_outcome_labels(
@@ -2353,18 +2355,20 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_parity_with_scan_and_windo
     )
 
     lifecycle = OpportunityLifecycleService()
-    _snapshot, expected_diagnostics = lifecycle.load_recent_performance_snapshot_with_scope_diagnostics(
-        shadow_repository=repository,
-        snapshot_config=OpportunityPerformanceSnapshotConfig(
-            recent_final_window_size=2,
-            max_scan_labels=6,
-            scope_environment="live",
-            scope_portfolio="live-1",
-            scope_model_version="A",
-            scope_decision_source="opportunity_ai_shadow",
-            require_scope_provenance=True,
-            require_lineage_provenance=True,
-        ),
+    _snapshot, expected_diagnostics = (
+        lifecycle.load_recent_performance_snapshot_with_scope_diagnostics(
+            shadow_repository=repository,
+            snapshot_config=OpportunityPerformanceSnapshotConfig(
+                recent_final_window_size=2,
+                max_scan_labels=6,
+                scope_environment="live",
+                scope_portfolio="live-1",
+                scope_model_version="A",
+                scope_decision_source="opportunity_ai_shadow",
+                require_scope_provenance=True,
+                require_lineage_provenance=True,
+            ),
+        )
     )
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
@@ -2388,7 +2392,9 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_parity_with_scan_and_windo
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_mode"] == "live_assisted"
     assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
-    assert event["performance_guard_scoped_label_count"] == str(expected_diagnostics.scoped_label_count)
+    assert event["performance_guard_scoped_label_count"] == str(
+        expected_diagnostics.scoped_label_count
+    )
     assert event["performance_guard_excluded_label_count"] == str(
         expected_diagnostics.excluded_label_count
     )
@@ -2416,7 +2422,9 @@ def test_opportunity_autonomy_runtime_performance_guard_defaults_remain_unchange
         performance_guard_max_scan_labels=256,
     )
 
-    result_default = controller_default.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    result_default = controller_default.process_signals(
+        [_opportunity_autonomy_signal("live_autonomous")]
+    )
     result_explicit = controller_explicit.process_signals(
         [_opportunity_autonomy_signal("live_autonomous")]
     )
@@ -3609,7 +3617,13 @@ def test_controller_restored_partial_scope_multihop_partial_restart_final_preser
 
 
 @pytest.mark.parametrize(
-    ("scope_variant", "close_status", "close_filled_quantity", "close_avg_price", "expected_label_quality"),
+    (
+        "scope_variant",
+        "close_status",
+        "close_filled_quantity",
+        "close_avg_price",
+        "expected_label_quality",
+    ),
     [
         ("environment_only", "partially_filled", 0.4, 109.0, "partial_exit_unconfirmed"),
         ("environment_only", "filled", 1.0, 112.0, "final"),

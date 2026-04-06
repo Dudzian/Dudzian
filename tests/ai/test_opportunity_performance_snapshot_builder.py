@@ -343,7 +343,9 @@ def test_snapshot_builder_scope_excludes_environment_only_partial_scope_as_missi
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 0
     assert diagnostics.scoped_label_count == 0
@@ -373,7 +375,9 @@ def test_snapshot_builder_scope_excludes_portfolio_only_partial_scope_as_missing
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 0
     assert diagnostics.scoped_label_count == 0
@@ -421,7 +425,9 @@ def test_snapshot_builder_scope_diagnostics_distinguish_full_partial_and_wrong_s
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 1
     assert snapshot.recent_realized_return_bps_sum == 7.0
@@ -515,7 +521,9 @@ def test_snapshot_builder_scope_excludes_missing_decision_source_as_missing_line
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 0
     assert diagnostics.scoped_label_count == 0
@@ -552,7 +560,9 @@ def test_snapshot_builder_scope_excludes_missing_model_version_as_missing_lineag
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 0
     assert diagnostics.scoped_label_count == 0
@@ -621,7 +631,9 @@ def test_snapshot_builder_scope_diagnostics_distinguish_full_partial_and_wrong_l
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 1
     assert snapshot.recent_realized_return_bps_sum == 7.0
@@ -658,7 +670,9 @@ def test_snapshot_builder_scope_excludes_combined_partial_scope_and_lineage_as_b
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 0
     assert diagnostics.scoped_label_count == 0
@@ -695,7 +709,9 @@ def test_snapshot_builder_scope_excludes_mirrored_combined_partial_scope_and_lin
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 0
     assert diagnostics.scoped_label_count == 0
@@ -774,7 +790,9 @@ def test_snapshot_builder_scope_diagnostics_distinguish_full_combined_partial_sc
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 1
     assert snapshot.recent_realized_return_bps_sum == 7.0
@@ -877,7 +895,9 @@ def test_snapshot_builder_scope_respects_max_scan_labels_and_does_not_pull_older
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 0
     assert snapshot.recent_realized_return_bps_sum == 0.0
@@ -980,7 +1000,9 @@ def test_snapshot_builder_scope_recent_final_window_uses_only_filtered_scoped_fi
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 2
     assert snapshot.recent_realized_return_bps_sum == 12.0
@@ -1089,7 +1111,9 @@ def test_snapshot_builder_scope_diagnostics_stay_consistent_with_mixed_labels_un
         )
     )
 
-    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(repository)
+    snapshot, diagnostics = builder.load_recent_performance_snapshot_with_scope_diagnostics(
+        repository
+    )
 
     assert snapshot.recent_final_outcomes_count == 1
     assert snapshot.recent_realized_return_bps_sum == 3.0
@@ -1099,7 +1123,9 @@ def test_snapshot_builder_scope_diagnostics_stay_consistent_with_mixed_labels_un
     assert diagnostics.missing_lineage_provenance_count == 3
 
 
-def test_snapshot_builder_scope_filters_by_decision_source_and_counts_missing_lineage(tmp_path: Path) -> None:
+def test_snapshot_builder_scope_filters_by_decision_source_and_counts_missing_lineage(
+    tmp_path: Path,
+) -> None:
     repository = OpportunityShadowRepository(tmp_path)
     repository.append_outcome_labels(
         [

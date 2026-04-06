@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
+from types import ModuleType
 from typing import Iterable, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -32,10 +33,13 @@ from bot_core.security.cloud_flag import (
     CloudFlagValidationError,
     validate_runtime_cloud_flag,
 )
+
 try:  # pragma: no cover - zależność środowiskowa
-    import yaml
+    import yaml as _yaml
 except ModuleNotFoundError:  # pragma: no cover - brak PyYAML
-    yaml = None
+    yaml: ModuleType | None = None
+else:  # pragma: no cover - zależność środowiskowa
+    yaml = _yaml
 
 
 def _configure_logging(level: str) -> None:
@@ -140,7 +144,9 @@ def _load_ci_smoke_runtime_config(config_path: str | Path) -> _CiSmokeRuntimeCon
     if not isinstance(runtime_section, Mapping):
         runtime_section = {}
 
-    runtime_config_path = Path(runtime_section.get("config_path", "config/runtime.yaml")).expanduser()
+    runtime_config_path = Path(
+        runtime_section.get("config_path", "config/runtime.yaml")
+    ).expanduser()
     if runtime_config_path.is_absolute():
         resolved_runtime_path = runtime_config_path
     else:
