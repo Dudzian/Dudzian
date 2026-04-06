@@ -97,7 +97,9 @@ def _temporal_eval(version: str, matched_outcomes: int) -> OpportunityTemporalEv
     )
 
 
-def _promotion_report(*, recommended: bool, matched_outcomes: int = 12) -> OpportunityPromotionReport:
+def _promotion_report(
+    *, recommended: bool, matched_outcomes: int = 12
+) -> OpportunityPromotionReport:
     champion_eval = _temporal_eval("champion-v1", matched_outcomes)
     challenger_eval = _temporal_eval("challenger-v2", matched_outcomes)
     return OpportunityPromotionReport(
@@ -155,7 +157,9 @@ def _readiness_report(
         ),
         activation_readiness=OpportunityActivationReadiness(
             activation_ready=activation_ready,
-            recommendation="hold_current_aliases" if not activation_ready else "manual_alias_switch",
+            recommendation="hold_current_aliases"
+            if not activation_ready
+            else "manual_alias_switch",
             reasons=() if activation_ready else ("not_ready",),
             alias_targets={"champion": "champion-v1", "challenger": "challenger-v2"},
         ),

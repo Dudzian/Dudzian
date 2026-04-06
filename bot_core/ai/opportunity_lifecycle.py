@@ -143,7 +143,9 @@ def evaluate_opportunity_execution_permission(
     normalized_environment = str(environment or "").strip().lower()
     is_live_environment = normalized_environment in {"live", "prod", "production"}
     mode = decision.mode
-    assisted_override_required = mode is OpportunityAutonomyMode.LIVE_ASSISTED and is_live_environment
+    assisted_override_required = (
+        mode is OpportunityAutonomyMode.LIVE_ASSISTED and is_live_environment
+    )
     assisted_override_used = assisted_override_required and bool(assisted_approval)
     denial_reason: str | None = None
     allowed = False
@@ -330,7 +332,9 @@ class OpportunityLifecycleService:
         quality_counts = self._extract_quality_counts(degraded_reasons)
         final_outcomes = max(quality_counts.get("final", 0), paired_matched_outcomes)
         partial_outcomes = sum(
-            value for key, value in quality_counts.items() if key.startswith(_PARTIAL_LABEL_PREFIXES)
+            value
+            for key, value in quality_counts.items()
+            if key.startswith(_PARTIAL_LABEL_PREFIXES)
         )
         non_final_non_partial_outcomes = max(
             0,
@@ -410,7 +414,10 @@ class OpportunityLifecycleService:
         )
         if live_ready:
             if non_blocking_degradations:
-                if len(non_blocking_degradations) <= config.max_allowed_degraded_reasons_for_live_assisted:
+                if (
+                    len(non_blocking_degradations)
+                    <= config.max_allowed_degraded_reasons_for_live_assisted
+                ):
                     return OpportunityAutonomyDecision(
                         mode=OpportunityAutonomyMode.LIVE_ASSISTED,
                         primary_reason="live_allowed_with_degradations",
@@ -490,7 +497,8 @@ class OpportunityLifecycleService:
         blocked = [
             reason
             for reason in degraded_reasons
-            if reason not in allowlisted and any(reason.startswith(prefix) for prefix in blocking_prefixes)
+            if reason not in allowlisted
+            and any(reason.startswith(prefix) for prefix in blocking_prefixes)
         ]
         if has_proxy_only and "proxy_only_outcomes_excluded_from_governance" not in blocked:
             blocked.append("proxy_only_outcomes_excluded_from_governance")
