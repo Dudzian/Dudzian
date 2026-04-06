@@ -17,6 +17,7 @@ from typing import (
     Mapping,
     MutableMapping,
     Optional,
+    Protocol,
     Sequence,
     TYPE_CHECKING,
 )
@@ -32,10 +33,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_signing_helpers() -> tuple[
-    Callable[[Mapping[str, object], bytes, str | None], Mapping[str, object]],
-    Callable[[Mapping[str, object], Mapping[str, object], bytes], Sequence[str]],
-]:
+class _BuildHmacSignature(Protocol):
+    def __call__(
+        self,
+        payload: Mapping[str, object],
+        *,
+        key: bytes,
+        key_id: str | None = None,
+    ) -> Mapping[str, object]: ...
+
+
+class _ValidateHmacSignature(Protocol):
+    def __call__(
+        self,
+        payload: Mapping[str, object],
+        signature_doc: Mapping[str, object],
+        *,
+        key: bytes,
+    ) -> Sequence[str]: ...
+
+
+def _get_signing_helpers() -> tuple[_BuildHmacSignature, _ValidateHmacSignature]:
     """Load HMAC signing helpers only when a signing path is actually used."""
 
     try:
@@ -893,7 +911,7 @@ def load_model_artifact_bundle(
             errors = validate_hmac_signature(
                 artifact_payload,
                 signature_doc,
-                key_material,
+                key=key_material,
             )
             if errors:
                 logger.error(
@@ -1013,8 +1031,8 @@ def generate_model_artifact_bundle(
             "signed_at": datetime.now(timezone.utc).isoformat(),
             "signature": build_hmac_signature(
                 artifact_payload,
-                signing_key,
-                signing_key_id,
+                key=signing_key,
+                key_id=signing_key_id,
             ),
         }
         signature_path = signature_path or output_path / f"{base_name}.sig"

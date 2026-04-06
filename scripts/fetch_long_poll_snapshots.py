@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import json
 import time
@@ -268,6 +269,24 @@ def fetch_snapshots(
     return output_path
 
 
+def _cleanup_long_poll_runtime() -> None:
+    """Domyka współdzielone zasoby HTTP/AnyIO używane przez long-poll fetcher."""
+
+    with contextlib.suppress(Exception):
+        from bot_core.exchanges import http_client as exchange_http_client
+
+        shutdown_client_cache = getattr(exchange_http_client, "_shutdown_client_cache", None)
+        if callable(shutdown_client_cache):
+            shutdown_client_cache()
+
+    with contextlib.suppress(Exception):
+        from core.network import sync as network_sync
+
+        shutdown_portal = getattr(network_sync, "_shutdown_portal", None)
+        if callable(shutdown_portal):
+            shutdown_portal()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8765", help="Adres stream gateway")
@@ -308,6 +327,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     except SnapshotFetchError as exc:
         raise SystemExit(str(exc)) from exc
+    finally:
+        _cleanup_long_poll_runtime()
 
     print(f"Pobrano rzeczywiste snapshoty long-polla: {path}")
     return 0

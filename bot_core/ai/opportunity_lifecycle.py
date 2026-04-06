@@ -359,7 +359,11 @@ class OpportunityPerformanceSnapshotBuilder:
         return any(normalized.startswith(prefix) for prefix in prefixes)
 
     def _is_loss_return(self, value: float) -> bool:
-        return value <= 0.0 if self._config.treat_negative_return_bps_below_or_equal_zero_as_loss else value < 0.0
+        return (
+            value <= 0.0
+            if self._config.treat_negative_return_bps_below_or_equal_zero_as_loss
+            else value < 0.0
+        )
 
     def _compute_recent_loss_streak(self, final_returns: Sequence[float]) -> int:
         streak = 0

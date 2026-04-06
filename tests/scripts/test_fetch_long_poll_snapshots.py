@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -314,3 +316,115 @@ def test_resolve_public_stream_params_detects_tickers_plural(
         channels=("tickers",),
     )
     assert params == {"symbol": "XBTUSD"}
+
+
+def test_main_success_cleans_up_long_poll_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output_path = tmp_path / "long_poll_snapshots.json"
+    cleanup_calls: list[str] = []
+
+    monkeypatch.setattr(fetcher, "fetch_snapshots", lambda **_kwargs: output_path)
+    monkeypatch.setattr(fetcher, "_cleanup_long_poll_runtime", lambda: cleanup_calls.append("done"))
+
+    exit_code = fetcher.main(
+        [
+            "--base-url",
+            "http://127.0.0.1:8765",
+            "--config",
+            str(tmp_path / "core.yaml"),
+            "--output",
+            str(output_path),
+            "--channels",
+            "ticker",
+            "--timeout-seconds",
+            "1.0",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Pobrano rzeczywiste snapshoty long-polla" in captured.out
+    assert cleanup_calls == ["done"]
+
+
+def test_cleanup_long_poll_runtime_calls_both_shutdown_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    import bot_core.exchanges as exchanges_pkg
+
+    exchange_http_client = types.ModuleType("bot_core.exchanges.http_client")
+    setattr(
+        exchange_http_client, "_shutdown_client_cache", lambda: calls.append("http_client_cache")
+    )
+    network_sync = types.ModuleType("core.network.sync")
+    setattr(network_sync, "_shutdown_portal", lambda: calls.append("network_portal"))
+    network_pkg = types.ModuleType("core.network")
+    setattr(network_pkg, "sync", network_sync)
+
+    monkeypatch.setitem(sys.modules, "bot_core.exchanges.http_client", exchange_http_client)
+    monkeypatch.setattr(exchanges_pkg, "http_client", exchange_http_client, raising=False)
+    monkeypatch.setitem(sys.modules, "core.network", network_pkg)
+    monkeypatch.setitem(sys.modules, "core.network.sync", network_sync)
+
+    fetcher._cleanup_long_poll_runtime()
+
+    assert calls == ["http_client_cache", "network_portal"]
+
+
+def test_cleanup_long_poll_runtime_continues_when_first_hook_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    import bot_core.exchanges as exchanges_pkg
+
+    def _raise_http_cache_shutdown() -> None:
+        calls.append("http_client_cache")
+        raise RuntimeError("simulated cleanup failure")
+
+    exchange_http_client = types.ModuleType("bot_core.exchanges.http_client")
+    setattr(exchange_http_client, "_shutdown_client_cache", _raise_http_cache_shutdown)
+    network_sync = types.ModuleType("core.network.sync")
+    setattr(network_sync, "_shutdown_portal", lambda: calls.append("network_portal"))
+    network_pkg = types.ModuleType("core.network")
+    setattr(network_pkg, "sync", network_sync)
+
+    monkeypatch.setitem(sys.modules, "bot_core.exchanges.http_client", exchange_http_client)
+    monkeypatch.setattr(exchanges_pkg, "http_client", exchange_http_client, raising=False)
+    monkeypatch.setitem(sys.modules, "core.network", network_pkg)
+    monkeypatch.setitem(sys.modules, "core.network.sync", network_sync)
+
+    fetcher._cleanup_long_poll_runtime()
+
+    assert calls == ["http_client_cache", "network_portal"]
+
+
+def test_main_error_path_still_runs_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cleanup_calls: list[str] = []
+
+    def _raise_snapshot_error(**_kwargs):
+        raise fetcher.SnapshotFetchError("boom")
+
+    monkeypatch.setattr(fetcher, "fetch_snapshots", _raise_snapshot_error)
+    monkeypatch.setattr(fetcher, "_cleanup_long_poll_runtime", lambda: cleanup_calls.append("done"))
+
+    with pytest.raises(SystemExit, match="boom"):
+        fetcher.main(
+            [
+                "--base-url",
+                "http://127.0.0.1:8765",
+                "--config",
+                str(tmp_path / "core.yaml"),
+                "--output",
+                str(tmp_path / "long_poll_snapshots.json"),
+                "--channels",
+                "ticker",
+                "--timeout-seconds",
+                "1.0",
+            ]
+        )
+
+    assert cleanup_calls == ["done"]
