@@ -9,7 +9,10 @@ from bot_core.ai.opportunity_lifecycle import (
     OpportunityPerformanceSnapshotConfig,
     evaluate_autonomy_performance_guard,
 )
-from bot_core.ai.trading_opportunity_shadow import OpportunityOutcomeLabel, OpportunityShadowRepository
+from bot_core.ai.trading_opportunity_shadow import (
+    OpportunityOutcomeLabel,
+    OpportunityShadowRepository,
+)
 
 
 def test_snapshot_builder_empty_labels_returns_safe_zero_snapshot(tmp_path: Path) -> None:
@@ -28,7 +31,9 @@ def test_snapshot_builder_empty_labels_returns_safe_zero_snapshot(tmp_path: Path
 
 def test_snapshot_builder_final_positive_only_metrics(tmp_path: Path) -> None:
     repository = OpportunityShadowRepository(tmp_path)
-    labels = [_label(i, realized_return_bps=float(i + 1), label_quality="final_close") for i in range(3)]
+    labels = [
+        _label(i, realized_return_bps=float(i + 1), label_quality="final_close") for i in range(3)
+    ]
     repository.append_outcome_labels(labels)
 
     snapshot = OpportunityPerformanceSnapshotBuilder().load_recent_performance_snapshot(repository)
@@ -61,7 +66,9 @@ def test_snapshot_builder_final_mixed_win_loss_metrics(tmp_path: Path) -> None:
     assert snapshot.recent_negative_outcomes_count == 2
 
 
-def test_snapshot_builder_recent_loss_streak_is_counted_from_latest_backwards(tmp_path: Path) -> None:
+def test_snapshot_builder_recent_loss_streak_is_counted_from_latest_backwards(
+    tmp_path: Path,
+) -> None:
     repository = OpportunityShadowRepository(tmp_path)
     repository.append_outcome_labels(
         [
@@ -186,7 +193,9 @@ def test_snapshot_builder_window_consistency_counts_partial_only_from_same_recen
 
 def test_snapshot_payload_shape_is_stable_and_serializable(tmp_path: Path) -> None:
     repository = OpportunityShadowRepository(tmp_path)
-    repository.append_outcome_labels([_label(0, realized_return_bps=5.0, label_quality="final_close")])
+    repository.append_outcome_labels(
+        [_label(0, realized_return_bps=5.0, label_quality="final_close")]
+    )
     snapshot = OpportunityPerformanceSnapshotBuilder().load_recent_performance_snapshot(repository)
 
     payload = snapshot.to_dict()
@@ -227,7 +236,9 @@ def test_performance_guard_accepts_snapshot_from_builder_without_transform(tmp_p
     assert "insufficient_recent_final_outcomes_for_live" in decision.reasons
 
 
-def _label(index: int, *, realized_return_bps: float, label_quality: str) -> OpportunityOutcomeLabel:
+def _label(
+    index: int, *, realized_return_bps: float, label_quality: str
+) -> OpportunityOutcomeLabel:
     return OpportunityOutcomeLabel(
         symbol="BTCUSDT",
         decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index),
