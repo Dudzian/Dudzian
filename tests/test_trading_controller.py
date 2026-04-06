@@ -853,6 +853,89 @@ def test_opportunity_autonomy_runtime_missing_repository_fails_closed_with_audit
     assert event["status"] == "blocked"
     assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
     assert event["performance_guard_source"] == "missing_repository_fail_closed"
+    assert event["performance_guard_recent_final_window_size"] == "20"
+    assert event["performance_guard_max_scan_labels"] == "256"
+
+
+def test_opportunity_autonomy_runtime_missing_repository_fails_closed_emits_override_guard_limits() -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        performance_guard_recent_final_window_size=2,
+        performance_guard_max_scan_labels=6,
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_source"] == "missing_repository_fail_closed"
+    assert event["performance_guard_recent_final_window_size"] == "2"
+    assert event["performance_guard_max_scan_labels"] == "6"
+
+
+def test_opportunity_autonomy_runtime_snapshot_load_failure_still_emits_guard_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 7.0, 6.0], environment="live", portfolio_id="live-1"
+        ),
+    )
+
+    def _raise_snapshot_failure(*_args, **_kwargs):
+        raise RuntimeError("snapshot boom")
+
+    monkeypatch.setattr(
+        OpportunityLifecycleService,
+        "load_recent_performance_snapshot_with_scope_diagnostics",
+        _raise_snapshot_failure,
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth_failed"
+    assert event["blocking_reason"] == "performance_guard_snapshot_load_failed"
+    assert event["performance_guard_recent_final_window_size"] == "20"
+    assert event["performance_guard_max_scan_labels"] == "256"
+
+
+def test_opportunity_autonomy_runtime_snapshot_load_failure_emits_override_guard_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 7.0, 6.0], environment="live", portfolio_id="live-1"
+        ),
+        performance_guard_recent_final_window_size=2,
+        performance_guard_max_scan_labels=6,
+    )
+
+    def _raise_snapshot_failure(*_args, **_kwargs):
+        raise RuntimeError("snapshot boom")
+
+    monkeypatch.setattr(
+        OpportunityLifecycleService,
+        "load_recent_performance_snapshot_with_scope_diagnostics",
+        _raise_snapshot_failure,
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth_failed"
+    assert event["performance_guard_recent_final_window_size"] == "2"
+    assert event["performance_guard_max_scan_labels"] == "6"
 
 
 def test_opportunity_autonomy_runtime_no_final_outcomes_uses_conservative_behavior() -> None:
@@ -941,6 +1024,85 @@ def test_opportunity_autonomy_runtime_no_breach_ignores_payload_performance_guar
     assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
     assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
     assert event["performance_guard_effective_mode"] == "live_autonomous"
+
+
+def test_opportunity_autonomy_enforcement_contract_keys_present_for_conservative_local_snapshot_path() -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [1.0, -2.0], environment="live", portfolio_id="live-1"
+        ),
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    required_keys = {
+        "performance_guard_source",
+        "performance_guard_recent_final_window_size",
+        "performance_guard_max_scan_labels",
+        "performance_guard_snapshot_window",
+        "performance_guard_scoped_label_count",
+        "performance_guard_excluded_label_count",
+        "execution_permission",
+        "autonomy_mode",
+        "autonomy_primary_reason",
+    }
+    assert required_keys <= set(event.keys())
+    assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+
+
+def test_opportunity_autonomy_enforcement_contract_keys_present_for_fail_closed_guard_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    required_keys = {
+        "performance_guard_source",
+        "performance_guard_recent_final_window_size",
+        "performance_guard_max_scan_labels",
+        "execution_permission",
+        "autonomy_mode",
+        "autonomy_primary_reason",
+    }
+
+    controller_missing, execution_missing, journal_missing = _build_autonomy_controller(
+        environment="live",
+        performance_guard_recent_final_window_size=2,
+        performance_guard_max_scan_labels=6,
+    )
+    result_missing = controller_missing.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    assert result_missing == []
+    assert execution_missing.requests == []
+    event_missing = _last_event(journal_missing, "opportunity_autonomy_enforcement")
+    assert required_keys <= set(event_missing.keys())
+    assert event_missing["performance_guard_source"] == "missing_repository_fail_closed"
+
+    controller_failure, execution_failure, journal_failure = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 7.0, 6.0], environment="live", portfolio_id="live-1"
+        ),
+        performance_guard_recent_final_window_size=2,
+        performance_guard_max_scan_labels=6,
+    )
+
+    def _raise_snapshot_failure(*_args, **_kwargs):
+        raise RuntimeError("snapshot boom")
+
+    monkeypatch.setattr(
+        OpportunityLifecycleService,
+        "load_recent_performance_snapshot_with_scope_diagnostics",
+        _raise_snapshot_failure,
+    )
+    result_failure = controller_failure.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    assert result_failure == []
+    assert execution_failure.requests == []
+    event_failure = _last_event(journal_failure, "opportunity_autonomy_enforcement")
+    assert required_keys <= set(event_failure.keys())
+    assert event_failure["performance_guard_source"] == "local_snapshot_source_of_truth_failed"
 
 
 def test_opportunity_autonomy_runtime_missing_repository_allows_payload_guard_only_as_fallback_metadata() -> (
@@ -2404,6 +2566,8 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_parity_with_scan_and_windo
     assert event["performance_guard_missing_lineage_provenance_count"] == str(
         expected_diagnostics.missing_lineage_provenance_count
     )
+    assert event["performance_guard_recent_final_window_size"] == "2"
+    assert event["performance_guard_max_scan_labels"] == "6"
     assert event["performance_guard_effective_mode"] == "live_assisted"
 
 
@@ -2461,6 +2625,16 @@ def test_opportunity_autonomy_runtime_performance_guard_defaults_remain_unchange
     assert (
         event_default["performance_guard_missing_lineage_provenance_count"]
         == event_explicit["performance_guard_missing_lineage_provenance_count"]
+    )
+    assert event_default["performance_guard_recent_final_window_size"] == "20"
+    assert event_default["performance_guard_max_scan_labels"] == "256"
+    assert (
+        event_default["performance_guard_recent_final_window_size"]
+        == event_explicit["performance_guard_recent_final_window_size"]
+    )
+    assert (
+        event_default["performance_guard_max_scan_labels"]
+        == event_explicit["performance_guard_max_scan_labels"]
     )
 
 
