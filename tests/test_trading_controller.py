@@ -352,6 +352,8 @@ def _build_autonomy_controller(
     environment: str,
     opportunity_shadow_repository: OpportunityShadowRepository | None = None,
     order_metadata_defaults: Mapping[str, object] | None = None,
+    performance_guard_recent_final_window_size: int | None = None,
+    performance_guard_max_scan_labels: int | None = None,
 ) -> tuple[TradingController, DummyExecutionService, CollectingDecisionJournal]:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -368,6 +370,8 @@ def _build_autonomy_controller(
         order_metadata_defaults=order_metadata_defaults,
         decision_journal=journal,
         opportunity_shadow_repository=opportunity_shadow_repository,
+        performance_guard_recent_final_window_size=performance_guard_recent_final_window_size,
+        performance_guard_max_scan_labels=performance_guard_max_scan_labels,
     )
     return controller, execution, journal
 
@@ -2219,9 +2223,7 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_mixed_dataset_keeps_builde
     assert event["performance_guard_effective_mode"] == "live_assisted"
 
 
-def test_opportunity_autonomy_runtime_scoped_snapshot_parity_with_scan_and_window_limits_via_lifecycle_hook(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_opportunity_autonomy_runtime_scoped_snapshot_parity_with_scan_and_window_limits() -> None:
     repo_dir = Path(tempfile.mkdtemp(prefix="autonomy-shadow-mixed-scan-window-"))
     repository = OpportunityShadowRepository(repo_dir)
     repository.append_outcome_labels(
@@ -2350,38 +2352,25 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_parity_with_scan_and_windo
         ]
     )
 
-    original = OpportunityLifecycleService.load_recent_performance_snapshot_with_scope_diagnostics
-
-    def _limited_snapshot_loader(
-        self: OpportunityLifecycleService,
-        *,
-        shadow_repository: OpportunityShadowRepository,
-        snapshot_config: OpportunityPerformanceSnapshotConfig,
-    ):
-        limited_config = OpportunityPerformanceSnapshotConfig(
+    lifecycle = OpportunityLifecycleService()
+    _snapshot, expected_diagnostics = lifecycle.load_recent_performance_snapshot_with_scope_diagnostics(
+        shadow_repository=repository,
+        snapshot_config=OpportunityPerformanceSnapshotConfig(
             recent_final_window_size=2,
             max_scan_labels=6,
-            scope_environment=snapshot_config.scope_environment,
-            scope_portfolio=snapshot_config.scope_portfolio,
-            scope_model_version=snapshot_config.scope_model_version,
-            scope_decision_source=snapshot_config.scope_decision_source,
-            require_scope_provenance=snapshot_config.require_scope_provenance,
-            require_lineage_provenance=snapshot_config.require_lineage_provenance,
-        )
-        return original(
-            self,
-            shadow_repository=shadow_repository,
-            snapshot_config=limited_config,
-        )
-
-    monkeypatch.setattr(
-        OpportunityLifecycleService,
-        "load_recent_performance_snapshot_with_scope_diagnostics",
-        _limited_snapshot_loader,
+            scope_environment="live",
+            scope_portfolio="live-1",
+            scope_model_version="A",
+            scope_decision_source="opportunity_ai_shadow",
+            require_scope_provenance=True,
+            require_lineage_provenance=True,
+        ),
     )
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
         opportunity_shadow_repository=repository,
+        performance_guard_recent_final_window_size=2,
+        performance_guard_max_scan_labels=6,
     )
 
     result = controller.process_signals(
@@ -2399,11 +2388,128 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_parity_with_scan_and_windo
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_mode"] == "live_assisted"
     assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
-    assert event["performance_guard_scoped_label_count"] == "2"
-    assert event["performance_guard_excluded_label_count"] == "4"
-    assert event["performance_guard_missing_scope_provenance_count"] == "2"
-    assert event["performance_guard_missing_lineage_provenance_count"] == "2"
+    assert event["performance_guard_scoped_label_count"] == str(expected_diagnostics.scoped_label_count)
+    assert event["performance_guard_excluded_label_count"] == str(
+        expected_diagnostics.excluded_label_count
+    )
+    assert event["performance_guard_missing_scope_provenance_count"] == str(
+        expected_diagnostics.missing_scope_provenance_count
+    )
+    assert event["performance_guard_missing_lineage_provenance_count"] == str(
+        expected_diagnostics.missing_lineage_provenance_count
+    )
     assert event["performance_guard_effective_mode"] == "live_assisted"
+
+
+def test_opportunity_autonomy_runtime_performance_guard_defaults_remain_unchanged() -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    controller_default, execution_default, journal_default = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    controller_explicit, execution_explicit, journal_explicit = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+        performance_guard_recent_final_window_size=20,
+        performance_guard_max_scan_labels=256,
+    )
+
+    result_default = controller_default.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    result_explicit = controller_explicit.process_signals(
+        [_opportunity_autonomy_signal("live_autonomous")]
+    )
+
+    assert result_default == result_explicit
+    assert len(execution_default.requests) == len(execution_explicit.requests)
+    event_default = _last_event(journal_default, "opportunity_autonomy_enforcement")
+    event_explicit = _last_event(journal_explicit, "opportunity_autonomy_enforcement")
+    assert event_default["autonomy_mode"] == event_explicit["autonomy_mode"]
+    assert (
+        event_default["performance_guard_effective_mode"]
+        == event_explicit["performance_guard_effective_mode"]
+    )
+    assert (
+        event_default["performance_guard_primary_reason"]
+        == event_explicit["performance_guard_primary_reason"]
+    )
+    assert (
+        event_default["performance_guard_snapshot_window"]
+        == event_explicit["performance_guard_snapshot_window"]
+    )
+    assert (
+        event_default["performance_guard_scoped_label_count"]
+        == event_explicit["performance_guard_scoped_label_count"]
+    )
+    assert (
+        event_default["performance_guard_excluded_label_count"]
+        == event_explicit["performance_guard_excluded_label_count"]
+    )
+    assert (
+        event_default["performance_guard_missing_scope_provenance_count"]
+        == event_explicit["performance_guard_missing_scope_provenance_count"]
+    )
+    assert (
+        event_default["performance_guard_missing_lineage_provenance_count"]
+        == event_explicit["performance_guard_missing_lineage_provenance_count"]
+    )
+
+
+@pytest.mark.parametrize("invalid_value", [0, -1])
+def test_trading_controller_rejects_non_positive_recent_final_window_size(
+    invalid_value: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="performance_guard_recent_final_window_size musi być dodatnią liczbą całkowitą \\(> 0\\)",
+    ):
+        _build_autonomy_controller(
+            environment="live",
+            performance_guard_recent_final_window_size=invalid_value,
+        )
+
+
+@pytest.mark.parametrize("invalid_value", [0, -1])
+def test_trading_controller_rejects_non_positive_max_scan_labels(
+    invalid_value: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="performance_guard_max_scan_labels musi być dodatnią liczbą całkowitą \\(> 0\\)",
+    ):
+        _build_autonomy_controller(
+            environment="live",
+            performance_guard_max_scan_labels=invalid_value,
+        )
+
+
+@pytest.mark.parametrize("invalid_value", [True, 1.5, "2"])
+def test_trading_controller_rejects_non_int_recent_final_window_size(
+    invalid_value: object,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="performance_guard_recent_final_window_size musi być dodatnią liczbą całkowitą \\(> 0\\)",
+    ):
+        _build_autonomy_controller(
+            environment="live",
+            performance_guard_recent_final_window_size=invalid_value,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("invalid_value", [True, 1.5, "2"])
+def test_trading_controller_rejects_non_int_max_scan_labels(
+    invalid_value: object,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="performance_guard_max_scan_labels musi być dodatnią liczbą całkowitą \\(> 0\\)",
+    ):
+        _build_autonomy_controller(
+            environment="live",
+            performance_guard_max_scan_labels=invalid_value,  # type: ignore[arg-type]
+        )
 
 
 def _shadow_record_for_key(
