@@ -23,8 +23,6 @@ from typing import (
 
 import numpy as np
 import pandas as pd
-
-from bot_core.security.signing import build_hmac_signature, validate_hmac_signature
 from .feature_engineering import FeatureDataset, FeatureVector
 
 if TYPE_CHECKING:
@@ -32,6 +30,24 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _get_signing_helpers() -> tuple[
+    Callable[[Mapping[str, object], bytes, str | None], Mapping[str, object]],
+    Callable[[Mapping[str, object], Mapping[str, object], bytes], Sequence[str]],
+]:
+    """Load HMAC signing helpers only when a signing path is actually used."""
+
+    try:
+        from bot_core.security.signing import build_hmac_signature, validate_hmac_signature
+    except ModuleNotFoundError as exc:
+        if exc.name in {"bot_core.security", "bot_core.security.signing"}:
+            raise RuntimeError(
+                "HMAC signing path requires module 'bot_core.security.signing'"
+            ) from exc
+        raise
+
+    return build_hmac_signature, validate_hmac_signature
 
 
 def _parse_trained_at(value: object) -> datetime:
@@ -873,6 +889,7 @@ def load_model_artifact_bundle(
             )
 
         if key_material is not None:
+            _, validate_hmac_signature = _get_signing_helpers()
             errors = validate_hmac_signature(
                 artifact_payload,
                 signature_doc,
@@ -990,6 +1007,7 @@ def generate_model_artifact_bundle(
 
     written_signature_path: Path | None = None
     if signing_key is not None:
+        build_hmac_signature, _ = _get_signing_helpers()
         signature_payload = {
             "target": artifact_path.name,
             "signed_at": datetime.now(timezone.utc).isoformat(),
