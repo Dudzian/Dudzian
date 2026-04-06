@@ -9,7 +9,10 @@ from bot_core.ai.opportunity_lifecycle import (
     OpportunityAutonomyDowngradeConfig,
     OpportunityAutonomyGateConfig,
     OpportunityAutonomyMode,
+    OpportunityAutonomyPerformanceGuardConfig,
+    OpportunityAutonomyPerformanceSnapshot,
     evaluate_autonomy_downgrade,
+    evaluate_autonomy_performance_guard,
     evaluate_opportunity_execution_permission,
     OpportunityLifecycleService,
     OpportunityPersistedPromotionReadinessReport,
@@ -808,6 +811,99 @@ def test_autonomy_downgrade_decision_shape_is_serializable() -> None:
     assert payload["downgrade_source"] == "opportunity_autonomy_downgrade_policy_v1"
 
 
+def test_performance_guard_live_autonomous_clean_keeps_mode() -> None:
+    decision = evaluate_autonomy_performance_guard(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        input_effective_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        snapshot=_performance_snapshot(),
+    )
+    assert decision.blocked is False
+    assert decision.downgraded is False
+    assert decision.effective_mode is OpportunityAutonomyMode.LIVE_AUTONOMOUS
+
+
+def test_performance_guard_live_autonomous_soft_breach_downgrades_to_live_assisted() -> None:
+    decision = evaluate_autonomy_performance_guard(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        input_effective_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        snapshot=_performance_snapshot(loss_streak=3),
+    )
+    assert decision.blocked is False
+    assert decision.downgraded is True
+    assert decision.effective_mode is OpportunityAutonomyMode.LIVE_ASSISTED
+
+
+def test_performance_guard_live_assisted_soft_breach_downgrades_to_paper() -> None:
+    decision = evaluate_autonomy_performance_guard(
+        requested_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+        input_effective_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+        snapshot=_performance_snapshot(loss_streak=3),
+    )
+    assert decision.blocked is False
+    assert decision.downgraded is True
+    assert decision.effective_mode is OpportunityAutonomyMode.PAPER_AUTONOMOUS
+
+
+def test_performance_guard_paper_with_further_degradation_downgrades_to_shadow() -> None:
+    decision = evaluate_autonomy_performance_guard(
+        requested_mode=OpportunityAutonomyMode.PAPER_AUTONOMOUS,
+        input_effective_mode=OpportunityAutonomyMode.PAPER_AUTONOMOUS,
+        snapshot=_performance_snapshot(worst_return_bps=-60.0, negative_outcomes=5),
+    )
+    assert decision.downgraded is True
+    assert decision.effective_mode is OpportunityAutonomyMode.SHADOW_ONLY
+
+
+def test_performance_guard_hard_breach_blocks_live_and_marks_hard_breach() -> None:
+    decision = evaluate_autonomy_performance_guard(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        input_effective_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        snapshot=_performance_snapshot(worst_return_bps=-75.0, negative_outcomes=5),
+    )
+    assert decision.blocked is True
+    assert decision.hard_breach is True
+    assert decision.primary_reason == "hard_performance_breach_detected"
+
+
+def test_performance_guard_insufficient_recent_final_outcomes_prevents_live() -> None:
+    decision = evaluate_autonomy_performance_guard(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        input_effective_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        snapshot=_performance_snapshot(final_outcomes=2),
+    )
+    assert decision.effective_mode is OpportunityAutonomyMode.LIVE_ASSISTED
+    assert decision.downgraded is True
+    assert "insufficient_recent_final_outcomes_for_live" in decision.reasons
+
+
+def test_performance_guard_fail_closed_on_invalid_snapshot() -> None:
+    decision = evaluate_autonomy_performance_guard(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        input_effective_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+        snapshot=_performance_snapshot(loss_streak=-1),
+        config=OpportunityAutonomyPerformanceGuardConfig(
+            fail_closed_mode=OpportunityAutonomyMode.SHADOW_ONLY
+        ),
+    )
+    assert decision.downgraded is True
+    assert decision.effective_mode is OpportunityAutonomyMode.SHADOW_ONLY
+    assert decision.primary_reason == "performance_guard_evaluation_failed_fail_closed"
+
+
+def test_performance_guard_decision_shape_is_serializable() -> None:
+    decision = evaluate_autonomy_performance_guard(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        input_effective_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        snapshot=_performance_snapshot(),
+    )
+    payload = decision.to_dict()
+    assert payload["requested_mode"] == "live_autonomous"
+    assert payload["effective_mode"] == "live_autonomous"
+    assert payload["hard_breach"] is False
+    assert payload["guardrail_source"] == "opportunity_autonomy_performance_guard_v1"
+    assert isinstance(payload["evidence_summary"], dict)
+
+
 def _autonomy_decision(mode: OpportunityAutonomyMode) -> OpportunityAutonomyDecision:
     return OpportunityAutonomyDecision(
         mode=mode,
@@ -816,6 +912,28 @@ def _autonomy_decision(mode: OpportunityAutonomyMode) -> OpportunityAutonomyDeci
         blocking_reasons=(),
         warnings=(),
         evidence_summary={},
+    )
+
+
+def _performance_snapshot(
+    *,
+    final_outcomes: int = 8,
+    loss_streak: int = 0,
+    return_sum_bps: float = 18.0,
+    avg_return_bps: float = 2.5,
+    worst_return_bps: float = -6.0,
+    negative_outcomes: int = 2,
+    partial_only_count: int = 0,
+) -> OpportunityAutonomyPerformanceSnapshot:
+    return OpportunityAutonomyPerformanceSnapshot(
+        recent_final_outcomes_count=final_outcomes,
+        recent_loss_streak=loss_streak,
+        recent_realized_return_bps_sum=return_sum_bps,
+        recent_avg_realized_return_bps=avg_return_bps,
+        recent_worst_realized_return_bps=worst_return_bps,
+        recent_negative_outcomes_count=negative_outcomes,
+        recent_partial_only_count=partial_only_count,
+        recent_window_label="last_8_final",
     )
 
 

@@ -1459,23 +1459,60 @@ class TradingController:
         decision_payload = (
             decision_payload_raw if isinstance(decision_payload_raw, Mapping) else None
         )
+        performance_guard_payload = None
+        if decision_payload is not None:
+            performance_guard_raw = decision_payload.get("performance_guard")
+            if isinstance(performance_guard_raw, Mapping):
+                performance_guard_payload = performance_guard_raw
         mode_raw = request_metadata.get("opportunity_autonomy_mode")
         if mode_raw is None:
             mode_raw = signal_metadata.get("opportunity_autonomy_mode")
+        mode_candidates: list[OpportunityAutonomyMode] = []
+        if mode_raw is not None:
+            mode_candidates.append(OpportunityAutonomyMode(str(mode_raw).strip().lower()))
         if decision_payload is not None:
             effective_mode_raw = decision_payload.get("effective_mode")
             if effective_mode_raw is not None:
-                mode_raw = effective_mode_raw
+                mode_candidates.append(
+                    OpportunityAutonomyMode(str(effective_mode_raw).strip().lower())
+                )
+        if performance_guard_payload is not None:
+            performance_effective_mode_raw = performance_guard_payload.get("effective_mode")
+            if performance_effective_mode_raw is not None:
+                mode_candidates.append(
+                    OpportunityAutonomyMode(str(performance_effective_mode_raw).strip().lower())
+                )
         if mode_raw is None and decision_payload is not None:
             mode_raw = decision_payload.get("mode")
-        if mode_raw is None:
+        if mode_raw is not None and not mode_candidates:
+            mode_candidates.append(OpportunityAutonomyMode(str(mode_raw).strip().lower()))
+        if mode_raw is None and decision_payload is not None and not mode_candidates:
+            payload_mode_raw = decision_payload.get("mode")
+            if payload_mode_raw is not None:
+                mode_candidates.append(
+                    OpportunityAutonomyMode(str(payload_mode_raw).strip().lower())
+                )
+        if not mode_candidates:
             raise ValueError("missing_autonomy_mode")
-        mode = OpportunityAutonomyMode(str(mode_raw).strip().lower())
+        mode = min(
+            mode_candidates,
+            key=lambda item: {
+                OpportunityAutonomyMode.DENIED: 0,
+                OpportunityAutonomyMode.SHADOW_ONLY: 1,
+                OpportunityAutonomyMode.PAPER_AUTONOMOUS: 2,
+                OpportunityAutonomyMode.LIVE_ASSISTED: 3,
+                OpportunityAutonomyMode.LIVE_AUTONOMOUS: 4,
+            }[item],
+        )
         primary_reason_raw = None
         if decision_payload is not None:
             payload_primary_reason = decision_payload.get("primary_reason")
             if payload_primary_reason is not None:
                 primary_reason_raw = payload_primary_reason
+        if performance_guard_payload is not None:
+            guard_reason = performance_guard_payload.get("primary_reason")
+            if guard_reason is not None:
+                primary_reason_raw = guard_reason
         if primary_reason_raw is None:
             primary_reason_raw = request_metadata.get("opportunity_autonomy_primary_reason")
         if primary_reason_raw is None:
@@ -1502,6 +1539,31 @@ class TradingController:
         if assisted_flag_raw is None:
             assisted_flag_raw = signal_metadata.get("autonomy_assisted_approval")
         assisted_approval = _as_bool(assisted_flag_raw)
+        diagnostics: dict[str, object] = {"autonomy_assisted_approval_supplied": assisted_approval}
+        decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
+        if decision_payload_raw is None:
+            decision_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
+        decision_payload = (
+            decision_payload_raw if isinstance(decision_payload_raw, Mapping) else None
+        )
+        if decision_payload is not None:
+            performance_guard_payload = decision_payload.get("performance_guard")
+            if isinstance(performance_guard_payload, Mapping):
+                diagnostics["performance_guard_applied"] = _as_bool(
+                    performance_guard_payload.get("performance_guard_applied")
+                )
+                diagnostics["performance_guard_hard_breach"] = _as_bool(
+                    performance_guard_payload.get("hard_breach")
+                )
+                diagnostics["performance_guard_blocked"] = _as_bool(
+                    performance_guard_payload.get("blocked")
+                )
+                guard_primary_reason = performance_guard_payload.get("primary_reason")
+                if guard_primary_reason is not None:
+                    diagnostics["performance_guard_primary_reason"] = str(guard_primary_reason)
+                guard_effective_mode = performance_guard_payload.get("effective_mode")
+                if guard_effective_mode is not None:
+                    diagnostics["performance_guard_effective_mode"] = str(guard_effective_mode)
         try:
             decision = self._extract_opportunity_autonomy_decision(signal, request)
             permission = evaluate_opportunity_execution_permission(
@@ -1509,8 +1571,35 @@ class TradingController:
                 environment=self.environment,
                 assisted_approval=assisted_approval,
             )
-            return permission, {"autonomy_assisted_approval_supplied": assisted_approval}
+            if _as_bool(diagnostics.get("performance_guard_blocked")):
+                guard_primary_reason = diagnostics.get("performance_guard_primary_reason")
+                permission = replace(
+                    permission,
+                    autonomous_execution_allowed=False,
+                    primary_reason=(
+                        str(guard_primary_reason).strip()
+                        if guard_primary_reason is not None
+                        else "performance_guard_local_kill_switch"
+                    ),
+                    denial_reason="performance_guard_local_kill_switch",
+                )
+                diagnostics["performance_guard_block_enforced"] = True
+            return permission, diagnostics
         except Exception as exc:  # noqa: BLE001
+            if _as_bool(diagnostics.get("performance_guard_blocked")):
+                return None, {
+                    "execution_permission": "blocked",
+                    "autonomy_mode": "unavailable",
+                    "autonomous_execution_allowed": False,
+                    "autonomy_primary_reason": str(
+                        diagnostics.get("performance_guard_primary_reason")
+                        or "performance_guard_local_kill_switch"
+                    ),
+                    "blocking_reason": "performance_guard_local_kill_switch",
+                    "autonomy_permission_error": str(exc),
+                    "performance_guard_block_enforced": True,
+                    **diagnostics,
+                }
             return None, {
                 "execution_permission": "blocked",
                 "autonomy_mode": "unavailable",
@@ -1518,7 +1607,7 @@ class TradingController:
                 "autonomy_primary_reason": "autonomy_permission_evaluation_failed",
                 "blocking_reason": "autonomy_permission_evaluation_failed",
                 "autonomy_permission_error": str(exc),
-                "autonomy_assisted_approval_supplied": assisted_approval,
+                **diagnostics,
             }
 
     def _try_attach_opportunity_outcome_label(

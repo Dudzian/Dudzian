@@ -221,6 +221,10 @@ def _opportunity_autonomy_signal(
     include_decision_payload: bool = False,
     decision_effective_mode: str | None = None,
     decision_primary_reason: str | None = None,
+    performance_guard_effective_mode: str | None = None,
+    performance_guard_primary_reason: str | None = None,
+    performance_guard_hard_breach: bool | None = None,
+    performance_guard_blocked: bool | None = None,
 ) -> StrategySignal:
     signal = _signal(side=side)
     metadata: dict[str, object] = dict(signal.metadata)
@@ -240,6 +244,30 @@ def _opportunity_autonomy_signal(
         if not isinstance(decision_payload, dict):
             decision_payload = {}
         decision_payload["primary_reason"] = decision_primary_reason
+        metadata["opportunity_autonomy_decision"] = decision_payload
+    if (
+        performance_guard_effective_mode is not None
+        or performance_guard_primary_reason is not None
+        or performance_guard_hard_breach is not None
+        or performance_guard_blocked is not None
+    ):
+        decision_payload = metadata.get("opportunity_autonomy_decision")
+        if not isinstance(decision_payload, dict):
+            decision_payload = {}
+        performance_guard_payload = decision_payload.get("performance_guard")
+        if not isinstance(performance_guard_payload, dict):
+            performance_guard_payload = {}
+        if performance_guard_effective_mode is not None:
+            performance_guard_payload["effective_mode"] = performance_guard_effective_mode
+        if performance_guard_primary_reason is not None:
+            performance_guard_payload["primary_reason"] = performance_guard_primary_reason
+        if performance_guard_hard_breach is not None:
+            performance_guard_payload["hard_breach"] = performance_guard_hard_breach
+            performance_guard_payload["performance_guard_applied"] = True
+        if performance_guard_blocked is not None:
+            performance_guard_payload["blocked"] = performance_guard_blocked
+            performance_guard_payload["performance_guard_applied"] = True
+        decision_payload["performance_guard"] = performance_guard_payload
         metadata["opportunity_autonomy_decision"] = decision_payload
     metadata["opportunity_autonomy_primary_reason"] = f"reason:{mode}"
     if assisted_approval is not None:
@@ -430,6 +458,59 @@ def test_opportunity_autonomy_enforcement_prefers_payload_primary_reason_for_eff
     assert event["autonomy_mode"] == "paper_autonomous"
     assert event["autonomy_primary_reason"] == "downgraded_to_paper_due_to_quality"
     assert event["autonomy_primary_reason"] != "reason:live_autonomous"
+
+
+def test_opportunity_autonomy_enforcement_prefers_more_conservative_performance_guard_mode() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="live_assisted",
+                decision_primary_reason="downgrade_governance",
+                performance_guard_effective_mode="paper_autonomous",
+                performance_guard_primary_reason="performance_soft_breach",
+                performance_guard_hard_breach=False,
+            )
+        ]
+    )
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "paper_autonomous"
+    assert event["autonomy_primary_reason"] == "performance_soft_breach"
+    assert event["performance_guard_applied"] == "true"
+    assert event["performance_guard_effective_mode"] == "paper_autonomous"
+
+
+def test_opportunity_autonomy_enforcement_blocks_when_performance_guard_sets_blocked_true() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="paper")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="live_assisted",
+                performance_guard_effective_mode="live_assisted",
+                performance_guard_primary_reason="runtime_performance_kill_switch",
+                performance_guard_hard_breach=True,
+                performance_guard_blocked=True,
+                assisted_approval=True,
+            )
+        ]
+    )
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "performance_guard_local_kill_switch"
+    assert event["performance_guard_applied"] == "true"
+    assert event["performance_guard_blocked"] == "true"
+    assert event["performance_guard_block_enforced"] == "true"
+    assert event["performance_guard_hard_breach"] == "true"
+    assert event["performance_guard_primary_reason"] == "runtime_performance_kill_switch"
+    assert event["execution_permission"] == "blocked"
 
 
 def test_opportunity_shadow_key_without_autonomy_contract_does_not_trigger_enforcement() -> None:

@@ -161,6 +161,77 @@ class OpportunityAutonomyDowngradeDecision:
         }
 
 
+@dataclass(slots=True, frozen=True)
+class OpportunityAutonomyPerformanceGuardConfig:
+    min_recent_final_outcomes_for_live: int = 6
+    max_recent_loss_streak_for_live: int = 2
+    min_recent_realized_return_bps_sum_for_live: float = -15.0
+    min_recent_avg_realized_return_bps_for_live: float = -2.0
+    downgrade_live_autonomous_to_live_assisted_on_soft_breach: bool = True
+    downgrade_live_assisted_to_paper_on_soft_breach: bool = True
+    block_live_on_hard_breach: bool = True
+    hard_breach_worst_loss_bps: float = -45.0
+    hard_breach_negative_outcome_count: int = 4
+    hard_breach_target_mode: OpportunityAutonomyMode = OpportunityAutonomyMode.SHADOW_ONLY
+    fail_closed_mode: OpportunityAutonomyMode = OpportunityAutonomyMode.SHADOW_ONLY
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityAutonomyPerformanceSnapshot:
+    recent_final_outcomes_count: int
+    recent_loss_streak: int
+    recent_realized_return_bps_sum: float
+    recent_avg_realized_return_bps: float
+    recent_worst_realized_return_bps: float
+    recent_negative_outcomes_count: int
+    recent_partial_only_count: int = 0
+    recent_window_label: str = "recent"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "recent_final_outcomes_count": self.recent_final_outcomes_count,
+            "recent_loss_streak": self.recent_loss_streak,
+            "recent_realized_return_bps_sum": self.recent_realized_return_bps_sum,
+            "recent_avg_realized_return_bps": self.recent_avg_realized_return_bps,
+            "recent_worst_realized_return_bps": self.recent_worst_realized_return_bps,
+            "recent_negative_outcomes_count": self.recent_negative_outcomes_count,
+            "recent_partial_only_count": self.recent_partial_only_count,
+            "recent_window_label": self.recent_window_label,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityAutonomyPerformanceGuardDecision:
+    requested_mode: OpportunityAutonomyMode
+    input_effective_mode: OpportunityAutonomyMode
+    effective_mode: OpportunityAutonomyMode
+    blocked: bool
+    downgraded: bool
+    hard_breach: bool
+    performance_guard_applied: bool
+    primary_reason: str
+    reasons: tuple[str, ...]
+    warnings: tuple[str, ...]
+    guardrail_source: str
+    evidence_summary: Mapping[str, int | float | bool | str]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "requested_mode": self.requested_mode.value,
+            "input_effective_mode": self.input_effective_mode.value,
+            "effective_mode": self.effective_mode.value,
+            "blocked": self.blocked,
+            "downgraded": self.downgraded,
+            "hard_breach": self.hard_breach,
+            "performance_guard_applied": self.performance_guard_applied,
+            "primary_reason": self.primary_reason,
+            "reasons": list(self.reasons),
+            "warnings": list(self.warnings),
+            "guardrail_source": self.guardrail_source,
+            "evidence_summary": dict(self.evidence_summary),
+        }
+
+
 _AUTONOMY_MODE_ORDER: dict[OpportunityAutonomyMode, int] = {
     OpportunityAutonomyMode.DENIED: 0,
     OpportunityAutonomyMode.SHADOW_ONLY: 1,
@@ -168,6 +239,150 @@ _AUTONOMY_MODE_ORDER: dict[OpportunityAutonomyMode, int] = {
     OpportunityAutonomyMode.LIVE_ASSISTED: 3,
     OpportunityAutonomyMode.LIVE_AUTONOMOUS: 4,
 }
+
+
+def evaluate_autonomy_performance_guard(
+    *,
+    requested_mode: OpportunityAutonomyMode,
+    input_effective_mode: OpportunityAutonomyMode,
+    snapshot: OpportunityAutonomyPerformanceSnapshot,
+    config: OpportunityAutonomyPerformanceGuardConfig | None = None,
+) -> OpportunityAutonomyPerformanceGuardDecision:
+    policy = config or OpportunityAutonomyPerformanceGuardConfig()
+    evidence_summary: dict[str, int | float | bool | str] = snapshot.to_dict()
+    reasons: list[str] = []
+    warnings: list[str] = []
+    guardrail_source = "opportunity_autonomy_performance_guard_v1"
+    constrained_input = _downgrade_clamp_mode(
+        requested_mode=requested_mode,
+        current_mode=input_effective_mode,
+        candidate_mode=input_effective_mode,
+    )
+    try:
+        if snapshot.recent_final_outcomes_count < 0:
+            raise ValueError("invalid_recent_final_outcomes_count")
+        if snapshot.recent_loss_streak < 0:
+            raise ValueError("invalid_recent_loss_streak")
+        if snapshot.recent_negative_outcomes_count < 0:
+            raise ValueError("invalid_recent_negative_outcomes_count")
+        if snapshot.recent_partial_only_count < 0:
+            raise ValueError("invalid_recent_partial_only_count")
+
+        target_mode = constrained_input
+        hard_breach = (
+            snapshot.recent_worst_realized_return_bps <= policy.hard_breach_worst_loss_bps
+            or snapshot.recent_negative_outcomes_count >= policy.hard_breach_negative_outcome_count
+        )
+        soft_breach = False
+        live_mode_in_scope = target_mode in {
+            OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+            OpportunityAutonomyMode.LIVE_ASSISTED,
+        }
+        if live_mode_in_scope and (
+            snapshot.recent_final_outcomes_count < policy.min_recent_final_outcomes_for_live
+        ):
+            soft_breach = True
+            reasons.append("insufficient_recent_final_outcomes_for_live")
+        if live_mode_in_scope and (
+            snapshot.recent_loss_streak > policy.max_recent_loss_streak_for_live
+        ):
+            soft_breach = True
+            reasons.append("recent_loss_streak_exceeded_for_live")
+        if live_mode_in_scope and (
+            snapshot.recent_realized_return_bps_sum
+            < policy.min_recent_realized_return_bps_sum_for_live
+        ):
+            soft_breach = True
+            reasons.append("recent_realized_return_sum_breach_for_live")
+        if live_mode_in_scope and (
+            snapshot.recent_avg_realized_return_bps < policy.min_recent_avg_realized_return_bps_for_live
+        ):
+            soft_breach = True
+            reasons.append("recent_avg_realized_return_breach_for_live")
+        if snapshot.recent_partial_only_count > 0:
+            warnings.append("recent_partial_only_outcomes_present")
+
+        if hard_breach:
+            reasons.insert(0, "hard_performance_breach_detected")
+            target_mode = _downgrade_clamp_mode(
+                requested_mode=requested_mode,
+                current_mode=target_mode,
+                candidate_mode=policy.hard_breach_target_mode,
+            )
+        elif soft_breach:
+            soft_breach_mode = target_mode
+            if soft_breach_mode is OpportunityAutonomyMode.LIVE_AUTONOMOUS:
+                candidate_mode = (
+                    OpportunityAutonomyMode.LIVE_ASSISTED
+                    if policy.downgrade_live_autonomous_to_live_assisted_on_soft_breach
+                    else OpportunityAutonomyMode.PAPER_AUTONOMOUS
+                )
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=candidate_mode,
+                )
+            elif soft_breach_mode is OpportunityAutonomyMode.LIVE_ASSISTED:
+                candidate_mode = (
+                    OpportunityAutonomyMode.PAPER_AUTONOMOUS
+                    if policy.downgrade_live_assisted_to_paper_on_soft_breach
+                    else OpportunityAutonomyMode.SHADOW_ONLY
+                )
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=candidate_mode,
+                )
+            elif soft_breach_mode is OpportunityAutonomyMode.PAPER_AUTONOMOUS:
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.SHADOW_ONLY,
+                )
+
+        blocked = (
+            hard_breach
+            and policy.block_live_on_hard_breach
+            and constrained_input
+            in {OpportunityAutonomyMode.LIVE_AUTONOMOUS, OpportunityAutonomyMode.LIVE_ASSISTED}
+        )
+        if not reasons:
+            reasons.append("performance_guard_no_breach")
+        downgraded = _AUTONOMY_MODE_ORDER[target_mode] < _AUTONOMY_MODE_ORDER[constrained_input]
+        return OpportunityAutonomyPerformanceGuardDecision(
+            requested_mode=requested_mode,
+            input_effective_mode=constrained_input,
+            effective_mode=target_mode,
+            blocked=blocked,
+            downgraded=downgraded,
+            hard_breach=hard_breach,
+            performance_guard_applied=hard_breach or soft_breach or downgraded,
+            primary_reason=reasons[0],
+            reasons=tuple(reasons),
+            warnings=tuple(warnings),
+            guardrail_source=guardrail_source,
+            evidence_summary=evidence_summary,
+        )
+    except Exception as exc:  # noqa: BLE001
+        fail_closed_mode = _downgrade_clamp_mode(
+            requested_mode=requested_mode,
+            current_mode=constrained_input,
+            candidate_mode=policy.fail_closed_mode,
+        )
+        return OpportunityAutonomyPerformanceGuardDecision(
+            requested_mode=requested_mode,
+            input_effective_mode=constrained_input,
+            effective_mode=fail_closed_mode,
+            blocked=False,
+            downgraded=_AUTONOMY_MODE_ORDER[fail_closed_mode] < _AUTONOMY_MODE_ORDER[constrained_input],
+            hard_breach=False,
+            performance_guard_applied=True,
+            primary_reason="performance_guard_evaluation_failed_fail_closed",
+            reasons=("performance_guard_evaluation_failed_fail_closed",),
+            warnings=(f"performance_guard_error:{exc}",),
+            guardrail_source=guardrail_source,
+            evidence_summary=evidence_summary,
+        )
 
 
 def _downgrade_clamp_mode(
@@ -852,6 +1067,9 @@ class OpportunityLifecycleService:
 
 
 __all__ = [
+    "OpportunityAutonomyPerformanceGuardConfig",
+    "OpportunityAutonomyPerformanceGuardDecision",
+    "OpportunityAutonomyPerformanceSnapshot",
     "OpportunityAutonomyDowngradeConfig",
     "OpportunityAutonomyDowngradeDecision",
     "OpportunityAutonomyDecision",
@@ -859,6 +1077,7 @@ __all__ = [
     "OpportunityAutonomyMode",
     "OpportunityExecutionPermission",
     "evaluate_autonomy_downgrade",
+    "evaluate_autonomy_performance_guard",
     "evaluate_opportunity_execution_permission",
     "OpportunityActivationReadiness",
     "OpportunityLifecycleService",
