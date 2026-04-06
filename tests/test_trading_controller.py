@@ -460,7 +460,9 @@ def test_opportunity_autonomy_enforcement_prefers_payload_primary_reason_for_eff
     assert event["autonomy_primary_reason"] != "reason:live_autonomous"
 
 
-def test_opportunity_autonomy_enforcement_prefers_more_conservative_performance_guard_mode() -> None:
+def test_opportunity_autonomy_enforcement_prefers_more_conservative_performance_guard_mode() -> (
+    None
+):
     controller, execution, journal = _build_autonomy_controller(environment="live")
     result = controller.process_signals(
         [

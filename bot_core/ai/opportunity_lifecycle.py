@@ -295,7 +295,8 @@ def evaluate_autonomy_performance_guard(
             soft_breach = True
             reasons.append("recent_realized_return_sum_breach_for_live")
         if live_mode_in_scope and (
-            snapshot.recent_avg_realized_return_bps < policy.min_recent_avg_realized_return_bps_for_live
+            snapshot.recent_avg_realized_return_bps
+            < policy.min_recent_avg_realized_return_bps_for_live
         ):
             soft_breach = True
             reasons.append("recent_avg_realized_return_breach_for_live")
@@ -374,7 +375,8 @@ def evaluate_autonomy_performance_guard(
             input_effective_mode=constrained_input,
             effective_mode=fail_closed_mode,
             blocked=False,
-            downgraded=_AUTONOMY_MODE_ORDER[fail_closed_mode] < _AUTONOMY_MODE_ORDER[constrained_input],
+            downgraded=_AUTONOMY_MODE_ORDER[fail_closed_mode]
+            < _AUTONOMY_MODE_ORDER[constrained_input],
             hard_breach=False,
             performance_guard_applied=True,
             primary_reason="performance_guard_evaluation_failed_fail_closed",
