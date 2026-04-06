@@ -1462,16 +1462,24 @@ class TradingController:
         mode_raw = request_metadata.get("opportunity_autonomy_mode")
         if mode_raw is None:
             mode_raw = signal_metadata.get("opportunity_autonomy_mode")
+        if decision_payload is not None:
+            effective_mode_raw = decision_payload.get("effective_mode")
+            if effective_mode_raw is not None:
+                mode_raw = effective_mode_raw
         if mode_raw is None and decision_payload is not None:
             mode_raw = decision_payload.get("mode")
         if mode_raw is None:
             raise ValueError("missing_autonomy_mode")
         mode = OpportunityAutonomyMode(str(mode_raw).strip().lower())
-        primary_reason_raw = request_metadata.get("opportunity_autonomy_primary_reason")
+        primary_reason_raw = None
+        if decision_payload is not None:
+            payload_primary_reason = decision_payload.get("primary_reason")
+            if payload_primary_reason is not None:
+                primary_reason_raw = payload_primary_reason
+        if primary_reason_raw is None:
+            primary_reason_raw = request_metadata.get("opportunity_autonomy_primary_reason")
         if primary_reason_raw is None:
             primary_reason_raw = signal_metadata.get("opportunity_autonomy_primary_reason")
-        if primary_reason_raw is None and decision_payload is not None:
-            primary_reason_raw = decision_payload.get("primary_reason")
         primary_reason = str(primary_reason_raw or "").strip() or "unspecified_primary_reason"
         return OpportunityAutonomyDecision(
             mode=mode,
