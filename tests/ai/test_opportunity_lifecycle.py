@@ -679,7 +679,9 @@ def test_autonomy_downgrade_live_autonomous_with_clean_strong_evidence_keeps_mod
     assert decision.effective_mode is OpportunityAutonomyMode.LIVE_AUTONOMOUS
 
 
-def test_autonomy_downgrade_live_autonomous_with_non_blocking_degradation_falls_to_live_assisted() -> None:
+def test_autonomy_downgrade_live_autonomous_with_non_blocking_degradation_falls_to_live_assisted() -> (
+    None
+):
     decision = evaluate_autonomy_downgrade(
         requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
         readiness_report=_readiness_report(

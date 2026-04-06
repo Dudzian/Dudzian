@@ -359,7 +359,9 @@ def evaluate_autonomy_downgrade(
         if not reasons:
             reasons.append("downgrade_not_required")
         primary_reason = reasons[0]
-        step_count = max(0, _AUTONOMY_MODE_ORDER[requested_mode] - _AUTONOMY_MODE_ORDER[target_mode])
+        step_count = max(
+            0, _AUTONOMY_MODE_ORDER[requested_mode] - _AUTONOMY_MODE_ORDER[target_mode]
+        )
         return OpportunityAutonomyDowngradeDecision(
             requested_mode=requested_mode,
             effective_mode=target_mode,

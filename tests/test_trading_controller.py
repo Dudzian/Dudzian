@@ -410,7 +410,9 @@ def test_opportunity_autonomy_enforcement_uses_effective_mode_from_decision_payl
     assert event["blocking_reason"] == "paper_autonomy_blocks_live_environment"
 
 
-def test_opportunity_autonomy_enforcement_prefers_payload_primary_reason_for_effective_mode() -> None:
+def test_opportunity_autonomy_enforcement_prefers_payload_primary_reason_for_effective_mode() -> (
+    None
+):
     controller, execution, journal = _build_autonomy_controller(environment="live")
     result = controller.process_signals(
         [
