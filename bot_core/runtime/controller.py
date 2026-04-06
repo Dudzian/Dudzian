@@ -204,6 +204,22 @@ _FILLED_EXECUTION_STATUSES = frozenset({"filled", "executed", "complete", "compl
 _PARTIAL_EXECUTION_STATUSES = frozenset({"partial", "partially_filled", "partially-filled"})
 _BUY_SIDES = frozenset({"BUY", "LONG"})
 _SELL_SIDES = frozenset({"SELL", "SHORT"})
+_OPPORTUNITY_AUTONOMY_PROVENANCE_KEYS = (
+    "autonomy_requested_mode",
+    "autonomy_upstream_effective_mode",
+    "autonomy_local_guard_effective_mode",
+    "autonomy_final_mode",
+    "autonomy_decisive_stage",
+    "autonomy_decisive_reason",
+)
+_LIVE_AUTONOMY_ADMISSION_BLOCKER_REASONS = frozenset(
+    {
+        "promotion_not_ready_for_live_autonomous",
+        "activation_not_ready_for_live_autonomous",
+        "insufficient_final_outcomes_for_live_autonomous",
+        "too_many_non_blocking_degradations_for_live_autonomous",
+    }
+)
 
 
 def _normalize_trade_side(value: object | None) -> str | None:
@@ -224,6 +240,11 @@ def _normalize_execution_status(value: object | None) -> str:
     return candidate or "unknown"
 
 
+def _is_live_autonomy_admission_blocker_reason(reason: object | None) -> bool:
+    candidate = str(reason or "").strip().lower()
+    return candidate in _LIVE_AUTONOMY_ADMISSION_BLOCKER_REASONS
+
+
 @dataclass(slots=True)
 class _OpportunityOpenOutcomeTracker:
     correlation_key: str
@@ -235,6 +256,12 @@ class _OpportunityOpenOutcomeTracker:
     closed_quantity: float = 0.0
     model_version: str | None = None
     decision_source: str | None = None
+    autonomy_requested_mode: str | None = None
+    autonomy_upstream_effective_mode: str | None = None
+    autonomy_local_guard_effective_mode: str | None = None
+    autonomy_final_mode: str | None = None
+    autonomy_decisive_stage: str | None = None
+    autonomy_decisive_reason: str | None = None
     environment_scope: str | None = None
     portfolio_scope: str | None = None
     restored_from_repository: bool = False
@@ -650,6 +677,7 @@ class TradingController:
             restored_portfolio = (
                 str(restored_portfolio_raw).strip() if restored_portfolio_raw is not None else ""
             )
+            autonomy_chain = self._extract_opportunity_autonomy_provenance_chain(restored_provenance)
             self._opportunity_open_outcomes[row.correlation_key] = _OpportunityOpenOutcomeTracker(
                 correlation_key=row.correlation_key,
                 symbol=row.symbol,
@@ -660,6 +688,16 @@ class TradingController:
                 closed_quantity=float(row.closed_quantity),
                 model_version=restored_model_version or None,
                 decision_source=restored_decision_source or None,
+                autonomy_requested_mode=autonomy_chain.get("autonomy_requested_mode"),
+                autonomy_upstream_effective_mode=autonomy_chain.get(
+                    "autonomy_upstream_effective_mode"
+                ),
+                autonomy_local_guard_effective_mode=autonomy_chain.get(
+                    "autonomy_local_guard_effective_mode"
+                ),
+                autonomy_final_mode=autonomy_chain.get("autonomy_final_mode"),
+                autonomy_decisive_stage=autonomy_chain.get("autonomy_decisive_stage"),
+                autonomy_decisive_reason=autonomy_chain.get("autonomy_decisive_reason"),
                 environment_scope=restored_environment or None,
                 portfolio_scope=restored_portfolio or None,
                 restored_from_repository=True,
@@ -681,6 +719,7 @@ class TradingController:
                     closed_quantity=tracker.closed_quantity,
                     provenance={
                         "source": "trading_controller_open_execution",
+                        **self._extract_opportunity_autonomy_provenance_chain_from_tracker(tracker),
                         **(
                             {"environment": tracker.environment_scope}
                             if tracker.environment_scope is not None
@@ -722,6 +761,39 @@ class TradingController:
             )
         except Exception:  # pragma: no cover - diagnostics only
             _LOGGER.debug("Nie udało się utrwalić open Opportunity outcome", exc_info=True)
+
+    def _extract_opportunity_autonomy_provenance_chain(
+        self, metadata: Mapping[str, object] | None
+    ) -> dict[str, str]:
+        if not isinstance(metadata, Mapping):
+            return {}
+        chain: dict[str, str] = {}
+        for key in _OPPORTUNITY_AUTONOMY_PROVENANCE_KEYS:
+            raw_value = metadata.get(key)
+            if raw_value is None:
+                continue
+            candidate = str(raw_value).strip()
+            if candidate:
+                chain[key] = candidate
+        return chain
+
+    def _extract_opportunity_autonomy_provenance_chain_from_tracker(
+        self, tracker: _OpportunityOpenOutcomeTracker | None
+    ) -> dict[str, str]:
+        if tracker is None:
+            return {}
+        return {
+            key: value
+            for key, value in {
+                "autonomy_requested_mode": tracker.autonomy_requested_mode,
+                "autonomy_upstream_effective_mode": tracker.autonomy_upstream_effective_mode,
+                "autonomy_local_guard_effective_mode": tracker.autonomy_local_guard_effective_mode,
+                "autonomy_final_mode": tracker.autonomy_final_mode,
+                "autonomy_decisive_stage": tracker.autonomy_decisive_stage,
+                "autonomy_decisive_reason": tracker.autonomy_decisive_reason,
+            }.items()
+            if value is not None
+        }
 
     def _discard_open_outcome_tracker(self, correlation_key: str) -> None:
         self._opportunity_open_outcomes.pop(correlation_key, None)
@@ -1324,6 +1396,15 @@ class TradingController:
             if blocked:
                 self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
                 return None
+            autonomy_chain = self._extract_opportunity_autonomy_provenance_chain(metadata)
+            if autonomy_chain:
+                request = replace(
+                    request,
+                    metadata={
+                        **dict(request.metadata or {}),
+                        **autonomy_chain,
+                    },
+                )
         account = self.account_snapshot_provider()
         risk_result = self.risk_engine.apply_pre_trade_checks(
             request,
@@ -1818,12 +1899,27 @@ class TradingController:
         mode_candidates: list[OpportunityAutonomyMode] = []
         if mode_raw is not None:
             mode_candidates.append(OpportunityAutonomyMode(str(mode_raw).strip().lower()))
+        governance_live_blocking_reason: str | None = None
         if decision_payload is not None:
             effective_mode_raw = decision_payload.get("effective_mode")
             if effective_mode_raw is not None:
                 mode_candidates.append(
                     OpportunityAutonomyMode(str(effective_mode_raw).strip().lower())
                 )
+            blocking_reasons_raw = decision_payload.get("blocking_reasons")
+            if isinstance(blocking_reasons_raw, SequenceABC) and not isinstance(
+                blocking_reasons_raw, (str, bytes, bytearray)
+            ):
+                for raw_reason in blocking_reasons_raw:
+                    candidate_reason = str(raw_reason or "").strip().lower()
+                    if _is_live_autonomy_admission_blocker_reason(candidate_reason):
+                        governance_live_blocking_reason = candidate_reason
+                        break
+        if (
+            governance_live_blocking_reason is not None
+            and any(candidate == OpportunityAutonomyMode.LIVE_AUTONOMOUS for candidate in mode_candidates)
+        ):
+            mode_candidates.append(OpportunityAutonomyMode.LIVE_ASSISTED)
         if include_performance_guard_payload and performance_guard_payload is not None:
             performance_effective_mode_raw = performance_guard_payload.get("effective_mode")
             if performance_effective_mode_raw is not None:
@@ -1857,6 +1953,8 @@ class TradingController:
             payload_primary_reason = decision_payload.get("primary_reason")
             if payload_primary_reason is not None:
                 primary_reason_raw = payload_primary_reason
+        if governance_live_blocking_reason is not None:
+            primary_reason_raw = governance_live_blocking_reason
         if include_performance_guard_payload and performance_guard_payload is not None:
             guard_reason = performance_guard_payload.get("primary_reason")
             if guard_reason is not None:
@@ -2224,6 +2322,7 @@ class TradingController:
             known_shadow_keys = set()
         signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        autonomy_chain = self._extract_opportunity_autonomy_provenance_chain(request_metadata)
 
         def _resolve_runtime_lineage(
             correlation_key_hint: str | None,
@@ -2451,6 +2550,29 @@ class TradingController:
                     tracked.decision_source = decision_source
                     tracked.environment_scope = scope_environment or None
                     tracked.portfolio_scope = scope_portfolio or None
+                    tracked.autonomy_requested_mode = (
+                        tracked.autonomy_requested_mode
+                        or autonomy_chain.get("autonomy_requested_mode")
+                    )
+                    tracked.autonomy_upstream_effective_mode = (
+                        tracked.autonomy_upstream_effective_mode
+                        or autonomy_chain.get("autonomy_upstream_effective_mode")
+                    )
+                    tracked.autonomy_local_guard_effective_mode = (
+                        tracked.autonomy_local_guard_effective_mode
+                        or autonomy_chain.get("autonomy_local_guard_effective_mode")
+                    )
+                    tracked.autonomy_final_mode = (
+                        tracked.autonomy_final_mode or autonomy_chain.get("autonomy_final_mode")
+                    )
+                    tracked.autonomy_decisive_stage = (
+                        tracked.autonomy_decisive_stage
+                        or autonomy_chain.get("autonomy_decisive_stage")
+                    )
+                    tracked.autonomy_decisive_reason = (
+                        tracked.autonomy_decisive_reason
+                        or autonomy_chain.get("autonomy_decisive_reason")
+                    )
                     final_label = OpportunityOutcomeLabel(
                         symbol=request.symbol,
                         decision_timestamp=tracked.decision_timestamp,
@@ -2461,6 +2583,7 @@ class TradingController:
                         max_adverse_excursion_bps=0.0,
                         provenance={
                             "source": "trading_controller_exit_result",
+                            **self._extract_opportunity_autonomy_provenance_chain_from_tracker(tracked),
                             **({"environment": scope_environment} if scope_environment else {}),
                             **({"portfolio": scope_portfolio} if scope_portfolio else {}),
                             **(
@@ -2513,6 +2636,30 @@ class TradingController:
                         tracked.decision_source = decision_source
                         tracked.environment_scope = scope_environment or None
                         tracked.portfolio_scope = scope_portfolio or None
+                        tracked.autonomy_requested_mode = (
+                            tracked.autonomy_requested_mode
+                            or autonomy_chain.get("autonomy_requested_mode")
+                        )
+                        tracked.autonomy_upstream_effective_mode = (
+                            tracked.autonomy_upstream_effective_mode
+                            or autonomy_chain.get("autonomy_upstream_effective_mode")
+                        )
+                        tracked.autonomy_local_guard_effective_mode = (
+                            tracked.autonomy_local_guard_effective_mode
+                            or autonomy_chain.get("autonomy_local_guard_effective_mode")
+                        )
+                        tracked.autonomy_final_mode = (
+                            tracked.autonomy_final_mode
+                            or autonomy_chain.get("autonomy_final_mode")
+                        )
+                        tracked.autonomy_decisive_stage = (
+                            tracked.autonomy_decisive_stage
+                            or autonomy_chain.get("autonomy_decisive_stage")
+                        )
+                        tracked.autonomy_decisive_reason = (
+                            tracked.autonomy_decisive_reason
+                            or autonomy_chain.get("autonomy_decisive_reason")
+                        )
                         self._persist_open_outcome_tracker(tracked)
                         partial_label = OpportunityOutcomeLabel(
                             symbol=request.symbol,
@@ -2524,6 +2671,9 @@ class TradingController:
                             max_adverse_excursion_bps=0.0,
                             provenance={
                                 "source": "trading_controller_partial_exit_result",
+                                **self._extract_opportunity_autonomy_provenance_chain_from_tracker(
+                                    tracked
+                                ),
                                 **({"environment": scope_environment} if scope_environment else {}),
                                 **({"portfolio": scope_portfolio} if scope_portfolio else {}),
                                 **(
@@ -2572,6 +2722,16 @@ class TradingController:
                     ),
                     model_version=None,
                     decision_source=None,
+                    autonomy_requested_mode=autonomy_chain.get("autonomy_requested_mode"),
+                    autonomy_upstream_effective_mode=autonomy_chain.get(
+                        "autonomy_upstream_effective_mode"
+                    ),
+                    autonomy_local_guard_effective_mode=autonomy_chain.get(
+                        "autonomy_local_guard_effective_mode"
+                    ),
+                    autonomy_final_mode=autonomy_chain.get("autonomy_final_mode"),
+                    autonomy_decisive_stage=autonomy_chain.get("autonomy_decisive_stage"),
+                    autonomy_decisive_reason=autonomy_chain.get("autonomy_decisive_reason"),
                     environment_scope=str(self.environment).strip() or None,
                     portfolio_scope=str(self.portfolio_id).strip() or None,
                     restored_from_repository=False,
@@ -2625,6 +2785,13 @@ class TradingController:
                 max_adverse_excursion_bps=0.0,
                 provenance={
                     "source": "trading_controller_execution_result",
+                    **(
+                        self._extract_opportunity_autonomy_provenance_chain_from_tracker(
+                            proxy_tracker
+                        )
+                        if proxy_tracker is not None
+                        else autonomy_chain
+                    ),
                     **({"environment": scope_environment} if scope_environment else {}),
                     **({"portfolio": scope_portfolio} if scope_portfolio else {}),
                     **(
