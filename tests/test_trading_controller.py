@@ -1762,6 +1762,128 @@ def _shadow_record_for_key(
     )
 
 
+def _attach_proxy_label_with_lineage_inputs(
+    *,
+    tmp_path: Path,
+    request_payload: object | None,
+    signal_payload: object | None,
+    request_metadata_lineage: Mapping[str, object] | None = None,
+    signal_metadata_lineage: Mapping[str, object] | None = None,
+    restored_tracker_lineage: Mapping[str, object] | None = None,
+    request_side: str = "BUY",
+) -> OpportunityOutcomeLabel:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="shadow-v0",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="shadow-v0",
+                decision_source="shadow-source",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            )
+        ]
+    )
+    if restored_tracker_lineage is not None:
+        tracker_side = "BUY" if str(request_side).upper() == "SELL" else "SELL"
+        tracker_provenance = {
+            "source": "restored_tracker",
+            "environment": "paper",
+            "portfolio": "paper-1",
+            **dict(restored_tracker_lineage),
+        }
+        shadow_repo.upsert_open_outcome(
+            shadow_repo.OpenOutcomeState(
+                correlation_key=correlation_key,
+                symbol="BTC/USDT",
+                side=tracker_side,
+                entry_price=100.0,
+                decision_timestamp=decision_timestamp,
+                entry_quantity=1.0,
+                closed_quantity=0.0,
+                provenance=tracker_provenance,
+            )
+        )
+
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal_metadata: dict[str, object] = {
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    if signal_payload is not None:
+        signal_metadata["opportunity_autonomy_decision"] = signal_payload
+    if signal_metadata_lineage:
+        signal_metadata.update(dict(signal_metadata_lineage))
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side=str(request_side).upper(),
+        confidence=0.8,
+        metadata=signal_metadata,
+    )
+    request_metadata: dict[str, object] = {
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    if request_payload is not None:
+        request_metadata["opportunity_autonomy_decision"] = request_payload
+    if request_metadata_lineage:
+        request_metadata.update(dict(request_metadata_lineage))
+    request = OrderRequest(
+        symbol="BTC/USDT",
+        side=str(request_side).upper(),
+        quantity=1.0,
+        order_type="market",
+        price=100.0,
+        metadata=request_metadata,
+    )
+    result = OrderResult(
+        order_id="order-1",
+        status="filled",
+        filled_quantity=1.0,
+        avg_price=100.0,
+        raw_response={"context": "unit_test"},
+    )
+
+    controller._try_attach_opportunity_outcome_label(  # pyright: ignore[reportPrivateUsage]
+        signal=signal,
+        request=request,
+        result=result,
+        normalized_status="filled",
+        metadata={"filled_quantity": "1.00000000", "avg_price": "100.00000000"},
+    )
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    return labels[0]
+
+
 def test_controller_attaches_runtime_outcome_label_for_opportunity_shadow_record(
     tmp_path: Path,
 ) -> None:
@@ -1808,11 +1930,150 @@ def test_controller_attaches_runtime_outcome_label_for_opportunity_shadow_record
     assert len(labels) == 1
     assert labels[0].correlation_key == correlation_key
     assert labels[0].label_quality == "execution_proxy_pending_exit"
+    assert labels[0].provenance.get("environment") == "paper"
+    assert labels[0].provenance.get("portfolio") == "paper-1"
+    assert labels[0].provenance.get("model_version") == "opportunity-v1"
+    assert labels[0].provenance.get("decision_source") == "opportunity_ai_shadow"
     attach_events = [
         event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
     ]
     assert attach_events
     assert attach_events[-1]["status"] == "proxy_attached"
+
+
+def test_controller_attach_lineage_request_payload_precedes_signal_payload(tmp_path: Path) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload={"model_version": "request-v1", "decision_source": "request-source"},
+        signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
+    )
+
+    assert label.provenance.get("model_version") == "request-v1"
+    assert label.provenance.get("decision_source") == "request-source"
+
+
+def test_controller_attach_lineage_request_payload_precedes_restored_tracker(tmp_path: Path) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload={"model_version": "request-v1", "decision_source": "request-source"},
+        signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
+        restored_tracker_lineage={"model_version": "tracker-v1", "decision_source": "tracker-source"},
+        request_side="SELL",
+    )
+
+    assert label.label_quality == "final"
+    assert label.provenance.get("model_version") == "request-v1"
+    assert label.provenance.get("decision_source") == "request-source"
+
+
+def test_controller_attach_lineage_request_payload_without_lineage_uses_signal_payload(
+    tmp_path: Path,
+) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload={"mode": "live_autonomous"},
+        signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
+    )
+
+    assert label.provenance.get("model_version") == "signal-v1"
+    assert label.provenance.get("decision_source") == "signal-source"
+
+
+def test_controller_attach_lineage_signal_payload_precedes_restored_tracker_when_request_payload_missing_lineage(
+    tmp_path: Path,
+) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload={"mode": "live_autonomous"},
+        signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
+        restored_tracker_lineage={"model_version": "tracker-v1", "decision_source": "tracker-source"},
+        request_side="SELL",
+    )
+
+    assert label.label_quality == "final"
+    assert label.provenance.get("model_version") == "signal-v1"
+    assert label.provenance.get("decision_source") == "signal-source"
+
+
+def test_controller_attach_lineage_malformed_request_payload_does_not_mask_signal_payload(
+    tmp_path: Path,
+) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload="not-a-mapping",
+        signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
+    )
+
+    assert label.provenance.get("model_version") == "signal-v1"
+    assert label.provenance.get("decision_source") == "signal-source"
+
+
+def test_controller_attach_lineage_empty_request_mapping_allows_signal_payload_lineage(
+    tmp_path: Path,
+) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload={},
+        signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
+    )
+
+    assert label.provenance.get("model_version") == "signal-v1"
+    assert label.provenance.get("decision_source") == "signal-source"
+
+
+def test_controller_attach_lineage_metadata_fallback_applies_after_payloads(tmp_path: Path) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload=None,
+        signal_payload=None,
+        request_metadata_lineage={
+            "opportunity_model_version": "request-meta-v1",
+            "opportunity_decision_source": "request-meta-source",
+        },
+        signal_metadata_lineage={
+            "opportunity_model_version": "signal-meta-v1",
+            "opportunity_decision_source": "signal-meta-source",
+        },
+    )
+
+    assert label.provenance.get("model_version") == "request-meta-v1"
+    assert label.provenance.get("decision_source") == "request-meta-source"
+
+
+def test_controller_attach_lineage_restored_tracker_precedes_request_metadata(tmp_path: Path) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload=None,
+        signal_payload=None,
+        request_metadata_lineage={
+            "opportunity_model_version": "request-meta-v1",
+            "opportunity_decision_source": "request-meta-source",
+        },
+        restored_tracker_lineage={"model_version": "tracker-v1", "decision_source": "tracker-source"},
+        request_side="SELL",
+    )
+
+    assert label.label_quality == "final"
+    assert label.provenance.get("model_version") == "tracker-v1"
+    assert label.provenance.get("decision_source") == "tracker-source"
+
+
+def test_controller_attach_lineage_restored_tracker_precedes_signal_metadata(tmp_path: Path) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload=None,
+        signal_payload=None,
+        signal_metadata_lineage={
+            "opportunity_model_version": "signal-meta-v1",
+            "opportunity_decision_source": "signal-meta-source",
+        },
+        restored_tracker_lineage={"model_version": "tracker-v1", "decision_source": "tracker-source"},
+        request_side="SELL",
+    )
+
+    assert label.label_quality == "final"
+    assert label.provenance.get("model_version") == "tracker-v1"
+    assert label.provenance.get("decision_source") == "tracker-source"
 
 
 def test_controller_outcome_attach_duplicate_is_idempotent_noop(tmp_path: Path) -> None:
@@ -1983,15 +2244,92 @@ def test_controller_restores_open_outcome_tracker_after_restart(tmp_path: Path) 
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
     controller_open.process_signals([open_signal])
-    assert shadow_repo.load_open_outcomes()
+    restored_rows = shadow_repo.load_open_outcomes()
+    assert restored_rows
+    assert restored_rows[0].provenance.get("environment") == "paper"
+    assert restored_rows[0].provenance.get("portfolio") == "paper-1"
+    assert restored_rows[0].provenance.get("model_version") == "opportunity-v1"
+    assert restored_rows[0].provenance.get("decision_source") == "opportunity_ai_shadow"
 
     controller_close = TradingController(
         risk_engine=DummyRiskEngine(),
         execution_service=DummyExecutionService(),
         alert_router=router,
         account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-after-restart",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_model_version": "wrong-after-restart",
+        "opportunity_decision_source": "wrong-after-restart",
+    }
+    controller_close.process_signals([close_signal])
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert labels[0].provenance.get("close_correlation_resolution") == "resolved_by_correlation_key"
+    assert labels[0].provenance.get("environment") == "paper"
+    assert labels[0].provenance.get("portfolio") == "paper-1"
+    assert labels[0].provenance.get("model_version") == "opportunity-v1"
+    assert labels[0].provenance.get("decision_source") == "opportunity_ai_shadow"
+    assert shadow_repo.load_open_outcomes() == []
+
+
+def test_controller_partial_close_after_restart_uses_restored_tracker_lineage(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller_open = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
         portfolio_id="paper-1",
         environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller_open.process_signals([open_signal])
+    assert shadow_repo.load_open_outcomes()
+
+    controller_close = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="partially_filled",
+            filled_quantity=0.4,
+            avg_price=110.0,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-after-restart",
+        environment="live",
         risk_profile="balanced",
         decision_journal=CollectingDecisionJournal(),
         opportunity_shadow_repository=shadow_repo,
@@ -2002,10 +2340,338 @@ def test_controller_restores_open_outcome_tracker_after_restart(tmp_path: Path) 
         "opportunity_shadow_record_key": correlation_key,
     }
     controller_close.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "partial_exit_unconfirmed"
+    assert labels[0].provenance.get("environment") == "paper"
+    assert labels[0].provenance.get("portfolio") == "paper-1"
+    assert labels[0].provenance.get("model_version") == "opportunity-v1"
+    assert labels[0].provenance.get("decision_source") == "opportunity_ai_shadow"
+
+
+def test_controller_partial_close_after_restart_with_legacy_scope_gap_is_auditable(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller_open = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller_open.process_signals([open_signal])
+    open_rows = shadow_repo.load_open_outcomes()
+    assert len(open_rows) == 1
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol=open_rows[0].symbol,
+            side=open_rows[0].side,
+            entry_price=open_rows[0].entry_price,
+            decision_timestamp=open_rows[0].decision_timestamp,
+            entry_quantity=open_rows[0].entry_quantity,
+            closed_quantity=open_rows[0].closed_quantity,
+            provenance={
+                "source": "legacy_without_scope",
+                "model_version": "legacy-v1",
+                "decision_source": "legacy-source",
+            },
+        )
+    )
+
+    controller_close = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="partially_filled",
+            filled_quantity=0.4,
+            avg_price=110.0,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-after-restart",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller_close.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "partial_exit_unconfirmed"
+    assert "environment" not in labels[0].provenance
+    assert "portfolio" not in labels[0].provenance
+    assert labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+    assert labels[0].provenance.get("model_version") == "legacy-v1"
+    assert labels[0].provenance.get("decision_source") == "legacy-source"
+
+    open_rows_after_partial = shadow_repo.load_open_outcomes()
+    assert len(open_rows_after_partial) == 1
+    assert "environment" not in open_rows_after_partial[0].provenance
+    assert "portfolio" not in open_rows_after_partial[0].provenance
+    assert (
+        open_rows_after_partial[0].provenance.get("scope_continuity")
+        == "missing_from_restored_open_outcome"
+    )
+
+
+def test_controller_final_close_after_restart_with_legacy_scope_gap_is_auditable(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller_open = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller_open.process_signals([open_signal])
+    open_rows = shadow_repo.load_open_outcomes()
+    assert len(open_rows) == 1
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol=open_rows[0].symbol,
+            side=open_rows[0].side,
+            entry_price=open_rows[0].entry_price,
+            decision_timestamp=open_rows[0].decision_timestamp,
+            entry_quantity=open_rows[0].entry_quantity,
+            closed_quantity=open_rows[0].closed_quantity,
+            provenance={
+                "source": "legacy_without_scope",
+                "model_version": "legacy-v1",
+                "decision_source": "legacy-source",
+            },
+        )
+    )
+
+    controller_close = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-after-restart",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _signal("SELL", price=110.0)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    controller_close.process_signals([close_signal])
+
     labels = shadow_repo.load_outcome_labels()
     assert len(labels) == 1
     assert labels[0].label_quality == "final"
-    assert labels[0].provenance.get("close_correlation_resolution") == "resolved_by_correlation_key"
+    assert "environment" not in labels[0].provenance
+    assert "portfolio" not in labels[0].provenance
+    assert labels[0].provenance.get("scope_continuity") == "restored_tracker_scope_missing"
+    assert labels[0].provenance.get("model_version") == "legacy-v1"
+    assert labels[0].provenance.get("decision_source") == "legacy-source"
+    assert shadow_repo.load_open_outcomes() == []
+
+
+def test_controller_multihop_restart_partial_then_final_persists_recovered_lineage(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="shadow-v0",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="shadow-v0",
+                decision_source="shadow_source",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            )
+        ]
+    )
+    controller_open = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=DummyExecutionService(),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _signal("BUY", price=100.0)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    controller_open.process_signals([open_signal])
+
+    open_rows = shadow_repo.load_open_outcomes()
+    assert len(open_rows) == 1
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol=open_rows[0].symbol,
+            side=open_rows[0].side,
+            entry_price=open_rows[0].entry_price,
+            decision_timestamp=open_rows[0].decision_timestamp,
+            entry_quantity=open_rows[0].entry_quantity,
+            closed_quantity=open_rows[0].closed_quantity,
+            provenance={
+                "source": "legacy_without_lineage",
+                "environment": "paper",
+                "portfolio": "paper-1",
+            },
+        )
+    )
+
+    controller_partial = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="partially_filled",
+            filled_quantity=0.4,
+            avg_price=108.0,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-partial",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    partial_signal = _signal("SELL", price=108.0)
+    partial_signal.metadata = {
+        **dict(partial_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_model_version": "recovered-v1",
+        "opportunity_decision_source": "recovered-source",
+    }
+    controller_partial.process_signals([partial_signal])
+
+    open_rows_after_partial = shadow_repo.load_open_outcomes()
+    assert len(open_rows_after_partial) == 1
+    assert open_rows_after_partial[0].provenance.get("environment") == "paper"
+    assert open_rows_after_partial[0].provenance.get("portfolio") == "paper-1"
+    assert open_rows_after_partial[0].provenance.get("model_version") == "recovered-v1"
+    assert open_rows_after_partial[0].provenance.get("decision_source") == "recovered-source"
+    partial_labels = shadow_repo.load_outcome_labels()
+    assert len(partial_labels) == 1
+    assert partial_labels[0].label_quality == "partial_exit_unconfirmed"
+    assert partial_labels[0].provenance.get("environment") == "paper"
+    assert partial_labels[0].provenance.get("portfolio") == "paper-1"
+    assert partial_labels[0].provenance.get("model_version") == "recovered-v1"
+    assert partial_labels[0].provenance.get("decision_source") == "recovered-source"
+
+    controller_final = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=StatusExecutionService(
+            status="filled",
+            filled_quantity=0.6,
+            avg_price=112.0,
+        ),
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="wrong-portfolio-final",
+        environment="live",
+        risk_profile="balanced",
+        decision_journal=CollectingDecisionJournal(),
+        opportunity_shadow_repository=shadow_repo,
+    )
+    final_signal = _signal("SELL", price=112.0)
+    final_signal.metadata = {
+        **dict(final_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_model_version": "",
+        "opportunity_decision_source": "",
+    }
+    controller_final.process_signals([final_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert labels[0].provenance.get("environment") == "paper"
+    assert labels[0].provenance.get("portfolio") == "paper-1"
+    assert labels[0].provenance.get("model_version") == "recovered-v1"
+    assert labels[0].provenance.get("decision_source") == "recovered-source"
+    assert labels[0].provenance.get("model_version") != "shadow-v0"
+    assert labels[0].provenance.get("decision_source") != "shadow_source"
     assert shadow_repo.load_open_outcomes() == []
 
 
@@ -2425,6 +3091,8 @@ def test_controller_partial_close_does_not_create_final_or_drop_tracker(tmp_path
     assert len(labels) == 1
     assert labels[0].label_quality == "partial_exit_unconfirmed"
     assert labels[0].provenance.get("close_confirmation") == "insufficient_evidence_for_final_close"
+    assert labels[0].provenance.get("model_version") == "opportunity-v1"
+    assert labels[0].provenance.get("decision_source") == "opportunity_ai_shadow"
     open_outcomes = shadow_repo.load_open_outcomes()
     assert len(open_outcomes) == 1
     assert open_outcomes[0].closed_quantity == pytest.approx(0.4, rel=1e-6)
@@ -2492,6 +3160,8 @@ def test_controller_final_close_after_partial_upgrades_and_removes_tracker(tmp_p
     assert len(labels) == 1
     assert labels[0].label_quality == "final"
     assert labels[0].provenance.get("close_confirmation") == "quantity_and_filled_status"
+    assert labels[0].provenance.get("model_version") == "opportunity-v1"
+    assert labels[0].provenance.get("decision_source") == "opportunity_ai_shadow"
     assert shadow_repo.load_open_outcomes() == []
 
 
