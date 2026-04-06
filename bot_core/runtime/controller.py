@@ -397,6 +397,17 @@ def _normalize_optional_request_float(value: object | None, *, field_name: str) 
         raise ValueError(f"{field_name} w metadanych musi być liczbą zmiennoprzecinkową") from exc
 
 
+def _validate_optional_positive_int(value: object | None, *, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} musi być dodatnią liczbą całkowitą (> 0)")
+    candidate = value
+    if candidate <= 0:
+        raise ValueError(f"{field_name} musi być dodatnią liczbą całkowitą (> 0)")
+    return candidate
+
+
 @dataclass(slots=True)
 class ControllerSignal:
     """Zbiera sygnał strategii wraz ze snapshotem rynku."""
@@ -441,6 +452,8 @@ class TradingController:
     rules_signal_modes: Sequence[str] | None = None
     signal_mode_priorities: Mapping[str, int] | None = None
     opportunity_shadow_repository: OpportunityShadowRepository | None = None
+    performance_guard_recent_final_window_size: int | None = None
+    performance_guard_max_scan_labels: int | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -487,6 +500,14 @@ class TradingController:
     )
 
     def __post_init__(self) -> None:
+        self.performance_guard_recent_final_window_size = _validate_optional_positive_int(
+            self.performance_guard_recent_final_window_size,
+            field_name="performance_guard_recent_final_window_size",
+        )
+        self.performance_guard_max_scan_labels = _validate_optional_positive_int(
+            self.performance_guard_max_scan_labels,
+            field_name="performance_guard_max_scan_labels",
+        )
         self._clock = self.clock
         self._health_interval = _as_timedelta(self.health_check_interval)
         metadata: MutableMapping[str, str] = {}
@@ -1750,6 +1771,16 @@ class TradingController:
                     lifecycle.load_recent_performance_snapshot_with_scope_diagnostics(
                         shadow_repository=repository,
                         snapshot_config=OpportunityPerformanceSnapshotConfig(
+                            recent_final_window_size=(
+                                self.performance_guard_recent_final_window_size
+                                if self.performance_guard_recent_final_window_size is not None
+                                else 20
+                            ),
+                            max_scan_labels=(
+                                self.performance_guard_max_scan_labels
+                                if self.performance_guard_max_scan_labels is not None
+                                else 256
+                            ),
                             scope_environment=self.environment,
                             scope_portfolio=self.portfolio_id,
                             scope_model_version=scope_model_version,
