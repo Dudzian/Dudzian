@@ -5,8 +5,10 @@ from pathlib import Path
 
 from bot_core.ai.opportunity_lifecycle import (
     OpportunityActivationReadiness,
+    OpportunityAutonomyDecision,
     OpportunityAutonomyGateConfig,
     OpportunityAutonomyMode,
+    evaluate_opportunity_execution_permission,
     OpportunityLifecycleService,
     OpportunityPersistedPromotionReadinessReport,
 )
@@ -655,3 +657,81 @@ def test_autonomy_gate_decision_shape_is_serializable() -> None:
     assert payload["autonomous_execution_allowed"] is True
     assert isinstance(payload["reasons"], list)
     assert isinstance(payload["evidence_summary"], dict)
+
+
+def _autonomy_decision(mode: OpportunityAutonomyMode) -> OpportunityAutonomyDecision:
+    return OpportunityAutonomyDecision(
+        mode=mode,
+        primary_reason=f"reason:{mode.value}",
+        reasons=(f"reason:{mode.value}",),
+        blocking_reasons=(),
+        warnings=(),
+        evidence_summary={},
+    )
+
+
+def test_execution_permission_denied_blocks_all_environments() -> None:
+    for environment in ("paper", "live"):
+        permission = evaluate_opportunity_execution_permission(
+            decision=_autonomy_decision(OpportunityAutonomyMode.DENIED),
+            environment=environment,
+        )
+        assert permission.autonomous_execution_allowed is False
+        assert permission.denial_reason == "autonomy_mode_denied"
+
+
+def test_execution_permission_shadow_only_blocks_order_execution() -> None:
+    permission = evaluate_opportunity_execution_permission(
+        decision=_autonomy_decision(OpportunityAutonomyMode.SHADOW_ONLY),
+        environment="paper",
+    )
+    assert permission.autonomous_execution_allowed is False
+    assert permission.denial_reason == "autonomy_mode_shadow_only_blocks_order_execution"
+
+
+def test_execution_permission_paper_autonomous_allows_only_non_live() -> None:
+    paper_permission = evaluate_opportunity_execution_permission(
+        decision=_autonomy_decision(OpportunityAutonomyMode.PAPER_AUTONOMOUS),
+        environment="paper",
+    )
+    live_permission = evaluate_opportunity_execution_permission(
+        decision=_autonomy_decision(OpportunityAutonomyMode.PAPER_AUTONOMOUS),
+        environment="live",
+    )
+    assert paper_permission.autonomous_execution_allowed is True
+    assert live_permission.autonomous_execution_allowed is False
+    assert live_permission.denial_reason == "paper_autonomy_blocks_live_environment"
+
+
+def test_execution_permission_live_assisted_requires_live_override() -> None:
+    blocked_live = evaluate_opportunity_execution_permission(
+        decision=_autonomy_decision(OpportunityAutonomyMode.LIVE_ASSISTED),
+        environment="live",
+        assisted_approval=False,
+    )
+    allowed_live = evaluate_opportunity_execution_permission(
+        decision=_autonomy_decision(OpportunityAutonomyMode.LIVE_ASSISTED),
+        environment="live",
+        assisted_approval=True,
+    )
+    paper_permission = evaluate_opportunity_execution_permission(
+        decision=_autonomy_decision(OpportunityAutonomyMode.LIVE_ASSISTED),
+        environment="paper",
+        assisted_approval=False,
+    )
+    assert blocked_live.autonomous_execution_allowed is False
+    assert blocked_live.assisted_override_required is True
+    assert blocked_live.denial_reason == "live_assisted_requires_explicit_approval"
+    assert allowed_live.autonomous_execution_allowed is True
+    assert allowed_live.assisted_override_used is True
+    assert paper_permission.autonomous_execution_allowed is True
+    assert paper_permission.assisted_override_required is False
+
+
+def test_execution_permission_live_autonomous_allows_live() -> None:
+    permission = evaluate_opportunity_execution_permission(
+        decision=_autonomy_decision(OpportunityAutonomyMode.LIVE_AUTONOMOUS),
+        environment="live",
+    )
+    assert permission.autonomous_execution_allowed is True
+    assert permission.denial_reason is None

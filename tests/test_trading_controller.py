@@ -212,6 +212,34 @@ def _signal(
     )
 
 
+def _opportunity_autonomy_signal(
+    mode: str,
+    *,
+    side: str = "BUY",
+    assisted_approval: bool | None = None,
+    include_mode: bool = True,
+    include_decision_payload: bool = False,
+) -> StrategySignal:
+    signal = _signal(side=side)
+    metadata: dict[str, object] = dict(signal.metadata)
+    metadata["opportunity_shadow_record_key"] = "shadow-key-1"
+    if include_mode:
+        metadata["opportunity_autonomy_mode"] = mode
+    if include_decision_payload:
+        metadata["opportunity_autonomy_decision"] = {}
+    metadata["opportunity_autonomy_primary_reason"] = f"reason:{mode}"
+    if assisted_approval is not None:
+        metadata["autonomy_assisted_approval"] = assisted_approval
+    signal.metadata = metadata
+    return signal
+
+
+def _last_event(journal: CollectingDecisionJournal, event_type: str) -> Mapping[str, str]:
+    events = [event for event in journal.export() if event.get("event") == event_type]
+    assert events, f"Missing event {event_type}"
+    return events[-1]
+
+
 class StubTCOReporter:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -248,6 +276,145 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     exported = tuple(audit.export())
     assert len(exported) >= 2
     assert any(event["event"] == "order_executed" for event in journal.export())
+
+
+def _build_autonomy_controller(*, environment: str) -> tuple[TradingController, DummyExecutionService, CollectingDecisionJournal]:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id=f"{environment}-1",
+        environment=environment,
+        risk_profile="balanced",
+        decision_journal=journal,
+    )
+    return controller, execution, journal
+
+
+def test_opportunity_autonomy_denied_blocks_execution() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="paper")
+    result = controller.process_signals([_opportunity_autonomy_signal("denied")])
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["autonomy_mode"] == "denied"
+    assert event["blocking_reason"] == "autonomy_mode_denied"
+
+
+def test_opportunity_autonomy_shadow_only_blocks_paper_and_live() -> None:
+    for environment in ("paper", "live"):
+        controller, execution, journal = _build_autonomy_controller(environment=environment)
+        result = controller.process_signals([_opportunity_autonomy_signal("shadow_only")])
+        assert result == []
+        assert execution.requests == []
+        event = _last_event(journal, "opportunity_autonomy_enforcement")
+        assert event["status"] == "blocked"
+        assert event["autonomy_mode"] == "shadow_only"
+        assert (
+            event["blocking_reason"] == "autonomy_mode_shadow_only_blocks_order_execution"
+        )
+
+
+def test_opportunity_autonomy_paper_autonomous_allows_paper_but_blocks_live() -> None:
+    paper_controller, paper_execution, paper_journal = _build_autonomy_controller(environment="paper")
+    paper_result = paper_controller.process_signals([_opportunity_autonomy_signal("paper_autonomous")])
+    assert len(paper_result) == 1
+    assert len(paper_execution.requests) == 1
+    paper_event = _last_event(paper_journal, "opportunity_autonomy_enforcement")
+    assert paper_event["status"] == "allowed"
+    assert paper_event["execution_permission"] == "allowed"
+
+    live_controller, live_execution, live_journal = _build_autonomy_controller(environment="live")
+    live_result = live_controller.process_signals([_opportunity_autonomy_signal("paper_autonomous")])
+    assert live_result == []
+    assert live_execution.requests == []
+    live_event = _last_event(live_journal, "opportunity_autonomy_enforcement")
+    assert live_event["status"] == "blocked"
+    assert live_event["blocking_reason"] == "paper_autonomy_blocks_live_environment"
+
+
+def test_opportunity_autonomy_live_assisted_blocks_live_without_approval() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [_opportunity_autonomy_signal("live_assisted", assisted_approval=False)]
+    )
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
+    assert event["assisted_override_used"] == "false"
+
+
+def test_opportunity_autonomy_live_assisted_allows_live_with_approval() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [_opportunity_autonomy_signal("live_assisted", assisted_approval=True)]
+    )
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "allowed"
+    assert event["assisted_override_used"] == "true"
+
+
+def test_opportunity_autonomy_live_autonomous_allows_live_execution() -> None:
+    controller, execution, _journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+
+
+def test_opportunity_shadow_key_without_autonomy_contract_does_not_trigger_enforcement() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="paper")
+    result = controller.process_signals(
+        [_opportunity_autonomy_signal("live_autonomous", include_mode=False)]
+    )
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    autonomy_events = [
+        event for event in journal.export() if event.get("event") == "opportunity_autonomy_enforcement"
+    ]
+    assert autonomy_events == []
+
+
+def test_opportunity_autonomy_permission_failure_fails_closed() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_mode=False,
+                include_decision_payload=True,
+            )
+        ]
+    )
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "autonomy_permission_evaluation_failed"
+    assert event["autonomy_mode"] == "unavailable"
+
+
+def test_opportunity_autonomy_enforcement_metadata_shape_is_stable() -> None:
+    controller, _execution, journal = _build_autonomy_controller(environment="live")
+    controller.process_signals(
+        [_opportunity_autonomy_signal("live_assisted", assisted_approval=False)]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomous_execution_allowed"] == "false"
+    assert event["autonomy_primary_reason"] == "reason:live_assisted"
+    assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
+    assert event["environment"] == "live"
+    assert event["assisted_override_used"] == "false"
 
 
 def _shadow_record_for_key(
