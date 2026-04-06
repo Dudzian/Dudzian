@@ -201,6 +201,141 @@ class OpportunityAutonomyPerformanceSnapshot:
 
 
 @dataclass(slots=True, frozen=True)
+class OpportunityPerformanceSnapshotConfig:
+    recent_final_window_size: int = 8
+    include_partial_only_count: bool = True
+    treat_negative_return_bps_below_or_equal_zero_as_loss: bool = True
+    max_scan_labels: int = 512
+    allowed_final_prefixes: tuple[str, ...] = _FINAL_LABEL_PREFIXES
+    allowed_partial_prefixes: tuple[str, ...] = _PARTIAL_LABEL_PREFIXES
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityRecentPerformanceWindow:
+    scanned_labels_count: int
+    recent_final_outcomes_count: int
+    recent_partial_only_count: int
+    window_label: str
+
+
+class OpportunityPerformanceSnapshotBuilder:
+    """Local read-only source-of-truth for recent performance snapshot metrics."""
+
+    def __init__(self, config: OpportunityPerformanceSnapshotConfig | None = None) -> None:
+        self._config = config or OpportunityPerformanceSnapshotConfig()
+
+    @property
+    def config(self) -> OpportunityPerformanceSnapshotConfig:
+        return self._config
+
+    def build_recent_performance_snapshot(
+        self,
+        labels: Sequence[OpportunityOutcomeLabel],
+    ) -> OpportunityAutonomyPerformanceSnapshot:
+        if self._config.recent_final_window_size <= 0:
+            raise ValueError("recent_final_window_size_must_be_positive")
+        if self._config.max_scan_labels <= 0:
+            raise ValueError("max_scan_labels_must_be_positive")
+
+        observed = list(labels)[-self._config.max_scan_labels :]
+        recent_span = self._build_recent_span(observed)
+        final_window = [
+            label
+            for label in recent_span
+            if self._is_quality(label.label_quality, self._final_prefixes)
+        ]
+        partial_only_count = (
+            sum(
+                1
+                for label in recent_span
+                if self._is_quality(label.label_quality, self._partial_prefixes)
+            )
+            if self._config.include_partial_only_count
+            else 0
+        )
+        final_returns = [float(label.realized_return_bps) for label in final_window]
+        final_count = len(final_returns)
+        return_sum = float(sum(final_returns))
+        avg_return = return_sum / final_count if final_count > 0 else 0.0
+        worst_return = min(final_returns) if final_returns else 0.0
+        negative_count = sum(1 for value in final_returns if self._is_loss_return(value))
+        loss_streak = self._compute_recent_loss_streak(final_returns)
+        window = OpportunityRecentPerformanceWindow(
+            scanned_labels_count=len(recent_span),
+            recent_final_outcomes_count=final_count,
+            recent_partial_only_count=partial_only_count,
+            window_label=f"last_{self._config.recent_final_window_size}_final_outcomes",
+        )
+        return OpportunityAutonomyPerformanceSnapshot(
+            recent_final_outcomes_count=window.recent_final_outcomes_count,
+            recent_loss_streak=loss_streak,
+            recent_realized_return_bps_sum=return_sum,
+            recent_avg_realized_return_bps=avg_return,
+            recent_worst_realized_return_bps=worst_return,
+            recent_negative_outcomes_count=negative_count,
+            recent_partial_only_count=window.recent_partial_only_count,
+            recent_window_label=window.window_label,
+        )
+
+    def load_recent_performance_snapshot(
+        self,
+        repository: OpportunityShadowRepository,
+    ) -> OpportunityAutonomyPerformanceSnapshot:
+        return self.build_recent_performance_snapshot(repository.load_outcome_labels())
+
+    @property
+    def _final_prefixes(self) -> tuple[str, ...]:
+        return tuple(
+            str(prefix or "").strip().lower()
+            for prefix in self._config.allowed_final_prefixes
+            if str(prefix or "").strip()
+        )
+
+    @property
+    def _partial_prefixes(self) -> tuple[str, ...]:
+        return tuple(
+            str(prefix or "").strip().lower()
+            for prefix in self._config.allowed_partial_prefixes
+            if str(prefix or "").strip()
+        )
+
+    def _is_quality(self, value: str, prefixes: tuple[str, ...]) -> bool:
+        normalized = str(value or "").strip().lower()
+        return any(normalized.startswith(prefix) for prefix in prefixes)
+
+    def _is_loss_return(self, value: float) -> bool:
+        return value <= 0.0 if self._config.treat_negative_return_bps_below_or_equal_zero_as_loss else value < 0.0
+
+    def _compute_recent_loss_streak(self, final_returns: Sequence[float]) -> int:
+        streak = 0
+        for value in reversed(final_returns):
+            if self._is_loss_return(float(value)):
+                streak += 1
+                continue
+            break
+        return streak
+
+    def _build_recent_span(
+        self,
+        observed: Sequence[OpportunityOutcomeLabel],
+    ) -> list[OpportunityOutcomeLabel]:
+        if not observed:
+            return []
+        finals_seen = 0
+        cutoff_index = 0
+        for index in range(len(observed) - 1, -1, -1):
+            label = observed[index]
+            if self._is_quality(label.label_quality, self._final_prefixes):
+                finals_seen += 1
+                if finals_seen >= self._config.recent_final_window_size:
+                    cutoff_index = index
+                    break
+        else:
+            return list(observed)
+        return list(observed[cutoff_index:])
+
+
+@dataclass(slots=True, frozen=True)
 class OpportunityAutonomyPerformanceGuardDecision:
     requested_mode: OpportunityAutonomyMode
     input_effective_mode: OpportunityAutonomyMode
@@ -683,6 +818,15 @@ class OpportunityLifecycleService:
             return False, f"missing_shadow_record:{missing[0]}"
         return True, "attached"
 
+    def load_recent_performance_snapshot(
+        self,
+        *,
+        shadow_repository: OpportunityShadowRepository,
+        snapshot_config: OpportunityPerformanceSnapshotConfig | None = None,
+    ) -> OpportunityAutonomyPerformanceSnapshot:
+        builder = OpportunityPerformanceSnapshotBuilder(config=snapshot_config)
+        return builder.load_recent_performance_snapshot(shadow_repository)
+
     def build_persisted_promotion_readiness(
         self,
         *,
@@ -1070,6 +1214,9 @@ __all__ = [
     "OpportunityAutonomyPerformanceGuardConfig",
     "OpportunityAutonomyPerformanceGuardDecision",
     "OpportunityAutonomyPerformanceSnapshot",
+    "OpportunityPerformanceSnapshotBuilder",
+    "OpportunityPerformanceSnapshotConfig",
+    "OpportunityRecentPerformanceWindow",
     "OpportunityAutonomyDowngradeConfig",
     "OpportunityAutonomyDowngradeDecision",
     "OpportunityAutonomyDecision",
