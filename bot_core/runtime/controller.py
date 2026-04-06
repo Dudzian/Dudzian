@@ -233,6 +233,11 @@ class _OpportunityOpenOutcomeTracker:
     decision_timestamp: datetime
     entry_quantity: float = 0.0
     closed_quantity: float = 0.0
+    model_version: str | None = None
+    decision_source: str | None = None
+    environment_scope: str | None = None
+    portfolio_scope: str | None = None
+    restored_from_repository: bool = False
 
 
 def _extract_adjusted_quantity(
@@ -601,6 +606,27 @@ class TradingController:
             _LOGGER.debug("Nie udało się odtworzyć open Opportunity outcomes", exc_info=True)
             return
         for row in restored:
+            restored_provenance = row.provenance if isinstance(row.provenance, Mapping) else {}
+            restored_model_version_raw = restored_provenance.get("model_version")
+            restored_decision_source_raw = restored_provenance.get("decision_source")
+            restored_model_version = (
+                str(restored_model_version_raw).strip()
+                if restored_model_version_raw is not None
+                else ""
+            )
+            restored_decision_source = (
+                str(restored_decision_source_raw).strip()
+                if restored_decision_source_raw is not None
+                else ""
+            )
+            restored_environment_raw = restored_provenance.get("environment")
+            restored_portfolio_raw = restored_provenance.get("portfolio")
+            restored_environment = (
+                str(restored_environment_raw).strip() if restored_environment_raw is not None else ""
+            )
+            restored_portfolio = (
+                str(restored_portfolio_raw).strip() if restored_portfolio_raw is not None else ""
+            )
             self._opportunity_open_outcomes[row.correlation_key] = _OpportunityOpenOutcomeTracker(
                 correlation_key=row.correlation_key,
                 symbol=row.symbol,
@@ -609,6 +635,11 @@ class TradingController:
                 decision_timestamp=row.decision_timestamp,
                 entry_quantity=float(row.entry_quantity),
                 closed_quantity=float(row.closed_quantity),
+                model_version=restored_model_version or None,
+                decision_source=restored_decision_source or None,
+                environment_scope=restored_environment or None,
+                portfolio_scope=restored_portfolio or None,
+                restored_from_repository=True,
             )
 
     def _persist_open_outcome_tracker(self, tracker: _OpportunityOpenOutcomeTracker) -> None:
@@ -627,8 +658,40 @@ class TradingController:
                     closed_quantity=tracker.closed_quantity,
                     provenance={
                         "source": "trading_controller_open_execution",
-                        "environment": self.environment,
-                        "portfolio": self.portfolio_id,
+                        **(
+                            {"environment": tracker.environment_scope}
+                            if tracker.environment_scope is not None
+                            else (
+                                {}
+                                if tracker.restored_from_repository
+                                else {"environment": self.environment}
+                            )
+                        ),
+                        **(
+                            {"portfolio": tracker.portfolio_scope}
+                            if tracker.portfolio_scope is not None
+                            else (
+                                {}
+                                if tracker.restored_from_repository
+                                else {"portfolio": self.portfolio_id}
+                            )
+                        ),
+                        **(
+                            {"scope_continuity": "missing_from_restored_open_outcome"}
+                            if tracker.restored_from_repository
+                            and (tracker.environment_scope is None or tracker.portfolio_scope is None)
+                            else {}
+                        ),
+                        **(
+                            {"model_version": tracker.model_version}
+                            if tracker.model_version is not None
+                            else {}
+                        ),
+                        **(
+                            {"decision_source": tracker.decision_source}
+                            if tracker.decision_source is not None
+                            else {}
+                        ),
                     },
                 )
             )
@@ -1858,7 +1921,101 @@ class TradingController:
         except Exception:  # pragma: no cover - diagnostics only
             shadow_by_key = {}
             known_shadow_keys = set()
+        signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+
+        def _resolve_runtime_lineage(
+            correlation_key_hint: str | None,
+            tracker_hint: _OpportunityOpenOutcomeTracker | None = None,
+        ) -> tuple[str | None, str | None]:
+            lineage_model_version: str | None = None
+            lineage_decision_source: str | None = None
+            for payload_raw in (
+                request_metadata.get("opportunity_autonomy_decision"),
+                signal_metadata.get("opportunity_autonomy_decision"),
+            ):
+                if not isinstance(payload_raw, Mapping):
+                    continue
+                if lineage_model_version is None:
+                    payload_model_raw = payload_raw.get("model_version")
+                    if payload_model_raw is not None:
+                        candidate = str(payload_model_raw).strip()
+                        if candidate:
+                            lineage_model_version = candidate
+                if lineage_decision_source is None:
+                    payload_source_raw = payload_raw.get("decision_source")
+                    if payload_source_raw is not None:
+                        candidate = str(payload_source_raw).strip()
+                        if candidate:
+                            lineage_decision_source = candidate
+            if tracker_hint is not None:
+                if lineage_model_version is None and tracker_hint.model_version is not None:
+                    candidate = str(tracker_hint.model_version).strip()
+                    if candidate:
+                        lineage_model_version = candidate
+                if lineage_decision_source is None and tracker_hint.decision_source is not None:
+                    candidate = str(tracker_hint.decision_source).strip()
+                    if candidate:
+                        lineage_decision_source = candidate
+            for metadata_source in (request_metadata, signal_metadata):
+                if lineage_model_version is None:
+                    metadata_model_raw = metadata_source.get("opportunity_model_version")
+                    if metadata_model_raw is None:
+                        metadata_model_raw = metadata_source.get("model_version")
+                    if metadata_model_raw is not None:
+                        candidate = str(metadata_model_raw).strip()
+                        if candidate:
+                            lineage_model_version = candidate
+                if lineage_decision_source is None:
+                    metadata_source_raw = metadata_source.get("opportunity_decision_source")
+                    if metadata_source_raw is None:
+                        metadata_source_raw = metadata_source.get("decision_source")
+                    if metadata_source_raw is not None:
+                        candidate = str(metadata_source_raw).strip()
+                        if candidate:
+                            lineage_decision_source = candidate
+            correlation_key_candidate = str(correlation_key_hint or "").strip()
+            shadow_record = shadow_by_key.get(correlation_key_candidate)
+            if shadow_record is not None:
+                if lineage_model_version is None:
+                    candidate = str(getattr(shadow_record, "model_version", "")).strip()
+                    if candidate:
+                        lineage_model_version = candidate
+                if lineage_decision_source is None:
+                    candidate = str(getattr(shadow_record, "decision_source", "")).strip()
+                    if candidate:
+                        lineage_decision_source = candidate
+            return lineage_model_version, lineage_decision_source
+
+        def _resolve_runtime_scope(
+            tracker_hint: _OpportunityOpenOutcomeTracker | None,
+        ) -> tuple[str, str, str]:
+            scope_environment = str(self.environment).strip()
+            scope_portfolio = str(self.portfolio_id).strip()
+            scope_resolution = "runtime_controller"
+            if tracker_hint is not None:
+                tracker_environment = (
+                    str(tracker_hint.environment_scope).strip()
+                    if tracker_hint.environment_scope is not None
+                    else ""
+                )
+                tracker_portfolio = (
+                    str(tracker_hint.portfolio_scope).strip()
+                    if tracker_hint.portfolio_scope is not None
+                    else ""
+                )
+                if tracker_environment:
+                    scope_environment = tracker_environment
+                if tracker_portfolio:
+                    scope_portfolio = tracker_portfolio
+                if tracker_environment and tracker_portfolio:
+                    scope_resolution = "restored_tracker"
+                elif tracker_hint.restored_from_repository:
+                    scope_environment = ""
+                    scope_portfolio = ""
+                    scope_resolution = "restored_tracker_scope_missing"
+            return scope_environment, scope_portfolio, scope_resolution
+
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
         side = str(request.side or "").upper()
         is_filled_or_partial = (
@@ -1977,6 +2134,17 @@ class TradingController:
                     and cumulative_closed_quantity + 1e-9 >= tracked.entry_quantity
                 )
                 if is_confirmed_final_close:
+                    model_version, decision_source = _resolve_runtime_lineage(
+                        tracked.correlation_key,
+                        tracker_hint=tracked,
+                    )
+                    scope_environment, scope_portfolio, scope_resolution = _resolve_runtime_scope(
+                        tracked
+                    )
+                    tracked.model_version = model_version
+                    tracked.decision_source = decision_source
+                    tracked.environment_scope = scope_environment or None
+                    tracked.portfolio_scope = scope_portfolio or None
                     final_label = OpportunityOutcomeLabel(
                         symbol=request.symbol,
                         decision_timestamp=tracked.decision_timestamp,
@@ -1987,8 +2155,13 @@ class TradingController:
                         max_adverse_excursion_bps=0.0,
                         provenance={
                             "source": "trading_controller_exit_result",
-                            "environment": self.environment,
-                            "portfolio": self.portfolio_id,
+                            **({"environment": scope_environment} if scope_environment else {}),
+                            **({"portfolio": scope_portfolio} if scope_portfolio else {}),
+                            **(
+                                {"scope_continuity": scope_resolution}
+                                if scope_resolution != "runtime_controller"
+                                else {}
+                            ),
                             "entry_price": f"{tracked.entry_price:.8f}",
                             "exit_price": f"{avg_price:.8f}",
                             "order_id": result.order_id or "",
@@ -2001,6 +2174,16 @@ class TradingController:
                             "entry_quantity": f"{tracked.entry_quantity:.8f}",
                             "closed_quantity_cumulative": f"{cumulative_closed_quantity:.8f}",
                             "close_confirmation": "quantity_and_filled_status",
+                            **(
+                                {"model_version": model_version}
+                                if model_version is not None
+                                else {}
+                            ),
+                            **(
+                                {"decision_source": decision_source}
+                                if decision_source is not None
+                                else {}
+                            ),
                         },
                         label_quality="final",
                     )
@@ -2013,6 +2196,18 @@ class TradingController:
                     if OpportunityShadowRepository._quality_rank(
                         existing_quality
                     ) < OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed"):
+                        model_version, decision_source = _resolve_runtime_lineage(
+                            tracked.correlation_key,
+                            tracker_hint=tracked,
+                        )
+                        scope_environment, scope_portfolio, scope_resolution = _resolve_runtime_scope(
+                            tracked
+                        )
+                        tracked.model_version = model_version
+                        tracked.decision_source = decision_source
+                        tracked.environment_scope = scope_environment or None
+                        tracked.portfolio_scope = scope_portfolio or None
+                        self._persist_open_outcome_tracker(tracked)
                         partial_label = OpportunityOutcomeLabel(
                             symbol=request.symbol,
                             decision_timestamp=tracked.decision_timestamp,
@@ -2023,8 +2218,13 @@ class TradingController:
                             max_adverse_excursion_bps=0.0,
                             provenance={
                                 "source": "trading_controller_partial_exit_result",
-                                "environment": self.environment,
-                                "portfolio": self.portfolio_id,
+                                **({"environment": scope_environment} if scope_environment else {}),
+                                **({"portfolio": scope_portfolio} if scope_portfolio else {}),
+                                **(
+                                    {"scope_continuity": scope_resolution}
+                                    if scope_resolution != "runtime_controller"
+                                    else {}
+                                ),
                                 "entry_price": f"{tracked.entry_price:.8f}",
                                 "exit_price": f"{avg_price:.8f}",
                                 "order_id": result.order_id or "",
@@ -2033,6 +2233,16 @@ class TradingController:
                                 "entry_quantity": f"{tracked.entry_quantity:.8f}",
                                 "closed_quantity_cumulative": f"{cumulative_closed_quantity:.8f}",
                                 "close_confirmation": "insufficient_evidence_for_final_close",
+                                **(
+                                    {"model_version": model_version}
+                                    if model_version is not None
+                                    else {}
+                                ),
+                                **(
+                                    {"decision_source": decision_source}
+                                    if decision_source is not None
+                                    else {}
+                                ),
                             },
                             label_quality="partial_exit_unconfirmed",
                         )
@@ -2054,7 +2264,18 @@ class TradingController:
                             )
                         ),
                     ),
+                    model_version=None,
+                    decision_source=None,
+                    environment_scope=str(self.environment).strip() or None,
+                    portfolio_scope=str(self.portfolio_id).strip() or None,
+                    restored_from_repository=False,
                 )
+                tracker_model_version, tracker_decision_source = _resolve_runtime_lineage(
+                    correlation_key,
+                    tracker_hint=tracker,
+                )
+                tracker.model_version = tracker_model_version
+                tracker.decision_source = tracker_decision_source
                 self._opportunity_open_outcomes[correlation_key] = tracker
                 self._persist_open_outcome_tracker(tracker)
             elif (
@@ -2080,6 +2301,12 @@ class TradingController:
             )
             return
         if correlation_key and final_label is None and partial_label is None:
+            proxy_tracker = self._opportunity_open_outcomes.get(correlation_key)
+            model_version, decision_source = _resolve_runtime_lineage(
+                correlation_key,
+                tracker_hint=proxy_tracker,
+            )
+            scope_environment, scope_portfolio, scope_resolution = _resolve_runtime_scope(proxy_tracker)
             proxy_label = OpportunityOutcomeLabel(
                 symbol=request.symbol,
                 decision_timestamp=timestamp_utc,
@@ -2090,12 +2317,19 @@ class TradingController:
                 max_adverse_excursion_bps=0.0,
                 provenance={
                     "source": "trading_controller_execution_result",
-                    "environment": self.environment,
-                    "portfolio": self.portfolio_id,
+                    **({"environment": scope_environment} if scope_environment else {}),
+                    **({"portfolio": scope_portfolio} if scope_portfolio else {}),
+                    **(
+                        {"scope_continuity": scope_resolution}
+                        if scope_resolution != "runtime_controller"
+                        else {}
+                    ),
                     "order_id": result.order_id or "",
                     "execution_status": normalized_status,
                     "filled_quantity": str(metadata.get("filled_quantity", "")),
                     "avg_price": str(metadata.get("avg_price", "")),
+                    **({"model_version": model_version} if model_version is not None else {}),
+                    **({"decision_source": decision_source} if decision_source is not None else {}),
                 },
                 label_quality="execution_proxy_pending_exit",
             )
