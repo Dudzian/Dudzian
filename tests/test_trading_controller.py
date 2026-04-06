@@ -219,6 +219,8 @@ def _opportunity_autonomy_signal(
     assisted_approval: bool | None = None,
     include_mode: bool = True,
     include_decision_payload: bool = False,
+    decision_effective_mode: str | None = None,
+    decision_primary_reason: str | None = None,
 ) -> StrategySignal:
     signal = _signal(side=side)
     metadata: dict[str, object] = dict(signal.metadata)
@@ -227,6 +229,18 @@ def _opportunity_autonomy_signal(
         metadata["opportunity_autonomy_mode"] = mode
     if include_decision_payload:
         metadata["opportunity_autonomy_decision"] = {}
+    if decision_effective_mode is not None:
+        decision_payload = metadata.get("opportunity_autonomy_decision")
+        if not isinstance(decision_payload, dict):
+            decision_payload = {}
+        decision_payload["effective_mode"] = decision_effective_mode
+        metadata["opportunity_autonomy_decision"] = decision_payload
+    if decision_primary_reason is not None:
+        decision_payload = metadata.get("opportunity_autonomy_decision")
+        if not isinstance(decision_payload, dict):
+            decision_payload = {}
+        decision_payload["primary_reason"] = decision_primary_reason
+        metadata["opportunity_autonomy_decision"] = decision_payload
     metadata["opportunity_autonomy_primary_reason"] = f"reason:{mode}"
     if assisted_approval is not None:
         metadata["autonomy_assisted_approval"] = assisted_approval
@@ -369,6 +383,45 @@ def test_opportunity_autonomy_live_autonomous_allows_live_execution() -> None:
     result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
     assert len(result) == 1
     assert len(execution.requests) == 1
+
+
+def test_opportunity_autonomy_enforcement_uses_effective_mode_from_decision_payload() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+            )
+        ]
+    )
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["autonomy_mode"] == "paper_autonomous"
+    assert event["blocking_reason"] == "paper_autonomy_blocks_live_environment"
+
+
+def test_opportunity_autonomy_enforcement_prefers_payload_primary_reason_for_effective_mode() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="downgraded_to_paper_due_to_quality",
+            )
+        ]
+    )
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "paper_autonomous"
+    assert event["autonomy_primary_reason"] == "downgraded_to_paper_due_to_quality"
+    assert event["autonomy_primary_reason"] != "reason:live_autonomous"
 
 
 def test_opportunity_shadow_key_without_autonomy_contract_does_not_trigger_enforcement() -> None:

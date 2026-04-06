@@ -6,8 +6,10 @@ from pathlib import Path
 from bot_core.ai.opportunity_lifecycle import (
     OpportunityActivationReadiness,
     OpportunityAutonomyDecision,
+    OpportunityAutonomyDowngradeConfig,
     OpportunityAutonomyGateConfig,
     OpportunityAutonomyMode,
+    evaluate_autonomy_downgrade,
     evaluate_opportunity_execution_permission,
     OpportunityLifecycleService,
     OpportunityPersistedPromotionReadinessReport,
@@ -657,6 +659,147 @@ def test_autonomy_gate_decision_shape_is_serializable() -> None:
     assert payload["autonomous_execution_allowed"] is True
     assert isinstance(payload["reasons"], list)
     assert isinstance(payload["evidence_summary"], dict)
+
+
+def test_autonomy_downgrade_live_autonomous_with_clean_strong_evidence_keeps_mode() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        readiness_report=_readiness_report(
+            activation_ready=True,
+            promotion_recommended=True,
+            degraded_reasons=(),
+            matched_outcomes=12,
+        ),
+    )
+    assert decision.downgraded is False
+    assert decision.effective_mode is OpportunityAutonomyMode.LIVE_AUTONOMOUS
+
+
+def test_autonomy_downgrade_live_autonomous_with_non_blocking_degradation_falls_to_live_assisted() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        readiness_report=_readiness_report(
+            activation_ready=True,
+            promotion_recommended=True,
+            degraded_reasons=("mixed_final_partial_outcomes_degraded:final:12,partial:1",),
+            matched_outcomes=12,
+        ),
+    )
+    assert decision.downgraded is True
+    assert decision.effective_mode is OpportunityAutonomyMode.LIVE_ASSISTED
+
+
+def test_autonomy_downgrade_live_autonomous_with_promotion_fail_is_downgraded() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        readiness_report=_readiness_report(
+            activation_ready=True,
+            promotion_recommended=False,
+            degraded_reasons=("promotion_gate_failed",),
+            matched_outcomes=12,
+        ),
+    )
+    assert decision.effective_mode is not OpportunityAutonomyMode.LIVE_AUTONOMOUS
+    assert decision.downgraded is True
+
+
+def test_autonomy_downgrade_live_autonomous_without_activation_readiness_blocks_live() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        readiness_report=_readiness_report(
+            activation_ready=False,
+            promotion_recommended=True,
+            degraded_reasons=(),
+            matched_outcomes=12,
+        ),
+    )
+    assert decision.effective_mode is OpportunityAutonomyMode.LIVE_ASSISTED
+    assert decision.downgraded is True
+
+
+def test_autonomy_downgrade_live_assisted_with_partial_only_goes_to_shadow_only() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+        readiness_report=_readiness_report(
+            activation_ready=False,
+            promotion_recommended=False,
+            degraded_reasons=(
+                "partial_only_outcomes_excluded_from_governance",
+                "non_final_outcomes_excluded:partial:2",
+            ),
+            matched_outcomes=2,
+        ),
+    )
+    assert decision.effective_mode is OpportunityAutonomyMode.SHADOW_ONLY
+    assert decision.downgraded is True
+
+
+def test_autonomy_downgrade_paper_autonomous_with_proxy_only_goes_to_shadow_only() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.PAPER_AUTONOMOUS,
+        readiness_report=_readiness_report(
+            activation_ready=False,
+            promotion_recommended=False,
+            degraded_reasons=("proxy_only_outcomes_excluded_from_governance",),
+            matched_outcomes=3,
+        ),
+        config=OpportunityAutonomyDowngradeConfig(
+            blocking_reason_target_mode=OpportunityAutonomyMode.SHADOW_ONLY
+        ),
+    )
+    assert decision.effective_mode is OpportunityAutonomyMode.SHADOW_ONLY
+    assert decision.downgraded is True
+
+
+def test_autonomy_downgrade_blocking_reason_can_force_denied() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+        readiness_report=_readiness_report(
+            activation_ready=False,
+            promotion_recommended=False,
+            degraded_reasons=("promotion_gate_failed",),
+            matched_outcomes=3,
+        ),
+        config=OpportunityAutonomyDowngradeConfig(
+            blocking_reason_target_mode=OpportunityAutonomyMode.DENIED
+        ),
+    )
+    assert decision.effective_mode is OpportunityAutonomyMode.DENIED
+    assert decision.blocking_reasons == ("promotion_gate_failed",)
+
+
+def test_autonomy_downgrade_never_upgrades_when_config_target_is_higher_than_requested() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.SHADOW_ONLY,
+        readiness_report=_readiness_report(
+            activation_ready=False,
+            promotion_recommended=False,
+            degraded_reasons=("promotion_gate_failed",),
+            matched_outcomes=2,
+        ),
+        config=OpportunityAutonomyDowngradeConfig(
+            blocking_reason_target_mode=OpportunityAutonomyMode.LIVE_ASSISTED
+        ),
+    )
+    assert decision.effective_mode is OpportunityAutonomyMode.SHADOW_ONLY
+    assert decision.downgraded is False
+
+
+def test_autonomy_downgrade_decision_shape_is_serializable() -> None:
+    decision = evaluate_autonomy_downgrade(
+        requested_mode=OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+        readiness_report=_readiness_report(
+            activation_ready=True,
+            promotion_recommended=True,
+            degraded_reasons=(),
+            matched_outcomes=12,
+        ),
+    )
+    payload = decision.to_dict()
+    assert payload["requested_mode"] == "live_autonomous"
+    assert payload["effective_mode"] == "live_autonomous"
+    assert payload["downgraded"] is False
+    assert payload["downgrade_source"] == "opportunity_autonomy_downgrade_policy_v1"
 
 
 def _autonomy_decision(mode: OpportunityAutonomyMode) -> OpportunityAutonomyDecision:

@@ -113,6 +113,75 @@ class OpportunityAutonomyDecision:
 
 
 @dataclass(slots=True, frozen=True)
+class OpportunityAutonomyDowngradeConfig:
+    downgrade_on_blocking_reason: bool = True
+    blocking_reason_target_mode: OpportunityAutonomyMode = OpportunityAutonomyMode.DENIED
+    downgrade_live_on_promotion_fail: bool = True
+    downgrade_live_on_activation_not_ready: bool = True
+    max_non_blocking_degradations_for_live_autonomous: int = 0
+    max_non_blocking_degradations_for_live_assisted: int = 1
+    allow_paper_on_partial_only: bool = False
+    minimum_final_outcomes_to_keep_live: int = 8
+    minimum_total_outcomes_to_keep_paper: int = 2
+    minimum_total_outcomes_to_keep_shadow: int = 1
+    proxy_only_target_mode: OpportunityAutonomyMode = OpportunityAutonomyMode.SHADOW_ONLY
+    partial_only_target_mode: OpportunityAutonomyMode = OpportunityAutonomyMode.SHADOW_ONLY
+    fail_closed_mode: OpportunityAutonomyMode = OpportunityAutonomyMode.DENIED
+    blocking_reason_prefixes: tuple[str, ...] = (
+        "proxy_only_outcomes_excluded_from_governance",
+        "promotion_gate_failed",
+    )
+
+
+@dataclass(slots=True, frozen=True)
+class OpportunityAutonomyDowngradeDecision:
+    requested_mode: OpportunityAutonomyMode
+    effective_mode: OpportunityAutonomyMode
+    downgraded: bool
+    primary_reason: str
+    reasons: tuple[str, ...]
+    blocking_reasons: tuple[str, ...]
+    warnings: tuple[str, ...]
+    downgrade_step_count: int
+    downgrade_source: str
+    evidence_summary: Mapping[str, int | bool | str]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "requested_mode": self.requested_mode.value,
+            "effective_mode": self.effective_mode.value,
+            "downgraded": self.downgraded,
+            "primary_reason": self.primary_reason,
+            "reasons": list(self.reasons),
+            "blocking_reasons": list(self.blocking_reasons),
+            "warnings": list(self.warnings),
+            "downgrade_step_count": self.downgrade_step_count,
+            "downgrade_source": self.downgrade_source,
+            "evidence_summary": dict(self.evidence_summary),
+        }
+
+
+_AUTONOMY_MODE_ORDER: dict[OpportunityAutonomyMode, int] = {
+    OpportunityAutonomyMode.DENIED: 0,
+    OpportunityAutonomyMode.SHADOW_ONLY: 1,
+    OpportunityAutonomyMode.PAPER_AUTONOMOUS: 2,
+    OpportunityAutonomyMode.LIVE_ASSISTED: 3,
+    OpportunityAutonomyMode.LIVE_AUTONOMOUS: 4,
+}
+
+
+def _downgrade_clamp_mode(
+    *,
+    requested_mode: OpportunityAutonomyMode,
+    current_mode: OpportunityAutonomyMode,
+    candidate_mode: OpportunityAutonomyMode,
+) -> OpportunityAutonomyMode:
+    """Enforce downgrade-only invariant for autonomy mode transitions."""
+    max_allowed_mode = min(requested_mode, current_mode, key=_AUTONOMY_MODE_ORDER.get)
+    return min(max_allowed_mode, candidate_mode, key=_AUTONOMY_MODE_ORDER.get)
+
+
+@dataclass(slots=True, frozen=True)
 class OpportunityExecutionPermission:
     environment: str
     autonomy_mode: OpportunityAutonomyMode
@@ -132,6 +201,204 @@ class OpportunityExecutionPermission:
             "primary_reason": self.primary_reason,
             "denial_reason": self.denial_reason,
         }
+
+
+def evaluate_autonomy_downgrade(
+    *,
+    requested_mode: OpportunityAutonomyMode,
+    readiness_report: OpportunityPersistedPromotionReadinessReport,
+    config: OpportunityAutonomyDowngradeConfig | None = None,
+) -> OpportunityAutonomyDowngradeDecision:
+    policy = config or OpportunityAutonomyDowngradeConfig()
+    degraded_reasons = tuple(readiness_report.degraded_reasons)
+    quality_counts = OpportunityLifecycleService._extract_quality_counts(degraded_reasons)
+    matched = tuple(int(value) for value in readiness_report.matched_outcomes.values())
+    paired_matched_outcomes = min(matched) if matched else 0
+    final_outcomes = max(quality_counts.get("final", 0), paired_matched_outcomes)
+    partial_outcomes = sum(
+        value for key, value in quality_counts.items() if key.startswith(_PARTIAL_LABEL_PREFIXES)
+    )
+    observed_outcomes = sum(quality_counts.values()) if quality_counts else paired_matched_outcomes
+    has_partial_only = "partial_only_outcomes_excluded_from_governance" in degraded_reasons
+    has_proxy_only = "proxy_only_outcomes_excluded_from_governance" in degraded_reasons
+    promotion_passed = (
+        readiness_report.promotion_report is not None
+        and readiness_report.promotion_report.promotion_recommended
+    )
+    activation_ready = readiness_report.activation_readiness.activation_ready
+    blocking_reasons = tuple(
+        reason
+        for reason in degraded_reasons
+        if any(reason.startswith(prefix) for prefix in policy.blocking_reason_prefixes)
+    )
+    non_blocking_degraded_reasons = tuple(
+        reason for reason in degraded_reasons if reason not in set(blocking_reasons)
+    )
+
+    evidence_summary: dict[str, int | bool | str] = {
+        "paired_matched_outcomes": paired_matched_outcomes,
+        "observed_outcomes": observed_outcomes,
+        "final_outcomes": final_outcomes,
+        "partial_outcomes": partial_outcomes,
+        "promotion_passed": promotion_passed,
+        "activation_ready": activation_ready,
+        "has_proxy_only_evidence": has_proxy_only,
+        "has_partial_only_evidence": has_partial_only,
+        "blocking_reason_count": len(blocking_reasons),
+        "non_blocking_degradation_count": len(non_blocking_degraded_reasons),
+    }
+    reasons: list[str] = []
+    warnings: list[str] = list(degraded_reasons)
+
+    try:
+        target_mode = requested_mode
+        if policy.downgrade_on_blocking_reason and blocking_reasons:
+            target_mode = _downgrade_clamp_mode(
+                requested_mode=requested_mode,
+                current_mode=target_mode,
+                candidate_mode=policy.blocking_reason_target_mode,
+            )
+            reasons.append("blocking_degradation_present")
+        elif has_proxy_only:
+            target_mode = _downgrade_clamp_mode(
+                requested_mode=requested_mode,
+                current_mode=target_mode,
+                candidate_mode=policy.proxy_only_target_mode,
+            )
+            reasons.append("proxy_only_evidence_requires_safe_mode")
+        elif has_partial_only and not policy.allow_paper_on_partial_only:
+            target_mode = _downgrade_clamp_mode(
+                requested_mode=requested_mode,
+                current_mode=target_mode,
+                candidate_mode=policy.partial_only_target_mode,
+            )
+            reasons.append("partial_only_evidence_requires_safe_mode")
+
+        if requested_mode is OpportunityAutonomyMode.LIVE_AUTONOMOUS:
+            if policy.downgrade_live_on_promotion_fail and not promotion_passed:
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+                )
+                reasons.append("promotion_not_ready_for_live_autonomous")
+            if policy.downgrade_live_on_activation_not_ready and not activation_ready:
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+                )
+                reasons.append("activation_not_ready_for_live_autonomous")
+            if final_outcomes < policy.minimum_final_outcomes_to_keep_live:
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+                )
+                reasons.append("insufficient_final_outcomes_for_live_autonomous")
+            if (
+                len(non_blocking_degraded_reasons)
+                > policy.max_non_blocking_degradations_for_live_autonomous
+            ):
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+                )
+                reasons.append("too_many_non_blocking_degradations_for_live_autonomous")
+
+        if requested_mode in {
+            OpportunityAutonomyMode.LIVE_AUTONOMOUS,
+            OpportunityAutonomyMode.LIVE_ASSISTED,
+        }:
+            if (
+                len(non_blocking_degraded_reasons)
+                > policy.max_non_blocking_degradations_for_live_assisted
+            ):
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.PAPER_AUTONOMOUS,
+                )
+                reasons.append("too_many_non_blocking_degradations_for_live_assisted")
+            if observed_outcomes < policy.minimum_total_outcomes_to_keep_paper:
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.SHADOW_ONLY,
+                )
+                reasons.append("insufficient_outcomes_for_paper_autonomy")
+
+        if requested_mode is OpportunityAutonomyMode.PAPER_AUTONOMOUS:
+            if observed_outcomes < policy.minimum_total_outcomes_to_keep_paper:
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.SHADOW_ONLY,
+                )
+                reasons.append("insufficient_outcomes_for_paper_autonomy")
+
+        if target_mode is OpportunityAutonomyMode.SHADOW_ONLY:
+            if observed_outcomes < policy.minimum_total_outcomes_to_keep_shadow:
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.DENIED,
+                )
+                reasons.append("insufficient_outcomes_for_shadow_mode")
+        elif target_mode is OpportunityAutonomyMode.PAPER_AUTONOMOUS:
+            if observed_outcomes < policy.minimum_total_outcomes_to_keep_paper:
+                target_mode = _downgrade_clamp_mode(
+                    requested_mode=requested_mode,
+                    current_mode=target_mode,
+                    candidate_mode=OpportunityAutonomyMode.SHADOW_ONLY,
+                )
+                reasons.append("paper_autonomy_requires_more_outcomes")
+
+        downgraded = _AUTONOMY_MODE_ORDER[target_mode] < _AUTONOMY_MODE_ORDER[requested_mode]
+        if not reasons:
+            reasons.append("downgrade_not_required")
+        primary_reason = reasons[0]
+        step_count = max(0, _AUTONOMY_MODE_ORDER[requested_mode] - _AUTONOMY_MODE_ORDER[target_mode])
+        return OpportunityAutonomyDowngradeDecision(
+            requested_mode=requested_mode,
+            effective_mode=target_mode,
+            downgraded=downgraded,
+            primary_reason=primary_reason,
+            reasons=tuple(reasons),
+            blocking_reasons=blocking_reasons,
+            warnings=tuple(warnings),
+            downgrade_step_count=step_count,
+            downgrade_source="opportunity_autonomy_downgrade_policy_v1",
+            evidence_summary=evidence_summary,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return OpportunityAutonomyDowngradeDecision(
+            requested_mode=requested_mode,
+            effective_mode=_downgrade_clamp_mode(
+                requested_mode=requested_mode,
+                current_mode=requested_mode,
+                candidate_mode=policy.fail_closed_mode,
+            ),
+            downgraded=True,
+            primary_reason="downgrade_evaluation_failed",
+            reasons=("downgrade_evaluation_failed",),
+            blocking_reasons=blocking_reasons,
+            warnings=(*warnings, f"downgrade_evaluation_error:{exc}"),
+            downgrade_step_count=max(
+                0,
+                _AUTONOMY_MODE_ORDER[requested_mode]
+                - _AUTONOMY_MODE_ORDER[
+                    _downgrade_clamp_mode(
+                        requested_mode=requested_mode,
+                        current_mode=requested_mode,
+                        candidate_mode=policy.fail_closed_mode,
+                    )
+                ],
+            ),
+            downgrade_source="opportunity_autonomy_downgrade_policy_v1",
+            evidence_summary=evidence_summary,
+        )
 
 
 def evaluate_opportunity_execution_permission(
@@ -575,10 +842,13 @@ class OpportunityLifecycleService:
 
 
 __all__ = [
+    "OpportunityAutonomyDowngradeConfig",
+    "OpportunityAutonomyDowngradeDecision",
     "OpportunityAutonomyDecision",
     "OpportunityAutonomyGateConfig",
     "OpportunityAutonomyMode",
     "OpportunityExecutionPermission",
+    "evaluate_autonomy_downgrade",
     "evaluate_opportunity_execution_permission",
     "OpportunityActivationReadiness",
     "OpportunityLifecycleService",
