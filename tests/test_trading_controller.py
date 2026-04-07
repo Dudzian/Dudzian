@@ -376,6 +376,19 @@ _AUTONOMY_CHAIN_EXPECTED_KEYS = (
     "autonomy_decisive_reason",
 )
 
+_AUTONOMY_CONTRACT_CROSS_SINK_KEYS = (
+    "autonomy_final_mode",
+    "autonomy_decisive_stage",
+    "autonomy_decisive_reason",
+    "autonomy_primary_reason",
+)
+
+_AUTONOMY_CONTRACT_UPSTREAM_PROVENANCE_KEYS = (
+    "upstream_autonomy_decision_source",
+    "upstream_autonomy_inference_model",
+    "upstream_autonomy_inference_model_version",
+)
+
 
 def _autonomy_signal_with_correlation(
     *,
@@ -391,6 +404,16 @@ def _autonomy_signal_with_correlation(
     metadata["opportunity_decision_timestamp"] = decision_timestamp.isoformat()
     signal.metadata = metadata
     return signal
+
+
+def _assert_autonomy_contract_consistent_with_provenance(
+    event: Mapping[str, str], provenance: Mapping[str, object]
+) -> None:
+    for key in _AUTONOMY_CONTRACT_CROSS_SINK_KEYS:
+        assert provenance.get(key) == event.get(key)
+    if any(event.get(key) for key in _AUTONOMY_CONTRACT_UPSTREAM_PROVENANCE_KEYS):
+        for key in _AUTONOMY_CONTRACT_UPSTREAM_PROVENANCE_KEYS:
+            assert provenance.get(key) == event.get(key)
 
 
 class StubTCOReporter:
@@ -5044,6 +5067,424 @@ def test_opportunity_autonomy_reason_precedence_fully_allowed_path_keeps_primary
     assert event["autonomy_decisive_reason"] == "reason:live_autonomous"
     assert "blocking_reason" not in event
     assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
+
+
+def test_opportunity_autonomy_cross_sink_consistency_upstream_governance_downgrade() -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="live_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                assisted_approval=True,
+                decision_effective_mode="live_assisted",
+                decision_primary_reason="upstream_downgraded_to_assisted",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "final" and label.correlation_key == correlation_key
+    ]
+    assert len(final_labels) == 1
+    _assert_autonomy_contract_consistent_with_provenance(event, final_labels[0].provenance)
+
+
+def test_opportunity_autonomy_cross_sink_consistency_readiness_clamp() -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        assisted_approval=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_initial_allow",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {**dict(signal.metadata), "opportunity_autonomy_decision": decision_payload}
+    controller.process_signals([signal])
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "final" and label.correlation_key == correlation_key
+    ]
+    assert len(final_labels) == 1
+    _assert_autonomy_contract_consistent_with_provenance(event, final_labels[0].provenance)
+
+
+def test_opportunity_autonomy_cross_sink_consistency_performance_guard_rewrite() -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="live_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                assisted_approval=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="upstream_initial_allow",
+                performance_guard_effective_mode="live_assisted",
+                performance_guard_primary_reason="insufficient_recent_final_outcomes_for_live",
+                decision_payload_decision_source="guard_source",
+                decision_payload_inference_model="guard_model",
+                decision_payload_inference_model_version="2026.04.09",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "final" and label.correlation_key == correlation_key
+    ]
+    assert len(final_labels) == 1
+    _assert_autonomy_contract_consistent_with_provenance(event, final_labels[0].provenance)
+
+
+def test_opportunity_autonomy_cross_sink_consistency_fail_closed_local_guard() -> None:
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_payload_decision_source="fail_closed_source",
+                decision_payload_inference_model="fail_closed_model",
+                decision_payload_inference_model_version="2026.04.10",
+            )
+        ]
+    )
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_decisive_stage"] == "fail_closed"
+    assert event["autonomy_primary_reason"] == event["autonomy_decisive_reason"]
+
+
+def test_opportunity_autonomy_cross_sink_consistency_fully_allowed_branch() -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="live_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                assisted_approval=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="upstream_allow_final",
+                decision_payload_decision_source="allow_source",
+                decision_payload_inference_model="allow_model",
+                decision_payload_inference_model_version="2026.04.11",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "final" and label.correlation_key == correlation_key
+    ]
+    assert len(final_labels) == 1
+    _assert_autonomy_contract_consistent_with_provenance(event, final_labels[0].provenance)
+
+
+def test_opportunity_autonomy_cross_sink_open_outcome_persists_extended_contract_fields() -> None:
+    decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repo_dir = Path(tempfile.mkdtemp(prefix="shadow-repo-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+
+    result = controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="paper_allow",
+                decision_payload_decision_source="open_source",
+                decision_payload_inference_model="open_model",
+                decision_payload_inference_model_version="2026.04.12",
+            )
+        ]
+    )
+
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    open_rows = repository.load_open_outcomes()
+    assert len(open_rows) == 1
+    _assert_autonomy_contract_consistent_with_provenance(event, open_rows[0].provenance)
+
+
+def test_opportunity_autonomy_cross_sink_restore_roundtrip_preserves_extended_contract_fields() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repo_dir = Path(tempfile.mkdtemp(prefix="shadow-repo-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller_open, execution_open, journal_open = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    open_result = controller_open.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="paper_allow",
+                decision_payload_decision_source="restore_source",
+                decision_payload_inference_model="restore_model",
+                decision_payload_inference_model_version="2026.04.13",
+            )
+        ]
+    )
+    assert len(open_result) == 1
+    assert len(execution_open.requests) == 1
+    open_event = _last_event(journal_open, "opportunity_autonomy_enforcement")
+    open_rows_before_restart = repository.load_open_outcomes()
+    assert len(open_rows_before_restart) == 1
+    _assert_autonomy_contract_consistent_with_provenance(
+        open_event, open_rows_before_restart[0].provenance
+    )
+
+    controller_close, _execution_close, _journal_close = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    controller_close.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "final" and label.correlation_key == correlation_key
+    ]
+    assert len(final_labels) == 1
+    _assert_autonomy_contract_consistent_with_provenance(open_event, final_labels[0].provenance)
+
+
+def test_opportunity_autonomy_cross_sink_partial_label_preserves_extended_contract_fields() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repo_dir = Path(tempfile.mkdtemp(prefix="shadow-repo-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 101.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    open_result = controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="paper_allow",
+                decision_payload_decision_source="partial_source",
+                decision_payload_inference_model="partial_model",
+                decision_payload_inference_model_version="2026.04.14",
+            )
+        ]
+    )
+    assert len(open_result) == 1
+    open_event = _last_event(journal, "opportunity_autonomy_enforcement")
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+
+    partial_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "partial_exit_unconfirmed"
+        and label.correlation_key == correlation_key
+    ]
+    assert len(partial_labels) == 1
+    _assert_autonomy_contract_consistent_with_provenance(open_event, partial_labels[0].provenance)
 
 
 def test_opportunity_autonomy_downgrade_chain_is_persisted_into_open_outcome_and_final_label() -> (
