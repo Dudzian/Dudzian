@@ -8918,9 +8918,7 @@ def test_opportunity_autonomy_close_with_correlation_key_never_resolves_to_ambig
     assert unresolved_events
     assert unresolved_events[-1]["close_correlation_resolution"] != "ambiguous"
     labels = shadow_repo.load_outcome_labels()
-    assert not any(
-        label.label_quality in {"final", "partial_exit_unconfirmed"} for label in labels
-    )
+    assert not any(label.label_quality in {"final", "partial_exit_unconfirmed"} for label in labels)
     assert all(
         label.provenance.get("autonomy_decisive_reason", "").startswith("open_reason_")
         for label in labels
@@ -9095,7 +9093,11 @@ def test_opportunity_autonomy_close_with_missing_correlation_key_does_not_mutate
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=existing_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=existing_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     shadow_repo.append_shadow_records(
         [
