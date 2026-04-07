@@ -677,7 +677,9 @@ class TradingController:
             restored_portfolio = (
                 str(restored_portfolio_raw).strip() if restored_portfolio_raw is not None else ""
             )
-            autonomy_chain = self._extract_opportunity_autonomy_provenance_chain(restored_provenance)
+            autonomy_chain = self._extract_opportunity_autonomy_provenance_chain(
+                restored_provenance
+            )
             self._opportunity_open_outcomes[row.correlation_key] = _OpportunityOpenOutcomeTracker(
                 correlation_key=row.correlation_key,
                 symbol=row.symbol,
@@ -1788,7 +1790,8 @@ class TradingController:
             return candidate or None
 
         requested_mode = _as_non_empty_string(
-            metadata.get("upstream_autonomy_requested_mode") or metadata.get("autonomy_requested_mode")
+            metadata.get("upstream_autonomy_requested_mode")
+            or metadata.get("autonomy_requested_mode")
         )
         upstream_effective_mode = _as_non_empty_string(
             metadata.get("upstream_autonomy_effective_mode")
@@ -1811,8 +1814,12 @@ class TradingController:
 
         blocking_reason = _as_non_empty_string(metadata.get("blocking_reason"))
         primary_reason = _as_non_empty_string(metadata.get("autonomy_primary_reason"))
-        upstream_primary_reason = _as_non_empty_string(metadata.get("upstream_autonomy_primary_reason"))
-        guard_primary_reason = _as_non_empty_string(metadata.get("performance_guard_primary_reason"))
+        upstream_primary_reason = _as_non_empty_string(
+            metadata.get("upstream_autonomy_primary_reason")
+        )
+        guard_primary_reason = _as_non_empty_string(
+            metadata.get("performance_guard_primary_reason")
+        )
         readiness_clamp_reason = next(
             (
                 reason
@@ -2611,8 +2618,8 @@ class TradingController:
                         tracked.autonomy_local_guard_effective_mode
                         or autonomy_chain.get("autonomy_local_guard_effective_mode")
                     )
-                    tracked.autonomy_final_mode = (
-                        tracked.autonomy_final_mode or autonomy_chain.get("autonomy_final_mode")
+                    tracked.autonomy_final_mode = tracked.autonomy_final_mode or autonomy_chain.get(
+                        "autonomy_final_mode"
                     )
                     tracked.autonomy_decisive_stage = (
                         tracked.autonomy_decisive_stage
@@ -2632,7 +2639,9 @@ class TradingController:
                         max_adverse_excursion_bps=0.0,
                         provenance={
                             "source": "trading_controller_exit_result",
-                            **self._extract_opportunity_autonomy_provenance_chain_from_tracker(tracked),
+                            **self._extract_opportunity_autonomy_provenance_chain_from_tracker(
+                                tracked
+                            ),
                             **({"environment": scope_environment} if scope_environment else {}),
                             **({"portfolio": scope_portfolio} if scope_portfolio else {}),
                             **(
@@ -2698,8 +2707,7 @@ class TradingController:
                             or autonomy_chain.get("autonomy_local_guard_effective_mode")
                         )
                         tracked.autonomy_final_mode = (
-                            tracked.autonomy_final_mode
-                            or autonomy_chain.get("autonomy_final_mode")
+                            tracked.autonomy_final_mode or autonomy_chain.get("autonomy_final_mode")
                         )
                         tracked.autonomy_decisive_stage = (
                             tracked.autonomy_decisive_stage
