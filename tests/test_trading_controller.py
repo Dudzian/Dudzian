@@ -899,8 +899,7 @@ def test_opportunity_autonomy_exception_contract_extract_failure_keeps_fail_safe
     assert event["blocking_reason"] == "autonomy_permission_evaluation_failed"
     assert event["autonomy_primary_reason"] == "autonomy_permission_evaluation_failed"
     assert (
-        event["performance_guard_primary_reason"]
-        == "payload_guard_reason_visible_in_diagnostics"
+        event["performance_guard_primary_reason"] == "payload_guard_reason_visible_in_diagnostics"
     )
     assert event["autonomy_requested_mode"] == "live_autonomous"
     assert event["autonomy_upstream_effective_mode"] == "live_assisted"
@@ -949,14 +948,22 @@ def test_opportunity_autonomy_exception_contract_after_local_guard_uses_determin
     assert event["autonomy_mode"] == "unavailable"
     assert event["status"] == "blocked"
     assert event["blocking_reason"] == "autonomy_permission_evaluation_failed_after_local_guard"
-    assert event["autonomy_primary_reason"] == "autonomy_permission_evaluation_failed_after_local_guard"
-    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert (
+        event["autonomy_primary_reason"]
+        == "autonomy_permission_evaluation_failed_after_local_guard"
+    )
+    assert (
+        event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    )
     assert event["autonomy_requested_mode"] == "live_autonomous"
     assert event["autonomy_upstream_effective_mode"] == "live_autonomous"
     assert event["autonomy_local_guard_effective_mode"] == "live_assisted"
     assert event["autonomy_final_mode"] == "unavailable"
     assert event["autonomy_decisive_stage"] == "fail_closed"
-    assert event["autonomy_decisive_reason"] == "autonomy_permission_evaluation_failed_after_local_guard"
+    assert (
+        event["autonomy_decisive_reason"]
+        == "autonomy_permission_evaluation_failed_after_local_guard"
+    )
 
 
 def test_opportunity_autonomy_exception_contract_extract_failure_with_payload_guard_block_uses_local_guard_fallback(
@@ -1132,8 +1139,9 @@ def test_opportunity_autonomy_enforcement_readiness_clamp_preserves_full_reasons
     ]
 
 
-def test_opportunity_autonomy_enforcement_performance_guard_rewrite_preserves_upstream_provenance(
-) -> None:
+def test_opportunity_autonomy_enforcement_performance_guard_rewrite_preserves_upstream_provenance() -> (
+    None
+):
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
         opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
@@ -1174,7 +1182,9 @@ def test_opportunity_autonomy_enforcement_performance_guard_rewrite_preserves_up
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_mode"] == "paper_autonomous"
     assert json.loads(event["autonomy_reasons"]) == ["insufficient_recent_final_outcomes_for_live"]
-    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert (
+        event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    )
     assert event["upstream_autonomy_decision_source"] == "readiness_source"
     assert event["upstream_autonomy_inference_model"] == "readiness_model"
     assert event["upstream_autonomy_inference_model_version"] == "2026.04.11"
@@ -4536,7 +4546,9 @@ def test_opportunity_autonomy_local_guard_insufficient_outcomes_blocks_and_keeps
     assert event["autonomy_mode"] == "live_assisted"
     assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
     assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
-    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert (
+        event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    )
     assert event["upstream_autonomy_effective_mode"] == "live_autonomous"
     assert event["upstream_autonomy_primary_reason"] == "upstream_no_breach_visible"
     assert event["upstream_autonomy_decision_source"] == "no_breach_source"
@@ -4990,7 +5002,9 @@ def test_opportunity_autonomy_reason_precedence_performance_guard_rewrite_overri
     assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
     assert event["autonomy_decisive_reason"] == "insufficient_recent_final_outcomes_for_live"
     assert "blocking_reason" not in event
-    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert (
+        event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    )
 
 
 def test_opportunity_autonomy_reason_precedence_fail_closed_local_guard_keeps_blocking_reason_authoritative() -> (
