@@ -1736,7 +1736,9 @@ def test_opportunity_autonomy_malformed_request_payload_does_not_mask_signal_pay
     assert event["autonomous_execution_allowed"] == "false"
 
 
-def test_opportunity_autonomy_extract_decision_uses_request_payload_and_normalizes_governance_fields() -> None:
+def test_opportunity_autonomy_extract_decision_uses_request_payload_and_normalizes_governance_fields() -> (
+    None
+):
     controller, _execution, _journal = _build_autonomy_controller(environment="live")
     signal = _opportunity_autonomy_signal(
         "live_autonomous",
@@ -1834,7 +1836,9 @@ def test_opportunity_autonomy_extract_decision_ignores_malformed_payload_context
     assert decision.evidence_summary == {}
 
 
-def test_opportunity_autonomy_extract_decision_prefers_request_payload_reasons_over_signal_payload() -> None:
+def test_opportunity_autonomy_extract_decision_prefers_request_payload_reasons_over_signal_payload() -> (
+    None
+):
     controller, _execution, _journal = _build_autonomy_controller(environment="live")
     signal = _opportunity_autonomy_signal(
         "live_assisted",
@@ -1868,7 +1872,9 @@ def test_opportunity_autonomy_extract_decision_prefers_request_payload_reasons_o
     assert decision.reasons == ("request_reason", "request_extra_reason")
 
 
-def test_opportunity_autonomy_extract_decision_without_reasons_key_falls_back_to_primary_reason() -> None:
+def test_opportunity_autonomy_extract_decision_without_reasons_key_falls_back_to_primary_reason() -> (
+    None
+):
     controller, _execution, _journal = _build_autonomy_controller(environment="live")
     signal = _opportunity_autonomy_signal(
         "live_assisted",
@@ -1963,7 +1969,9 @@ def test_opportunity_autonomy_extract_decision_handles_malformed_or_empty_payloa
     assert decision.reasons == expected_reasons
 
 
-def test_opportunity_autonomy_extract_decision_readiness_blocker_not_overridden_by_performance_guard_reason() -> None:
+def test_opportunity_autonomy_extract_decision_readiness_blocker_not_overridden_by_performance_guard_reason() -> (
+    None
+):
     controller, _execution, _journal = _build_autonomy_controller(environment="live")
     signal = _opportunity_autonomy_signal(
         "live_autonomous",
@@ -2002,7 +2010,9 @@ def test_opportunity_autonomy_extract_decision_readiness_blocker_not_overridden_
     )
 
 
-def test_opportunity_autonomy_extract_decision_without_blocker_keeps_performance_guard_primary_reason() -> None:
+def test_opportunity_autonomy_extract_decision_without_blocker_keeps_performance_guard_primary_reason() -> (
+    None
+):
     controller, _execution, _journal = _build_autonomy_controller(environment="live")
     signal = _opportunity_autonomy_signal(
         "live_assisted",
