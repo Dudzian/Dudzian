@@ -1980,6 +1980,485 @@ def test_opportunity_autonomy_downgrade_chain_readiness_clamp_allowed_assisted_p
     )
 
 
+def test_opportunity_autonomy_readiness_clamp_propagates_to_execution_proxy_pending_exit() -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller, _execution, _journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": decision_payload,
+    }
+    controller.process_signals([signal])
+
+    proxy_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key
+        and label.label_quality == "execution_proxy_pending_exit"
+    ]
+    assert len(proxy_labels) == 1
+    provenance = proxy_labels[0].provenance
+    assert provenance.get("autonomy_requested_mode") == "live_autonomous"
+    assert provenance.get("autonomy_final_mode") == "live_assisted"
+    assert provenance.get("autonomy_decisive_stage") == "readiness_clamp"
+    assert (
+        provenance.get("autonomy_decisive_reason")
+        == "promotion_not_ready_for_live_autonomous"
+    )
+
+
+def test_opportunity_autonomy_readiness_clamp_open_restart_final_preserves_identical_chain_without_partial() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller_open, _execution_open, _journal_open = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": decision_payload,
+    }
+    controller_open.process_signals([signal])
+
+    open_rows = repository.load_open_outcomes()
+    assert len(open_rows) == 1
+    chain_before_restart = {
+        key: open_rows[0].provenance.get(key) for key in _AUTONOMY_CHAIN_EXPECTED_KEYS
+    }
+
+    controller_close, _execution_close, _journal_close = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    controller_close.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key and label.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    for key in _AUTONOMY_CHAIN_EXPECTED_KEYS:
+        assert final_labels[0].provenance.get(key) == chain_before_restart[key]
+
+
+def test_opportunity_autonomy_readiness_clamp_direct_final_conflicting_close_preserves_entry_chain() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller, _execution, _journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": decision_payload,
+    }
+    controller.process_signals([signal])
+    chain_a = {
+        "autonomy_requested_mode": "live_autonomous",
+        "autonomy_upstream_effective_mode": "live_autonomous",
+        "autonomy_local_guard_effective_mode": "live_assisted",
+        "autonomy_final_mode": "live_assisted",
+        "autonomy_decisive_stage": "readiness_clamp",
+        "autonomy_decisive_reason": "promotion_not_ready_for_live_autonomous",
+    }
+
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="live_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=True,
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="close_chain_b_reason",
+            )
+        ]
+    )
+
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key and label.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    for key, value in chain_a.items():
+        assert final_labels[0].provenance.get(key) == value
+
+
+def test_opportunity_autonomy_readiness_clamp_propagates_to_partial_and_open_outcome() -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 101.0},
+        ]
+    )
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="live",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": decision_payload,
+    }
+    controller.process_signals([signal])
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+
+    expected_chain = {
+        "autonomy_requested_mode": "live_autonomous",
+        "autonomy_upstream_effective_mode": "live_autonomous",
+        "autonomy_local_guard_effective_mode": "live_assisted",
+        "autonomy_final_mode": "live_assisted",
+        "autonomy_decisive_stage": "readiness_clamp",
+        "autonomy_decisive_reason": "promotion_not_ready_for_live_autonomous",
+    }
+    partial_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key
+        and label.label_quality == "partial_exit_unconfirmed"
+    ]
+    assert len(partial_labels) == 1
+    open_rows = repository.load_open_outcomes()
+    assert len(open_rows) == 1
+    for key, value in expected_chain.items():
+        assert partial_labels[0].provenance.get(key) == value
+        assert open_rows[0].provenance.get(key) == value
+
+
+def test_opportunity_autonomy_readiness_clamp_partial_restart_final_preserves_identical_chain() -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    execution_open_partial = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 101.0},
+        ]
+    )
+    controller_open_partial, _journal_open_partial = _build_autonomy_controller_with_execution(
+        environment="live",
+        execution_service=execution_open_partial,
+        opportunity_shadow_repository=repository,
+    )
+
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": decision_payload,
+    }
+    controller_open_partial.process_signals([signal])
+    controller_open_partial.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+
+    partial_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key
+        and label.label_quality == "partial_exit_unconfirmed"
+    ]
+    assert len(partial_labels) == 1
+    partial_chain = {
+        key: partial_labels[0].provenance.get(key) for key in _AUTONOMY_CHAIN_EXPECTED_KEYS
+    }
+
+    controller_final, _journal_final = _build_autonomy_controller_with_execution(
+        environment="live",
+        execution_service=DummyExecutionService(),
+        opportunity_shadow_repository=repository,
+    )
+    controller_final.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key and label.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    for key in _AUTONOMY_CHAIN_EXPECTED_KEYS:
+        assert final_labels[0].provenance.get(key) == partial_chain[key]
+
+
+def test_opportunity_autonomy_readiness_clamp_conflicting_close_chain_does_not_overwrite_first_write() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    execution_open_partial = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 101.0},
+        ]
+    )
+    controller_open_partial, _journal_open_partial = _build_autonomy_controller_with_execution(
+        environment="live",
+        execution_service=execution_open_partial,
+        opportunity_shadow_repository=repository,
+    )
+
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": decision_payload,
+    }
+    controller_open_partial.process_signals([signal])
+    chain_a = {
+        "autonomy_requested_mode": "live_autonomous",
+        "autonomy_upstream_effective_mode": "live_autonomous",
+        "autonomy_local_guard_effective_mode": "live_assisted",
+        "autonomy_final_mode": "live_assisted",
+        "autonomy_decisive_stage": "readiness_clamp",
+        "autonomy_decisive_reason": "promotion_not_ready_for_live_autonomous",
+    }
+
+    controller_open_partial.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="live_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=True,
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="close_chain_b_reason",
+            )
+        ]
+    )
+
+    partial_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key
+        and label.label_quality == "partial_exit_unconfirmed"
+    ]
+    assert len(partial_labels) == 1
+    open_rows = repository.load_open_outcomes()
+    assert len(open_rows) == 1
+    for key, value in chain_a.items():
+        assert partial_labels[0].provenance.get(key) == value
+        assert open_rows[0].provenance.get(key) == value
+
+    controller_final, _journal_final = _build_autonomy_controller_with_execution(
+        environment="live",
+        execution_service=DummyExecutionService(),
+        opportunity_shadow_repository=repository,
+    )
+    controller_final.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="live_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=True,
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="close_chain_b_reason",
+            )
+        ]
+    )
+
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key and label.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    for key, value in chain_a.items():
+        assert final_labels[0].provenance.get(key) == value
+
+
 def test_opportunity_autonomy_empty_request_mapping_does_not_fall_through_to_signal_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
