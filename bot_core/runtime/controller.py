@@ -1947,6 +1947,7 @@ class TradingController:
             return normalized
 
         payload_blocking_reasons: tuple[str, ...] = ()
+        payload_reasons: tuple[str, ...] | None = None
         payload_warnings: tuple[str, ...] = ()
         payload_evidence_summary: Mapping[str, object] = {}
         governance_live_blocking_reason: str | None = None
@@ -1959,6 +1960,8 @@ class TradingController:
             payload_blocking_reasons = _normalize_reason_sequence(
                 decision_payload.get("blocking_reasons")
             )
+            if "reasons" in decision_payload:
+                payload_reasons = _normalize_reason_sequence(decision_payload.get("reasons"))
             payload_warnings = _normalize_reason_sequence(decision_payload.get("warnings"))
             payload_evidence_summary = _normalize_evidence_summary(
                 decision_payload.get("evidence_summary")
@@ -2020,10 +2023,11 @@ class TradingController:
         if primary_reason_raw is None:
             primary_reason_raw = signal_metadata.get("opportunity_autonomy_primary_reason")
         primary_reason = str(primary_reason_raw or "").strip() or "unspecified_primary_reason"
+        reasons = payload_reasons if payload_reasons else (primary_reason,)
         return OpportunityAutonomyDecision(
             mode=mode,
             primary_reason=primary_reason,
-            reasons=(primary_reason,),
+            reasons=reasons,
             blocking_reasons=payload_blocking_reasons,
             warnings=payload_warnings,
             evidence_summary=payload_evidence_summary,
