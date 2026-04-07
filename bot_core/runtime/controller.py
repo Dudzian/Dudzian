@@ -2151,6 +2151,7 @@ class TradingController:
                 request,
                 include_performance_guard_payload=False,
             )
+            diagnostics["autonomy_reasons"] = decision.reasons
             performance_guard_recent_final_window_size = (
                 self.performance_guard_recent_final_window_size
                 if self.performance_guard_recent_final_window_size is not None
@@ -2179,6 +2180,7 @@ class TradingController:
                         environment=self.environment,
                         assisted_approval=assisted_approval,
                     )
+                    diagnostics["autonomy_reasons"] = fallback_decision.reasons
                     if _as_bool(diagnostics.get("performance_guard_blocked")):
                         guard_primary_reason = diagnostics.get("performance_guard_primary_reason")
                         fallback_permission = replace(
@@ -2238,6 +2240,7 @@ class TradingController:
                         environment=self.environment,
                         assisted_approval=assisted_approval,
                     )
+                    diagnostics["autonomy_reasons"] = fallback_decision.reasons
                     if _as_bool(diagnostics.get("performance_guard_blocked")):
                         guard_primary_reason = diagnostics.get("performance_guard_primary_reason")
                         fallback_permission = replace(
@@ -2321,6 +2324,7 @@ class TradingController:
                     decision,
                     mode=guard_decision.effective_mode,
                 )
+            diagnostics["autonomy_reasons"] = decision.reasons
             permission = evaluate_opportunity_execution_permission(
                 decision=decision,
                 environment=self.environment,

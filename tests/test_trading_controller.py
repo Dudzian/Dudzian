@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import tempfile
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -713,6 +714,7 @@ def test_opportunity_autonomy_enforcement_prefers_payload_primary_reason_for_eff
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_mode"] == "paper_autonomous"
     assert event["autonomy_primary_reason"] == "downgraded_to_paper_due_to_quality"
+    assert json.loads(event["autonomy_reasons"]) == ["downgraded_to_paper_due_to_quality"]
     assert event["performance_guard_primary_reason"] == "performance_guard_no_breach"
     assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
 
@@ -855,6 +857,108 @@ def test_opportunity_autonomy_enforcement_metadata_shape_is_stable() -> None:
     assert event["assisted_override_used"] == "false"
 
 
+def test_opportunity_autonomy_enforcement_uses_signal_payload_reasons_when_request_payload_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [12.0, 11.0, 10.0, 9.0, 8.0, 7.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_without_decision_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        metadata = dict(request.metadata or {})
+        metadata.pop("opportunity_autonomy_decision", None)
+        return replace(request, metadata=metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_without_decision_payload,
+    )
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="signal_primary_reason",
+        assisted_approval=False,
+    )
+    signal.metadata = {
+        **dict(signal.metadata or {}),
+        "opportunity_autonomy_decision": {
+            "effective_mode": "live_assisted",
+            "primary_reason": "signal_primary_reason",
+            "reasons": ["signal_primary_reason", "signal_extra_reason"],
+        },
+    }
+
+    result = controller.process_signals([signal])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert json.loads(event["autonomy_reasons"]) == [
+        "signal_primary_reason",
+        "signal_extra_reason",
+    ]
+
+
+def test_opportunity_autonomy_enforcement_readiness_clamp_preserves_full_reasons_contract() -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+        assisted_approval=False,
+    )
+    signal.metadata = {
+        **dict(signal.metadata or {}),
+        "opportunity_autonomy_decision": {
+            "effective_mode": "live_autonomous",
+            "primary_reason": "upstream_inconsistent_live_allow",
+            "blocking_reasons": [
+                "promotion_not_ready_for_live_autonomous",
+                "other_blocker",
+            ],
+            "reasons": [
+                "upstream_inconsistent_live_allow",
+                "governance_hint",
+            ],
+        },
+    }
+    result = controller.process_signals([signal])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "live_assisted"
+    assert json.loads(event["autonomy_reasons"]) == [
+        "promotion_not_ready_for_live_autonomous",
+        "upstream_inconsistent_live_allow",
+        "governance_hint",
+    ]
+
+
 def test_opportunity_autonomy_runtime_local_snapshot_good_outcomes_allow_execution() -> None:
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
@@ -900,6 +1004,9 @@ def test_opportunity_autonomy_runtime_local_snapshot_soft_breach_downgrades_and_
     assert (
         event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
     )
+    assert json.loads(event["autonomy_reasons"]) == [
+        "insufficient_recent_final_outcomes_for_live",
+    ]
     assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
 
 
@@ -936,6 +1043,7 @@ def test_opportunity_autonomy_runtime_missing_repository_fails_closed_with_audit
     assert event["status"] == "blocked"
     assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
     assert event["performance_guard_source"] == "missing_repository_fail_closed"
+    assert json.loads(event["autonomy_reasons"]) == ["reason:live_autonomous"]
     assert event["performance_guard_recent_final_window_size"] == "20"
     assert event["performance_guard_max_scan_labels"] == "256"
 
@@ -986,6 +1094,7 @@ def test_opportunity_autonomy_runtime_snapshot_load_failure_still_emits_guard_li
     assert event["status"] == "blocked"
     assert event["performance_guard_source"] == "local_snapshot_source_of_truth_failed"
     assert event["blocking_reason"] == "performance_guard_snapshot_load_failed"
+    assert json.loads(event["autonomy_reasons"]) == ["reason:live_autonomous"]
     assert event["performance_guard_recent_final_window_size"] == "20"
     assert event["performance_guard_max_scan_labels"] == "256"
 
