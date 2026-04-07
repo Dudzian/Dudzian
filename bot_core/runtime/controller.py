@@ -1922,6 +1922,7 @@ class TradingController:
         mode_candidates: list[OpportunityAutonomyMode] = []
         if mode_raw is not None:
             mode_candidates.append(OpportunityAutonomyMode(str(mode_raw).strip().lower()))
+
         def _as_non_empty_string(value: object | None) -> str | None:
             if value is None:
                 return None
@@ -1970,9 +1971,8 @@ class TradingController:
                 if _is_live_autonomy_admission_blocker_reason(reason):
                     governance_live_blocking_reason = reason.lower()
                     break
-        if (
-            governance_live_blocking_reason is not None
-            and any(candidate == OpportunityAutonomyMode.LIVE_AUTONOMOUS for candidate in mode_candidates)
+        if governance_live_blocking_reason is not None and any(
+            candidate == OpportunityAutonomyMode.LIVE_AUTONOMOUS for candidate in mode_candidates
         ):
             mode_candidates.append(OpportunityAutonomyMode.LIVE_ASSISTED)
         if include_performance_guard_payload and performance_guard_payload is not None:
