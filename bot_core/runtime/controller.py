@@ -1922,6 +1922,33 @@ class TradingController:
         mode_candidates: list[OpportunityAutonomyMode] = []
         if mode_raw is not None:
             mode_candidates.append(OpportunityAutonomyMode(str(mode_raw).strip().lower()))
+        def _as_non_empty_string(value: object | None) -> str | None:
+            if value is None:
+                return None
+            candidate = str(value).strip()
+            return candidate or None
+
+        def _normalize_reason_sequence(value: object | None) -> tuple[str, ...]:
+            if not isinstance(value, SequenceABC) or isinstance(value, (str, bytes, bytearray)):
+                return ()
+            normalized: list[str] = []
+            for item in value:
+                candidate = _as_non_empty_string(item)
+                if candidate is not None:
+                    normalized.append(candidate)
+            return tuple(normalized)
+
+        def _normalize_evidence_summary(value: object | None) -> Mapping[str, object]:
+            if not isinstance(value, Mapping):
+                return {}
+            normalized: dict[str, object] = {}
+            for key, entry in sorted(value.items(), key=lambda item: str(item[0])):
+                normalized[str(key)] = entry
+            return normalized
+
+        payload_blocking_reasons: tuple[str, ...] = ()
+        payload_warnings: tuple[str, ...] = ()
+        payload_evidence_summary: Mapping[str, object] = {}
         governance_live_blocking_reason: str | None = None
         if decision_payload is not None:
             effective_mode_raw = decision_payload.get("effective_mode")
@@ -1929,17 +1956,20 @@ class TradingController:
                 mode_candidates.append(
                     OpportunityAutonomyMode(str(effective_mode_raw).strip().lower())
                 )
-            blocking_reasons_raw = decision_payload.get("blocking_reasons")
-            if isinstance(blocking_reasons_raw, SequenceABC) and not isinstance(
-                blocking_reasons_raw, (str, bytes, bytearray)
-            ):
-                for raw_reason in blocking_reasons_raw:
-                    candidate_reason = str(raw_reason or "").strip().lower()
-                    if _is_live_autonomy_admission_blocker_reason(candidate_reason):
-                        governance_live_blocking_reason = candidate_reason
-                        break
-        if governance_live_blocking_reason is not None and any(
-            candidate == OpportunityAutonomyMode.LIVE_AUTONOMOUS for candidate in mode_candidates
+            payload_blocking_reasons = _normalize_reason_sequence(
+                decision_payload.get("blocking_reasons")
+            )
+            payload_warnings = _normalize_reason_sequence(decision_payload.get("warnings"))
+            payload_evidence_summary = _normalize_evidence_summary(
+                decision_payload.get("evidence_summary")
+            )
+            for reason in payload_blocking_reasons:
+                if _is_live_autonomy_admission_blocker_reason(reason):
+                    governance_live_blocking_reason = reason.lower()
+                    break
+        if (
+            governance_live_blocking_reason is not None
+            and any(candidate == OpportunityAutonomyMode.LIVE_AUTONOMOUS for candidate in mode_candidates)
         ):
             mode_candidates.append(OpportunityAutonomyMode.LIVE_ASSISTED)
         if include_performance_guard_payload and performance_guard_payload is not None:
@@ -1977,7 +2007,11 @@ class TradingController:
                 primary_reason_raw = payload_primary_reason
         if governance_live_blocking_reason is not None:
             primary_reason_raw = governance_live_blocking_reason
-        if include_performance_guard_payload and performance_guard_payload is not None:
+        if (
+            governance_live_blocking_reason is None
+            and include_performance_guard_payload
+            and performance_guard_payload is not None
+        ):
             guard_reason = performance_guard_payload.get("primary_reason")
             if guard_reason is not None:
                 primary_reason_raw = guard_reason
@@ -1990,9 +2024,9 @@ class TradingController:
             mode=mode,
             primary_reason=primary_reason,
             reasons=(primary_reason,),
-            blocking_reasons=(),
-            warnings=(),
-            evidence_summary={},
+            blocking_reasons=payload_blocking_reasons,
+            warnings=payload_warnings,
+            evidence_summary=payload_evidence_summary,
         )
 
     def _evaluate_opportunity_execution_permission(
