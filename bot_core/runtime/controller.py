@@ -1668,6 +1668,9 @@ class TradingController:
             primary_reason = _as_non_empty_string(payload.get("primary_reason"))
             downgrade_source = _as_non_empty_string(payload.get("downgrade_source"))
             downgrade_step_count_raw = payload.get("downgrade_step_count")
+            decision_source = _as_non_empty_string(payload.get("decision_source"))
+            inference_model = _as_non_empty_string(payload.get("inference_model"))
+            inference_model_version = _as_non_empty_string(payload.get("inference_model_version"))
             blocking_reasons = _normalize_reason_sequence(payload.get("blocking_reasons"))
             warnings = _normalize_reason_sequence(payload.get("warnings"))
             evidence_summary = _normalize_evidence_summary(payload.get("evidence_summary"))
@@ -1682,6 +1685,9 @@ class TradingController:
                         isinstance(downgrade_step_count_raw, int)
                         and not isinstance(downgrade_step_count_raw, bool)
                     ),
+                    decision_source is not None,
+                    inference_model is not None,
+                    inference_model_version is not None,
                     blocking_reasons is not None and len(blocking_reasons) > 0,
                     warnings is not None and len(warnings) > 0,
                     evidence_summary is not None and len(evidence_summary) > 0,
@@ -1766,6 +1772,18 @@ class TradingController:
             downgrade_step_count_raw, bool
         ):
             metadata["upstream_autonomy_downgrade_step_count"] = downgrade_step_count_raw
+
+        decision_source = _as_non_empty_string(payload.get("decision_source"))
+        if decision_source is not None:
+            metadata["upstream_autonomy_decision_source"] = decision_source
+
+        inference_model = _as_non_empty_string(payload.get("inference_model"))
+        if inference_model is not None:
+            metadata["upstream_autonomy_inference_model"] = inference_model
+
+        inference_model_version = _as_non_empty_string(payload.get("inference_model_version"))
+        if inference_model_version is not None:
+            metadata["upstream_autonomy_inference_model_version"] = inference_model_version
 
         blocking_reasons = _normalize_reason_sequence(payload.get("blocking_reasons"))
         if blocking_reasons is not None:

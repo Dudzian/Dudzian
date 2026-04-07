@@ -237,6 +237,8 @@ def _opportunity_autonomy_signal(
     decision_source: str | None = None,
     decision_payload_model_version: str | None = None,
     decision_payload_decision_source: str | None = None,
+    decision_payload_inference_model: str | None = None,
+    decision_payload_inference_model_version: str | None = None,
 ) -> StrategySignal:
     signal = _signal(side=side)
     metadata: dict[str, object] = dict(signal.metadata)
@@ -268,6 +270,18 @@ def _opportunity_autonomy_signal(
         if not isinstance(decision_payload, dict):
             decision_payload = {}
         decision_payload["decision_source"] = decision_payload_decision_source
+        metadata["opportunity_autonomy_decision"] = decision_payload
+    if decision_payload_inference_model is not None:
+        decision_payload = metadata.get("opportunity_autonomy_decision")
+        if not isinstance(decision_payload, dict):
+            decision_payload = {}
+        decision_payload["inference_model"] = decision_payload_inference_model
+        metadata["opportunity_autonomy_decision"] = decision_payload
+    if decision_payload_inference_model_version is not None:
+        decision_payload = metadata.get("opportunity_autonomy_decision")
+        if not isinstance(decision_payload, dict):
+            decision_payload = {}
+        decision_payload["inference_model_version"] = decision_payload_inference_model_version
         metadata["opportunity_autonomy_decision"] = decision_payload
     if (
         performance_guard_effective_mode is not None
@@ -312,6 +326,9 @@ def _upstream_governance_envelope(
     primary_reason: str | None = "upstream_downgrade",
     downgrade_source: str | None = "governance",
     downgrade_step_count: int | None = 2,
+    decision_source: str | None = None,
+    inference_model: str | None = None,
+    inference_model_version: str | None = None,
     blocking_reasons: object | None = None,
     warnings: object | None = None,
     evidence_summary: object | None = None,
@@ -329,6 +346,12 @@ def _upstream_governance_envelope(
         payload["downgrade_source"] = downgrade_source
     if downgrade_step_count is not None:
         payload["downgrade_step_count"] = downgrade_step_count
+    if decision_source is not None:
+        payload["decision_source"] = decision_source
+    if inference_model is not None:
+        payload["inference_model"] = inference_model
+    if inference_model_version is not None:
+        payload["inference_model_version"] = inference_model_version
     if blocking_reasons is not None:
         payload["blocking_reasons"] = blocking_reasons
     if warnings is not None:
@@ -957,6 +980,54 @@ def test_opportunity_autonomy_enforcement_readiness_clamp_preserves_full_reasons
         "upstream_inconsistent_live_allow",
         "governance_hint",
     ]
+
+
+def test_opportunity_autonomy_enforcement_performance_guard_rewrite_preserves_upstream_provenance(
+) -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+        assisted_approval=False,
+    )
+    signal.metadata = {
+        **dict(signal.metadata or {}),
+        "opportunity_autonomy_decision": {
+            "effective_mode": "live_autonomous",
+            "primary_reason": "upstream_inconsistent_live_allow",
+            "decision_source": "readiness_source",
+            "inference_model": "readiness_model",
+            "inference_model_version": "2026.04.11",
+            "blocking_reasons": [
+                "promotion_not_ready_for_live_autonomous",
+                "other_blocker",
+            ],
+            "reasons": [
+                "upstream_inconsistent_live_allow",
+                "governance_hint",
+            ],
+        },
+    }
+    result = controller.process_signals([signal])
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "paper_autonomous"
+    assert json.loads(event["autonomy_reasons"]) == ["insufficient_recent_final_outcomes_for_live"]
+    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["upstream_autonomy_decision_source"] == "readiness_source"
+    assert event["upstream_autonomy_inference_model"] == "readiness_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.04.11"
 
 
 def test_opportunity_autonomy_runtime_local_snapshot_good_outcomes_allow_execution() -> None:
@@ -3861,6 +3932,9 @@ def test_opportunity_autonomy_enforcement_emits_upstream_governance_fields_from_
         blocking_reasons=["guard_block", "risk_limit"],
         warnings=["warn_a", "warn_b"],
         evidence_summary={"zeta": 9, "alpha": {"sample": "ok"}},
+        decision_source="request_source",
+        inference_model="request_model",
+        inference_model_version="2026.04.07",
     )
 
     def _build_order_request_with_request_governance_payload(
@@ -3890,6 +3964,9 @@ def test_opportunity_autonomy_enforcement_emits_upstream_governance_fields_from_
     assert event["upstream_autonomy_primary_reason"] == "upstream_downgrade"
     assert event["upstream_autonomy_downgrade_source"] == "governance"
     assert event["upstream_autonomy_downgrade_step_count"] == "2"
+    assert event["upstream_autonomy_decision_source"] == "request_source"
+    assert event["upstream_autonomy_inference_model"] == "request_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.04.07"
     assert event["upstream_autonomy_blocking_reasons"] == '["guard_block","risk_limit"]'
     assert event["upstream_autonomy_warnings"] == '["warn_a","warn_b"]'
     assert event["upstream_autonomy_evidence_summary"] == '{"alpha":{"sample":"ok"},"zeta":9}'
@@ -3942,6 +4019,58 @@ def test_opportunity_autonomy_governance_uses_signal_payload_when_request_has_no
     assert event["upstream_autonomy_payload_source"] == "signal"
     assert event["upstream_autonomy_effective_mode"] == "paper_autonomous"
     assert event["upstream_autonomy_primary_reason"] == "signal_reason"
+
+
+def test_opportunity_autonomy_governance_signal_fallback_preserves_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_without_governance_envelope(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "performance_guard": {"effective_mode": "live_autonomous"}
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_without_governance_envelope,
+    )
+
+    controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_payload_decision_source="signal_source",
+                decision_payload_inference_model="signal_model",
+                decision_payload_inference_model_version="2026.04.08",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_payload_source"] == "signal"
+    assert event["upstream_autonomy_decision_source"] == "signal_source"
+    assert event["upstream_autonomy_inference_model"] == "signal_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.04.08"
 
 
 def test_opportunity_autonomy_request_with_empty_governance_values_does_not_mask_signal_payload(
@@ -4157,6 +4286,51 @@ def test_opportunity_autonomy_missing_useful_governance_envelope_emits_no_payloa
     assert "upstream_autonomy_primary_reason" not in event
 
 
+def test_opportunity_autonomy_provenance_only_payload_is_selected_as_useful_governance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
+        environment="live",
+        portfolio_id="live-1",
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    base_build_order_request = TradingController._build_order_request
+
+    def _build_order_request_with_provenance_only_payload(
+        self: TradingController,
+        signal: StrategySignal,
+        *,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> OrderRequest:
+        request = base_build_order_request(self, signal, extra_metadata=extra_metadata)
+        request_metadata = dict(request.metadata or {})
+        request_metadata["opportunity_autonomy_decision"] = {
+            "decision_source": "provenance_only_source",
+            "inference_model": "provenance_only_model",
+            "inference_model_version": "2026.04.12",
+        }
+        return replace(request, metadata=request_metadata)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_build_order_request",
+        _build_order_request_with_provenance_only_payload,
+    )
+
+    controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_payload_source"] == "request"
+    assert event["upstream_autonomy_decision_source"] == "provenance_only_source"
+    assert event["upstream_autonomy_inference_model"] == "provenance_only_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.04.12"
+    assert "upstream_autonomy_effective_mode" not in event
+    assert "upstream_autonomy_primary_reason" not in event
+
+
 def test_opportunity_autonomy_local_guard_block_keeps_upstream_governance_fields() -> None:
     controller, execution, journal = _build_autonomy_controller(environment="live")
     controller.process_signals(
@@ -4166,6 +4340,9 @@ def test_opportunity_autonomy_local_guard_block_keeps_upstream_governance_fields
                 include_decision_payload=True,
                 decision_effective_mode="live_autonomous",
                 decision_primary_reason="upstream_still_visible",
+                decision_payload_decision_source="guard_source",
+                decision_payload_inference_model="guard_model",
+                decision_payload_inference_model_version="2026.04.09",
             )
         ]
     )
@@ -4174,9 +4351,14 @@ def test_opportunity_autonomy_local_guard_block_keeps_upstream_governance_fields
     assert event["performance_guard_source"] == "missing_repository_fail_closed"
     assert event["upstream_autonomy_effective_mode"] == "live_autonomous"
     assert event["upstream_autonomy_primary_reason"] == "upstream_still_visible"
+    assert event["upstream_autonomy_decision_source"] == "guard_source"
+    assert event["upstream_autonomy_inference_model"] == "guard_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.04.09"
 
 
-def test_opportunity_autonomy_local_guard_no_breach_keeps_upstream_governance_fields() -> None:
+def test_opportunity_autonomy_local_guard_insufficient_outcomes_blocks_and_keeps_upstream_governance_fields() -> (
+    None
+):
     repository = _autonomy_shadow_repository_with_final_outcomes(
         [8.0, 7.0, 6.0, 5.0, 4.0, 3.0],
         environment="live",
@@ -4193,14 +4375,23 @@ def test_opportunity_autonomy_local_guard_no_breach_keeps_upstream_governance_fi
                 include_decision_payload=True,
                 decision_effective_mode="live_autonomous",
                 decision_primary_reason="upstream_no_breach_visible",
+                decision_payload_decision_source="no_breach_source",
+                decision_payload_inference_model="no_breach_model",
+                decision_payload_inference_model_version="2026.04.10",
             )
         ]
     )
     event = _last_event(journal, "opportunity_autonomy_enforcement")
-    assert len(execution.requests) == 1
+    assert len(execution.requests) == 0
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
     assert event["performance_guard_source"] == "local_snapshot_source_of_truth"
+    assert event["performance_guard_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
     assert event["upstream_autonomy_effective_mode"] == "live_autonomous"
     assert event["upstream_autonomy_primary_reason"] == "upstream_no_breach_visible"
+    assert event["upstream_autonomy_decision_source"] == "no_breach_source"
+    assert event["upstream_autonomy_inference_model"] == "no_breach_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.04.10"
 
 
 def test_opportunity_autonomy_governance_collections_are_serialized_stably(
