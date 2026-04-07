@@ -5095,7 +5095,11 @@ def test_opportunity_autonomy_cross_sink_consistency_upstream_governance_downgra
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, _execution, journal = _build_autonomy_controller(
         environment="live",
@@ -5149,7 +5153,11 @@ def test_opportunity_autonomy_cross_sink_consistency_readiness_clamp() -> None:
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, _execution, journal = _build_autonomy_controller(
         environment="live",
@@ -5202,7 +5210,11 @@ def test_opportunity_autonomy_cross_sink_consistency_performance_guard_rewrite()
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, _execution, journal = _build_autonomy_controller(
         environment="live",
@@ -5280,7 +5292,11 @@ def test_opportunity_autonomy_cross_sink_consistency_fully_allowed_branch() -> N
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, _execution, journal = _build_autonomy_controller(
         environment="live",
@@ -5335,7 +5351,11 @@ def test_opportunity_autonomy_cross_sink_open_outcome_persists_extended_contract
     repo_dir = Path(tempfile.mkdtemp(prefix="shadow-repo-"))
     repository = OpportunityShadowRepository(repo_dir)
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, execution, journal = _build_autonomy_controller(
         environment="paper",
@@ -5380,7 +5400,11 @@ def test_opportunity_autonomy_cross_sink_restore_roundtrip_preserves_extended_co
     repo_dir = Path(tempfile.mkdtemp(prefix="shadow-repo-"))
     repository = OpportunityShadowRepository(repo_dir)
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller_open, execution_open, journal_open = _build_autonomy_controller(
         environment="paper",
@@ -5435,9 +5459,7 @@ def test_opportunity_autonomy_cross_sink_restore_roundtrip_preserves_extended_co
     _assert_autonomy_contract_consistent_with_provenance(open_event, final_labels[0].provenance)
 
 
-def test_opportunity_autonomy_cross_sink_partial_label_preserves_extended_contract_fields() -> (
-    None
-):
+def test_opportunity_autonomy_cross_sink_partial_label_preserves_extended_contract_fields() -> None:
     decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -5448,7 +5470,11 @@ def test_opportunity_autonomy_cross_sink_partial_label_preserves_extended_contra
     repo_dir = Path(tempfile.mkdtemp(prefix="shadow-repo-"))
     repository = OpportunityShadowRepository(repo_dir)
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
