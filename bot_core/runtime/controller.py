@@ -211,6 +211,10 @@ _OPPORTUNITY_AUTONOMY_PROVENANCE_KEYS = (
     "autonomy_final_mode",
     "autonomy_decisive_stage",
     "autonomy_decisive_reason",
+    "autonomy_primary_reason",
+    "upstream_autonomy_decision_source",
+    "upstream_autonomy_inference_model",
+    "upstream_autonomy_inference_model_version",
 )
 _LIVE_AUTONOMY_ADMISSION_BLOCKER_REASONS = frozenset(
     {
@@ -262,6 +266,10 @@ class _OpportunityOpenOutcomeTracker:
     autonomy_final_mode: str | None = None
     autonomy_decisive_stage: str | None = None
     autonomy_decisive_reason: str | None = None
+    autonomy_primary_reason: str | None = None
+    upstream_autonomy_decision_source: str | None = None
+    upstream_autonomy_inference_model: str | None = None
+    upstream_autonomy_inference_model_version: str | None = None
     environment_scope: str | None = None
     portfolio_scope: str | None = None
     restored_from_repository: bool = False
@@ -700,6 +708,16 @@ class TradingController:
                 autonomy_final_mode=autonomy_chain.get("autonomy_final_mode"),
                 autonomy_decisive_stage=autonomy_chain.get("autonomy_decisive_stage"),
                 autonomy_decisive_reason=autonomy_chain.get("autonomy_decisive_reason"),
+                autonomy_primary_reason=autonomy_chain.get("autonomy_primary_reason"),
+                upstream_autonomy_decision_source=autonomy_chain.get(
+                    "upstream_autonomy_decision_source"
+                ),
+                upstream_autonomy_inference_model=autonomy_chain.get(
+                    "upstream_autonomy_inference_model"
+                ),
+                upstream_autonomy_inference_model_version=autonomy_chain.get(
+                    "upstream_autonomy_inference_model_version"
+                ),
                 environment_scope=restored_environment or None,
                 portfolio_scope=restored_portfolio or None,
                 restored_from_repository=True,
@@ -793,6 +811,12 @@ class TradingController:
                 "autonomy_final_mode": tracker.autonomy_final_mode,
                 "autonomy_decisive_stage": tracker.autonomy_decisive_stage,
                 "autonomy_decisive_reason": tracker.autonomy_decisive_reason,
+                "autonomy_primary_reason": tracker.autonomy_primary_reason,
+                "upstream_autonomy_decision_source": tracker.upstream_autonomy_decision_source,
+                "upstream_autonomy_inference_model": tracker.upstream_autonomy_inference_model,
+                "upstream_autonomy_inference_model_version": (
+                    tracker.upstream_autonomy_inference_model_version
+                ),
             }.items()
             if value is not None
         }
@@ -2674,6 +2698,22 @@ class TradingController:
                         tracked.autonomy_decisive_reason
                         or autonomy_chain.get("autonomy_decisive_reason")
                     )
+                    tracked.autonomy_primary_reason = (
+                        tracked.autonomy_primary_reason
+                        or autonomy_chain.get("autonomy_primary_reason")
+                    )
+                    tracked.upstream_autonomy_decision_source = (
+                        tracked.upstream_autonomy_decision_source
+                        or autonomy_chain.get("upstream_autonomy_decision_source")
+                    )
+                    tracked.upstream_autonomy_inference_model = (
+                        tracked.upstream_autonomy_inference_model
+                        or autonomy_chain.get("upstream_autonomy_inference_model")
+                    )
+                    tracked.upstream_autonomy_inference_model_version = (
+                        tracked.upstream_autonomy_inference_model_version
+                        or autonomy_chain.get("upstream_autonomy_inference_model_version")
+                    )
                     final_label = OpportunityOutcomeLabel(
                         symbol=request.symbol,
                         decision_timestamp=tracked.decision_timestamp,
@@ -2762,6 +2802,22 @@ class TradingController:
                             tracked.autonomy_decisive_reason
                             or autonomy_chain.get("autonomy_decisive_reason")
                         )
+                        tracked.autonomy_primary_reason = (
+                            tracked.autonomy_primary_reason
+                            or autonomy_chain.get("autonomy_primary_reason")
+                        )
+                        tracked.upstream_autonomy_decision_source = (
+                            tracked.upstream_autonomy_decision_source
+                            or autonomy_chain.get("upstream_autonomy_decision_source")
+                        )
+                        tracked.upstream_autonomy_inference_model = (
+                            tracked.upstream_autonomy_inference_model
+                            or autonomy_chain.get("upstream_autonomy_inference_model")
+                        )
+                        tracked.upstream_autonomy_inference_model_version = (
+                            tracked.upstream_autonomy_inference_model_version
+                            or autonomy_chain.get("upstream_autonomy_inference_model_version")
+                        )
                         self._persist_open_outcome_tracker(tracked)
                         partial_label = OpportunityOutcomeLabel(
                             symbol=request.symbol,
@@ -2834,6 +2890,16 @@ class TradingController:
                     autonomy_final_mode=autonomy_chain.get("autonomy_final_mode"),
                     autonomy_decisive_stage=autonomy_chain.get("autonomy_decisive_stage"),
                     autonomy_decisive_reason=autonomy_chain.get("autonomy_decisive_reason"),
+                    autonomy_primary_reason=autonomy_chain.get("autonomy_primary_reason"),
+                    upstream_autonomy_decision_source=autonomy_chain.get(
+                        "upstream_autonomy_decision_source"
+                    ),
+                    upstream_autonomy_inference_model=autonomy_chain.get(
+                        "upstream_autonomy_inference_model"
+                    ),
+                    upstream_autonomy_inference_model_version=autonomy_chain.get(
+                        "upstream_autonomy_inference_model_version"
+                    ),
                     environment_scope=str(self.environment).strip() or None,
                     portfolio_scope=str(self.portfolio_id).strip() or None,
                     restored_from_repository=False,
