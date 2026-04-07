@@ -1974,10 +1974,7 @@ def test_opportunity_autonomy_downgrade_chain_readiness_clamp_allowed_assisted_p
     assert provenance.get("autonomy_upstream_effective_mode") == "live_autonomous"
     assert provenance.get("autonomy_final_mode") == "live_assisted"
     assert provenance.get("autonomy_decisive_stage") == "readiness_clamp"
-    assert (
-        provenance.get("autonomy_decisive_reason")
-        == "promotion_not_ready_for_live_autonomous"
-    )
+    assert provenance.get("autonomy_decisive_reason") == "promotion_not_ready_for_live_autonomous"
 
 
 def test_opportunity_autonomy_readiness_clamp_propagates_to_execution_proxy_pending_exit() -> None:
@@ -1992,7 +1989,11 @@ def test_opportunity_autonomy_readiness_clamp_propagates_to_execution_proxy_pend
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, _execution, _journal = _build_autonomy_controller(
         environment="live",
@@ -2028,10 +2029,7 @@ def test_opportunity_autonomy_readiness_clamp_propagates_to_execution_proxy_pend
     assert provenance.get("autonomy_requested_mode") == "live_autonomous"
     assert provenance.get("autonomy_final_mode") == "live_assisted"
     assert provenance.get("autonomy_decisive_stage") == "readiness_clamp"
-    assert (
-        provenance.get("autonomy_decisive_reason")
-        == "promotion_not_ready_for_live_autonomous"
-    )
+    assert provenance.get("autonomy_decisive_reason") == "promotion_not_ready_for_live_autonomous"
 
 
 def test_opportunity_autonomy_readiness_clamp_open_restart_final_preserves_identical_chain_without_partial() -> (
@@ -2048,7 +2046,11 @@ def test_opportunity_autonomy_readiness_clamp_open_restart_final_preserves_ident
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller_open, _execution_open, _journal_open = _build_autonomy_controller(
         environment="live",
@@ -2119,7 +2121,11 @@ def test_opportunity_autonomy_readiness_clamp_direct_final_conflicting_close_pre
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, _execution, _journal = _build_autonomy_controller(
         environment="live",
@@ -2189,7 +2195,11 @@ def test_opportunity_autonomy_readiness_clamp_propagates_to_partial_and_open_out
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
@@ -2254,7 +2264,9 @@ def test_opportunity_autonomy_readiness_clamp_propagates_to_partial_and_open_out
         assert open_rows[0].provenance.get(key) == value
 
 
-def test_opportunity_autonomy_readiness_clamp_partial_restart_final_preserves_identical_chain() -> None:
+def test_opportunity_autonomy_readiness_clamp_partial_restart_final_preserves_identical_chain() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -2266,7 +2278,11 @@ def test_opportunity_autonomy_readiness_clamp_partial_restart_final_preserves_id
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution_open_partial = SequencedExecutionService(
         [
@@ -2361,7 +2377,11 @@ def test_opportunity_autonomy_readiness_clamp_conflicting_close_chain_does_not_o
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution_open_partial = SequencedExecutionService(
         [
@@ -3180,7 +3200,9 @@ def test_opportunity_autonomy_downgrade_chain_upstream_downgrade_without_local_b
     assert event["autonomy_decisive_reason"] == "upstream_downgraded_to_assisted"
 
 
-def test_opportunity_autonomy_downgrade_chain_local_guard_downgrade_with_permissive_upstream() -> None:
+def test_opportunity_autonomy_downgrade_chain_local_guard_downgrade_with_permissive_upstream() -> (
+    None
+):
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
         opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
@@ -3248,7 +3270,9 @@ def test_opportunity_autonomy_downgrade_chain_fully_allowed_branch_has_no_downgr
     assert event["autonomy_decisive_reason"] == "reason:live_autonomous"
 
 
-def test_opportunity_autonomy_downgrade_chain_is_persisted_into_open_outcome_and_final_label() -> None:
+def test_opportunity_autonomy_downgrade_chain_is_persisted_into_open_outcome_and_final_label() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -3436,12 +3460,13 @@ def test_opportunity_autonomy_downgrade_chain_local_guard_flow_propagates_to_fin
     assert provenance.get("autonomy_final_mode") == "live_assisted"
     assert provenance.get("autonomy_decisive_stage") == "local_guard"
     assert (
-        provenance.get("autonomy_decisive_reason")
-        == "insufficient_recent_final_outcomes_for_live"
+        provenance.get("autonomy_decisive_reason") == "insufficient_recent_final_outcomes_for_live"
     )
 
 
-def test_opportunity_autonomy_downgrade_chain_survives_open_outcome_restart_to_final_close() -> None:
+def test_opportunity_autonomy_downgrade_chain_survives_open_outcome_restart_to_final_close() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -3884,7 +3909,9 @@ def test_opportunity_outcome_non_autonomy_path_excludes_compact_chain_from_all_l
         assert key not in final_labels[0].provenance
 
 
-def test_opportunity_autonomy_final_close_conflicting_chain_does_not_overwrite_entry_chain() -> None:
+def test_opportunity_autonomy_final_close_conflicting_chain_does_not_overwrite_entry_chain() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -3896,7 +3923,11 @@ def test_opportunity_autonomy_final_close_conflicting_chain_does_not_overwrite_e
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, _execution, _journal = _build_autonomy_controller(
         environment="live",
@@ -3951,7 +3982,9 @@ def test_opportunity_autonomy_final_close_conflicting_chain_does_not_overwrite_e
         assert final_labels[0].provenance.get(key) == value
 
 
-def test_opportunity_autonomy_partial_close_conflicting_chain_does_not_overwrite_entry_chain() -> None:
+def test_opportunity_autonomy_partial_close_conflicting_chain_does_not_overwrite_entry_chain() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -3963,7 +3996,11 @@ def test_opportunity_autonomy_partial_close_conflicting_chain_does_not_overwrite
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
@@ -4029,7 +4066,9 @@ def test_opportunity_autonomy_partial_close_conflicting_chain_does_not_overwrite
         assert open_rows[0].provenance.get(key) == value
 
 
-def test_opportunity_autonomy_partial_restart_conflicting_final_close_preserves_original_chain() -> None:
+def test_opportunity_autonomy_partial_restart_conflicting_final_close_preserves_original_chain() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -4041,7 +4080,11 @@ def test_opportunity_autonomy_partial_restart_conflicting_final_close_preserves_
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution_open_partial = SequencedExecutionService(
         [
