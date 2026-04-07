@@ -2045,6 +2045,538 @@ def test_opportunity_autonomy_extract_decision_without_blocker_keeps_performance
     assert decision.blocking_reasons == ("non_live_blocker",)
 
 
+def test_opportunity_autonomy_extract_decision_performance_guard_primary_reason_is_prepended_when_missing_from_non_empty_payload_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_reason",
+        performance_guard_primary_reason="guard_reason_should_win_without_blocker",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "primary_reason": "upstream_reason",
+                "reasons": ["payload_reason_a", "payload_reason_b"],
+                "blocking_reasons": ["non_live_blocker"],
+                "performance_guard": {
+                    "primary_reason": "guard_reason_should_win_without_blocker",
+                },
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "guard_reason_should_win_without_blocker"
+    assert decision.reasons == (
+        "guard_reason_should_win_without_blocker",
+        "payload_reason_a",
+        "payload_reason_b",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_performance_guard_primary_reason_is_not_duplicated_when_already_present_in_payload_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_reason",
+        performance_guard_primary_reason="guard_reason_should_win_without_blocker",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "primary_reason": "upstream_reason",
+                "reasons": [
+                    "guard_reason_should_win_without_blocker",
+                    "payload_reason_b",
+                ],
+                "blocking_reasons": ["non_live_blocker"],
+                "performance_guard": {
+                    "primary_reason": "guard_reason_should_win_without_blocker",
+                },
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "guard_reason_should_win_without_blocker"
+    assert decision.reasons == (
+        "guard_reason_should_win_without_blocker",
+        "payload_reason_b",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_readiness_clamp_path_still_keeps_final_primary_reason_in_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+        performance_guard_primary_reason="guard_reason_must_not_win_with_blocker",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_autonomous",
+                "primary_reason": "upstream_inconsistent_live_allow",
+                "reasons": ["payload_reason_a", "payload_reason_b"],
+                "blocking_reasons": ["promotion_not_ready_for_live_autonomous", "other_blocker"],
+                "performance_guard": {
+                    "primary_reason": "guard_reason_must_not_win_with_blocker",
+                },
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "promotion_not_ready_for_live_autonomous"
+    assert decision.reasons == (
+        "promotion_not_ready_for_live_autonomous",
+        "payload_reason_a",
+        "payload_reason_b",
+    )
+
+
+@pytest.mark.parametrize("payload_reasons", ("bad", 123, {}, ["", " ", "   "]))
+def test_opportunity_autonomy_extract_decision_performance_guard_with_malformed_or_empty_reasons_still_falls_back_to_primary_reason(
+    payload_reasons: object,
+) -> None:
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_reason",
+        performance_guard_primary_reason="guard_reason_should_win_without_blocker",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "primary_reason": "upstream_reason",
+                "reasons": payload_reasons,
+                "blocking_reasons": ["non_live_blocker"],
+                "performance_guard": {
+                    "primary_reason": "guard_reason_should_win_without_blocker",
+                },
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "guard_reason_should_win_without_blocker"
+    assert decision.reasons == ("guard_reason_should_win_without_blocker",)
+
+
+def test_opportunity_autonomy_extract_decision_request_metadata_primary_reason_is_prepended_to_non_empty_payload_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_primary_reason": "request_metadata_reason",
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": ["payload_reason_a", "payload_reason_b"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "request_metadata_reason"
+    assert decision.reasons == (
+        "request_metadata_reason",
+        "payload_reason_a",
+        "payload_reason_b",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_request_metadata_primary_reason_is_not_duplicated_when_already_present() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_primary_reason": "request_metadata_reason",
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": ["request_metadata_reason", "payload_reason_b"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "request_metadata_reason"
+    assert decision.reasons == ("request_metadata_reason", "payload_reason_b")
+
+
+def test_opportunity_autonomy_extract_decision_signal_metadata_primary_reason_is_prepended_to_non_empty_payload_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    signal_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    signal_payload["primary_reason"] = " "
+    signal_payload["reasons"] = ["payload_reason_a", "payload_reason_b"]
+    signal_metadata = {
+        **dict(signal.metadata or {}),
+        "opportunity_autonomy_primary_reason": "signal_metadata_reason",
+        "opportunity_autonomy_decision": signal_payload,
+    }
+    signal = replace(signal, metadata=signal_metadata)
+
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": ["payload_reason_a", "payload_reason_b"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "signal_metadata_reason"
+    assert decision.reasons == (
+        "signal_metadata_reason",
+        "payload_reason_a",
+        "payload_reason_b",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_unspecified_primary_reason_is_prepended_to_non_empty_payload_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    signal_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    signal_payload["primary_reason"] = " "
+    signal = replace(
+        signal,
+        metadata={
+            **dict(signal.metadata or {}),
+            "opportunity_autonomy_primary_reason": " ",
+            "opportunity_autonomy_decision": signal_payload,
+        },
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_primary_reason": " ",
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": ["payload_reason_a", "payload_reason_b"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "unspecified_primary_reason"
+    assert decision.reasons == (
+        "unspecified_primary_reason",
+        "payload_reason_a",
+        "payload_reason_b",
+    )
+
+
+@pytest.mark.parametrize("payload_reasons", ([], ["", " ", "   "], "bad", 123, {}))
+def test_opportunity_autonomy_extract_decision_request_metadata_primary_reason_with_empty_or_malformed_reasons_falls_back_to_single_primary(
+    payload_reasons: object,
+) -> None:
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_primary_reason": "request_metadata_reason",
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": payload_reasons,
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "request_metadata_reason"
+    assert decision.reasons == ("request_metadata_reason",)
+
+
+def test_opportunity_autonomy_extract_decision_readiness_clamp_semantic_reason_match_different_casing_is_not_duplicated() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_autonomous",
+                "primary_reason": "upstream_inconsistent_live_allow",
+                "reasons": [
+                    "Promotion_Not_Ready_For_Live_Autonomous",
+                    "manual_review_required",
+                ],
+                "blocking_reasons": ["promotion_not_ready_for_live_autonomous", "other_blocker"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "promotion_not_ready_for_live_autonomous"
+    assert decision.reasons == (
+        "promotion_not_ready_for_live_autonomous",
+        "manual_review_required",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_performance_guard_semantic_reason_match_different_casing_is_not_duplicated() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_reason",
+        performance_guard_primary_reason="guard_reason_should_win_without_blocker",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "primary_reason": "upstream_reason",
+                "reasons": ["Guard_Reason_Should_Win_Without_Blocker", "payload_reason_b"],
+                "blocking_reasons": ["non_live_blocker"],
+                "performance_guard": {
+                    "primary_reason": "guard_reason_should_win_without_blocker",
+                },
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "guard_reason_should_win_without_blocker"
+    assert decision.reasons == ("guard_reason_should_win_without_blocker", "payload_reason_b")
+
+
+def test_opportunity_autonomy_extract_decision_request_metadata_semantic_reason_match_different_casing_is_not_duplicated() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_primary_reason": "request_metadata_reason",
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": ["Request_Metadata_Reason", "payload_reason_b"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "request_metadata_reason"
+    assert decision.reasons == ("request_metadata_reason", "payload_reason_b")
+
+
+def test_opportunity_autonomy_extract_decision_signal_metadata_semantic_reason_match_different_casing_uses_exact_primary_reason_without_duplication() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    signal_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    signal_payload["primary_reason"] = " "
+    signal_payload["reasons"] = ["Signal_Metadata_Reason", "payload_reason_b"]
+    signal = replace(
+        signal,
+        metadata={
+            **dict(signal.metadata or {}),
+            "opportunity_autonomy_primary_reason": "signal_metadata_reason",
+            "opportunity_autonomy_decision": signal_payload,
+        },
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": ["Signal_Metadata_Reason", "payload_reason_b"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "signal_metadata_reason"
+    assert decision.reasons == ("signal_metadata_reason", "payload_reason_b")
+
+
+def test_opportunity_autonomy_extract_decision_semantically_different_reason_is_still_prepended() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_primary_reason": "request_metadata_reason",
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": ["request_metadata_reason_alt", "payload_reason_b"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "request_metadata_reason"
+    assert decision.reasons == (
+        "request_metadata_reason",
+        "request_metadata_reason_alt",
+        "payload_reason_b",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_semantic_dedup_does_not_change_empty_reasons_fallback() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason=None,
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_primary_reason": "request_metadata_reason",
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "reasons": [" ", "   ", ""],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.primary_reason == "request_metadata_reason"
+    assert decision.reasons == ("request_metadata_reason",)
+
+
 def test_opportunity_autonomy_extract_decision_readiness_clamp_keeps_blockers_in_contract() -> None:
     controller, _execution, _journal = _build_autonomy_controller(environment="live")
     signal = _opportunity_autonomy_signal(
@@ -2078,6 +2610,144 @@ def test_opportunity_autonomy_extract_decision_readiness_clamp_keeps_blockers_in
     )
     assert decision.warnings == ("warn_a",)
     assert list(decision.evidence_summary.keys()) == ["alpha", "beta"]
+
+
+def test_opportunity_autonomy_extract_decision_readiness_clamp_injects_blocker_into_non_empty_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_autonomous",
+                "primary_reason": "upstream_inconsistent_live_allow",
+                "reasons": ["upstream_reason_a", "upstream_reason_b"],
+                "blocking_reasons": ["promotion_not_ready_for_live_autonomous", "other_blocker"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "promotion_not_ready_for_live_autonomous"
+    assert decision.reasons == (
+        "promotion_not_ready_for_live_autonomous",
+        "upstream_reason_a",
+        "upstream_reason_b",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_readiness_clamp_does_not_duplicate_blocker_in_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_autonomous",
+                "primary_reason": "upstream_inconsistent_live_allow",
+                "reasons": [
+                    "promotion_not_ready_for_live_autonomous",
+                    "upstream_reason_b",
+                ],
+                "blocking_reasons": ["promotion_not_ready_for_live_autonomous", "other_blocker"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "promotion_not_ready_for_live_autonomous"
+    assert decision.reasons == (
+        "promotion_not_ready_for_live_autonomous",
+        "upstream_reason_b",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_without_readiness_blocker_keeps_non_empty_payload_reasons() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_reason",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "primary_reason": "upstream_reason",
+                "reasons": ["upstream_reason_a", "upstream_reason_b"],
+                "blocking_reasons": ["non_live_blocker"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "upstream_reason"
+    assert decision.reasons == (
+        "upstream_reason",
+        "upstream_reason_a",
+        "upstream_reason_b",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_readiness_clamp_with_whitespace_reasons_falls_back_to_primary_reason() -> (
+    None
+):
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_autonomous",
+                "primary_reason": "upstream_inconsistent_live_allow",
+                "reasons": [" ", "", "   "],
+                "blocking_reasons": ["promotion_not_ready_for_live_autonomous", "other_blocker"],
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "promotion_not_ready_for_live_autonomous"
+    assert decision.reasons == ("promotion_not_ready_for_live_autonomous",)
 
 
 def test_opportunity_autonomy_inconsistent_upstream_blocking_reasons_clamp_live_autonomous_admission(

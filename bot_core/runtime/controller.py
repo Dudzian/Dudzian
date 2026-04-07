@@ -1939,6 +1939,9 @@ class TradingController:
                     normalized.append(candidate)
             return tuple(normalized)
 
+        def _canonical_reason(value: object | None) -> str:
+            return str(value or "").strip().lower()
+
         def _normalize_evidence_summary(value: object | None) -> Mapping[str, object]:
             if not isinstance(value, Mapping):
                 return {}
@@ -2023,7 +2026,23 @@ class TradingController:
         if primary_reason_raw is None:
             primary_reason_raw = signal_metadata.get("opportunity_autonomy_primary_reason")
         primary_reason = str(primary_reason_raw or "").strip() or "unspecified_primary_reason"
-        reasons = payload_reasons if payload_reasons else (primary_reason,)
+        if payload_reasons:
+            canonical_primary_reason = _canonical_reason(primary_reason)
+            normalized_reasons: list[str] = []
+            matched_primary_reason = False
+            for item in payload_reasons:
+                if _canonical_reason(item) == canonical_primary_reason:
+                    if not matched_primary_reason:
+                        normalized_reasons.append(primary_reason)
+                        matched_primary_reason = True
+                    continue
+                normalized_reasons.append(item)
+            if not matched_primary_reason:
+                reasons = (primary_reason, *payload_reasons)
+            else:
+                reasons = tuple(normalized_reasons)
+        else:
+            reasons = (primary_reason,)
         return OpportunityAutonomyDecision(
             mode=mode,
             primary_reason=primary_reason,
