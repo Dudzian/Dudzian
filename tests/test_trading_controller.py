@@ -1736,6 +1736,206 @@ def test_opportunity_autonomy_malformed_request_payload_does_not_mask_signal_pay
     assert event["autonomous_execution_allowed"] == "false"
 
 
+def test_opportunity_autonomy_extract_decision_uses_request_payload_and_normalizes_governance_fields() -> None:
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="signal_reason_should_be_ignored",
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": {
+            "effective_mode": "paper_autonomous",
+            "primary_reason": "signal_reason_should_be_ignored",
+            "blocking_reasons": ["signal_block"],
+            "warnings": ["signal_warn"],
+            "evidence_summary": {"z": 9},
+        },
+    }
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "primary_reason": "request_reason",
+                "blocking_reasons": [" blocker_a ", "", "blocker_b", "   "],
+                "warnings": ["warn_1", "  ", " warn_2 "],
+                "evidence_summary": {"b": 2, 7: "x", "a": {"nested": 1}},
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "request_reason"
+    assert decision.blocking_reasons == ("blocker_a", "blocker_b")
+    assert decision.warnings == ("warn_1", "warn_2")
+    assert list(decision.evidence_summary.keys()) == ["7", "a", "b"]
+    assert decision.evidence_summary == {"7": "x", "a": {"nested": 1}, "b": 2}
+
+
+def test_opportunity_autonomy_extract_decision_uses_signal_payload_when_request_missing() -> None:
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="signal_reason",
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": {
+            "effective_mode": "live_assisted",
+            "primary_reason": "signal_reason",
+            "blocking_reasons": [" signal_block ", ""],
+            "warnings": [" signal_warn "],
+            "evidence_summary": {"z": 5, "a": 1},
+        },
+    }
+    request = controller._build_order_request(signal)
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "signal_reason"
+    assert decision.blocking_reasons == ("signal_block",)
+    assert decision.warnings == ("signal_warn",)
+    assert list(decision.evidence_summary.keys()) == ["a", "z"]
+
+
+def test_opportunity_autonomy_extract_decision_ignores_malformed_payload_context_fields() -> None:
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal("live_assisted")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": "broken",
+    }
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": 123,
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.blocking_reasons == ()
+    assert decision.warnings == ()
+    assert decision.evidence_summary == {}
+
+
+def test_opportunity_autonomy_extract_decision_readiness_blocker_not_overridden_by_performance_guard_reason() -> None:
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+        performance_guard_primary_reason="guard_reason_must_not_win_with_blocker",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_autonomous",
+                "primary_reason": "upstream_inconsistent_live_allow",
+                "blocking_reasons": ["promotion_not_ready_for_live_autonomous", "other_blocker"],
+                "warnings": ["warn_a"],
+                "evidence_summary": {"beta": 2, "alpha": 1},
+                "performance_guard": {
+                    "primary_reason": "guard_reason_must_not_win_with_blocker",
+                },
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "promotion_not_ready_for_live_autonomous"
+    assert decision.blocking_reasons == (
+        "promotion_not_ready_for_live_autonomous",
+        "other_blocker",
+    )
+
+
+def test_opportunity_autonomy_extract_decision_without_blocker_keeps_performance_guard_primary_reason() -> None:
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_reason",
+        performance_guard_primary_reason="guard_reason_should_win_without_blocker",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_assisted",
+                "primary_reason": "upstream_reason",
+                "blocking_reasons": ["non_live_blocker"],
+                "performance_guard": {
+                    "primary_reason": "guard_reason_should_win_without_blocker",
+                },
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "guard_reason_should_win_without_blocker"
+    assert decision.blocking_reasons == ("non_live_blocker",)
+
+
+def test_opportunity_autonomy_extract_decision_readiness_clamp_keeps_blockers_in_contract() -> None:
+    controller, _execution, _journal = _build_autonomy_controller(environment="live")
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    request = controller._build_order_request(signal)
+    request = replace(
+        request,
+        metadata={
+            **dict(request.metadata or {}),
+            "opportunity_autonomy_decision": {
+                "effective_mode": "live_autonomous",
+                "primary_reason": "upstream_inconsistent_live_allow",
+                "blocking_reasons": ["promotion_not_ready_for_live_autonomous", "other_blocker"],
+                "warnings": ["warn_a"],
+                "evidence_summary": {"beta": 2, "alpha": 1},
+            },
+        },
+    )
+
+    decision = controller._extract_opportunity_autonomy_decision(signal, request)
+
+    assert decision.mode.value == "live_assisted"
+    assert decision.primary_reason == "promotion_not_ready_for_live_autonomous"
+    assert decision.blocking_reasons == (
+        "promotion_not_ready_for_live_autonomous",
+        "other_blocker",
+    )
+    assert decision.warnings == ("warn_a",)
+    assert list(decision.evidence_summary.keys()) == ["alpha", "beta"]
+
+
 def test_opportunity_autonomy_inconsistent_upstream_blocking_reasons_clamp_live_autonomous_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
