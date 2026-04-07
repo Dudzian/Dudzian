@@ -1776,6 +1776,8 @@ def test_opportunity_autonomy_inconsistent_upstream_blocking_reasons_clamp_live_
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_mode"] == "live_assisted"
     assert event["autonomy_primary_reason"] == "promotion_not_ready_for_live_autonomous"
+    assert event["autonomy_decisive_stage"] == "readiness_clamp"
+    assert event["autonomy_decisive_reason"] == "promotion_not_ready_for_live_autonomous"
     assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
 
 
@@ -1810,6 +1812,8 @@ def test_opportunity_autonomy_inconsistent_signal_payload_blocking_reasons_clamp
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_mode"] == "live_assisted"
     assert event["autonomy_primary_reason"] == "promotion_not_ready_for_live_autonomous"
+    assert event["autonomy_decisive_stage"] == "readiness_clamp"
+    assert event["autonomy_decisive_reason"] == "promotion_not_ready_for_live_autonomous"
     assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
 
 
@@ -1853,6 +1857,8 @@ def test_opportunity_autonomy_request_blocker_without_effective_mode_clamps_live
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_mode"] == "live_assisted"
     assert event["autonomy_primary_reason"] == "promotion_not_ready_for_live_autonomous"
+    assert event["autonomy_decisive_stage"] == "readiness_clamp"
+    assert event["autonomy_decisive_reason"] == "promotion_not_ready_for_live_autonomous"
     assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
 
 
@@ -1899,6 +1905,79 @@ def test_opportunity_autonomy_inconsistent_request_blocker_allows_assisted_when_
     assert event["autonomy_mode"] == "live_assisted"
     assert event["autonomous_execution_allowed"] == "true"
     assert event["autonomy_primary_reason"] == "promotion_not_ready_for_live_autonomous"
+    assert event["autonomy_decisive_stage"] == "readiness_clamp"
+    assert event["autonomy_decisive_reason"] == "promotion_not_ready_for_live_autonomous"
+
+
+def test_opportunity_autonomy_downgrade_chain_readiness_clamp_allowed_assisted_propagates_to_final_label() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    controller, _execution, _journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_autonomy_decision": decision_payload,
+    }
+    controller.process_signals([signal])
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "final" and label.correlation_key == correlation_key
+    ]
+    assert len(final_labels) == 1
+    provenance = final_labels[0].provenance
+    assert provenance.get("autonomy_upstream_effective_mode") == "live_autonomous"
+    assert provenance.get("autonomy_final_mode") == "live_assisted"
+    assert provenance.get("autonomy_decisive_stage") == "readiness_clamp"
+    assert (
+        provenance.get("autonomy_decisive_reason")
+        == "promotion_not_ready_for_live_autonomous"
+    )
 
 
 def test_opportunity_autonomy_empty_request_mapping_does_not_fall_through_to_signal_payload(

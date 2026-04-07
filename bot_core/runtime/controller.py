@@ -1813,6 +1813,14 @@ class TradingController:
         primary_reason = _as_non_empty_string(metadata.get("autonomy_primary_reason"))
         upstream_primary_reason = _as_non_empty_string(metadata.get("upstream_autonomy_primary_reason"))
         guard_primary_reason = _as_non_empty_string(metadata.get("performance_guard_primary_reason"))
+        readiness_clamp_reason = next(
+            (
+                reason
+                for reason in (upstream_primary_reason, primary_reason, blocking_reason)
+                if _is_live_autonomy_admission_blocker_reason(reason)
+            ),
+            None,
+        )
 
         if blocking_reason in {
             "performance_guard_snapshot_source_unavailable",
@@ -1828,6 +1836,14 @@ class TradingController:
             metadata["autonomy_decisive_reason"] = (
                 guard_primary_reason or blocking_reason or "performance_guard_local_kill_switch"
             )
+            return
+        if (
+            readiness_clamp_reason is not None
+            and requested_mode == "live_autonomous"
+            and final_mode == "live_assisted"
+        ):
+            metadata["autonomy_decisive_stage"] = "readiness_clamp"
+            metadata["autonomy_decisive_reason"] = readiness_clamp_reason
             return
         if (
             local_guard_effective_mode is not None
