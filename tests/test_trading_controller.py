@@ -859,9 +859,7 @@ def test_opportunity_autonomy_enforcement_metadata_shape_is_stable() -> None:
 
 def test_opportunity_autonomy_enforcement_uses_signal_payload_reasons_when_request_payload_missing(
     monkeypatch: pytest.MonkeyPatch,
-) -> (
-    None
-):
+) -> None:
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
         opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
