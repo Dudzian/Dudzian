@@ -1798,14 +1798,19 @@ class TradingController:
             metadata["upstream_autonomy_downgrade_step_count"] = downgrade_step_count_raw
 
         decision_source = _as_non_empty_string(payload.get("decision_source"))
+        inference_model = _as_non_empty_string(payload.get("inference_model"))
+        inference_model_version = _as_non_empty_string(payload.get("inference_model_version"))
+        if decision_source in {"model", "hybrid"} and (
+            inference_model is None or inference_model_version is None
+        ):
+            decision_source = None
+            inference_model = None
+            inference_model_version = None
+
         if decision_source is not None:
             metadata["upstream_autonomy_decision_source"] = decision_source
-
-        inference_model = _as_non_empty_string(payload.get("inference_model"))
         if inference_model is not None:
             metadata["upstream_autonomy_inference_model"] = inference_model
-
-        inference_model_version = _as_non_empty_string(payload.get("inference_model_version"))
         if inference_model_version is not None:
             metadata["upstream_autonomy_inference_model_version"] = inference_model_version
 
