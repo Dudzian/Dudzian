@@ -65,6 +65,62 @@ def test_ai_governor_decision_supports_model_assisted_contract_fields() -> None:
     assert payload["inference_model_version"] == "2026.04.02"
 
 
+def test_ai_governor_decision_policy_path_drops_model_lineage_fields() -> None:
+    decision = AIGovernorDecision(
+        mode="grid",
+        reason="policy fallback",
+        confidence=0.8,
+        regime="trend",
+        risk_score=0.3,
+        transaction_cost_bps=11.0,
+        decision_source="policy",
+        inference_model="stale_model",
+        inference_model_version="stale_version",
+    )
+
+    payload = decision.to_mapping()
+    assert payload["decision_source"] == "policy"
+    assert payload["inference_model"] is None
+    assert payload["inference_model_version"] is None
+
+
+@pytest.mark.parametrize("decision_source", ("model", "hybrid"))
+def test_ai_governor_decision_model_or_hybrid_path_requires_lineage(
+    decision_source: str,
+) -> None:
+    with pytest.raises(ValueError, match="decision_source=model/hybrid"):
+        AIGovernorDecision(
+            mode="hedge",
+            reason="model override",
+            confidence=0.9,
+            regime="trend",
+            risk_score=0.2,
+            transaction_cost_bps=9.0,
+            decision_source=decision_source,
+            inference_model="decision_model",
+            inference_model_version=None,
+        )
+
+
+def test_ai_governor_decision_hybrid_path_keeps_required_lineage() -> None:
+    decision = AIGovernorDecision(
+        mode="hedge",
+        reason="hybrid override",
+        confidence=0.9,
+        regime="trend",
+        risk_score=0.2,
+        transaction_cost_bps=9.0,
+        decision_source="hybrid",
+        inference_model="decision_model",
+        inference_model_version="2026.04.03",
+    )
+
+    payload = decision.to_mapping()
+    assert payload["decision_source"] == "hybrid"
+    assert payload["inference_model"] == "decision_model"
+    assert payload["inference_model_version"] == "2026.04.03"
+
+
 def test_ai_governor_decision_rejects_model_path_without_metadata() -> None:
     with pytest.raises(ValueError, match="decision_source=model/hybrid"):
         AIGovernorDecision(
