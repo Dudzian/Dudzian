@@ -5608,8 +5608,9 @@ def test_opportunity_autonomy_truthfulness_policy_decision_source_does_not_infer
     assert open_rows[0].provenance.get("upstream_autonomy_inference_model_version") is None
 
 
-def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_explicit_model_lineage_across_open_partial_final(
-) -> None:
+def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_explicit_model_lineage_across_open_partial_final() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -5705,7 +5706,9 @@ def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_expli
     assert len(final_labels) == 1
     assert final_labels[0].provenance.get("upstream_autonomy_decision_source") == "hybrid"
     assert final_labels[0].provenance.get("upstream_autonomy_inference_model") == "decision_model"
-    assert final_labels[0].provenance.get("upstream_autonomy_inference_model_version") == "2026.04.30"
+    assert (
+        final_labels[0].provenance.get("upstream_autonomy_inference_model_version") == "2026.04.30"
+    )
 
 
 @pytest.mark.parametrize("decision_source", ("model", "hybrid"))
@@ -6015,7 +6018,9 @@ def test_opportunity_autonomy_truthfulness_conflicting_policy_close_payload_does
     assert len(final_labels) == 1
     assert final_labels[0].provenance.get("upstream_autonomy_decision_source") == "model"
     assert final_labels[0].provenance.get("upstream_autonomy_inference_model") == "open_model"
-    assert final_labels[0].provenance.get("upstream_autonomy_inference_model_version") == "2026.05.02"
+    assert (
+        final_labels[0].provenance.get("upstream_autonomy_inference_model_version") == "2026.05.02"
+    )
     assert final_labels[0].provenance.get("upstream_autonomy_decision_source") != "policy"
 
     replay_journal = CollectingDecisionJournal()
@@ -6038,8 +6043,7 @@ def test_opportunity_autonomy_truthfulness_conflicting_policy_close_payload_does
     ]
     assert len(final_labels_after_replay) == 1
     assert (
-        final_labels_after_replay[0].provenance.get("upstream_autonomy_decision_source")
-        == "model"
+        final_labels_after_replay[0].provenance.get("upstream_autonomy_decision_source") == "model"
     )
     assert (
         final_labels_after_replay[0].provenance.get("upstream_autonomy_inference_model")
