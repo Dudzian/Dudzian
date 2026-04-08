@@ -93,6 +93,11 @@ class AIGovernorDecision(BaseModel):
                 raise ValueError(
                     "decision_source=model/hybrid wymaga inference_model i inference_model_version"
                 )
+            object.__setattr__(self, "inference_model", model_name)
+            object.__setattr__(self, "inference_model_version", model_version)
+        else:
+            object.__setattr__(self, "inference_model", None)
+            object.__setattr__(self, "inference_model_version", None)
         return self
 
 
