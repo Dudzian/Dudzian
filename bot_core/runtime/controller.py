@@ -3065,6 +3065,7 @@ class TradingController:
                 metadata={
                     "proxy_correlation_key": correlation_key,
                     "execution_status": normalized_status,
+                    "close_correlation_resolution": final_resolution,
                 },
             )
 
