@@ -5773,7 +5773,9 @@ def test_opportunity_autonomy_close_replay_partial_attach_conflict_is_non_destru
     ]
     assert len(partial_labels_after_replay) == 1
     assert final_labels_after_replay == []
-    assert _autonomy_persistence_snapshot(partial_labels_after_replay[0].provenance) == first_snapshot
+    assert (
+        _autonomy_persistence_snapshot(partial_labels_after_replay[0].provenance) == first_snapshot
+    )
     attach_events = [
         event for event in replay_journal.export() if event["event"] == "opportunity_outcome_attach"
     ]
@@ -6094,7 +6096,9 @@ def test_opportunity_autonomy_replay_final_after_partial_then_final_is_idempoten
         if label.correlation_key == correlation_key and label.label_quality == "final"
     ]
     assert len(final_labels_before_replay) == 1
-    snapshot_before_replay = _autonomy_persistence_snapshot(final_labels_before_replay[0].provenance)
+    snapshot_before_replay = _autonomy_persistence_snapshot(
+        final_labels_before_replay[0].provenance
+    )
 
     replay_journal = CollectingDecisionJournal()
     controller_replay = TradingController(
@@ -6135,7 +6139,10 @@ def test_opportunity_autonomy_replay_final_after_partial_then_final_is_idempoten
     ]
     assert len(final_labels_after_replay) == 1
     assert partial_labels_after_replay == []
-    assert _autonomy_persistence_snapshot(final_labels_after_replay[0].provenance) == snapshot_before_replay
+    assert (
+        _autonomy_persistence_snapshot(final_labels_after_replay[0].provenance)
+        == snapshot_before_replay
+    )
     for key in _AUTONOMY_PERSISTENCE_NO_LEAK_KEYS:
         assert final_labels_after_replay[0].provenance.get(key) == open_event.get(key)
 
@@ -7289,7 +7296,8 @@ def test_opportunity_autonomy_runtime_lineage_open_partial_final_keeps_lineage_a
     partial_labels = [
         row
         for row in repository.load_outcome_labels()
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ]
     assert len(partial_labels) == 1
     partial_snapshot = _lineage_and_autonomy_snapshot(partial_labels[0].provenance)
@@ -7314,7 +7322,9 @@ def test_opportunity_autonomy_runtime_lineage_open_partial_final_keeps_lineage_a
     assert final_labels[0].provenance.get("model_version") == "lineage-open-v1"
     assert final_labels[0].provenance.get("decision_source") == "upstream_open_source"
     _assert_autonomy_contract_consistent_with_provenance(open_event, final_labels[0].provenance)
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-2]["status"] in {"partial_attached", "quality_upgraded"}
     assert attach_events[-1]["status"] == "final_upgraded"
 
@@ -7333,7 +7343,11 @@ def test_opportunity_autonomy_runtime_lineage_and_autonomy_contract_survive_rest
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller_open_partial, _journal_open_partial = _build_autonomy_controller_with_execution(
         environment="paper",
@@ -7377,13 +7391,16 @@ def test_opportunity_autonomy_runtime_lineage_and_autonomy_contract_survive_rest
     partial_label = next(
         row
         for row in repository.load_outcome_labels()
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     )
     contract_before_restart = _lineage_and_autonomy_snapshot(partial_label.provenance)
 
     controller_restarted, restart_journal = _build_autonomy_controller_with_execution(
         environment="paper",
-        execution_service=StatusExecutionService(status="filled", filled_quantity=0.5, avg_price=102.0),
+        execution_service=StatusExecutionService(
+            status="filled", filled_quantity=0.5, avg_price=102.0
+        ),
         opportunity_shadow_repository=repository,
     )
     controller_restarted.process_signals(
@@ -7404,7 +7421,11 @@ def test_opportunity_autonomy_runtime_lineage_and_autonomy_contract_survive_rest
     ]
     assert len(final_labels) == 1
     assert _lineage_and_autonomy_snapshot(final_labels[0].provenance) == contract_before_restart
-    attach_events = [event for event in restart_journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event
+        for event in restart_journal.export()
+        if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "final_upgraded"
 
 
@@ -7422,7 +7443,11 @@ def test_opportunity_autonomy_runtime_lineage_and_autonomy_contract_reject_confl
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, _journal = _build_autonomy_controller_with_execution(
         environment="paper",
@@ -7473,7 +7498,9 @@ def test_opportunity_autonomy_runtime_lineage_and_autonomy_contract_reject_confl
     )
     controller_conflicting, conflict_journal = _build_autonomy_controller_with_execution(
         environment="paper",
-        execution_service=StatusExecutionService(status="filled", filled_quantity=0.6, avg_price=104.0),
+        execution_service=StatusExecutionService(
+            status="filled", filled_quantity=0.6, avg_price=104.0
+        ),
         opportunity_shadow_repository=repository,
     )
     controller_conflicting.process_signals(
@@ -7502,7 +7529,11 @@ def test_opportunity_autonomy_runtime_lineage_and_autonomy_contract_reject_confl
     assert _lineage_and_autonomy_snapshot(final_label.provenance) == expected_contract
     assert final_label.provenance.get("model_version") != "conflict-lineage-v9"
     assert final_label.provenance.get("decision_source") != "conflict-lineage-source"
-    attach_events = [event for event in conflict_journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event
+        for event in conflict_journal.export()
+        if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] == "final_upgraded"
 
 
@@ -7520,7 +7551,11 @@ def test_opportunity_autonomy_runtime_lineage_fallback_from_metadata_stays_coher
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="paper",
@@ -7571,7 +7606,9 @@ def test_opportunity_autonomy_runtime_lineage_fallback_from_metadata_stays_coher
     assert final_label.provenance.get("model_version") == "fallback-lineage-v1"
     assert final_label.provenance.get("decision_source") == "fallback_upstream_source"
     _assert_autonomy_contract_consistent_with_provenance(open_event, final_label.provenance)
-    attach_events = [event for event in journal.export() if event["event"] == "opportunity_outcome_attach"]
+    attach_events = [
+        event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
     assert attach_events[-1]["status"] in {"final_attached", "final_upgraded"}
 
 
@@ -10350,6 +10387,7 @@ def test_opportunity_autonomy_unresolved_close_attach_error_after_resolution_doe
     )
 
     attach_calls: list[list[OpportunityOutcomeLabel]] = []
+
     def _raise_attach_failure(*_args: object, **_kwargs: object) -> object:
         labels_to_attach = list(_args[0]) if _args else []
         attach_calls.append(labels_to_attach)
@@ -10372,8 +10410,7 @@ def test_opportunity_autonomy_unresolved_close_attach_error_after_resolution_doe
     assert not any(label.label_quality == "partial_exit_unconfirmed" for label in labels)
     open_outcomes = shadow_repo.load_open_outcomes()
     assert {
-        row.correlation_key: _autonomy_persistence_snapshot(row.provenance)
-        for row in open_outcomes
+        row.correlation_key: _autonomy_persistence_snapshot(row.provenance) for row in open_outcomes
     } == tracker_contract_before
     attach_events = [
         event for event in journal.export() if event["event"] == "opportunity_outcome_attach"
@@ -10420,7 +10457,9 @@ def test_opportunity_autonomy_unresolved_close_repo_read_failure_before_resoluti
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=target_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=target_key, decision_timestamp=decision_timestamp
+            ),
             _shadow_record_for_key(
                 correlation_key=other_key,
                 decision_timestamp=decision_timestamp + timedelta(minutes=1),
@@ -10542,7 +10581,9 @@ def test_opportunity_autonomy_unresolved_close_outcome_labels_read_failure_befor
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=target_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=target_key, decision_timestamp=decision_timestamp
+            ),
             _shadow_record_for_key(
                 correlation_key=other_key,
                 decision_timestamp=decision_timestamp + timedelta(minutes=1),
@@ -10590,11 +10631,15 @@ def test_opportunity_autonomy_unresolved_close_outcome_labels_read_failure_befor
     original_load_outcome_labels = shadow_repo.load_outcome_labels
 
     def _load_outcome_labels_fail_in_attach_path(*_args: object, **_kwargs: object) -> object:
-        if any(frame.function == "_try_attach_opportunity_outcome_label" for frame in inspect.stack()):
+        if any(
+            frame.function == "_try_attach_opportunity_outcome_label" for frame in inspect.stack()
+        ):
             raise RuntimeError("synthetic_outcome_labels_failure")
         return original_load_outcome_labels()
 
-    monkeypatch.setattr(shadow_repo, "load_outcome_labels", _load_outcome_labels_fail_in_attach_path)
+    monkeypatch.setattr(
+        shadow_repo, "load_outcome_labels", _load_outcome_labels_fail_in_attach_path
+    )
 
     close_signal = _autonomy_signal_with_correlation(
         mode="live_assisted",
