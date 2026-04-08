@@ -2433,18 +2433,22 @@ class TradingController:
         repository = self._opportunity_shadow_repository
         if repository is None:
             return
+        attach_repo_read_failure_stage: str | None = None
         try:
             existing_labels_by_key = {
                 str(row.correlation_key): row for row in repository.load_outcome_labels()
             }
         except Exception:  # pragma: no cover - diagnostics only
             existing_labels_by_key = {}
+            attach_repo_read_failure_stage = "outcome_labels_load_failed_before_resolution"
         try:
             shadow_by_key = {str(row.record_key): row for row in repository.load_shadow_records()}
             known_shadow_keys = set(shadow_by_key)
         except Exception:  # pragma: no cover - diagnostics only
             shadow_by_key = {}
             known_shadow_keys = set()
+            if attach_repo_read_failure_stage is None:
+                attach_repo_read_failure_stage = "shadow_records_load_failed_before_resolution"
         signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
         autonomy_chain = self._extract_opportunity_autonomy_provenance_chain(request_metadata)
@@ -2581,6 +2585,25 @@ class TradingController:
         unresolved_close_with_correlation_key = False
         open_intent_candidate = False
         replay_open_candidate = False
+        if (
+            attach_repo_read_failure_stage is not None
+            and correlation_key
+            and is_filled_or_partial
+            and avg_price is not None
+            and side in _BUY_SIDES | _SELL_SIDES
+        ):
+            self._record_decision_event(
+                "opportunity_outcome_attach",
+                signal=signal,
+                request=request,
+                status="attach_error",
+                metadata={
+                    "proxy_correlation_key": correlation_key,
+                    "execution_status": normalized_status,
+                    "attach_error_stage": attach_repo_read_failure_stage,
+                },
+            )
+            return
         if is_filled_or_partial and avg_price is not None:
             tracked, resolution = self._resolve_open_outcome_tracker(
                 symbol=str(request.symbol),
