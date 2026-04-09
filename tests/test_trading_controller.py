@@ -22,6 +22,7 @@ from bot_core.ui.api import build_explainability_feed
 
 from bot_core.ai.opportunity_lifecycle import (
     OpportunityLifecycleService,
+    OpportunityAutonomyMode,
     OpportunityPerformanceSnapshotConfig,
 )
 from bot_core.ai.trading_opportunity_shadow import (
@@ -5490,6 +5491,155 @@ def test_opportunity_autonomy_fail_closed_keeps_model_upstream_provenance_with_e
     assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
 
 
+def test_opportunity_autonomy_execution_permission_truth_live_assisted_without_approval_preserves_upstream_model_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [float(30 - idx) for idx in range(25)],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.controller.evaluate_autonomy_performance_guard",
+        lambda **_kwargs: SimpleNamespace(
+            requested_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+            input_effective_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+            effective_mode=OpportunityAutonomyMode.LIVE_ASSISTED,
+            blocked=False,
+            downgraded=False,
+            hard_breach=False,
+            performance_guard_applied=False,
+            primary_reason="performance_guard_no_breach",
+            reasons=("performance_guard_no_breach",),
+            warnings=(),
+            evidence_summary={},
+        ),
+    )
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_assisted",
+                include_decision_payload=True,
+                decision_effective_mode="live_assisted",
+                decision_primary_reason="upstream_model_requests_assisted",
+                assisted_approval=False,
+                decision_payload_decision_source="model",
+                decision_payload_inference_model="assistant_model",
+                decision_payload_inference_model_version="2026.06.01",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_decision_source"] == "model"
+    assert event["upstream_autonomy_inference_model"] == "assistant_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.06.01"
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "upstream_model_requests_assisted"
+    assert event["autonomous_execution_allowed"] == "false"
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
+    assert event["assisted_override_used"] == "false"
+
+
+def test_opportunity_autonomy_execution_permission_truth_hybrid_upstream_downgraded_to_live_assisted_without_approval() -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [1.0, -2.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="upstream_hybrid_requests_live",
+                assisted_approval=False,
+                decision_payload_decision_source="hybrid",
+                decision_payload_inference_model="hybrid_decider",
+                decision_payload_inference_model_version="2026.06.02",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_decision_source"] == "hybrid"
+    assert event["upstream_autonomy_inference_model"] == "hybrid_decider"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.06.02"
+    assert event["autonomy_mode"] == "live_assisted"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["autonomous_execution_allowed"] == "false"
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "live_assisted_requires_explicit_approval"
+    assert event["assisted_override_used"] == "false"
+
+
+def test_opportunity_autonomy_execution_permission_truth_fail_closed_preserves_upstream_model_provenance() -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_payload_decision_source="model",
+                decision_payload_inference_model="fail_closed_model",
+                decision_payload_inference_model_version="2026.06.03",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_decision_source"] == "model"
+    assert event["upstream_autonomy_inference_model"] == "fail_closed_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.06.03"
+    assert event["autonomy_mode"] == "unavailable"
+    assert event["autonomy_primary_reason"] == "performance_guard_snapshot_source_unavailable"
+    assert event["autonomous_execution_allowed"] == "false"
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
+
+
+def test_opportunity_autonomy_execution_permission_truth_fail_closed_keeps_assisted_override_optional() -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_payload_decision_source="hybrid",
+                decision_payload_inference_model="fail_closed_hybrid_model",
+                decision_payload_inference_model_version="2026.06.04",
+            )
+        ]
+    )
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["autonomy_mode"] == "unavailable"
+    assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
+    assert "assisted_override_used" not in event
+
+
 def test_opportunity_autonomy_cross_sink_consistency_fully_allowed_branch() -> None:
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
@@ -9515,6 +9665,28 @@ def test_controller_attach_lineage_conflicting_payload_cannot_override_restored_
 
     assert label.label_quality == "final"
     assert label.provenance.get("model_version") == "request-v1"
+    assert label.provenance.get("decision_source") == "tracker-source"
+
+
+def test_controller_attach_lineage_signal_payload_model_version_precedes_restored_tracker_when_request_payload_missing_model_version(
+    tmp_path: Path,
+) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload={"decision_source": "request-source"},
+        signal_payload={"model_version": "signal-v2", "decision_source": "signal-source"},
+        restored_tracker_lineage={
+            "model_version": "tracker-v1",
+            "decision_source": "tracker-source",
+            "upstream_autonomy_decision_source": "tracker-upstream-source",
+            "upstream_autonomy_inference_model": "tracker-upstream-model",
+            "upstream_autonomy_inference_model_version": "2026.06.03",
+        },
+        request_side="SELL",
+    )
+
+    assert label.label_quality == "final"
+    assert label.provenance.get("model_version") == "signal-v2"
     assert label.provenance.get("decision_source") == "tracker-source"
 
 
