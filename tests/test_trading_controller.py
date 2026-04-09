@@ -5789,8 +5789,9 @@ def test_opportunity_autonomy_truthfulness_policy_decision_source_does_not_infer
     assert open_rows[0].provenance.get("upstream_autonomy_inference_model_version") is None
 
 
-def test_opportunity_autonomy_truthfulness_policy_decision_source_strips_conflicting_inference_lineage_across_open_final(
-) -> None:
+def test_opportunity_autonomy_truthfulness_policy_decision_source_strips_conflicting_inference_lineage_across_open_final() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -5975,15 +5976,18 @@ def test_opportunity_autonomy_truthfulness_source_level_ai_governor_decision_han
             open_rows[0].provenance.get("upstream_autonomy_inference_model_version")
             == inference_model_version
         )
-        assert final_labels[0].provenance.get("upstream_autonomy_inference_model") == inference_model
+        assert (
+            final_labels[0].provenance.get("upstream_autonomy_inference_model") == inference_model
+        )
         assert (
             final_labels[0].provenance.get("upstream_autonomy_inference_model_version")
             == inference_model_version
         )
 
 
-def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_explicit_model_lineage_across_open_partial_final(
-) -> None:
+def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_explicit_model_lineage_across_open_partial_final() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -6084,8 +6088,9 @@ def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_expli
     )
 
 
-def test_opportunity_autonomy_truthfulness_source_level_open_handoff_rejects_conflicting_close_payload_on_finalization(
-) -> None:
+def test_opportunity_autonomy_truthfulness_source_level_open_handoff_rejects_conflicting_close_payload_on_finalization() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -6198,10 +6203,7 @@ def test_opportunity_autonomy_truthfulness_source_level_open_handoff_rejects_con
     assert _lineage_and_autonomy_snapshot(final_provenance) == expected_contract
     assert final_provenance.get("upstream_autonomy_decision_source") == "model"
     assert final_provenance.get("upstream_autonomy_inference_model") == "source_handoff_model"
-    assert (
-        final_provenance.get("upstream_autonomy_inference_model_version")
-        == "2026.08.01"
-    )
+    assert final_provenance.get("upstream_autonomy_inference_model_version") == "2026.08.01"
     assert final_provenance.get("decision_source") == "model"
     assert final_provenance.get("model_version") == "source-open-model-version"
     assert final_provenance.get("decision_source") != "policy"
