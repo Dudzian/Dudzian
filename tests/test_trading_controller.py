@@ -15,6 +15,7 @@ import pytest
 
 
 from bot_core.alerts import DefaultAlertRouter, InMemoryAlertAuditLog
+from bot_core.auto_trader.ai_governor import AIGovernorDecision
 from bot_core.execution import ExecutionService
 from bot_core.observability import MetricsRegistry
 from bot_core.ui.api import build_explainability_feed
@@ -5608,9 +5609,201 @@ def test_opportunity_autonomy_truthfulness_policy_decision_source_does_not_infer
     assert open_rows[0].provenance.get("upstream_autonomy_inference_model_version") is None
 
 
-def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_explicit_model_lineage_across_open_partial_final() -> (
-    None
-):
+def test_opportunity_autonomy_truthfulness_policy_decision_source_strips_conflicting_inference_lineage_across_open_final(
+) -> None:
+    decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repo_dir = Path(tempfile.mkdtemp(prefix="shadow-repo-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="policy_allow",
+                decision_payload_decision_source="policy",
+                decision_payload_inference_model="synthetic_policy_model",
+                decision_payload_inference_model_version="2027.01.01",
+            )
+        ]
+    )
+    open_event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert open_event["upstream_autonomy_decision_source"] == "policy"
+    assert "upstream_autonomy_inference_model" not in open_event
+    assert "upstream_autonomy_inference_model_version" not in open_event
+    open_rows = repository.load_open_outcomes()
+    assert len(open_rows) == 1
+    assert open_rows[0].provenance.get("upstream_autonomy_decision_source") == "policy"
+    assert open_rows[0].provenance.get("upstream_autonomy_inference_model") is None
+    assert open_rows[0].provenance.get("upstream_autonomy_inference_model_version") is None
+
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key and label.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    assert final_labels[0].provenance.get("upstream_autonomy_decision_source") == "policy"
+    assert final_labels[0].provenance.get("upstream_autonomy_inference_model") is None
+    assert final_labels[0].provenance.get("upstream_autonomy_inference_model_version") is None
+
+
+@pytest.mark.parametrize(
+    ("decision_source", "inference_model", "inference_model_version"),
+    (
+        ("policy", None, None),
+        ("model", "handoff_model", "2026.07.01"),
+        ("hybrid", "handoff_hybrid_model", "2026.07.02"),
+    ),
+)
+def test_opportunity_autonomy_truthfulness_source_level_ai_governor_decision_handoff_to_runtime_enforcement_and_persistence(
+    decision_source: str,
+    inference_model: str | None,
+    inference_model_version: str | None,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repo_dir = Path(tempfile.mkdtemp(prefix="shadow-repo-"))
+    repository = OpportunityShadowRepository(repo_dir)
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    governor_decision = AIGovernorDecision(
+        mode="paper_autonomous",
+        reason=f"source_level_{decision_source}",
+        confidence=0.71,
+        regime="trend",
+        risk_score=0.22,
+        transaction_cost_bps=1.5,
+        decision_source=decision_source,
+        inference_model=inference_model,
+        inference_model_version=inference_model_version,
+    )
+    handoff_payload = json.loads(json.dumps(governor_decision.to_mapping()))
+    handoff_payload["effective_mode"] = "paper_autonomous"
+    handoff_payload["primary_reason"] = f"handoff_{decision_source}_reason"
+
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=False,
+    )
+    open_metadata = dict(open_signal.metadata)
+    open_metadata["opportunity_autonomy_decision"] = handoff_payload
+    open_signal.metadata = open_metadata
+    controller.process_signals([open_signal])
+
+    open_event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert open_event["upstream_autonomy_decision_source"] == decision_source
+    open_rows = repository.load_open_outcomes()
+    assert len(open_rows) == 1
+    assert open_rows[0].provenance.get("upstream_autonomy_decision_source") == decision_source
+    assert open_rows[0].provenance.get("decision_source") == decision_source
+
+    final_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    controller.process_signals([final_signal])
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key and label.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    assert final_labels[0].provenance.get("upstream_autonomy_decision_source") == decision_source
+    assert final_labels[0].provenance.get("decision_source") == decision_source
+
+    if decision_source == "policy":
+        assert "upstream_autonomy_inference_model" not in open_event
+        assert "upstream_autonomy_inference_model_version" not in open_event
+        assert open_rows[0].provenance.get("upstream_autonomy_inference_model") is None
+        assert open_rows[0].provenance.get("upstream_autonomy_inference_model_version") is None
+        assert final_labels[0].provenance.get("upstream_autonomy_inference_model") is None
+        assert final_labels[0].provenance.get("upstream_autonomy_inference_model_version") is None
+    else:
+        assert open_event["upstream_autonomy_inference_model"] == inference_model
+        assert open_event["upstream_autonomy_inference_model_version"] == inference_model_version
+        assert open_rows[0].provenance.get("upstream_autonomy_inference_model") == inference_model
+        assert (
+            open_rows[0].provenance.get("upstream_autonomy_inference_model_version")
+            == inference_model_version
+        )
+        assert final_labels[0].provenance.get("upstream_autonomy_inference_model") == inference_model
+        assert (
+            final_labels[0].provenance.get("upstream_autonomy_inference_model_version")
+            == inference_model_version
+        )
+
+
+def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_explicit_model_lineage_across_open_partial_final(
+) -> None:
     decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -5709,6 +5902,138 @@ def test_opportunity_autonomy_truthfulness_hybrid_decision_source_requires_expli
     assert (
         final_labels[0].provenance.get("upstream_autonomy_inference_model_version") == "2026.04.30"
     )
+
+
+def test_opportunity_autonomy_truthfulness_source_level_open_handoff_rejects_conflicting_close_payload_on_finalization(
+) -> None:
+    decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    open_partial_controller, _open_partial_journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=SequencedExecutionService(
+            [
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+                {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 101.0},
+            ]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    governor_decision = AIGovernorDecision(
+        mode="paper_autonomous",
+        reason="source_level_open_handoff",
+        confidence=0.74,
+        regime="trend",
+        risk_score=0.21,
+        transaction_cost_bps=1.2,
+        decision_source="model",
+        inference_model="source_handoff_model",
+        inference_model_version="2026.08.01",
+    )
+    open_payload = json.loads(json.dumps(governor_decision.to_mapping()))
+    open_payload["effective_mode"] = "paper_autonomous"
+    open_payload["primary_reason"] = "source_level_open_reason"
+
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=False,
+        model_version="source-open-model-version",
+    )
+    open_metadata = dict(open_signal.metadata)
+    open_metadata["opportunity_autonomy_decision"] = open_payload
+    open_signal.metadata = open_metadata
+    open_partial_controller.process_signals([open_signal])
+    open_partial_controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+
+    expected_contract = _lineage_and_autonomy_snapshot(
+        next(
+            row
+            for row in repository.load_outcome_labels()
+            if row.correlation_key == correlation_key
+            and row.label_quality == "partial_exit_unconfirmed"
+        ).provenance
+    )
+
+    final_controller, final_journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=StatusExecutionService(
+            status="filled", filled_quantity=0.6, avg_price=104.0
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    final_controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                model_version="conflicting-close-model-version",
+                decision_source="conflicting-close-decision-source",
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="conflicting_close_reason",
+                decision_payload_decision_source="policy",
+                decision_payload_inference_model="conflicting_close_model",
+                decision_payload_inference_model_version="2027.01.01",
+            )
+        ]
+    )
+
+    final_labels = [
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == correlation_key and row.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    final_provenance = final_labels[0].provenance
+    assert _lineage_and_autonomy_snapshot(final_provenance) == expected_contract
+    assert final_provenance.get("upstream_autonomy_decision_source") == "model"
+    assert final_provenance.get("upstream_autonomy_inference_model") == "source_handoff_model"
+    assert (
+        final_provenance.get("upstream_autonomy_inference_model_version")
+        == "2026.08.01"
+    )
+    assert final_provenance.get("decision_source") == "model"
+    assert final_provenance.get("model_version") == "source-open-model-version"
+    assert final_provenance.get("decision_source") != "policy"
+    assert final_provenance.get("decision_source") != "conflicting-close-decision-source"
+    assert final_provenance.get("model_version") != "conflicting-close-model-version"
+
+    attach_events = [
+        event for event in final_journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
+    assert attach_events[-1]["status"] == "final_upgraded"
+    assert attach_events[-1]["final_correlation_key"] == correlation_key
+    assert attach_events[-1]["close_correlation_resolution"] == "resolved_by_correlation_key"
 
 
 @pytest.mark.parametrize("decision_source", ("model", "hybrid"))
