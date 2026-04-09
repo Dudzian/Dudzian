@@ -250,6 +250,14 @@ jobs:
           tests/runtime/test_multi_strategy_scheduler_async.py
           tests/test_journal_analysis.py
           tests/test_journal_aggregation.py
+          # Intentional narrow blocking-gate subset for autonomy/governance contracts.
+          # Do not replace with full-file inclusion; broader autonomy regression stays in py-tests-* --fast.
+          tests/ai/test_opportunity_lifecycle.py::test_performance_guard_fail_closed_on_invalid_snapshot
+          tests/ai/test_opportunity_lifecycle.py::test_execution_permission_denied_blocks_all_environments
+          tests/ai/test_opportunity_lifecycle.py::test_execution_permission_live_assisted_requires_live_override
+          tests/test_trading_controller.py::test_opportunity_autonomy_runtime_lineage_payload_precedes_stale_request_metadata
+          tests/test_trading_controller.py::test_opportunity_autonomy_permission_failure_fails_closed
+          tests/test_trading_controller.py::test_opportunity_autonomy_enforcement_contract_keys_present_for_fail_closed_guard_paths
           tests/strategies/test_regime_workflow.py
           tests/strategies/test_day_trading_strategy.py
           tests/test_futures_spread_strategy.py
