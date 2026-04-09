@@ -1800,6 +1800,9 @@ class TradingController:
         decision_source = _as_non_empty_string(payload.get("decision_source"))
         inference_model = _as_non_empty_string(payload.get("inference_model"))
         inference_model_version = _as_non_empty_string(payload.get("inference_model_version"))
+        if decision_source == "policy":
+            inference_model = None
+            inference_model_version = None
         if decision_source in {"model", "hybrid"} and (
             inference_model is None or inference_model_version is None
         ):
@@ -2464,6 +2467,15 @@ class TradingController:
         ) -> tuple[str | None, str | None]:
             lineage_model_version: str | None = None
             lineage_decision_source: str | None = None
+            if tracker_hint is not None:
+                if tracker_hint.model_version is not None:
+                    candidate = str(tracker_hint.model_version).strip()
+                    if candidate:
+                        lineage_model_version = candidate
+                if tracker_hint.decision_source is not None:
+                    candidate = str(tracker_hint.decision_source).strip()
+                    if candidate:
+                        lineage_decision_source = candidate
             for payload_raw in (
                 request_metadata.get("opportunity_autonomy_decision"),
                 signal_metadata.get("opportunity_autonomy_decision"),
@@ -2482,15 +2494,6 @@ class TradingController:
                         candidate = str(payload_source_raw).strip()
                         if candidate:
                             lineage_decision_source = candidate
-            if tracker_hint is not None:
-                if lineage_model_version is None and tracker_hint.model_version is not None:
-                    candidate = str(tracker_hint.model_version).strip()
-                    if candidate:
-                        lineage_model_version = candidate
-                if lineage_decision_source is None and tracker_hint.decision_source is not None:
-                    candidate = str(tracker_hint.decision_source).strip()
-                    if candidate:
-                        lineage_decision_source = candidate
             for metadata_source in (request_metadata, signal_metadata):
                 if lineage_model_version is None:
                     metadata_model_raw = metadata_source.get("opportunity_model_version")
