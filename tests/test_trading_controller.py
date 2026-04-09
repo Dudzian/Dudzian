@@ -7910,6 +7910,7 @@ def test_opportunity_autonomy_runtime_lineage_and_autonomy_contract_reject_confl
     assert _lineage_and_autonomy_snapshot(final_label.provenance) == expected_contract
     assert final_label.provenance.get("model_version") != "conflict-lineage-v9"
     assert final_label.provenance.get("decision_source") != "conflict-lineage-source"
+    assert final_label.provenance.get("decision_source") == "stable_upstream_source"
     attach_events = [
         event
         for event in conflict_journal.export()
@@ -8988,6 +8989,46 @@ def test_controller_attach_lineage_request_payload_precedes_restored_tracker(
     assert label.label_quality == "final"
     assert label.provenance.get("model_version") == "request-v1"
     assert label.provenance.get("decision_source") == "request-source"
+
+
+def test_controller_attach_lineage_conflicting_payload_cannot_override_restored_contract_decision_source(
+    tmp_path: Path,
+) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload={"model_version": "request-v1", "decision_source": "request-source"},
+        signal_payload={"model_version": "signal-v1", "decision_source": "signal-source"},
+        restored_tracker_lineage={
+            "model_version": "tracker-v1",
+            "decision_source": "tracker-source",
+            "upstream_autonomy_decision_source": "tracker-upstream-source",
+            "upstream_autonomy_inference_model": "tracker-upstream-model",
+            "upstream_autonomy_inference_model_version": "2026.06.03",
+        },
+        request_side="SELL",
+    )
+
+    assert label.label_quality == "final"
+    assert label.provenance.get("model_version") == "request-v1"
+    assert label.provenance.get("decision_source") == "tracker-source"
+
+
+def test_controller_attach_lineage_request_decision_source_still_precedes_restored_tracker_without_upstream_contract(
+    tmp_path: Path,
+) -> None:
+    label = _attach_proxy_label_with_lineage_inputs(
+        tmp_path=tmp_path,
+        request_payload={"decision_source": "request-source"},
+        signal_payload={"decision_source": "signal-source"},
+        restored_tracker_lineage={
+            "decision_source": "tracker-source",
+        },
+        request_side="SELL",
+    )
+
+    assert label.label_quality == "final"
+    assert label.provenance.get("decision_source") == "request-source"
+    assert label.provenance.get("decision_source") != "tracker-source"
 
 
 def test_controller_attach_lineage_request_payload_without_lineage_uses_signal_payload(

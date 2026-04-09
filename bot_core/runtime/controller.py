@@ -2464,6 +2464,22 @@ class TradingController:
         ) -> tuple[str | None, str | None]:
             lineage_model_version: str | None = None
             lineage_decision_source: str | None = None
+            tracker_contract_decision_source_locked = False
+            if tracker_hint is not None and tracker_hint.decision_source is not None:
+                tracker_candidate = str(tracker_hint.decision_source).strip()
+                if tracker_candidate:
+                    tracker_autonomy_contract_present = any(
+                        str(value).strip()
+                        for value in (
+                            tracker_hint.upstream_autonomy_decision_source,
+                            tracker_hint.upstream_autonomy_inference_model,
+                            tracker_hint.upstream_autonomy_inference_model_version,
+                        )
+                        if value is not None
+                    )
+                    if tracker_autonomy_contract_present:
+                        lineage_decision_source = tracker_candidate
+                        tracker_contract_decision_source_locked = True
             for payload_raw in (
                 request_metadata.get("opportunity_autonomy_decision"),
                 signal_metadata.get("opportunity_autonomy_decision"),
@@ -2476,7 +2492,7 @@ class TradingController:
                         candidate = str(payload_model_raw).strip()
                         if candidate:
                             lineage_model_version = candidate
-                if lineage_decision_source is None:
+                if lineage_decision_source is None and not tracker_contract_decision_source_locked:
                     payload_source_raw = payload_raw.get("decision_source")
                     if payload_source_raw is not None:
                         candidate = str(payload_source_raw).strip()
