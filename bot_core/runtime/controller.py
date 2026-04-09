@@ -2503,6 +2503,12 @@ class TradingController:
                         candidate = str(payload_source_raw).strip()
                         if candidate:
                             lineage_decision_source = candidate
+            if lineage_decision_source is None and tracker_hint is not None:
+                tracker_source_raw = tracker_hint.decision_source
+                if tracker_source_raw is not None:
+                    tracker_source_candidate = str(tracker_source_raw).strip()
+                    if tracker_source_candidate:
+                        lineage_decision_source = tracker_source_candidate
             for metadata_source in (request_metadata, signal_metadata):
                 if lineage_model_version is None:
                     metadata_model_raw = metadata_source.get("opportunity_model_version")
