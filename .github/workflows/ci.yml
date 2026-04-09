@@ -663,6 +663,162 @@ jobs:
           path: test-results/pytest.xml
           retention-days: 3
 
+  integration-linux:
+    if: github.event_name != 'schedule'
+    name: Integration tests (Linux)
+    runs-on: ubuntu-latest
+    needs: py-tests-ubuntu
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v7
+        with:
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          INSTALL_EXTRAS=test bash scripts/ci/install_deps_python.sh
+
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
+
+      - name: Pytest integration
+        shell: bash
+        run: |
+          mkdir -p test-results/integration
+          pytest -m integration --maxfail=1 \
+            --junitxml=test-results/integration/pytest.xml | tee test-results/integration/pytest-console.log
+
+      - name: Upload integration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: integration-linux-diagnostics
+          path: test-results/integration
+          if-no-files-found: warn
+          retention-days: 3
+
+  ui-tests-windows:
+    if: github.event_name != 'schedule'
+    name: UI / QML tests (Windows)
+    runs-on: windows-latest
+    needs: py-tests-windows
+    timeout-minutes: 60
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_OPENGL: software
+      DUDZIAN_QML_FLUSH_DELETES: "0"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v7
+        with:
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+
+      - name: Install deps
+        shell: bash
+        run: |
+          INSTALL_EXTRAS=test bash scripts/ci/install_deps_python.sh
+
+      - name: Preflight
+        shell: pwsh
+        run: python scripts/ci/preflight_test_env.py
+
+      - name: Run QML tests (windows script)
+        shell: pwsh
+        run: |
+          ./scripts/run_qml_tests_windows.ps1 -QtQpaPlatform "offscreen" -QtOpenGL "${{ env.QT_OPENGL }}"
+
+      - name: Upload QML diagnostics (Windows)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: qml-tests-windows-diagnostics
+          path: test-results/qml
+          if-no-files-found: warn
+          retention-days: 3
+
+  ui-tests-macos:
+    if: github.event_name != 'schedule'
+    name: UI / QML tests (macOS)
+    runs-on: macos-latest
+    needs: py-tests-macos
+    timeout-minutes: 60
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_OPENGL: software
+      DUDZIAN_QML_FLUSH_DELETES: "0"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v7
+        with:
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+
+      - name: Install deps
+        shell: bash
+        run: |
+          INSTALL_EXTRAS=test bash scripts/ci/install_deps_python.sh
+
+      - name: Preflight
+        shell: bash
+        run: python scripts/ci/preflight_test_env.py
+
+      - name: Run QML tests (marker)
+        shell: bash
+        run: |
+          mkdir -p test-results/qml
+          python -m pytest -m qml --maxfail=1 --disable-warnings \
+            --junitxml=test-results/qml/pytest.xml \
+            --log-file=test-results/qml/pytest.log \
+            --log-file-level=INFO | tee test-results/qml/pytest-console.log
+
+      - name: Upload QML diagnostics (macOS)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: qml-tests-macos-diagnostics
+          path: test-results/qml
+          if-no-files-found: warn
+          retention-days: 3
+
   loopback-e2e:
     if: github.event_name != 'schedule'
     name: Loopback E2E
