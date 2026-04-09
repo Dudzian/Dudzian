@@ -5228,6 +5228,84 @@ def test_opportunity_autonomy_cross_sink_consistency_readiness_clamp() -> None:
     _assert_autonomy_contract_consistent_with_provenance(event, final_labels[0].provenance)
 
 
+def test_opportunity_autonomy_cross_sink_consistency_readiness_clamp_keeps_model_upstream_provenance() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (9.0, "live", "live-1", "A", "model"),
+            (8.0, "live", "live-1", "A", "model"),
+            (7.0, "live", "live-1", "A", "model"),
+            (6.0, "live", "live-1", "A", "model"),
+            (5.0, "live", "live-1", "A", "model"),
+            (4.0, "live", "live-1", "A", "model"),
+        ]
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        assisted_approval=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_model_said_live",
+        decision_payload_decision_source="model",
+        decision_payload_inference_model="readiness_clamp_model",
+        decision_payload_inference_model_version="2026.05.01",
+    )
+    decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
+    decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
+    signal.metadata = {**dict(signal.metadata), "opportunity_autonomy_decision": decision_payload}
+    controller.process_signals([signal])
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_decision_source"] == "model"
+    assert event["upstream_autonomy_inference_model"] == "readiness_clamp_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.05.01"
+    assert event["autonomy_decisive_stage"] == "readiness_clamp"
+    assert event["autonomy_decisive_reason"] == "promotion_not_ready_for_live_autonomous"
+    assert event["autonomy_primary_reason"] == "promotion_not_ready_for_live_autonomous"
+    assert event["autonomy_final_mode"] == "live_assisted"
+    assert "blocking_reason" not in event
+
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "final" and label.correlation_key == correlation_key
+    ]
+    assert len(final_labels) == 1
+    _assert_autonomy_contract_consistent_with_provenance(event, final_labels[0].provenance)
+
+
 def test_opportunity_autonomy_cross_sink_consistency_performance_guard_rewrite() -> None:
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
@@ -5290,6 +5368,80 @@ def test_opportunity_autonomy_cross_sink_consistency_performance_guard_rewrite()
     _assert_autonomy_contract_consistent_with_provenance(event, final_labels[0].provenance)
 
 
+def test_opportunity_autonomy_cross_sink_consistency_local_guard_rewrite_keeps_hybrid_upstream_provenance() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_mixed_lineage_outcomes(
+        [
+            (1.0, "live", "live-1", "A", "hybrid"),
+            (-2.0, "live", "live-1", "A", "hybrid"),
+        ]
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller, _execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="live_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                assisted_approval=True,
+                decision_effective_mode="live_autonomous",
+                decision_primary_reason="upstream_hybrid_said_live",
+                decision_payload_model_version="A",
+                decision_payload_decision_source="hybrid",
+                decision_payload_inference_model="local_guard_model",
+                decision_payload_inference_model_version="2026.05.02",
+            )
+        ]
+    )
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_decision_source"] == "hybrid"
+    assert event["upstream_autonomy_inference_model"] == "local_guard_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.05.02"
+    assert event["autonomy_decisive_stage"] == "local_guard"
+    assert event["autonomy_decisive_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["autonomy_primary_reason"] == "insufficient_recent_final_outcomes_for_live"
+    assert event["autonomy_final_mode"] == "live_assisted"
+
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.label_quality == "final" and label.correlation_key == correlation_key
+    ]
+    assert len(final_labels) == 1
+    _assert_autonomy_contract_consistent_with_provenance(event, final_labels[0].provenance)
+
+
 def test_opportunity_autonomy_cross_sink_consistency_fail_closed_local_guard() -> None:
     controller, execution, journal = _build_autonomy_controller(environment="live")
     result = controller.process_signals(
@@ -5308,6 +5460,34 @@ def test_opportunity_autonomy_cross_sink_consistency_fail_closed_local_guard() -
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["autonomy_decisive_stage"] == "fail_closed"
     assert event["autonomy_primary_reason"] == event["autonomy_decisive_reason"]
+
+
+def test_opportunity_autonomy_fail_closed_keeps_model_upstream_provenance_with_explicit_final_decider() -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(environment="live")
+    result = controller.process_signals(
+        [
+            _opportunity_autonomy_signal(
+                "live_autonomous",
+                include_decision_payload=True,
+                decision_payload_decision_source="model",
+                decision_payload_inference_model="fail_closed_model",
+                decision_payload_inference_model_version="2026.05.03",
+            )
+        ]
+    )
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["upstream_autonomy_decision_source"] == "model"
+    assert event["upstream_autonomy_inference_model"] == "fail_closed_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.05.03"
+    assert event["autonomy_decisive_stage"] == "fail_closed"
+    assert event["autonomy_decisive_reason"] == "performance_guard_snapshot_source_unavailable"
+    assert event["autonomy_primary_reason"] == "performance_guard_snapshot_source_unavailable"
+    assert event["autonomy_final_mode"] == "unavailable"
+    assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
 
 
 def test_opportunity_autonomy_cross_sink_consistency_fully_allowed_branch() -> None:
