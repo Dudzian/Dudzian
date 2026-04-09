@@ -2464,6 +2464,8 @@ class TradingController:
         def _resolve_runtime_lineage(
             correlation_key_hint: str | None,
             tracker_hint: _OpportunityOpenOutcomeTracker | None = None,
+            *,
+            prefer_tracker_model_version: bool = False,
         ) -> tuple[str | None, str | None]:
             lineage_model_version: str | None = None
             lineage_decision_source: str | None = None
@@ -2518,6 +2520,12 @@ class TradingController:
                         candidate = str(metadata_source_raw).strip()
                         if candidate:
                             lineage_decision_source = candidate
+            if prefer_tracker_model_version and lineage_model_version is None and tracker_hint is not None:
+                tracker_model_raw = tracker_hint.model_version
+                if tracker_model_raw is not None:
+                    tracker_model_candidate = str(tracker_model_raw).strip()
+                    if tracker_model_candidate:
+                        lineage_model_version = tracker_model_candidate
             correlation_key_candidate = str(correlation_key_hint or "").strip()
             shadow_record = shadow_by_key.get(correlation_key_candidate)
             if shadow_record is not None:
@@ -2702,10 +2710,40 @@ class TradingController:
                     and cumulative_closed_quantity + 1e-9 >= tracked.entry_quantity
                 )
                 if is_confirmed_final_close:
+                    existing_quality = ""
+                    existing_label = existing_labels_by_key.get(tracked.correlation_key)
+                    if existing_label is not None:
+                        existing_quality = str(existing_label.label_quality)
+                    request_payload_has_explicit_model_version = False
+                    request_payload_raw = request_metadata.get("opportunity_autonomy_decision")
+                    if isinstance(request_payload_raw, Mapping):
+                        payload_model_raw = request_payload_raw.get("model_version")
+                        if payload_model_raw is not None and str(payload_model_raw).strip():
+                            request_payload_has_explicit_model_version = True
+                    signal_payload_has_explicit_model_version = False
+                    signal_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
+                    if isinstance(signal_payload_raw, Mapping):
+                        payload_model_raw = signal_payload_raw.get("model_version")
+                        if payload_model_raw is not None and str(payload_model_raw).strip():
+                            signal_payload_has_explicit_model_version = True
+                    preserve_tracker_model_version = (not tracked.restored_from_repository) or (
+                        tracked.closed_quantity > 0.0
+                    ) or (
+                        OpportunityShadowRepository._quality_rank(existing_quality)
+                        >= OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed")
+                    )
+                    if (
+                        request_payload_has_explicit_model_version
+                        or signal_payload_has_explicit_model_version
+                    ):
+                        preserve_tracker_model_version = False
                     model_version, decision_source = _resolve_runtime_lineage(
                         tracked.correlation_key,
                         tracker_hint=tracked,
+                        prefer_tracker_model_version=preserve_tracker_model_version,
                     )
+                    if preserve_tracker_model_version:
+                        model_version = tracked.model_version or model_version
                     scope_environment, scope_portfolio, scope_resolution = _resolve_runtime_scope(
                         tracked
                     )
@@ -2806,10 +2844,24 @@ class TradingController:
                     if OpportunityShadowRepository._quality_rank(
                         existing_quality
                     ) < OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed"):
+                        preserve_tracker_model_version = not tracked.restored_from_repository
+                        request_payload_raw = request_metadata.get("opportunity_autonomy_decision")
+                        if isinstance(request_payload_raw, Mapping):
+                            payload_model_raw = request_payload_raw.get("model_version")
+                            if payload_model_raw is not None and str(payload_model_raw).strip():
+                                preserve_tracker_model_version = False
+                        signal_payload_raw = signal_metadata.get("opportunity_autonomy_decision")
+                        if isinstance(signal_payload_raw, Mapping):
+                            payload_model_raw = signal_payload_raw.get("model_version")
+                            if payload_model_raw is not None and str(payload_model_raw).strip():
+                                preserve_tracker_model_version = False
                         model_version, decision_source = _resolve_runtime_lineage(
                             tracked.correlation_key,
                             tracker_hint=tracked,
+                            prefer_tracker_model_version=preserve_tracker_model_version,
                         )
+                        if preserve_tracker_model_version:
+                            model_version = tracked.model_version or model_version
                         scope_environment, scope_portfolio, scope_resolution = (
                             _resolve_runtime_scope(tracked)
                         )
