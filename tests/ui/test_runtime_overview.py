@@ -2507,7 +2507,15 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         latency_label = cycle_group.findChild(QObject, "runtimeOverviewCycleLatency")
         assert latency_label is not None
         latency_text = latency_label.property("text")
-        assert "2450" in latency_text
+        latency_match = re.search(
+            r"p50:\s*(?P<p50>.+?)\s*ms\s*•\s*p95:\s*(?P<p95>.+?)\s*ms",
+            latency_text,
+        )
+        assert latency_match is not None
+        p50_compact = re.sub(r"\D", "", latency_match.group("p50"))
+        p95_compact = re.sub(r"\D", "", latency_match.group("p95"))
+        assert p50_compact == "1250"
+        assert p95_compact == "2450"
 
         runtime_service.push_longpoll_metrics(
             [
