@@ -75,7 +75,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def download(wheelhouse: Path, cmd: list[str], *, attempts: int = 1, retry_delay_seconds: int = 5) -> None:
+def download(
+    wheelhouse: Path, cmd: list[str], *, attempts: int = 1, retry_delay_seconds: int = 5
+) -> None:
     if attempts < 1:
         raise ValueError("attempts must be >= 1")
 

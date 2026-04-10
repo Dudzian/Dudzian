@@ -1537,7 +1537,9 @@ class TradingController:
                     },
                 )
                 return None
-        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        correlation_key = str(
+            (request.metadata or {}).get("opportunity_shadow_record_key") or ""
+        ).strip()
         existing_open_tracker = (
             self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
         )
