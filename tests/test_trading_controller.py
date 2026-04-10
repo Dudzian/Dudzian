@@ -9181,7 +9181,11 @@ def test_opportunity_autonomy_duplicate_open_reentry_same_runtime_is_suppressed(
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller, execution, journal = _build_autonomy_controller(
         environment="paper",
@@ -9217,9 +9221,7 @@ def test_opportunity_autonomy_duplicate_open_reentry_same_runtime_is_suppressed(
         tracker_contract_before_replay
     )
     assert repository.load_outcome_labels() == labels_before_replay
-    skipped_events = [
-        event for event in journal.export() if event["event"] == "signal_skipped"
-    ]
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
     assert skipped_events
     assert skipped_events[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
     assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
@@ -9239,11 +9241,17 @@ def test_opportunity_autonomy_duplicate_open_reentry_after_restart_is_suppressed
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     controller_open, _journal_open = _build_autonomy_controller_with_execution(
         environment="paper",
-        execution_service=StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=100.0),
+        execution_service=StatusExecutionService(
+            status="filled", filled_quantity=1.0, avg_price=100.0
+        ),
         opportunity_shadow_repository=repository,
     )
     controller_open.process_signals(
@@ -9322,7 +9330,11 @@ def test_opportunity_autonomy_duplicate_open_guard_does_not_suppress_legit_close
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [

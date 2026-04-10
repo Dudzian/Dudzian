@@ -1459,8 +1459,7 @@ class TradingController:
             }
             if (
                 duplicate_open_guard_enabled
-                and
-                existing_open_tracker is not None
+                and existing_open_tracker is not None
                 and str(existing_open_tracker.symbol) == str(request.symbol)
                 and not self._is_closing_side(str(existing_open_tracker.side), str(request.side))
             ):
@@ -2638,10 +2637,7 @@ class TradingController:
             return bool(
                 tracker_hint is not None
                 and tracker_hint.restored_from_repository
-                and (
-                    tracker_hint.environment_scope is None
-                    or tracker_hint.portfolio_scope is None
-                )
+                and (tracker_hint.environment_scope is None or tracker_hint.portfolio_scope is None)
             )
 
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
