@@ -1007,9 +1007,14 @@ class TradingController:
             shadow_environment = (
                 str(shadow_environment_raw).strip() if shadow_environment_raw is not None else ""
             )
-            if scope_environment and not shadow_environment:
-                continue
-            if scope_environment and shadow_environment != scope_environment:
+            shadow_environment_normalized = shadow_environment.lower()
+            legacy_shadow_scope_missing = shadow_environment_normalized in {"", "shadow"}
+            if (
+                scope_environment
+                and shadow_environment
+                and shadow_environment != scope_environment
+                and not legacy_shadow_scope_missing
+            ):
                 continue
             matching_shadow_scope_candidate_exists = True
             proposed_direction = (
