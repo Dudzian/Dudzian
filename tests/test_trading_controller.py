@@ -18913,6 +18913,272 @@ def test_controller_partial_close_does_not_create_final_or_drop_tracker(tmp_path
     assert attach_events[-1]["status"] == "quality_upgraded"
 
 
+@pytest.mark.parametrize("open_status", ["rejected", "canceled", "cancelled", "expired"])
+def test_opportunity_autonomous_open_non_filled_status_does_not_create_open_tracker(
+    tmp_path: Path, open_status: str
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = StatusExecutionService(status=open_status, filled_quantity=0.0, avg_price=None)
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+
+    controller.process_signals([open_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    assert labels[0].provenance.get("execution_status") == open_status
+    assert shadow_repo.load_open_outcomes() == []
+
+
+def test_opportunity_autonomous_open_partial_fill_creates_partial_tracker_without_finalization(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = StatusExecutionService(status="partially_filled", filled_quantity=0.4, avg_price=101.0)
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+
+    controller.process_signals([open_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    assert labels[0].provenance.get("execution_status") == "partially_filled"
+    open_outcomes = shadow_repo.load_open_outcomes()
+    assert len(open_outcomes) == 1
+    assert open_outcomes[0].entry_quantity == pytest.approx(0.4, rel=1e-6)
+    assert open_outcomes[0].closed_quantity == 0.0
+
+
+def test_opportunity_autonomous_open_unrecognized_non_fill_zero_fill_does_not_create_tracker_or_label_drift(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = StatusExecutionService(status="pending", filled_quantity=0.0, avg_price=None)
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+
+    controller.process_signals([open_signal])
+    controller.process_signals([open_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    assert labels[0].provenance.get("execution_status") == "pending"
+    assert shadow_repo.load_open_outcomes() == []
+
+
+@pytest.mark.parametrize("close_status", ["rejected", "canceled", "cancelled", "expired"])
+def test_opportunity_autonomous_close_non_filled_status_keeps_remaining_state_and_replay_no_drift(
+    tmp_path: Path, close_status: str
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": close_status, "filled_quantity": 0.0, "avg_price": None},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 111.0},
+        ]
+    )
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+
+    controller.process_signals([open_signal])
+    controller.process_signals([close_signal])
+
+    labels_after_non_filled_close = shadow_repo.load_outcome_labels()
+    assert len(labels_after_non_filled_close) == 1
+    assert labels_after_non_filled_close[0].label_quality == "execution_proxy_pending_exit"
+    assert labels_after_non_filled_close[0].provenance.get("execution_status") == "filled"
+    open_outcomes_after_non_filled_close = shadow_repo.load_open_outcomes()
+    assert len(open_outcomes_after_non_filled_close) == 1
+    assert open_outcomes_after_non_filled_close[0].closed_quantity == 0.0
+    attach_events = [
+        event for event in _journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
+    assert attach_events[-1]["status"] in {"duplicate_noop", "conflict_rejected"}
+    assert attach_events[-1]["execution_status"] == close_status
+
+    controller.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert labels[0].provenance.get("close_confirmation") == "quantity_and_filled_status"
+    assert shadow_repo.load_open_outcomes() == []
+
+
+def test_opportunity_autonomous_close_unrecognized_non_fill_zero_fill_keeps_tracker_and_allows_filled_replay(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "pending", "filled_quantity": 0.0, "avg_price": None},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 111.0},
+        ]
+    )
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+
+    controller.process_signals([open_signal])
+    controller.process_signals([close_signal])
+
+    open_outcomes_after_pending_close = shadow_repo.load_open_outcomes()
+    assert len(open_outcomes_after_pending_close) == 1
+    assert open_outcomes_after_pending_close[0].closed_quantity == 0.0
+    pending_close_labels = shadow_repo.load_outcome_labels()
+    assert len(pending_close_labels) == 1
+    assert pending_close_labels[0].label_quality == "execution_proxy_pending_exit"
+    assert pending_close_labels[0].provenance.get("execution_status") == "filled"
+    attach_events = [
+        event for event in _journal.export() if event["event"] == "opportunity_outcome_attach"
+    ]
+    assert attach_events[-1]["execution_status"] == "pending"
+
+    controller.process_signals([close_signal])
+
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert labels[0].provenance.get("execution_status") == "filled"
+    assert shadow_repo.load_open_outcomes() == []
+
+
 def test_controller_final_close_after_partial_upgrades_and_removes_tracker(tmp_path: Path) -> None:
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
