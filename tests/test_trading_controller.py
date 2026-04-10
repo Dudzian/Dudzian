@@ -9405,7 +9405,11 @@ def test_opportunity_autonomy_duplicate_close_replay_same_runtime_is_suppressed(
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
@@ -9501,7 +9505,11 @@ def test_opportunity_autonomy_duplicate_close_replay_after_restart_is_suppressed
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution_open = SequencedExecutionService(
         [
@@ -9592,7 +9600,11 @@ def test_opportunity_autonomy_duplicate_close_guard_does_not_suppress_legit_part
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
@@ -9660,7 +9672,11 @@ def test_opportunity_autonomy_duplicate_close_guard_does_not_apply_to_live_assis
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="live", portfolio_id="live-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
@@ -9719,7 +9735,11 @@ def test_opportunity_autonomy_duplicate_close_guard_does_not_apply_to_non_autono
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
