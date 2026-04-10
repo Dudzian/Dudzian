@@ -1033,6 +1033,72 @@ class TradingController:
             return False
         return False
 
+    def _matches_current_open_tracker_scope(
+        self,
+        *,
+        correlation_key: str,
+        symbol: str,
+        tracker: _OpportunityOpenOutcomeTracker,
+    ) -> bool:
+        scope_environment = str(self.environment or "").strip()
+        scope_portfolio = str(self.portfolio_id or "").strip()
+        tracker_environment = str(tracker.environment_scope or "").strip()
+        tracker_portfolio = str(tracker.portfolio_scope or "").strip()
+        if tracker_environment:
+            if scope_environment and tracker_environment != scope_environment:
+                return False
+        if tracker_portfolio:
+            if scope_portfolio and tracker_portfolio != scope_portfolio:
+                return False
+        if scope_portfolio and not tracker_portfolio:
+            return False
+        if tracker_environment and tracker_portfolio:
+            return True
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return not (scope_environment and not tracker_environment) and not (
+                scope_portfolio and not tracker_portfolio
+            )
+        try:
+            shadow_records = repository.load_shadow_records()
+        except Exception:  # pragma: no cover - diagnostics only
+            return not (scope_environment and not tracker_environment) and not (
+                scope_portfolio and not tracker_portfolio
+            )
+        has_same_scope_shadow = False
+        has_foreign_scope_shadow = False
+        has_legacy_scope_shadow = False
+        for shadow_record in shadow_records:
+            if shadow_record.record_key != correlation_key:
+                continue
+            if str(getattr(shadow_record, "symbol", "")) != str(symbol):
+                continue
+            shadow_context = getattr(shadow_record, "context", None)
+            if isinstance(shadow_context, Mapping):
+                shadow_environment_raw = shadow_context.get("environment")
+            else:
+                shadow_environment_raw = getattr(shadow_context, "environment", None)
+            shadow_environment = (
+                str(shadow_environment_raw).strip() if shadow_environment_raw is not None else ""
+            )
+            shadow_environment_normalized = shadow_environment.lower()
+            if shadow_environment_normalized in {"", "shadow"}:
+                has_legacy_scope_shadow = True
+                continue
+            if scope_environment and shadow_environment == scope_environment:
+                has_same_scope_shadow = True
+                continue
+            has_foreign_scope_shadow = True
+        if has_same_scope_shadow:
+            return True
+        if has_foreign_scope_shadow:
+            return False
+        if has_legacy_scope_shadow:
+            return True
+        return not (scope_environment and not tracker_environment) and not (
+            scope_portfolio and not tracker_portfolio
+        )
+
     def _record_decision_event(
         self,
         event_type: str,
@@ -1619,6 +1685,11 @@ class TradingController:
             if (
                 duplicate_open_guard_enabled
                 and existing_open_tracker is not None
+                and self._matches_current_open_tracker_scope(
+                    correlation_key=correlation_key,
+                    symbol=str(request.symbol),
+                    tracker=existing_open_tracker,
+                )
                 and str(existing_open_tracker.symbol) == str(request.symbol)
                 and not self._is_closing_side(str(existing_open_tracker.side), str(request.side))
             ):
