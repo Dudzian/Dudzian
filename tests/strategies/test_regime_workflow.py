@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import date, datetime, time, timezone, timedelta
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from bot_core.ai import MarketRegime, MarketRegimeAssessment, RegimeHistory
 from bot_core.auto_trader.schedule import ScheduleWindow
@@ -16,6 +18,8 @@ from bot_core.strategies.regime_workflow import (
     ActivationUptimeStats,
     PresetAvailability,
     StrategyRegimeWorkflow,
+    _gather_strings,
+    _normalize_regime,
 )
 from bot_core.security.capabilities import build_capabilities_from_payload
 from bot_core.security.guards import install_capability_guard, reset_capability_guard
@@ -956,3 +960,89 @@ def test_activation_uptime_stats_tracks_regime_and_fallback_time() -> None:
     assert single_stats.regime_uptime[MarketRegime.DAILY] == timedelta(minutes=15)
     assert single_stats.preset_uptime[None] == timedelta(minutes=15)
     assert single_stats.fallback_uptime == timedelta(minutes=15)
+
+
+def test_regime_workflow_helper_guard_paths() -> None:
+    workflow = _workflow([MarketRegime.TREND])
+
+    assert _normalize_regime(MarketRegime.DAILY) is MarketRegime.DAILY
+    assert _normalize_regime("trend") is MarketRegime.TREND
+    with pytest.raises(ValueError, match="Unsupported market regime"):
+        _normalize_regime("nope")
+    assert _gather_strings((("a", " "), ("a", "b"))) == ("a", "b")
+
+    workflow._activation_history.extend([SimpleNamespace(), SimpleNamespace()])  # type: ignore[arg-type]
+    assert len(workflow._history_slice(None)) == 2
+    assert len(workflow._history_slice(0)) == 2
+    assert len(workflow._history_slice(1)) == 1
+    assert len(workflow._history_slice("bad")) == 2  # type: ignore[arg-type]
+
+    assert workflow._missing_data(("ohlcv", " ", "order_book"), {"ohlcv"}) == ("order_book",)
+
+    with pytest.raises(RuntimeError, match="Missing market data"):
+        workflow._resolve_fallback({"ohlcv"}, ("spread_history",))
+    with pytest.raises(RuntimeError, match="Decision schedule blocks"):
+        workflow._resolve_fallback({"ohlcv"}, ())
+
+    class _ExplodingWindow:
+        allow_trading = True
+
+        def contains(self, _: datetime) -> bool:
+            raise RuntimeError("boom")
+
+    workflow._schedule = (_ExplodingWindow(),)
+    assert workflow._is_within_schedule(datetime(2024, 1, 1, tzinfo=timezone.utc)) is False
+
+
+def test_regime_workflow_candidate_and_recommendation_helpers() -> None:
+    workflow = _workflow([MarketRegime.TREND])
+    version = workflow.register_preset(
+        MarketRegime.TREND,
+        name="trend-core",
+        entries=[{"engine": "daily_trend_momentum", "metadata": {"expected_probability": 5.0}}],
+        signing_key=b"k",
+        key_id="id",
+    )
+    registered = workflow._presets[MarketRegime.TREND]
+    candidates = workflow._build_candidates(registered.preset, version)
+    assert candidates[0].expected_probability == 1.0
+    assert candidates[0].metadata["preset"] == "trend-core"
+
+    class _Engine:
+        def select_strategy(self, regime: MarketRegime) -> str:
+            return regime.value
+
+    workflow._decision_engine = _Engine()  # type: ignore[assignment]
+    assert workflow._fetch_recommendation(MarketRegime.TREND) == "trend"
+
+    class _BrokenEngine:
+        def select_strategy(self, regime: MarketRegime) -> str:
+            raise RuntimeError(regime.value)
+
+    workflow._decision_engine = _BrokenEngine()  # type: ignore[assignment]
+    assert workflow._fetch_recommendation(MarketRegime.TREND) is None
+
+
+def test_regime_workflow_weight_and_plugin_metadata_helpers() -> None:
+    workflow = _workflow([MarketRegime.TREND])
+    workflow.register_preset(
+        MarketRegime.TREND,
+        name="trend-meta",
+        entries=[{"engine": "daily_trend_momentum", "name": "custom"}],
+        signing_key=b"k",
+        key_id="id",
+    )
+    activation = workflow.activate(
+        _market_frame(),
+        available_data={"ohlcv", "technical_indicators", "order_book", "spread_history"},
+        now=datetime(2024, 1, 7, 10, 0, tzinfo=timezone.utc),
+    )
+    weights = workflow._derive_weights(
+        activation,
+        SimpleNamespace(ensemble_weights={"": 1, "x": "NaN"}),
+    )
+    assert "custom" in weights
+    assert "day_trading" in weights
+    metadata = workflow._collect_plugin_metadata(weights)
+    assert "strategies" in metadata
+    assert "license_tiers" in metadata
