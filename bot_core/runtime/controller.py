@@ -667,7 +667,24 @@ class TradingController:
         except Exception:  # pragma: no cover - diagnostics only
             _LOGGER.debug("Nie udało się odtworzyć open Opportunity outcomes", exc_info=True)
             return
+        finalized_correlation_keys: set[str] = set()
+        try:
+            labels = repository.load_outcome_labels()
+        except Exception:  # pragma: no cover - diagnostics only
+            labels = []
+        for label in labels:
+            if str(label.label_quality).startswith("final"):
+                finalized_correlation_keys.add(str(label.correlation_key))
         for row in restored:
+            if row.correlation_key in finalized_correlation_keys:
+                try:
+                    repository.remove_open_outcome(row.correlation_key)
+                except Exception:  # pragma: no cover - diagnostics only
+                    _LOGGER.debug(
+                        "Nie udało się usunąć nieaktualnego open Opportunity outcome",
+                        exc_info=True,
+                    )
+                continue
             restored_provenance = row.provenance if isinstance(row.provenance, Mapping) else {}
             restored_model_version_raw = restored_provenance.get("model_version")
             restored_decision_source_raw = restored_provenance.get("decision_source")
@@ -873,6 +890,53 @@ class TradingController:
         if len(candidates) > 1:
             return None, "ambiguous"
         return candidates[0], "resolved_by_symbol_singleton"
+
+    def _runtime_position_notional_for_symbol(
+        self,
+        *,
+        account: AccountSnapshot | None,
+        symbol: str,
+    ) -> float | None:
+        if account is None:
+            return None
+        balances = getattr(account, "balances", None)
+        if not isinstance(balances, Mapping):
+            return None
+        normalized_symbol = str(symbol or "").strip()
+        if not normalized_symbol:
+            return None
+        lookup_keys = (
+            f"{normalized_symbol}_position",
+            f"{normalized_symbol.replace('/', '')}_position",
+        )
+        for key in lookup_keys:
+            if key not in balances:
+                continue
+            raw_value = balances.get(key)
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(value):
+                return None
+            return value
+        return None
+
+    @staticmethod
+    def _is_autonomous_restored_tracker_contract(
+        tracker: _OpportunityOpenOutcomeTracker | None,
+    ) -> bool:
+        if tracker is None:
+            return False
+        final_mode = str(tracker.autonomy_final_mode or "").strip().lower()
+        if final_mode:
+            return final_mode in {"paper_autonomous", "live_autonomous"}
+        autonomy_modes = {
+            str(tracker.autonomy_requested_mode or "").strip().lower(),
+            str(tracker.autonomy_upstream_effective_mode or "").strip().lower(),
+            str(tracker.autonomy_local_guard_effective_mode or "").strip().lower(),
+        }
+        return bool(autonomy_modes & {"paper_autonomous", "live_autonomous"})
 
     def _is_duplicate_autonomous_close_replay(
         self,
@@ -1543,6 +1607,49 @@ class TradingController:
         existing_open_tracker = (
             self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
         )
+        if (
+            correlation_key
+            and existing_open_tracker is not None
+            and existing_open_tracker.restored_from_repository
+            and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+            and self._is_autonomous_restored_tracker_contract(existing_open_tracker)
+        ):
+            account_for_runtime_truth: AccountSnapshot | None
+            try:
+                account_for_runtime_truth = self.account_snapshot_provider()
+            except Exception:  # pragma: no cover - diagnostics only
+                account_for_runtime_truth = None
+            runtime_position_notional = self._runtime_position_notional_for_symbol(
+                account=account_for_runtime_truth,
+                symbol=str(request.symbol),
+            )
+            if runtime_position_notional is not None:
+                expected_runtime_sign = (
+                    1.0 if str(existing_open_tracker.side).upper() in _BUY_SIDES else -1.0
+                )
+                sign_mismatch = (
+                    abs(runtime_position_notional) > 1e-12
+                    and runtime_position_notional * expected_runtime_sign < 0.0
+                )
+                if abs(runtime_position_notional) <= 1e-12 or sign_mismatch:
+                    self._discard_open_outcome_tracker(correlation_key)
+                    existing_open_tracker = None
+                    self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                    self._record_decision_event(
+                        "signal_skipped",
+                        signal=signal,
+                        request=request,
+                        status="skipped",
+                        metadata={
+                            "reason": (
+                                "restored_tracker_runtime_position_sign_mismatch_suppressed"
+                                if sign_mismatch
+                                else "restored_tracker_runtime_position_absent_suppressed"
+                            ),
+                            "proxy_correlation_key": correlation_key,
+                        },
+                    )
+                    return None
         if self._is_duplicate_autonomous_close_replay(
             request=request,
             correlation_key=correlation_key,
