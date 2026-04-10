@@ -938,6 +938,23 @@ class TradingController:
         }
         return bool(autonomy_modes & {"paper_autonomous", "live_autonomous"})
 
+    @staticmethod
+    def _remaining_quantity_for_tracker(
+        tracker: _OpportunityOpenOutcomeTracker | None,
+    ) -> float | None:
+        if tracker is None:
+            return None
+        try:
+            entry_quantity = float(tracker.entry_quantity)
+            closed_quantity = float(tracker.closed_quantity)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(entry_quantity) or not math.isfinite(closed_quantity):
+            return None
+        if entry_quantity < 0.0 or closed_quantity < 0.0:
+            return None
+        return max(0.0, entry_quantity - closed_quantity)
+
     def _is_duplicate_autonomous_close_replay(
         self,
         *,
@@ -1755,6 +1772,48 @@ class TradingController:
                         },
                     )
                     return None
+        if (
+            existing_open_tracker is not None
+            and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+            and self._is_autonomous_restored_tracker_contract(existing_open_tracker)
+        ):
+            remaining_quantity = self._remaining_quantity_for_tracker(existing_open_tracker)
+            if remaining_quantity is None:
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    request=request,
+                    status="skipped",
+                    metadata={
+                        "reason": "restored_tracker_remaining_quantity_invalid_suppressed",
+                        "proxy_correlation_key": correlation_key,
+                    },
+                )
+                return None
+            if remaining_quantity <= 1e-12:
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    request=request,
+                    status="skipped",
+                    metadata={
+                        "reason": "restored_tracker_remaining_quantity_exhausted_suppressed",
+                        "proxy_correlation_key": correlation_key,
+                    },
+                )
+                return None
+            if request.quantity > remaining_quantity + 1e-12:
+                request = replace(
+                    request,
+                    quantity=remaining_quantity,
+                    metadata={
+                        **dict(request.metadata or {}),
+                        "restored_tracker_remaining_quantity": remaining_quantity,
+                        "restored_tracker_quantity_clamped": True,
+                    },
+                )
         if self._is_duplicate_autonomous_close_replay(
             request=request,
             correlation_key=correlation_key,

@@ -10371,6 +10371,243 @@ def test_opportunity_autonomy_duplicate_close_replay_after_restart_prunes_stale_
     assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
 
 
+def test_opportunity_autonomy_restored_tracker_partial_close_clamps_to_remaining_quantity() -> None:
+    decision_timestamp = datetime(2026, 1, 11, 13, 30, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.4,
+            provenance={
+                "source": "restored_partial_tracker",
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    execution = StatusExecutionService(status="filled", avg_price=111.0)
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    close_signal.metadata = {**dict(close_signal.metadata), "quantity": "0.8"}
+    controller.process_signals([close_signal])
+
+    assert len(execution.requests) == 1
+    assert execution.requests[0].quantity == pytest.approx(0.6, rel=1e-6)
+    request_metadata = execution.requests[0].metadata or {}
+    assert request_metadata.get("restored_tracker_remaining_quantity") == pytest.approx(0.6, rel=1e-6)
+    assert request_metadata.get("restored_tracker_quantity_clamped") is True
+    assert repository.load_open_outcomes() == []
+
+
+def test_opportunity_autonomy_restored_tracker_partial_close_allows_exact_remaining_quantity() -> None:
+    decision_timestamp = datetime(2026, 1, 11, 13, 40, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.4,
+            provenance={
+                "source": "restored_partial_tracker",
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    execution = StatusExecutionService(status="filled", avg_price=111.0)
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    close_signal.metadata = {**dict(close_signal.metadata), "quantity": "0.6"}
+    controller.process_signals([close_signal])
+
+    assert len(execution.requests) == 1
+    assert execution.requests[0].quantity == pytest.approx(0.6, rel=1e-6)
+    assert repository.load_open_outcomes() == []
+
+
+def test_opportunity_autonomy_restored_tracker_inconsistent_closed_quantity_fail_closed_skip() -> None:
+    decision_timestamp = datetime(2026, 1, 11, 13, 50, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=1.5,
+            provenance={
+                "source": "restored_inconsistent_tracker",
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    execution = StatusExecutionService(status="filled", avg_price=111.0)
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    controller.process_signals([close_signal])
+
+    assert execution.requests == []
+    skipped_events = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and event.get("reason") == "restored_tracker_remaining_quantity_exhausted_suppressed"
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
+
+
+def test_opportunity_autonomy_restored_tracker_negative_closed_quantity_invalid_fail_closed_skip() -> None:
+    decision_timestamp = datetime(2026, 1, 11, 13, 55, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=-0.1,
+            provenance={
+                "source": "restored_invalid_tracker",
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    execution = StatusExecutionService(status="filled", avg_price=111.0)
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    controller.process_signals([close_signal])
+
+    assert execution.requests == []
+    skipped_events = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and event.get("reason") == "restored_tracker_remaining_quantity_invalid_suppressed"
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
+
+
 def test_opportunity_autonomy_restored_tracker_runtime_position_absent_suppresses_close_execution_after_restart() -> (
     None
 ):
