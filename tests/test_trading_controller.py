@@ -10166,9 +10166,13 @@ def test_opportunity_autonomy_reason_precedence_restored_runtime_sign_mismatch_b
         event for event in replay_journal.export() if event["event"] == "signal_skipped"
     ]
     assert skipped_events
-    assert skipped_events[-1]["reason"] == "restored_tracker_runtime_position_sign_mismatch_suppressed"
+    assert (
+        skipped_events[-1]["reason"] == "restored_tracker_runtime_position_sign_mismatch_suppressed"
+    )
     assert len(skipped_events) == 1
-    assert skipped_events[0]["reason"] == "restored_tracker_runtime_position_sign_mismatch_suppressed"
+    assert (
+        skipped_events[0]["reason"] == "restored_tracker_runtime_position_sign_mismatch_suppressed"
+    )
     assert not any(
         event.get("reason") == "restored_tracker_runtime_position_absent_suppressed"
         for event in skipped_events
@@ -10361,7 +10365,6 @@ def test_opportunity_autonomy_restored_buy_tracker_runtime_positive_position_kee
         and event.get("reason") == "restored_tracker_runtime_position_sign_mismatch_suppressed"
     ]
     assert skipped_events == []
-
 
 
 def test_opportunity_autonomy_restored_sell_tracker_runtime_positive_position_sign_mismatch_suppresses_close_execution_after_restart_for_balance_key_without_slash() -> (
@@ -11834,7 +11837,9 @@ def test_opportunity_autonomy_runtime_position_guard_scope_final_autonomous_stil
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="scope-final-autonomous-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="scope-final-autonomous-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -11909,7 +11914,9 @@ def test_opportunity_autonomy_runtime_position_guard_scope_legacy_fallback_witho
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="scope-legacy-fallback-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="scope-legacy-fallback-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
