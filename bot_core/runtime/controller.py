@@ -1012,7 +1012,9 @@ class TradingController:
             if scope_environment and shadow_environment != scope_environment:
                 continue
             matching_shadow_scope_candidate_exists = True
-            proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+            proposed_direction = (
+                str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+            )
             expected_open_side = (
                 "BUY"
                 if proposed_direction in {"long", "buy"}
