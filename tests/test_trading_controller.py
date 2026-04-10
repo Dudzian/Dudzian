@@ -13312,7 +13312,9 @@ def test_opportunity_autonomy_duplicate_close_guard_legacy_shadow_missing_enviro
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-shadow-legacy-missing-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-shadow-legacy-missing-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -13417,7 +13419,9 @@ def test_opportunity_autonomy_duplicate_close_guard_legacy_shadow_environment_fa
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-shadow-legacy-blank-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-shadow-legacy-blank-"))
+    )
     shadow_repo.append_shadow_records(
         [
             OpportunityShadowRecord(
@@ -13507,7 +13511,9 @@ def test_opportunity_autonomy_duplicate_close_guard_mixed_legacy_and_same_scope_
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-shadow-legacy-mixed-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-shadow-legacy-mixed-"))
+    )
     legacy_missing_scope = OpportunityShadowRecord(
         record_key=correlation_key,
         symbol="BTC/USDT",
@@ -13530,7 +13536,9 @@ def test_opportunity_autonomy_duplicate_close_guard_mixed_legacy_and_same_scope_
         correlation_key=correlation_key,
         decision_timestamp=decision_timestamp,
     )
-    records = [legacy_missing_scope, same_scope] if legacy_first else [same_scope, legacy_missing_scope]
+    records = (
+        [legacy_missing_scope, same_scope] if legacy_first else [same_scope, legacy_missing_scope]
+    )
     shadow_repo.append_shadow_records(records)
     shadow_repo.append_outcome_labels(
         [
@@ -13599,7 +13607,9 @@ def test_opportunity_autonomy_duplicate_close_guard_foreign_plus_legacy_shadow_f
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-shadow-legacy-foreign-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-shadow-legacy-foreign-"))
+    )
     legacy_missing_scope = OpportunityShadowRecord(
         record_key=correlation_key,
         symbol="BTC/USDT",
@@ -13636,7 +13646,11 @@ def test_opportunity_autonomy_duplicate_close_guard_foreign_plus_legacy_shadow_f
         snapshot={},
         context=OpportunityShadowContext(environment="live"),
     )
-    records = [legacy_missing_scope, foreign_scope] if legacy_first else [foreign_scope, legacy_missing_scope]
+    records = (
+        [legacy_missing_scope, foreign_scope]
+        if legacy_first
+        else [foreign_scope, legacy_missing_scope]
+    )
     shadow_repo.append_shadow_records(records)
     shadow_repo.append_outcome_labels(
         [
