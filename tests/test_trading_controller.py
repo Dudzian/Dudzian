@@ -12566,7 +12566,9 @@ def test_opportunity_autonomy_duplicate_close_guard_prefers_later_same_scope_aut
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-order-a-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-order-a-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -12652,7 +12654,9 @@ def test_opportunity_autonomy_duplicate_close_guard_prefers_same_scope_autonomou
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-order-b-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-order-b-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -12738,7 +12742,9 @@ def test_opportunity_autonomy_duplicate_close_guard_ignores_same_scope_non_auton
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-order-c-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-order-c-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -12824,7 +12830,9 @@ def test_opportunity_autonomy_duplicate_close_guard_does_not_suppress_when_no_sa
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-order-d-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-order-d-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -12910,7 +12918,9 @@ def test_opportunity_autonomy_duplicate_close_guard_does_not_suppress_when_auton
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-a-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-a-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -12980,7 +12990,9 @@ def test_opportunity_autonomy_duplicate_close_guard_does_not_suppress_when_auton
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-b-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-b-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -13050,7 +13062,9 @@ def test_opportunity_autonomy_duplicate_close_guard_ignores_scope_incomplete_lab
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-c-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-c-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -13135,7 +13149,9 @@ def test_opportunity_autonomy_duplicate_close_guard_ignores_scope_incomplete_lab
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-d-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-d-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -13220,7 +13236,9 @@ def test_opportunity_autonomy_duplicate_close_guard_full_same_scope_autonomous_s
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-e-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-scope-incomplete-e-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -13294,7 +13312,9 @@ def test_opportunity_autonomy_duplicate_close_guard_prefers_same_scope_shadow_re
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-shadow-scope-a-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-shadow-scope-a-"))
+    )
     shadow_repo.append_shadow_records(
         [
             OpportunityShadowRecord(
@@ -13386,7 +13406,9 @@ def test_opportunity_autonomy_duplicate_close_guard_prefers_same_scope_shadow_re
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-shadow-scope-b-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-shadow-scope-b-"))
+    )
     shadow_repo.append_shadow_records(
         [
             _shadow_record_for_key(
@@ -13478,7 +13500,9 @@ def test_opportunity_autonomy_duplicate_close_guard_does_not_suppress_when_only_
         model_version="opportunity-v1",
         rank=1,
     )
-    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-shadow-scope-c-")))
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-shadow-scope-c-"))
+    )
     shadow_repo.append_shadow_records(
         [
             OpportunityShadowRecord(
@@ -13569,7 +13593,9 @@ def test_opportunity_autonomy_duplicate_close_guard_shadow_record_direction_orde
     )
 
     def _run_case(records: list[OpportunityShadowRecord]) -> list[dict[str, str]]:
-        shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="duplicate-shadow-scope-d-")))
+        shadow_repo = OpportunityShadowRepository(
+            Path(tempfile.mkdtemp(prefix="duplicate-shadow-scope-d-"))
+        )
         shadow_repo.append_shadow_records(records)
         shadow_repo.append_outcome_labels(
             [
