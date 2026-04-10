@@ -874,6 +874,67 @@ class TradingController:
             return None, "ambiguous"
         return candidates[0], "resolved_by_symbol_singleton"
 
+    def _is_duplicate_autonomous_close_replay(
+        self,
+        *,
+        request: OrderRequest,
+        correlation_key: str,
+        existing_open_tracker: _OpportunityOpenOutcomeTracker | None,
+    ) -> bool:
+        if not correlation_key or existing_open_tracker is not None:
+            return False
+        side = str(request.side or "").upper()
+        if side not in (_BUY_SIDES | _SELL_SIDES):
+            return False
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return False
+        try:
+            labels = repository.load_outcome_labels()
+            shadow_records = repository.load_shadow_records()
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug(
+                "Nie udało się zweryfikować replay close przed egzekucją",
+                exc_info=True,
+            )
+            return False
+        matching_final_label = next(
+            (
+                row
+                for row in labels
+                if row.correlation_key == correlation_key
+                and str(row.symbol) == str(request.symbol)
+                and str(row.label_quality).startswith("final")
+            ),
+            None,
+        )
+        if matching_final_label is None:
+            return False
+        final_provenance = (
+            matching_final_label.provenance
+            if isinstance(matching_final_label.provenance, Mapping)
+            else {}
+        )
+        final_mode_raw = final_provenance.get("autonomy_final_mode")
+        final_mode = str(final_mode_raw or "").strip().lower()
+        if final_mode not in {"paper_autonomous", "live_autonomous"}:
+            return False
+        shadow_record = next(
+            (row for row in shadow_records if row.record_key == correlation_key),
+            None,
+        )
+        if shadow_record is None:
+            return False
+        proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+        expected_open_side = (
+            "BUY"
+            if proposed_direction in {"long", "buy"}
+            else ("SELL" if proposed_direction in {"short", "sell"} else "")
+        )
+        if not expected_open_side:
+            return False
+        return self._is_closing_side(expected_open_side, side)
+
     def _record_decision_event(
         self,
         event_type: str,
@@ -1477,6 +1538,27 @@ class TradingController:
                     },
                 )
                 return None
+        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        existing_open_tracker = (
+            self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
+        )
+        if self._is_duplicate_autonomous_close_replay(
+            request=request,
+            correlation_key=correlation_key,
+            existing_open_tracker=existing_open_tracker,
+        ):
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": "duplicate_autonomous_close_replay_suppressed",
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            return None
         account = self.account_snapshot_provider()
         risk_result = self.risk_engine.apply_pre_trade_checks(
             request,
