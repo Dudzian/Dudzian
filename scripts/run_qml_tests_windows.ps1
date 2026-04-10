@@ -32,26 +32,6 @@ $pytestArgs = @(
   "--log-file-level=INFO"
 )
 
-$supportsBoxed = $false
-$supportsForked = $false
-& python -c "import xdist" 2>$null
-if ($LASTEXITCODE -eq 0) {
-  $supportsBoxed = $true
-} else {
-  & python -c "import pytest_forked" 2>$null
-  if ($LASTEXITCODE -eq 0) {
-    $supportsForked = $true
-  }
-}
-if ($supportsBoxed) {
-  $pytestArgs += "--boxed"
-} elseif ($supportsForked) {
-  $pytestArgs += "--forked"
-} else {
-  Write-Error "pytest isolation unavailable: install pytest-xdist (--boxed) or pytest-forked (--forked)."
-  exit 1
-}
-
 if ($supportsTimeout) {
   $pytestArgs += "--timeout=$PytestTimeoutSeconds"
 } else {
