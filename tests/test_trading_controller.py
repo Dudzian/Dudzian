@@ -570,6 +570,35 @@ def _autonomy_shadow_repository_with_final_outcomes(
     return repository
 
 
+def _append_autonomous_final_label_for_correlation(
+    repository: OpportunityShadowRepository,
+    *,
+    correlation_key: str,
+    decision_timestamp: datetime,
+    environment: str,
+    portfolio_id: str,
+) -> None:
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp + timedelta(minutes=5),
+                correlation_key=correlation_key,
+                horizon_minutes=15,
+                realized_return_bps=3.0,
+                max_favorable_excursion_bps=3.0,
+                max_adverse_excursion_bps=-1.0,
+                provenance={
+                    "environment": environment,
+                    "portfolio_id": portfolio_id,
+                    "autonomy_final_mode": "paper_autonomous",
+                },
+                label_quality="final",
+            )
+        ]
+    )
+
+
 def _autonomy_shadow_repository_with_mixed_scope_outcomes(
     rows: Sequence[tuple[float, str, str]],
 ) -> OpportunityShadowRepository:
@@ -9777,6 +9806,89 @@ def test_opportunity_autonomy_restored_tracker_runtime_position_absent_suppresse
     assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
 
 
+def test_opportunity_autonomy_reason_precedence_restored_runtime_absent_beats_duplicate_close_replay() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 11, 14, 5, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="precedence-absent-")))
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "source": "restored_tracker_reason_precedence_absent",
+                "autonomy_requested_mode": "paper_autonomous",
+                "autonomy_upstream_effective_mode": "paper_autonomous",
+                "autonomy_local_guard_effective_mode": "paper_autonomous",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    replay_execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 106.0}]
+    )
+    replay_journal = CollectingDecisionJournal()
+    controller_replay = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=replay_execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=lambda: AccountSnapshot(
+            balances={"BTC/USDT_position": 0.0},
+            total_equity=100_000.0,
+            available_margin=90_000.0,
+            maintenance_margin=10_000.0,
+        ),
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=replay_journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    _append_autonomous_final_label_for_correlation(
+        shadow_repo,
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    controller_replay.process_signals([close_signal])
+
+    skipped_events = [
+        event for event in replay_journal.export() if event["event"] == "signal_skipped"
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["reason"] == "restored_tracker_runtime_position_absent_suppressed"
+    assert not any(
+        event.get("reason") == "duplicate_autonomous_close_replay_suppressed"
+        for event in skipped_events
+    )
+
+
 def test_opportunity_autonomy_restored_buy_tracker_runtime_negative_position_sign_mismatch_suppresses_close_execution_after_restart() -> (
     None
 ):
@@ -9857,6 +9969,91 @@ def test_opportunity_autonomy_restored_buy_tracker_runtime_negative_position_sig
     ]
     assert skipped_events
     assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
+
+
+def test_opportunity_autonomy_reason_precedence_restored_runtime_sign_mismatch_beats_duplicate_close_replay() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 11, 14, 35, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="precedence-sign-mismatch-"))
+    )
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    shadow_repo.upsert_open_outcome(
+        shadow_repo.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "source": "restored_tracker_reason_precedence_sign_mismatch",
+                "autonomy_requested_mode": "paper_autonomous",
+                "autonomy_upstream_effective_mode": "paper_autonomous",
+                "autonomy_local_guard_effective_mode": "paper_autonomous",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    replay_execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 106.0}]
+    )
+    replay_journal = CollectingDecisionJournal()
+    controller_replay = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=replay_execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=lambda: AccountSnapshot(
+            balances={"BTC/USDT_position": -125.0},
+            total_equity=100_000.0,
+            available_margin=90_000.0,
+            maintenance_margin=10_000.0,
+        ),
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=replay_journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    _append_autonomous_final_label_for_correlation(
+        shadow_repo,
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    controller_replay.process_signals([close_signal])
+
+    skipped_events = [
+        event for event in replay_journal.export() if event["event"] == "signal_skipped"
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["reason"] == "restored_tracker_runtime_position_sign_mismatch_suppressed"
+    assert not any(
+        event.get("reason") == "duplicate_autonomous_close_replay_suppressed"
+        for event in skipped_events
+    )
 
 
 def test_opportunity_autonomy_restored_sell_tracker_runtime_positive_position_sign_mismatch_suppresses_close_execution_after_restart() -> (
@@ -10594,6 +10791,66 @@ def test_opportunity_autonomy_runtime_position_guard_scope_unknown_final_mode_do
         }
     ]
     assert skipped_events == []
+
+
+def test_opportunity_autonomy_reason_precedence_without_restored_tracker_keeps_duplicate_close_replay_reason() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 30, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="precedence-duplicate-no-restored-"))
+    )
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    _append_autonomous_final_label_for_correlation(
+        shadow_repo,
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+
+    replay_execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 106.0}]
+    )
+    replay_journal = CollectingDecisionJournal()
+    controller_replay = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=replay_execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=replay_journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    controller_replay.process_signals([close_signal])
+
+    assert replay_execution.requests == []
+    skipped_events = [
+        event for event in replay_journal.export() if event["event"] == "signal_skipped"
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["reason"] == "duplicate_autonomous_close_replay_suppressed"
 
 
 def test_opportunity_autonomy_duplicate_close_guard_does_not_suppress_legit_partial_to_final_close() -> (
