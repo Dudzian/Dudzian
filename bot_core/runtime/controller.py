@@ -2598,6 +2598,21 @@ class TradingController:
                         scope_resolution = "restored_tracker"
             return scope_environment, scope_portfolio, scope_resolution
 
+        def _is_restored_tracker_scope_gap(
+            tracker_hint: _OpportunityOpenOutcomeTracker | None,
+        ) -> bool:
+            # Auditable precedence exception: when a tracker was restored from legacy/open outcomes
+            # but lacks full scope continuity, close/proxy lineage must stay conservative and
+            # preserve restored tracker provenance instead of promoting shadow/opportunity lineage.
+            return bool(
+                tracker_hint is not None
+                and tracker_hint.restored_from_repository
+                and (
+                    tracker_hint.environment_scope is None
+                    or tracker_hint.portfolio_scope is None
+                )
+            )
+
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
         side = str(request.side or "").upper()
         is_filled_or_partial = (
@@ -2882,7 +2897,10 @@ class TradingController:
                     if OpportunityShadowRepository._quality_rank(
                         existing_quality
                     ) < OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed"):
-                        preserve_tracker_model_version = not tracked.restored_from_repository
+                        preserve_tracker_model_version = (
+                            not tracked.restored_from_repository
+                            or _is_restored_tracker_scope_gap(tracked)
+                        )
                         request_payload_raw = request_metadata.get("opportunity_autonomy_decision")
                         if isinstance(request_payload_raw, Mapping):
                             payload_model_raw = request_payload_raw.get("model_version")
@@ -3081,6 +3099,7 @@ class TradingController:
             model_version, decision_source = _resolve_runtime_lineage(
                 correlation_key,
                 tracker_hint=proxy_tracker,
+                prefer_tracker_model_version=_is_restored_tracker_scope_gap(proxy_tracker),
             )
             scope_environment, scope_portfolio, scope_resolution = _resolve_runtime_scope(
                 proxy_tracker
