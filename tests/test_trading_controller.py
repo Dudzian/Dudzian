@@ -520,6 +520,30 @@ def _build_autonomy_controller(
     return controller, execution, journal
 
 
+def _build_autonomy_controller_with_risk(
+    *,
+    environment: str,
+    risk_engine: DummyRiskEngine,
+    execution_service: ExecutionService | None = None,
+    opportunity_shadow_repository: OpportunityShadowRepository | None = None,
+) -> tuple[TradingController, ExecutionService, CollectingDecisionJournal]:
+    execution = execution_service or DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id=f"{environment}-1",
+        environment=environment,
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=opportunity_shadow_repository,
+    )
+    return controller, execution, journal
+
+
 def _build_autonomy_controller_with_execution(
     *,
     environment: str,
@@ -668,6 +692,175 @@ def test_opportunity_autonomy_denied_blocks_execution() -> None:
     assert event["status"] == "blocked"
     assert event["autonomy_mode"] == "denied"
     assert event["blocking_reason"] == "autonomy_mode_denied"
+
+
+def test_opportunity_autonomous_open_respects_active_risk_veto_and_never_executes() -> None:
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result(RiskCheckResult(allowed=False, reason="risk_veto_active"))
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+        ),
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("paper_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    assert len(risk_engine.last_checks) == 1
+    autonomy_event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert autonomy_event["status"] == "allowed"
+    assert autonomy_event["autonomous_execution_allowed"] == "true"
+    rejected_event = _last_event(journal, "risk_rejected")
+    assert rejected_event["reason"] == "risk_veto_active"
+
+
+def test_opportunity_live_autonomous_open_respects_active_risk_veto_and_never_executes() -> None:
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result(RiskCheckResult(allowed=False, reason="risk_veto_active"))
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="live",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [16.0, 14.0, 12.0, 10.0, 8.0, 6.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+
+    assert result == []
+    assert execution.requests == []
+    assert len(risk_engine.last_checks) == 1
+    autonomy_event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert autonomy_event["status"] == "allowed"
+    assert autonomy_event["autonomous_execution_allowed"] == "true"
+    rejected_event = _last_event(journal, "risk_rejected")
+    assert rejected_event["reason"] == "risk_veto_active"
+
+
+def test_opportunity_autonomous_replay_after_restart_does_not_flip_risk_rejection_into_execute() -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0],
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous")
+
+    risk_engine_first = DummyRiskEngine()
+    risk_engine_first.set_result(RiskCheckResult(allowed=False, reason="risk_veto_active"))
+    controller_first, execution_first, journal_first = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine_first,
+        opportunity_shadow_repository=repository,
+    )
+    first_result = controller_first.process_signals([signal])
+    assert first_result == []
+    assert execution_first.requests == []
+    assert _last_event(journal_first, "risk_rejected")["reason"] == "risk_veto_active"
+
+    risk_engine_replay = DummyRiskEngine()
+    risk_engine_replay.set_result(RiskCheckResult(allowed=False, reason="risk_veto_active"))
+    controller_replay, execution_replay, journal_replay = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine_replay,
+        opportunity_shadow_repository=repository,
+    )
+    replay_result = controller_replay.process_signals([signal])
+
+    assert replay_result == []
+    assert execution_replay.requests == []
+    assert len(risk_engine_replay.last_checks) == 1
+    assert _last_event(journal_replay, "risk_rejected")["reason"] == "risk_veto_active"
+    assert repository.load_open_outcomes() == []
+
+
+def test_opportunity_autonomous_restored_tracker_close_still_respects_risk_veto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0],
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    repository.upsert_open_outcome(
+        OpportunityShadowRepository.OpenOutcomeState(
+            correlation_key="shadow-key-1",
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result(RiskCheckResult(allowed=False, reason="risk_veto_active"))
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=repository,
+    )
+    runtime_position_checks: list[tuple[str, str, str]] = []
+
+    def _spy_runtime_position(
+        self: TradingController, account: AccountSnapshot | None, symbol: str
+    ) -> float | None:
+        runtime_position_checks.append((str(self.environment), str(symbol), "called"))
+        return 1.0
+
+    monkeypatch.setattr(
+        TradingController,
+        "_runtime_position_notional_for_symbol",
+        _spy_runtime_position,
+    )
+
+    result = controller.process_signals([_opportunity_autonomy_signal("paper_autonomous", side="SELL")])
+
+    assert result == []
+    assert execution.requests == []
+    assert len(risk_engine.last_checks) == 1
+    assert len(runtime_position_checks) == 1
+    assert runtime_position_checks[0][0] == "paper"
+    assert runtime_position_checks[0][1] == "BTC/USDT"
+    assert risk_engine.last_checks[0][0].metadata.get("opportunity_shadow_record_key") == "shadow-key-1"
+    autonomy_event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert autonomy_event["status"] == "allowed"
+    assert autonomy_event["autonomous_execution_allowed"] == "true"
+    assert _last_event(journal, "risk_rejected")["reason"] == "risk_veto_active"
+    assert len(repository.load_open_outcomes()) == 1
+
+
+def test_opportunity_autonomy_fail_closed_on_missing_snapshot_source_blocks_before_risk_even_when_veto_present() -> (
+    None
+):
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result(RiskCheckResult(allowed=False, reason="risk_veto_active"))
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=None,
+    )
+
+    signal = _opportunity_autonomy_signal("paper_autonomous")
+    result = controller.process_signals([signal])
+
+    assert result == []
+    assert execution.requests == []
+    assert risk_engine.last_checks == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "performance_guard_snapshot_source_unavailable"
+    assert event["performance_guard_source"] == "missing_repository_fail_closed"
+    assert event["autonomous_execution_allowed"] == "false"
 
 
 def test_opportunity_autonomy_shadow_only_blocks_paper_and_live() -> None:
