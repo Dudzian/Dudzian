@@ -6795,7 +6795,9 @@ def test_opportunity_autonomy_assisted_approval_open_and_persistence_contract_st
     _assert_autonomy_contract_consistent_with_provenance(open_event, final_labels[0].provenance)
 
 
-def test_opportunity_autonomy_assisted_without_approval_blocks_without_execution_persistence() -> None:
+def test_opportunity_autonomy_assisted_without_approval_blocks_without_execution_persistence() -> (
+    None
+):
     repository = _autonomy_shadow_repository_with_final_outcomes(
         [16.0, 14.0, 12.0, 10.0, 8.0, 6.0], environment="live", portfolio_id="live-1"
     )

@@ -74,7 +74,9 @@ def test_futures_spread_strategy_no_trade_below_threshold_and_spread_z_alias() -
 
 def test_futures_spread_strategy_basis_and_time_exits_reset_state() -> None:
     basis_strategy = FuturesSpreadStrategy(
-        FuturesSpreadSettings(entry_z=1.0, exit_z=0.1, max_bars=5, funding_exit=9.0, basis_exit=0.01)
+        FuturesSpreadSettings(
+            entry_z=1.0, exit_z=0.1, max_bars=5, funding_exit=9.0, basis_exit=0.01
+        )
     )
     basis_strategy.on_data(_snapshot(spread=1.2, basis=0.0, funding=0.0))
     basis_exit = basis_strategy.on_data(_snapshot(spread=1.1, basis=-0.02, funding=0.0))
