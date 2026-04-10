@@ -2801,8 +2801,8 @@ class TradingController:
                         tracked.assisted_override_used
                         or autonomy_chain.get("assisted_override_used")
                     )
-                    tracked.blocking_reason = (
-                        tracked.blocking_reason or autonomy_chain.get("blocking_reason")
+                    tracked.blocking_reason = tracked.blocking_reason or autonomy_chain.get(
+                        "blocking_reason"
                     )
                     tracked.autonomy_decisive_stage = (
                         tracked.autonomy_decisive_stage
@@ -2930,8 +2930,8 @@ class TradingController:
                             tracked.assisted_override_used
                             or autonomy_chain.get("assisted_override_used")
                         )
-                        tracked.blocking_reason = (
-                            tracked.blocking_reason or autonomy_chain.get("blocking_reason")
+                        tracked.blocking_reason = tracked.blocking_reason or autonomy_chain.get(
+                            "blocking_reason"
                         )
                         tracked.autonomy_decisive_stage = (
                             tracked.autonomy_decisive_stage
@@ -3027,9 +3027,7 @@ class TradingController:
                         "autonomy_local_guard_effective_mode"
                     ),
                     autonomy_final_mode=autonomy_chain.get("autonomy_final_mode"),
-                    autonomous_execution_allowed=autonomy_chain.get(
-                        "autonomous_execution_allowed"
-                    ),
+                    autonomous_execution_allowed=autonomy_chain.get("autonomous_execution_allowed"),
                     assisted_override_used=autonomy_chain.get("assisted_override_used"),
                     blocking_reason=autonomy_chain.get("blocking_reason"),
                     autonomy_decisive_stage=autonomy_chain.get("autonomy_decisive_stage"),
