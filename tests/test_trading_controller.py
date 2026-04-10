@@ -9167,6 +9167,218 @@ def test_opportunity_autonomy_runtime_lineage_and_autonomy_contract_reject_confl
     assert attach_events[-1]["status"] == "final_upgraded"
 
 
+def test_opportunity_autonomy_duplicate_open_reentry_same_runtime_is_suppressed() -> None:
+    decision_timestamp = datetime(2026, 1, 7, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        model_version="open-lineage-v1",
+        decision_source="open-lineage-source",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="duplicate_open_contract",
+        decision_payload_decision_source="open_upstream_source",
+        decision_payload_inference_model="open_upstream_model",
+        decision_payload_inference_model_version="2026.06.10",
+    )
+
+    controller.process_signals([open_signal])
+    open_rows_before_replay = repository.load_open_outcomes()
+    labels_before_replay = repository.load_outcome_labels()
+    tracker_contract_before_replay = _lineage_and_autonomy_snapshot(
+        open_rows_before_replay[0].provenance
+    )
+    controller.process_signals([open_signal])
+
+    assert len(execution.requests) == 1
+    open_rows_after_replay = repository.load_open_outcomes()
+    assert len(open_rows_after_replay) == 1
+    assert _lineage_and_autonomy_snapshot(open_rows_after_replay[0].provenance) == (
+        tracker_contract_before_replay
+    )
+    assert repository.load_outcome_labels() == labels_before_replay
+    skipped_events = [
+        event for event in journal.export() if event["event"] == "signal_skipped"
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+    assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
+
+
+def test_opportunity_autonomy_duplicate_open_reentry_after_restart_is_suppressed_and_contract_stable() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 8, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller_open, _journal_open = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=100.0),
+        opportunity_shadow_repository=repository,
+    )
+    controller_open.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                model_version="restart-open-v1",
+                decision_source="restart-open-source",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="restart_duplicate_open_contract",
+                decision_payload_decision_source="restart_open_upstream_source",
+                decision_payload_inference_model="restart_open_upstream_model",
+                decision_payload_inference_model_version="2026.06.11",
+            )
+        ]
+    )
+    open_rows_before_replay = repository.load_open_outcomes()
+    labels_before_replay = repository.load_outcome_labels()
+    tracker_contract_before_replay = _lineage_and_autonomy_snapshot(
+        open_rows_before_replay[0].provenance
+    )
+
+    execution_replay = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=100.0)
+    controller_replay, replay_journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution_replay,
+        opportunity_shadow_repository=repository,
+    )
+    controller_replay.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                model_version="conflicting-replay-v9",
+                decision_source="conflicting-replay-source",
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="replayed_duplicate_open_contract",
+                decision_payload_decision_source="conflicting_replay_upstream_source",
+                decision_payload_inference_model="conflicting_replay_upstream_model",
+                decision_payload_inference_model_version="2027.01.01",
+            )
+        ]
+    )
+
+    assert len(execution_replay.requests) == 0
+    open_rows_after_replay = repository.load_open_outcomes()
+    assert len(open_rows_after_replay) == 1
+    assert _lineage_and_autonomy_snapshot(open_rows_after_replay[0].provenance) == (
+        tracker_contract_before_replay
+    )
+    assert repository.load_outcome_labels() == labels_before_replay
+    skipped_events = [
+        event for event in replay_journal.export() if event["event"] == "signal_skipped"
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+    assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
+
+
+def test_opportunity_autonomy_duplicate_open_guard_does_not_suppress_legit_close() -> None:
+    decision_timestamp = datetime(2026, 1, 9, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 104.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="BUY",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="legit_close_open",
+                decision_payload_decision_source="legit_close_source",
+                decision_payload_inference_model="legit_close_model",
+                decision_payload_inference_model_version="2026.06.12",
+            )
+        ]
+    )
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+
+    assert len(execution.requests) == 2
+    suppressed_close_events = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and event.get("reason") == "duplicate_autonomous_open_reentry_suppressed"
+        and event.get("proxy_correlation_key") == correlation_key
+    ]
+    assert suppressed_close_events == []
+    final_labels = [
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == correlation_key and row.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    assert repository.load_open_outcomes() == []
+
+
 def test_opportunity_autonomy_runtime_lineage_fallback_from_metadata_stays_coherent_with_autonomy_contract() -> (
     None
 ):

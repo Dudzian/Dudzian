@@ -1446,6 +1446,37 @@ class TradingController:
                         **autonomy_chain,
                     },
                 )
+            correlation_key = str(
+                (request.metadata or {}).get("opportunity_shadow_record_key") or ""
+            ).strip()
+            existing_open_tracker = (
+                self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
+            )
+            mode_raw = (request.metadata or {}).get("opportunity_autonomy_mode")
+            duplicate_open_guard_enabled = str(mode_raw or "").strip().lower() in {
+                "paper_autonomous",
+                "live_autonomous",
+            }
+            if (
+                duplicate_open_guard_enabled
+                and
+                existing_open_tracker is not None
+                and str(existing_open_tracker.symbol) == str(request.symbol)
+                and not self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+            ):
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    request=request,
+                    status="skipped",
+                    metadata={
+                        "reason": "duplicate_autonomous_open_reentry_suppressed",
+                        "proxy_correlation_key": correlation_key,
+                        "existing_open_side": str(existing_open_tracker.side),
+                    },
+                )
+                return None
         account = self.account_snapshot_provider()
         risk_result = self.risk_engine.apply_pre_trade_checks(
             request,
