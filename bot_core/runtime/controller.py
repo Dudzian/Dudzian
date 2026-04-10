@@ -962,42 +962,69 @@ class TradingController:
                 exc_info=True,
             )
             return False
-        matching_final_label = next(
-            (
-                row
-                for row in labels
-                if row.correlation_key == correlation_key
-                and str(row.symbol) == str(request.symbol)
-                and str(row.label_quality).startswith("final")
-            ),
-            None,
-        )
-        if matching_final_label is None:
+        scope_environment = str(self.environment or "").strip()
+        scope_portfolio = str(self.portfolio_id or "").strip()
+        matching_scope_autonomous_final_exists = False
+        for row in labels:
+            if (
+                row.correlation_key != correlation_key
+                or str(row.symbol) != str(request.symbol)
+                or not str(row.label_quality).startswith("final")
+            ):
+                continue
+            final_provenance = row.provenance if isinstance(row.provenance, Mapping) else {}
+            final_mode_raw = final_provenance.get("autonomy_final_mode")
+            final_mode = str(final_mode_raw or "").strip().lower()
+            if final_mode not in {"paper_autonomous", "live_autonomous"}:
+                continue
+            final_environment = str(final_provenance.get("environment") or "").strip()
+            final_portfolio = str(
+                final_provenance.get("portfolio") or final_provenance.get("portfolio_id") or ""
+            ).strip()
+            if scope_environment and not final_environment:
+                continue
+            if scope_portfolio and not final_portfolio:
+                continue
+            if final_environment and scope_environment and final_environment != scope_environment:
+                continue
+            if final_portfolio and scope_portfolio and final_portfolio != scope_portfolio:
+                continue
+            matching_scope_autonomous_final_exists = True
+            break
+        if not matching_scope_autonomous_final_exists:
             return False
-        final_provenance = (
-            matching_final_label.provenance
-            if isinstance(matching_final_label.provenance, Mapping)
-            else {}
-        )
-        final_mode_raw = final_provenance.get("autonomy_final_mode")
-        final_mode = str(final_mode_raw or "").strip().lower()
-        if final_mode not in {"paper_autonomous", "live_autonomous"}:
+        matching_shadow_scope_candidate_exists = False
+        for shadow_record in shadow_records:
+            if shadow_record.record_key != correlation_key:
+                continue
+            if str(getattr(shadow_record, "symbol", "")) != str(request.symbol):
+                continue
+            shadow_context = getattr(shadow_record, "context", None)
+            if isinstance(shadow_context, Mapping):
+                shadow_environment_raw = shadow_context.get("environment")
+            else:
+                shadow_environment_raw = getattr(shadow_context, "environment", None)
+            shadow_environment = (
+                str(shadow_environment_raw).strip() if shadow_environment_raw is not None else ""
+            )
+            if scope_environment and not shadow_environment:
+                continue
+            if scope_environment and shadow_environment != scope_environment:
+                continue
+            matching_shadow_scope_candidate_exists = True
+            proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+            expected_open_side = (
+                "BUY"
+                if proposed_direction in {"long", "buy"}
+                else ("SELL" if proposed_direction in {"short", "sell"} else "")
+            )
+            if not expected_open_side:
+                continue
+            if self._is_closing_side(expected_open_side, side):
+                return True
+        if not matching_shadow_scope_candidate_exists:
             return False
-        shadow_record = next(
-            (row for row in shadow_records if row.record_key == correlation_key),
-            None,
-        )
-        if shadow_record is None:
-            return False
-        proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
-        expected_open_side = (
-            "BUY"
-            if proposed_direction in {"long", "buy"}
-            else ("SELL" if proposed_direction in {"short", "sell"} else "")
-        )
-        if not expected_open_side:
-            return False
-        return self._is_closing_side(expected_open_side, side)
+        return False
 
     def _record_decision_event(
         self,
