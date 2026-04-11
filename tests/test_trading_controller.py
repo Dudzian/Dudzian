@@ -22161,7 +22161,8 @@ def test_upstream_handoff_open_validator_does_not_block_legal_autonomous_close_o
     blocked_events = [
         event
         for event in journal.export()
-        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
     ]
     assert blocked_events == []
 
@@ -22257,7 +22258,9 @@ def test_upstream_handoff_complete_contract_but_symbol_mismatch_shadow_record_is
     assert shadow_repo.load_outcome_labels() == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
-    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_symbol_mismatch"
+    assert (
+        event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_symbol_mismatch"
+    )
 
 
 def test_upstream_handoff_complete_contract_but_dangling_shadow_reference_replay_is_stably_blocked(
@@ -22348,7 +22351,10 @@ def test_upstream_handoff_complete_contract_but_timestamp_mismatch_is_fail_close
     assert shadow_repo.load_outcome_labels() == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
-    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    assert (
+        event["blocking_reason"]
+        == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    )
 
 
 def test_upstream_handoff_complete_contract_timestamp_mismatch_replay_is_stably_blocked(
@@ -22401,7 +22407,8 @@ def test_upstream_handoff_complete_contract_timestamp_mismatch_replay_is_stably_
     assert len(enforcement_events) == 2
     assert all(event["status"] == "blocked" for event in enforcement_events)
     assert all(
-        event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+        event["blocking_reason"]
+        == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
         for event in enforcement_events
     )
 
@@ -22492,7 +22499,10 @@ def test_upstream_handoff_payload_only_effective_mode_timestamp_mismatch_is_fail
     assert shadow_repo.load_outcome_labels() == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
-    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    assert (
+        event["blocking_reason"]
+        == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    )
 
 
 def test_upstream_handoff_timestamp_mismatch_validator_does_not_block_legal_close_or_replay_close(
@@ -22543,7 +22553,9 @@ def test_upstream_handoff_timestamp_mismatch_validator_does_not_block_legal_clos
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": shadow_timestamp.isoformat(),
     }
-    close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL", include_decision_payload=True)
+    close_signal = _opportunity_autonomy_signal(
+        "paper_autonomous", side="SELL", include_decision_payload=True
+    )
     close_signal.metadata = {
         **dict(close_signal.metadata),
         "quantity": "1.0",
@@ -22567,7 +22579,8 @@ def test_upstream_handoff_timestamp_mismatch_validator_does_not_block_legal_clos
     blocked_events = [
         event
         for event in journal.export()
-        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
     ]
     assert blocked_events == []
 
@@ -22678,7 +22691,9 @@ def test_upstream_handoff_scope_aware_resolution_is_order_independent_when_scope
         snapshot={},
         context=OpportunityShadowContext(environment="paper"),
     )
-    first, second = (foreign_record, scoped_record) if foreign_first else (scoped_record, foreign_record)
+    first, second = (
+        (foreign_record, scoped_record) if foreign_first else (scoped_record, foreign_record)
+    )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records([first, second])
     controller, execution, _journal = _build_autonomy_controller(
@@ -22833,7 +22848,9 @@ def test_upstream_handoff_scope_aware_resolution_blocks_ambiguous_same_scope_sha
     assert shadow_repo.load_open_outcomes() == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
-    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+    assert (
+        event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+    )
 
 
 @pytest.mark.parametrize("foreign_first", (True, False))
@@ -22908,7 +22925,10 @@ def test_upstream_handoff_open_close_classifier_is_order_independent_for_actual_
     assert execution.requests == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
-    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    assert (
+        event["blocking_reason"]
+        == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    )
 
 
 @pytest.mark.parametrize("foreign_first", (True, False))
@@ -22980,7 +23000,9 @@ def test_upstream_handoff_open_close_classifier_is_order_independent_for_legal_c
         decision_journal=journal,
         opportunity_shadow_repository=shadow_repo,
     )
-    close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL", include_decision_payload=True)
+    close_signal = _opportunity_autonomy_signal(
+        "paper_autonomous", side="SELL", include_decision_payload=True
+    )
     close_signal.metadata = {
         **dict(close_signal.metadata),
         "quantity": "1.0",
@@ -22996,7 +23018,8 @@ def test_upstream_handoff_open_close_classifier_is_order_independent_for_legal_c
     blocked_events = [
         event
         for event in journal.export()
-        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
     ]
     assert blocked_events == []
 
@@ -23074,7 +23097,10 @@ def test_upstream_handoff_payload_only_effective_mode_open_close_classifier_uses
     assert execution.requests == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
-    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    assert (
+        event["blocking_reason"]
+        == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    )
 
 
 @pytest.mark.parametrize("reversed_order", (False, True))
