@@ -22528,8 +22528,9 @@ def test_upstream_handoff_early_fail_closed_event_metadata_contract_is_stable(
     assert str(event["performance_guard_block_enforced"]).strip().lower() == "true"
 
 
-def test_upstream_handoff_live_missing_timestamp_with_performance_guard_keeps_fail_closed_local_guard_precedence(
-) -> None:
+def test_upstream_handoff_live_missing_timestamp_with_performance_guard_keeps_fail_closed_local_guard_precedence() -> (
+    None
+):
     controller, execution, journal = _build_autonomy_controller(environment="live")
     signal = _opportunity_autonomy_signal(
         "live_autonomous",
@@ -22562,7 +22563,6 @@ def test_upstream_handoff_live_missing_timestamp_with_performance_guard_keeps_fa
         )
         assert event["autonomy_primary_reason"] == event["blocking_reason"]
     assert event.get("missing_contract_fields", "") == ""
-
 
 
 def test_upstream_handoff_open_validator_does_not_block_legal_autonomous_close_or_close_replay(
