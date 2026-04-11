@@ -2343,17 +2343,22 @@ class TradingController:
             if runtime_environment and candidate_environment != runtime_environment:
                 continue
             scoped_candidates.append(candidate)
-        if len(scoped_candidates) != 1:
+        if not scoped_candidates:
             return True
-        scoped_shadow_record = scoped_candidates[0]
-        proposed_direction = str(getattr(scoped_shadow_record, "proposed_direction", "")).strip().lower()
-        expected_open_side = (
+        implied_expected_open_sides = {
             "BUY"
-            if proposed_direction in {"long", "buy"}
-            else ("SELL" if proposed_direction in {"short", "sell"} else "")
-        )
-        if not expected_open_side:
+            if str(getattr(candidate, "proposed_direction", "")).strip().lower() in {"long", "buy"}
+            else (
+                "SELL"
+                if str(getattr(candidate, "proposed_direction", "")).strip().lower() in {"short", "sell"}
+                else ""
+            )
+            for candidate in scoped_candidates
+        }
+        implied_expected_open_sides.discard("")
+        if len(implied_expected_open_sides) != 1:
             return True
+        expected_open_side = next(iter(implied_expected_open_sides))
         return not self._is_closing_side(expected_open_side, str(request.side))
 
     def _select_opportunity_autonomy_payload(
