@@ -9517,9 +9517,9 @@ def test_opportunity_autonomy_batch_multiple_open_candidates_fail_closed_determi
     assert repository.load_open_outcomes() == []
     skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
     assert len(skipped_events) == 2
-    assert {
-        event.get("reason") for event in skipped_events
-    } == {"autonomous_open_candidate_arbitration_conflict_fail_closed"}
+    assert {event.get("reason") for event in skipped_events} == {
+        "autonomous_open_candidate_arbitration_conflict_fail_closed"
+    }
 
 
 def test_opportunity_autonomy_batch_multiple_open_candidates_replay_stays_fail_closed_without_provenance_mutation() -> (
@@ -9587,9 +9587,9 @@ def test_opportunity_autonomy_batch_multiple_open_candidates_replay_stays_fail_c
     assert repository.load_outcome_labels() == labels_before
     skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
     assert len(skipped_events) == 4
-    assert {
-        event.get("reason") for event in skipped_events
-    } == {"autonomous_open_candidate_arbitration_conflict_fail_closed"}
+    assert {event.get("reason") for event in skipped_events} == {
+        "autonomous_open_candidate_arbitration_conflict_fail_closed"
+    }
 
 
 def test_opportunity_autonomy_batch_mixed_buy_sell_does_not_trigger_open_arbitration_conflict() -> (
