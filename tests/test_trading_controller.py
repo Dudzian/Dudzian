@@ -21430,6 +21430,59 @@ def test_controller_skips_risk_when_orchestrator_rejects_signal() -> None:
     assert all(entry.get("category") != "execution" for entry in exported)
 
 
+def test_controller_decision_rejection_blocks_autonomous_open_before_enforcement() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+
+    class _RejectingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=False,
+                reasons=("contract_rejected",),
+                cost_bps=21.0,
+                net_edge_bps=-1.5,
+                model_name="gbm_v1",
+            )
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_orchestrator=_RejectingOrchestrator(),
+        decision_min_probability=0.4,
+        decision_journal=journal,
+    )
+
+    signal = _opportunity_autonomy_signal("paper_autonomous")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "expected_probability": 0.95,
+        "expected_return_bps": 15.0,
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    decision_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "decision_evaluation" and event.get("status") == "rejected"
+    ]
+    assert decision_events
+    autonomy_events = [
+        event for event in journal.export() if event.get("event") == "opportunity_autonomy_enforcement"
+    ]
+    assert autonomy_events == []
+
+
 def test_controller_attaches_decision_metadata_for_execution() -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
