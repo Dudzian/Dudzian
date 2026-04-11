@@ -1334,6 +1334,7 @@ class TradingController:
         """Przetwarza listę sygnałów strategii i zarządza alertami."""
         results: list[OrderResult] = []
         ai_blocked = self._update_ai_failover_state()
+        autonomous_open_conflicts = self._collect_autonomous_open_arbitration_conflicts(signals)
 
         prioritized: list[tuple[int, int, StrategySignal, str]] = []
         for index, signal in enumerate(signals):
@@ -1356,6 +1357,20 @@ class TradingController:
                     signal=signal,
                     status="skipped",
                     metadata={"reason": "ai_failover_active", "mode": mode},
+                )
+                continue
+            if self._is_autonomous_open_arbitration_conflict_signal(
+                signal=signal,
+                conflict_groups=autonomous_open_conflicts,
+            ):
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    status="skipped",
+                    metadata={
+                        "reason": "autonomous_open_candidate_arbitration_conflict_fail_closed",
+                    },
                 )
                 continue
             priority = self._signal_mode_priorities.get(mode, self._default_signal_priority)
@@ -1395,6 +1410,80 @@ class TradingController:
 
         self.maybe_report_health()
         return results
+
+    def _collect_autonomous_open_arbitration_conflicts(
+        self,
+        signals: Sequence[StrategySignal],
+    ) -> set[tuple[str, str, str, str]]:
+        grouped_keys: dict[tuple[str, str, str, str], set[str]] = {}
+        for signal in signals:
+            candidate = self._autonomous_open_arbitration_candidate(signal)
+            if candidate is None:
+                continue
+            group_key, correlation_key = candidate
+            grouped_keys.setdefault(group_key, set()).add(correlation_key)
+        return {group_key for group_key, keys in grouped_keys.items() if len(keys) > 1}
+
+    def _is_autonomous_open_arbitration_conflict_signal(
+        self,
+        *,
+        signal: StrategySignal,
+        conflict_groups: set[tuple[str, str, str, str]],
+    ) -> bool:
+        candidate = self._autonomous_open_arbitration_candidate(signal)
+        if candidate is None:
+            return False
+        group_key, _correlation_key = candidate
+        return group_key in conflict_groups
+
+    def _autonomous_open_arbitration_candidate(
+        self,
+        signal: StrategySignal,
+    ) -> tuple[tuple[str, str, str, str], str] | None:
+        metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        mode_raw = metadata.get("opportunity_autonomy_mode")
+        mode = str(mode_raw or "").strip().lower()
+        if mode not in {"paper_autonomous", "live_autonomous"}:
+            return None
+
+        correlation_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        if not correlation_key:
+            return None
+        if self._opportunity_open_outcomes.get(correlation_key) is not None:
+            return None
+
+        decision_timestamp = str(metadata.get("opportunity_decision_timestamp") or "").strip()
+        if not decision_timestamp:
+            return None
+        normalized_side = _normalize_trade_side(signal.side)
+        if normalized_side is None:
+            return None
+        repository = self._opportunity_shadow_repository
+        if repository is not None:
+            try:
+                shadow_records = repository.load_shadow_records()
+            except Exception:  # pragma: no cover - diagnostics only
+                shadow_records = ()
+            shadow_record = next(
+                (row for row in shadow_records if str(getattr(row, "record_key", "")) == correlation_key),
+                None,
+            )
+            if shadow_record is not None:
+                proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                expected_open_side = (
+                    "BUY"
+                    if proposed_direction in {"long", "buy"}
+                    else ("SELL" if proposed_direction in {"short", "sell"} else "")
+                )
+                if expected_open_side and self._is_closing_side(expected_open_side, normalized_side):
+                    return None
+        group_key = (
+            str(signal.symbol).strip(),
+            decision_timestamp,
+            mode,
+            normalized_side,
+        )
+        return group_key, correlation_key
 
     def maybe_report_health(self, *, force: bool = False) -> None:
         """Publikuje raport health-check, gdy minął interwał lub wymusimy wysyłkę."""
