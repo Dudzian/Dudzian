@@ -2358,7 +2358,8 @@ class TradingController:
             if str(getattr(candidate, "proposed_direction", "")).strip().lower() in {"long", "buy"}
             else (
                 "SELL"
-                if str(getattr(candidate, "proposed_direction", "")).strip().lower() in {"short", "sell"}
+                if str(getattr(candidate, "proposed_direction", "")).strip().lower()
+                in {"short", "sell"}
                 else ""
             )
             for candidate in scoped_candidates
