@@ -23289,7 +23289,9 @@ def test_upstream_handoff_classifier_allows_legal_close_with_same_scope_semantic
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
-    close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL", include_decision_payload=True)
+    close_signal = _opportunity_autonomy_signal(
+        "paper_autonomous", side="SELL", include_decision_payload=True
+    )
     close_signal.metadata = {
         **dict(close_signal.metadata),
         "quantity": "1.0",
@@ -23331,7 +23333,8 @@ def test_upstream_handoff_classifier_allows_legal_close_with_same_scope_semantic
     blocked_events = [
         event
         for event in journal.export()
-        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
     ]
     assert blocked_events == []
 
@@ -23409,7 +23412,9 @@ def test_upstream_handoff_classifier_keeps_actual_open_on_open_path_with_same_sc
     assert execution.requests == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
-    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+    assert (
+        event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+    )
 
 
 @pytest.mark.parametrize("reversed_order", (False, True))
@@ -23493,7 +23498,9 @@ def test_upstream_handoff_payload_only_effective_mode_classifier_uses_aligned_sa
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
-    close_signal = _opportunity_autonomy_signal("live_assisted", side="SELL", include_decision_payload=True)
+    close_signal = _opportunity_autonomy_signal(
+        "live_assisted", side="SELL", include_decision_payload=True
+    )
     close_signal.metadata = {
         **dict(close_signal.metadata),
         "quantity": "1.0",
@@ -23539,7 +23546,8 @@ def test_upstream_handoff_payload_only_effective_mode_classifier_uses_aligned_sa
     blocked_events = [
         event
         for event in journal.export()
-        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
     ]
     assert blocked_events == []
 
@@ -23669,7 +23677,9 @@ def test_upstream_handoff_classifier_keeps_conflicting_same_scope_implied_sides_
         environment="paper",
         opportunity_shadow_repository=shadow_repo,
     )
-    signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL", include_decision_payload=True)
+    signal = _opportunity_autonomy_signal(
+        "paper_autonomous", side="SELL", include_decision_payload=True
+    )
     signal.metadata = {
         **dict(signal.metadata),
         "quantity": "1.0",
@@ -23685,7 +23695,9 @@ def test_upstream_handoff_classifier_keeps_conflicting_same_scope_implied_sides_
     assert execution.requests == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["status"] == "blocked"
-    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+    assert (
+        event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+    )
 
 
 def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_and_persistence_regardless_of_order() -> (
