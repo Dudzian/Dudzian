@@ -21807,6 +21807,1276 @@ def test_upstream_handoff_replay_same_accepted_candidate_keeps_controller_contra
         assert first_request_metadata.get(key) == second_request_metadata.get(key)
 
 
+@pytest.mark.parametrize(
+    ("missing_key", "missing_timestamp"),
+    (
+        (True, False),
+        (False, True),
+        (True, True),
+    ),
+)
+def test_upstream_handoff_accepted_autonomous_open_with_incomplete_contract_is_fail_closed(
+    tmp_path: Path,
+    missing_key: bool,
+    missing_timestamp: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        include_decision_payload=True,
+        decision_payload_inference_model="ensemble_v3",
+        decision_payload_inference_model_version="ensemble_v3.2",
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.93,
+        "expected_return_bps": 14.0,
+    }
+    signal.metadata.pop("opportunity_shadow_record_key", None)
+    signal.metadata.pop("opportunity_decision_timestamp", None)
+    if not missing_key:
+        signal.metadata["opportunity_shadow_record_key"] = correlation_key
+    if not missing_timestamp:
+        signal.metadata["opportunity_decision_timestamp"] = decision_timestamp.isoformat()
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_contract_incomplete"
+    missing_fields = set(filter(None, event.get("missing_contract_fields", "").split(",")))
+    expected_missing = set()
+    if missing_key:
+        expected_missing.add("opportunity_shadow_record_key")
+    if missing_timestamp:
+        expected_missing.add("opportunity_decision_timestamp")
+    assert missing_fields == expected_missing
+
+
+def test_upstream_handoff_incomplete_autonomous_contract_replay_is_stably_blocked_without_persistence_or_provenance_drift(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        include_decision_payload=True,
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.93,
+        "expected_return_bps": 14.0,
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    signal.metadata.pop("opportunity_decision_timestamp", None)
+
+    first_results = controller.process_signals([signal])
+    second_results = controller.process_signals([signal])
+
+    assert first_results == []
+    assert second_results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    enforcement_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+    ]
+    assert len(enforcement_events) == 2
+    assert all(event["status"] == "blocked" for event in enforcement_events)
+    assert all(
+        event["blocking_reason"] == "accepted_autonomous_handoff_contract_incomplete"
+        for event in enforcement_events
+    )
+    assert all(
+        event.get("missing_contract_fields") == "opportunity_decision_timestamp"
+        for event in enforcement_events
+    )
+
+
+@pytest.mark.parametrize(
+    ("missing_key", "missing_timestamp"),
+    (
+        (True, False),
+        (False, True),
+        (True, True),
+    ),
+)
+def test_upstream_handoff_payload_only_effective_autonomous_mode_incomplete_contract_is_fail_closed(
+    tmp_path: Path,
+    missing_key: bool,
+    missing_timestamp: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.93,
+        "expected_return_bps": 14.0,
+    }
+    signal.metadata.pop("opportunity_autonomy_mode", None)
+    signal.metadata.pop("opportunity_shadow_record_key", None)
+    signal.metadata.pop("opportunity_decision_timestamp", None)
+    decision_payload = dict(signal.metadata["opportunity_autonomy_decision"])
+    decision_payload["effective_mode"] = "paper_autonomous"
+    signal.metadata["opportunity_autonomy_decision"] = decision_payload
+    if not missing_key:
+        signal.metadata["opportunity_shadow_record_key"] = correlation_key
+    if not missing_timestamp:
+        signal.metadata["opportunity_decision_timestamp"] = decision_timestamp.isoformat()
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_contract_incomplete"
+    missing_fields = set(filter(None, event.get("missing_contract_fields", "").split(",")))
+    expected_missing = set()
+    if missing_key:
+        expected_missing.add("opportunity_shadow_record_key")
+    if missing_timestamp:
+        expected_missing.add("opportunity_decision_timestamp")
+    assert missing_fields == expected_missing
+
+
+def test_upstream_handoff_payload_only_effective_autonomous_mode_incomplete_contract_replay_is_stably_blocked(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        include_decision_payload=True,
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.93,
+        "expected_return_bps": 14.0,
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    signal.metadata.pop("opportunity_autonomy_mode", None)
+    signal.metadata.pop("opportunity_decision_timestamp", None)
+    decision_payload = dict(signal.metadata["opportunity_autonomy_decision"])
+    decision_payload["effective_mode"] = "paper_autonomous"
+    signal.metadata["opportunity_autonomy_decision"] = decision_payload
+
+    first_results = controller.process_signals([signal])
+    second_results = controller.process_signals([signal])
+
+    assert first_results == []
+    assert second_results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    enforcement_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+    ]
+    assert len(enforcement_events) == 2
+    assert all(event["status"] == "blocked" for event in enforcement_events)
+    assert all(
+        event["blocking_reason"] == "accepted_autonomous_handoff_contract_incomplete"
+        for event in enforcement_events
+    )
+
+
+def test_upstream_handoff_open_validator_does_not_block_legal_autonomous_close_or_close_replay(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+        ]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        include_decision_payload=True,
+    )
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    close_signal = _opportunity_autonomy_signal(
+        "live_assisted",
+        side="SELL",
+        include_decision_payload=True,
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "quantity": "1.0",
+        "price": "110.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    close_signal.metadata.pop("opportunity_autonomy_mode", None)
+    close_signal.metadata.pop("opportunity_decision_timestamp", None)
+    close_payload = dict(close_signal.metadata["opportunity_autonomy_decision"])
+    close_payload["effective_mode"] = "paper_autonomous"
+    close_signal.metadata["opportunity_autonomy_decision"] = close_payload
+
+    open_results = controller.process_signals([open_signal])
+    close_results = controller.process_signals([close_signal])
+    replay_results = controller.process_signals([close_signal])
+
+    assert len(open_results) == 1
+    assert len(close_results) == 1
+    assert replay_results == []
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert shadow_repo.load_open_outcomes() == []
+    blocked_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+    ]
+    assert blocked_events == []
+
+
+def test_upstream_handoff_complete_contract_but_missing_shadow_record_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_unresolved"
+
+
+def test_upstream_handoff_complete_contract_but_symbol_mismatch_shadow_record_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="ETH/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_symbol_mismatch"
+
+
+def test_upstream_handoff_complete_contract_but_dangling_shadow_reference_replay_is_stably_blocked(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    first_results = controller.process_signals([signal])
+    second_results = controller.process_signals([signal])
+
+    assert first_results == []
+    assert second_results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    enforcement_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+    ]
+    assert len(enforcement_events) == 2
+    assert all(event["status"] == "blocked" for event in enforcement_events)
+    assert all(
+        event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_unresolved"
+        for event in enforcement_events
+    )
+
+
+def test_upstream_handoff_complete_contract_but_timestamp_mismatch_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    shadow_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    handoff_timestamp = shadow_timestamp + timedelta(minutes=5)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=shadow_timestamp,
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": handoff_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+
+
+def test_upstream_handoff_complete_contract_timestamp_mismatch_replay_is_stably_blocked(
+    tmp_path: Path,
+) -> None:
+    shadow_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    handoff_timestamp = shadow_timestamp + timedelta(minutes=5)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=shadow_timestamp,
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": handoff_timestamp.isoformat(),
+    }
+
+    first_results = controller.process_signals([signal])
+    second_results = controller.process_signals([signal])
+
+    assert first_results == []
+    assert second_results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    enforcement_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+    ]
+    assert len(enforcement_events) == 2
+    assert all(event["status"] == "blocked" for event in enforcement_events)
+    assert all(
+        event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+        for event in enforcement_events
+    )
+
+
+def test_upstream_handoff_complete_contract_with_matching_timestamp_still_allows_legal_open(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    controller, execution, _journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    assert len(shadow_repo.load_open_outcomes()) == 1
+
+
+def test_upstream_handoff_payload_only_effective_mode_timestamp_mismatch_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    shadow_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    handoff_timestamp = shadow_timestamp + timedelta(minutes=5)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=shadow_timestamp,
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("live_assisted", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": handoff_timestamp.isoformat(),
+    }
+    signal.metadata.pop("opportunity_autonomy_mode", None)
+    decision_payload = dict(signal.metadata["opportunity_autonomy_decision"])
+    decision_payload["effective_mode"] = "paper_autonomous"
+    signal.metadata["opportunity_autonomy_decision"] = decision_payload
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+
+
+def test_upstream_handoff_timestamp_mismatch_validator_does_not_block_legal_close_or_replay_close(
+    tmp_path: Path,
+) -> None:
+    shadow_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    close_handoff_timestamp = shadow_timestamp + timedelta(minutes=5)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=shadow_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+        ]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": shadow_timestamp.isoformat(),
+    }
+    close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL", include_decision_payload=True)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "quantity": "1.0",
+        "price": "110.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": close_handoff_timestamp.isoformat(),
+    }
+
+    open_results = controller.process_signals([open_signal])
+    close_results = controller.process_signals([close_signal])
+    replay_results = controller.process_signals([close_signal])
+
+    assert len(open_results) == 1
+    assert len(close_results) == 1
+    assert replay_results == []
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert shadow_repo.load_open_outcomes() == []
+    blocked_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+    ]
+    assert blocked_events == []
+
+
+def test_upstream_handoff_scope_aware_resolution_blocks_foreign_scope_only_shadow_reference(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="live"),
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_mismatch"
+
+
+@pytest.mark.parametrize("foreign_first", (True, False))
+def test_upstream_handoff_scope_aware_resolution_is_order_independent_when_scope_match_exists(
+    tmp_path: Path,
+    foreign_first: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    foreign_record = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "test"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="live"),
+    )
+    scoped_record = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "test"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    first, second = (foreign_record, scoped_record) if foreign_first else (scoped_record, foreign_record)
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([first, second])
+    controller, execution, _journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    open_rows = shadow_repo.load_open_outcomes()
+    assert len(open_rows) == 1
+    assert open_rows[0].correlation_key == correlation_key
+
+
+def test_upstream_handoff_payload_only_effective_mode_scope_aware_resolution_blocks_foreign_scope_only(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="live"),
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("live_assisted", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    signal.metadata.pop("opportunity_autonomy_mode", None)
+    decision_payload = dict(signal.metadata["opportunity_autonomy_decision"])
+    decision_payload["effective_mode"] = "paper_autonomous"
+    signal.metadata["opportunity_autonomy_decision"] = decision_payload
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_mismatch"
+
+
+def test_upstream_handoff_scope_aware_resolution_blocks_ambiguous_same_scope_shadow_reference(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    record_a = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "test-a"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    record_b = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "test-b"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([record_a, record_b])
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+
+
+@pytest.mark.parametrize("foreign_first", (True, False))
+def test_upstream_handoff_open_close_classifier_is_order_independent_for_actual_open_with_timestamp_mismatch(
+    tmp_path: Path,
+    foreign_first: bool,
+) -> None:
+    shadow_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    handoff_timestamp = shadow_timestamp + timedelta(minutes=5)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    foreign_short = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="short",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "foreign"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="live"),
+    )
+    scoped_long = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "scoped"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    first, second = (foreign_short, scoped_long) if foreign_first else (scoped_long, foreign_short)
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([first, second])
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": handoff_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+
+
+@pytest.mark.parametrize("foreign_first", (True, False))
+def test_upstream_handoff_open_close_classifier_is_order_independent_for_legal_close_timestamp_mismatch(
+    tmp_path: Path,
+    foreign_first: bool,
+) -> None:
+    shadow_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    close_handoff_timestamp = shadow_timestamp + timedelta(minutes=5)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    foreign_short = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="short",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "foreign"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="live"),
+    )
+    scoped_long = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "scoped"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    first, second = (foreign_short, scoped_long) if foreign_first else (scoped_long, foreign_short)
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([first, second])
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+        ]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL", include_decision_payload=True)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "quantity": "1.0",
+        "price": "110.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": close_handoff_timestamp.isoformat(),
+    }
+
+    first_close = controller.process_signals([close_signal])
+
+    assert len(first_close) == 1
+    blocked_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+    ]
+    assert blocked_events == []
+
+
+def test_upstream_handoff_payload_only_effective_mode_open_close_classifier_uses_same_order_independent_path(
+    tmp_path: Path,
+) -> None:
+    shadow_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    handoff_timestamp = shadow_timestamp + timedelta(minutes=5)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    foreign_short = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="short",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "foreign"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="live"),
+    )
+    scoped_long = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=shadow_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "scoped"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([foreign_short, scoped_long])
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("live_assisted", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": handoff_timestamp.isoformat(),
+    }
+    signal.metadata.pop("opportunity_autonomy_mode", None)
+    decision_payload = dict(signal.metadata["opportunity_autonomy_decision"])
+    decision_payload["effective_mode"] = "paper_autonomous"
+    signal.metadata["opportunity_autonomy_decision"] = decision_payload
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+
+
 def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_and_persistence_regardless_of_order() -> (
     None
 ):
