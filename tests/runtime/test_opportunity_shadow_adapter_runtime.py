@@ -788,7 +788,9 @@ def test_decision_sink_mixed_batch_emits_only_accepted_without_rejected_contract
     assert exported[0][1][0].metadata["opportunity_model_version"] == "accepted-upstream-v1"
     assert exported[0][1][0].metadata["opportunity_decision_source"] == "accepted-upstream-source"
 
-    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    decision_events = [
+        event for event in journal.events if event.event_type == "decision_evaluation"
+    ]
     assert len(decision_events) == 2
     accepted_event = next(event for event in decision_events if event.symbol == "BTCUSDT")
     rejected_event = next(event for event in decision_events if event.symbol == "ETHUSDT")
