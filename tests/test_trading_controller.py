@@ -23103,6 +23103,486 @@ def test_upstream_handoff_payload_only_effective_mode_open_close_classifier_uses
     )
 
 
+@pytest.mark.parametrize("reversed_order", (False, True))
+def test_upstream_handoff_classifier_allows_legal_close_with_same_scope_semantically_aligned_duplicates(
+    tmp_path: Path,
+    reversed_order: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    scoped_long_a = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "aligned-a"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    scoped_long_b = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="buy",
+        accepted=True,
+        rejection_reason=None,
+        rank=2,
+        provenance={"probability_method": "aligned-b"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    first_scoped_record, second_scoped_record = (
+        (scoped_long_b, scoped_long_a) if reversed_order else (scoped_long_a, scoped_long_b)
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([first_scoped_record])
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+        ]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL", include_decision_payload=True)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "quantity": "1.0",
+        "price": "110.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+
+    open_results = controller.process_signals([open_signal])
+    shadow_repo.append_shadow_records([second_scoped_record])
+
+    # Helper-level proof: classifier can resolve CLOSE via repository fallback
+    # when aligned same-scope duplicates exist and tracker shortcut is absent.
+    classifier_probe_request = OrderRequest(
+        symbol="BTC/USDT",
+        side="SELL",
+        quantity=1.0,
+        order_type="market",
+        price=110.0,
+        metadata={"opportunity_shadow_record_key": correlation_key},
+    )
+    tracked_before_probe = controller._opportunity_open_outcomes.pop(correlation_key, None)
+    assert controller._is_autonomous_open_handoff_path(classifier_probe_request) is False
+    if tracked_before_probe is not None:
+        controller._opportunity_open_outcomes[correlation_key] = tracked_before_probe
+
+    # Runtime black-box close/replay contract remains tracker-driven.
+    close_results = controller.process_signals([close_signal])
+    replay_results = controller.process_signals([close_signal])
+
+    assert len(open_results) == 1
+    assert len(close_results) == 1
+    assert replay_results == []
+    assert len(execution.requests) == 2
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert shadow_repo.load_open_outcomes() == []
+    blocked_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+    ]
+    assert blocked_events == []
+
+
+@pytest.mark.parametrize("reversed_order", (False, True))
+def test_upstream_handoff_classifier_keeps_actual_open_on_open_path_with_same_scope_semantically_aligned_duplicates(
+    tmp_path: Path,
+    reversed_order: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    scoped_long_a = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "aligned-a"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    scoped_long_b = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="buy",
+        accepted=True,
+        rejection_reason=None,
+        rank=2,
+        provenance={"probability_method": "aligned-b"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    records = [scoped_long_a, scoped_long_b]
+    if reversed_order:
+        records = list(reversed(records))
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(records)
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+
+
+@pytest.mark.parametrize("reversed_order", (False, True))
+def test_upstream_handoff_payload_only_effective_mode_classifier_uses_aligned_same_scope_duplicates_for_legal_close(
+    tmp_path: Path,
+    reversed_order: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    scoped_long_a = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "aligned-a"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    scoped_long_b = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="buy",
+        accepted=True,
+        rejection_reason=None,
+        rank=2,
+        provenance={"probability_method": "aligned-b"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    first_scoped_record, second_scoped_record = (
+        (scoped_long_b, scoped_long_a) if reversed_order else (scoped_long_a, scoped_long_b)
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([first_scoped_record])
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 110.0},
+        ]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    close_signal = _opportunity_autonomy_signal("live_assisted", side="SELL", include_decision_payload=True)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "quantity": "1.0",
+        "price": "110.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    close_signal.metadata.pop("opportunity_autonomy_mode", None)
+    close_payload = dict(close_signal.metadata["opportunity_autonomy_decision"])
+    close_payload["effective_mode"] = "paper_autonomous"
+    close_signal.metadata["opportunity_autonomy_decision"] = close_payload
+
+    open_results = controller.process_signals([open_signal])
+    shadow_repo.append_shadow_records([second_scoped_record])
+
+    # Helper-level proof: classifier can resolve CLOSE via repository fallback
+    # when aligned same-scope duplicates exist and tracker shortcut is absent.
+    classifier_probe_request = OrderRequest(
+        symbol="BTC/USDT",
+        side="SELL",
+        quantity=1.0,
+        order_type="market",
+        price=110.0,
+        metadata={"opportunity_shadow_record_key": correlation_key},
+    )
+    tracked_before_probe = controller._opportunity_open_outcomes.pop(correlation_key, None)
+    assert controller._is_autonomous_open_handoff_path(classifier_probe_request) is False
+    if tracked_before_probe is not None:
+        controller._opportunity_open_outcomes[correlation_key] = tracked_before_probe
+
+    # Runtime black-box close/replay contract remains tracker-driven.
+    close_results = controller.process_signals([close_signal])
+    replay_results = controller.process_signals([close_signal])
+
+    assert len(open_results) == 1
+    assert len(close_results) == 1
+    assert replay_results == []
+    assert len(execution.requests) == 2
+    labels = shadow_repo.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].label_quality == "final"
+    assert shadow_repo.load_open_outcomes() == []
+    blocked_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+    ]
+    assert blocked_events == []
+
+
+@pytest.mark.parametrize("reversed_order", (False, True))
+def test_upstream_handoff_classifier_repo_fallback_for_aligned_same_scope_duplicates_is_order_independent_helper_level(
+    tmp_path: Path,
+    reversed_order: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    scoped_long_a = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "aligned-a"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    scoped_long_b = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="buy",
+        accepted=True,
+        rejection_reason=None,
+        rank=2,
+        provenance={"probability_method": "aligned-b"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    records = [scoped_long_b, scoped_long_a] if reversed_order else [scoped_long_a, scoped_long_b]
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(records)
+    controller, _execution, _journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    controller._opportunity_open_outcomes.clear()
+    close_request = OrderRequest(
+        symbol="BTC/USDT",
+        side="SELL",
+        quantity=1.0,
+        order_type="market",
+        price=110.0,
+        metadata={"opportunity_shadow_record_key": correlation_key},
+    )
+
+    assert controller._is_autonomous_open_handoff_path(close_request) is False
+
+
+@pytest.mark.parametrize("reversed_order", (False, True))
+def test_upstream_handoff_classifier_keeps_conflicting_same_scope_implied_sides_fail_closed(
+    tmp_path: Path,
+    reversed_order: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    scoped_long = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "aligned-a"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    scoped_short = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="short",
+        accepted=True,
+        rejection_reason=None,
+        rank=2,
+        provenance={"probability_method": "aligned-b"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper"),
+    )
+    records = [scoped_long, scoped_short]
+    if reversed_order:
+        records = list(reversed(records))
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(records)
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "110.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_ambiguous"
+
+
 def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_and_persistence_regardless_of_order() -> (
     None
 ):
