@@ -711,3 +711,181 @@ def test_runtime_control_plane_hot_updates_policy_without_restart() -> None:
         second_event.metadata["opportunity_ai_disabled_reason"]
         == "manual_kill_switch:runtime_control_plane"
     )
+
+
+def test_decision_sink_mixed_batch_emits_only_accepted_without_rejected_contract_leak() -> None:
+    class _MixedOutcomeOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            if candidate.symbol == "BTCUSDT":
+                return SimpleNamespace(
+                    candidate=candidate,
+                    accepted=True,
+                    reasons=("accepted_contract_reason",),
+                    risk_flags=(),
+                    stress_failures=(),
+                    cost_bps=3.0,
+                    net_edge_bps=9.0,
+                    model_name="accepted-model-v2",
+                    latency_ms=None,
+                )
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=False,
+                reasons=("rejected_contract_reason",),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=99.0,
+                net_edge_bps=-7.0,
+                model_name="rejected-model-v1",
+                latency_ms=None,
+            )
+
+    journal = _CollectingJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_MixedOutcomeOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+    )
+    accepted_signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={
+            "expected_probability": 0.9,
+            "expected_return_bps": 12.0,
+            "opportunity_model_version": "accepted-upstream-v1",
+            "opportunity_decision_source": "accepted-upstream-source",
+        },
+    )
+    rejected_signal = StrategySignal(
+        symbol="ETHUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={
+            "expected_probability": 0.9,
+            "expected_return_bps": 12.0,
+            "opportunity_model_version": "rejected-upstream-v9",
+            "opportunity_decision_source": "rejected-upstream-source",
+        },
+    )
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(accepted_signal, rejected_signal),
+    )
+
+    exported = sink.export()
+    assert len(exported) == 1
+    assert [signal.symbol for signal in exported[0][1]] == ["BTCUSDT"]
+    assert exported[0][1][0].metadata["opportunity_model_version"] == "accepted-upstream-v1"
+    assert exported[0][1][0].metadata["opportunity_decision_source"] == "accepted-upstream-source"
+
+    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    assert len(decision_events) == 2
+    accepted_event = next(event for event in decision_events if event.symbol == "BTCUSDT")
+    rejected_event = next(event for event in decision_events if event.symbol == "ETHUSDT")
+    assert accepted_event.status == "accepted"
+    assert rejected_event.status == "rejected"
+    assert accepted_event.metadata.get("decision_reasons") == "accepted_contract_reason"
+    assert accepted_event.metadata.get("cost_bps") == "3.000000"
+    assert accepted_event.metadata.get("net_edge_bps") == "9.000000"
+    assert accepted_event.metadata.get("model_name") == "accepted-model-v2"
+    assert "rejected_contract_reason" not in accepted_event.metadata.get("decision_reasons", "")
+
+
+def test_decision_sink_mixed_batch_is_order_independent_and_replay_stable() -> None:
+    class _MixedOutcomeOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            if candidate.symbol == "BTCUSDT":
+                return SimpleNamespace(
+                    candidate=candidate,
+                    accepted=True,
+                    reasons=("accepted_contract_reason",),
+                    risk_flags=(),
+                    stress_failures=(),
+                    cost_bps=3.0,
+                    net_edge_bps=9.0,
+                    model_name="accepted-model-v2",
+                    latency_ms=None,
+                )
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=False,
+                reasons=("rejected_contract_reason",),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=99.0,
+                net_edge_bps=-7.0,
+                model_name="rejected-model-v1",
+                latency_ms=None,
+            )
+
+    def _signal(symbol: str, model_version: str, decision_source: str) -> StrategySignal:
+        return StrategySignal(
+            symbol=symbol,
+            side="BUY",
+            confidence=0.9,
+            metadata={
+                "expected_probability": 0.9,
+                "expected_return_bps": 12.0,
+                "opportunity_model_version": model_version,
+                "opportunity_decision_source": decision_source,
+            },
+        )
+
+    journal = _CollectingJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_MixedOutcomeOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+    )
+
+    forward_batch = (
+        _signal("BTCUSDT", "accepted-upstream-v1", "accepted-upstream-source"),
+        _signal("ETHUSDT", "rejected-upstream-v9", "rejected-upstream-source"),
+    )
+    reverse_batch = (
+        _signal("ETHUSDT", "rejected-upstream-v9", "rejected-upstream-source"),
+        _signal("BTCUSDT", "accepted-upstream-v1", "accepted-upstream-source"),
+    )
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=forward_batch,
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 6, tzinfo=timezone.utc),
+        signals=reverse_batch,
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 7, tzinfo=timezone.utc),
+        signals=forward_batch,
+    )
+
+    exported = sink.export()
+    assert len(exported) == 3
+    emitted_contracts = [batch[1][0].metadata for batch in exported]
+    assert [batch[1][0].symbol for batch in exported] == ["BTCUSDT", "BTCUSDT", "BTCUSDT"]
+    assert emitted_contracts[0] == emitted_contracts[1] == emitted_contracts[2]
