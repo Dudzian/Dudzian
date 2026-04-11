@@ -1742,6 +1742,29 @@ class TradingController:
 
         request = self._build_order_request(signal, extra_metadata=decision_metadata)
         if self._is_opportunity_autonomy_enforced(signal, request):
+            if self._is_autonomous_open_handoff_path(request):
+                contract_valid, missing_fields, mode, blocking_reason = self._validate_autonomous_open_handoff_contract(
+                    signal=signal,
+                    request=request,
+                )
+                if not contract_valid:
+                    self._record_decision_event(
+                        "opportunity_autonomy_enforcement",
+                        signal=signal,
+                        request=request,
+                        status="blocked",
+                        metadata={
+                            "environment": self.environment,
+                            "execution_permission": "blocked",
+                            "autonomy_mode": mode or "unknown",
+                            "autonomous_execution_allowed": False,
+                            "autonomy_primary_reason": blocking_reason,
+                            "blocking_reason": blocking_reason,
+                            "missing_contract_fields": ",".join(missing_fields),
+                        },
+                    )
+                    self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                    return None
             permission, diagnostics = self._evaluate_opportunity_execution_permission(
                 signal=signal,
                 request=request,
@@ -2147,6 +2170,191 @@ class TradingController:
             "opportunity_autonomy_decision",
         )
         return any(key in signal_metadata or key in request_metadata for key in keys)
+
+    def _validate_autonomous_open_handoff_contract(
+        self,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ) -> tuple[bool, tuple[str, ...], str | None, str]:
+        signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        mode: str | None = None
+        try:
+            decision = self._extract_opportunity_autonomy_decision(
+                signal,
+                request,
+                include_performance_guard_payload=False,
+            )
+            mode = decision.mode.value
+        except Exception:
+            mode_raw = request_metadata.get("opportunity_autonomy_mode")
+            if mode_raw is None:
+                mode_raw = signal_metadata.get("opportunity_autonomy_mode")
+            mode = str(mode_raw or "").strip().lower() or None
+        if mode not in {"paper_autonomous", "live_autonomous"}:
+            return True, (), None, ""
+        missing_fields: list[str] = []
+        correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
+        if not correlation_key:
+            missing_fields.append("opportunity_shadow_record_key")
+        decision_timestamp = str(request_metadata.get("opportunity_decision_timestamp") or "").strip()
+        if not decision_timestamp:
+            missing_fields.append("opportunity_decision_timestamp")
+        if missing_fields:
+            return (
+                False,
+                tuple(missing_fields),
+                mode,
+                "accepted_autonomous_handoff_contract_incomplete",
+            )
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_unresolved",
+            )
+        try:
+            shadow_records = repository.load_shadow_records()
+        except Exception:  # pragma: no cover - diagnostics only
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_unresolved",
+            )
+        key_candidates = [
+            row
+            for row in shadow_records
+            if str(getattr(row, "record_key", "")).strip() == correlation_key
+        ]
+        if not key_candidates:
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_unresolved",
+            )
+        request_symbol = str(request.symbol).strip()
+        symbol_candidates = [
+            row
+            for row in key_candidates
+            if not request_symbol or str(getattr(row, "symbol", "")).strip() == request_symbol
+        ]
+        if not symbol_candidates:
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_symbol_mismatch",
+            )
+        try:
+            handoff_decision_timestamp = datetime.fromisoformat(
+                decision_timestamp.replace("Z", "+00:00")
+            )
+        except ValueError:
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch",
+            )
+        if handoff_decision_timestamp.tzinfo is None:
+            handoff_decision_timestamp = handoff_decision_timestamp.replace(tzinfo=timezone.utc)
+        handoff_decision_timestamp = handoff_decision_timestamp.astimezone(timezone.utc)
+        timestamp_candidates: list[object] = []
+        for candidate in symbol_candidates:
+            shadow_decision_timestamp = getattr(candidate, "decision_timestamp", None)
+            if not isinstance(shadow_decision_timestamp, datetime):
+                continue
+            if shadow_decision_timestamp.tzinfo is None:
+                shadow_decision_timestamp = shadow_decision_timestamp.replace(tzinfo=timezone.utc)
+            shadow_decision_timestamp = shadow_decision_timestamp.astimezone(timezone.utc)
+            if handoff_decision_timestamp == shadow_decision_timestamp:
+                timestamp_candidates.append(candidate)
+        if not timestamp_candidates:
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch",
+            )
+        runtime_environment = str(self.environment).strip().lower()
+        scoped_candidates = []
+        for candidate in timestamp_candidates:
+            candidate_context = getattr(candidate, "context", None)
+            candidate_environment = str(getattr(candidate_context, "environment", "")).strip().lower()
+            if runtime_environment and candidate_environment != runtime_environment:
+                continue
+            scoped_candidates.append(candidate)
+        if not scoped_candidates:
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_scope_mismatch",
+            )
+        if len(scoped_candidates) > 1:
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_scope_ambiguous",
+            )
+        return True, (), mode, ""
+
+    def _is_autonomous_open_handoff_path(self, request: OrderRequest) -> bool:
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
+        if not correlation_key:
+            return True
+        tracker = self._opportunity_open_outcomes.get(correlation_key)
+        if tracker is not None:
+            return not self._is_closing_side(str(tracker.side), str(request.side))
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return True
+        try:
+            shadow_records = repository.load_shadow_records()
+        except Exception:  # pragma: no cover - diagnostics only
+            return True
+        key_candidates = [
+            row
+            for row in shadow_records
+            if str(getattr(row, "record_key", "")).strip() == correlation_key
+        ]
+        if not key_candidates:
+            return True
+        request_symbol = str(request.symbol).strip()
+        symbol_candidates = [
+            row
+            for row in key_candidates
+            if not request_symbol or str(getattr(row, "symbol", "")).strip() == request_symbol
+        ]
+        if not symbol_candidates:
+            return True
+        runtime_environment = str(self.environment).strip().lower()
+        scoped_candidates = []
+        for candidate in symbol_candidates:
+            candidate_context = getattr(candidate, "context", None)
+            candidate_environment = str(getattr(candidate_context, "environment", "")).strip().lower()
+            if runtime_environment and candidate_environment != runtime_environment:
+                continue
+            scoped_candidates.append(candidate)
+        if len(scoped_candidates) != 1:
+            return True
+        scoped_shadow_record = scoped_candidates[0]
+        proposed_direction = str(getattr(scoped_shadow_record, "proposed_direction", "")).strip().lower()
+        expected_open_side = (
+            "BUY"
+            if proposed_direction in {"long", "buy"}
+            else ("SELL" if proposed_direction in {"short", "sell"} else "")
+        )
+        if not expected_open_side:
+            return True
+        return not self._is_closing_side(expected_open_side, str(request.side))
 
     def _select_opportunity_autonomy_payload(
         self,
