@@ -1750,20 +1750,47 @@ class TradingController:
                     )
                 )
                 if not contract_valid:
+                    metadata: dict[str, object] = {
+                        "environment": self.environment,
+                        "execution_permission": "blocked",
+                        "autonomy_mode": mode or "unknown",
+                        "autonomous_execution_allowed": False,
+                        "autonomy_primary_reason": blocking_reason,
+                        "blocking_reason": blocking_reason,
+                        "missing_contract_fields": ",".join(missing_fields),
+                    }
+                    metadata.update(
+                        self._extract_upstream_autonomy_governance_metadata(
+                            signal=signal,
+                            request=request,
+                        )
+                    )
+                    decision_payload = self._select_opportunity_autonomy_payload(signal, request)
+                    if decision_payload is not None:
+                        performance_guard_payload = decision_payload[0].get("performance_guard")
+                        if isinstance(performance_guard_payload, Mapping):
+                            guard_primary_reason = performance_guard_payload.get("primary_reason")
+                            if guard_primary_reason is not None:
+                                metadata["performance_guard_primary_reason"] = str(
+                                    guard_primary_reason
+                                )
+                            guard_effective_mode = performance_guard_payload.get("effective_mode")
+                            if guard_effective_mode is not None:
+                                metadata["performance_guard_effective_mode"] = str(
+                                    guard_effective_mode
+                                )
+                            guard_blocked = _as_bool(performance_guard_payload.get("blocked"))
+                            if guard_blocked:
+                                metadata["performance_guard_block_enforced"] = True
+                    self._attach_opportunity_autonomy_downgrade_chain_metadata(metadata)
+                    metadata["autonomy_decisive_stage"] = "fail_closed"
+                    metadata["autonomy_decisive_reason"] = blocking_reason
                     self._record_decision_event(
                         "opportunity_autonomy_enforcement",
                         signal=signal,
                         request=request,
                         status="blocked",
-                        metadata={
-                            "environment": self.environment,
-                            "execution_permission": "blocked",
-                            "autonomy_mode": mode or "unknown",
-                            "autonomous_execution_allowed": False,
-                            "autonomy_primary_reason": blocking_reason,
-                            "blocking_reason": blocking_reason,
-                            "missing_contract_fields": ",".join(missing_fields),
-                        },
+                        metadata=metadata,
                     )
                     self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
                     return None
@@ -2329,11 +2356,13 @@ class TradingController:
             "paper_autonomous",
             "live_autonomous",
         }
+        runtime_environment = str(self.environment).strip().lower()
         if (
             correlation_key
             and not has_handoff_decision_timestamp
             and has_performance_guard_payload
             and has_accepted_autonomous_handoff_intent
+            and runtime_environment == "paper"
         ):
             return True
         if correlation_key and has_handoff_decision_timestamp and has_performance_guard_payload:
