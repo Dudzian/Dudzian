@@ -742,7 +742,9 @@ def test_opportunity_live_autonomous_open_respects_active_risk_veto_and_never_ex
     assert rejected_event["reason"] == "risk_veto_active"
 
 
-def test_opportunity_autonomous_replay_after_restart_does_not_flip_risk_rejection_into_execute() -> None:
+def test_opportunity_autonomous_replay_after_restart_does_not_flip_risk_rejection_into_execute() -> (
+    None
+):
     repository = _autonomy_shadow_repository_with_final_outcomes(
         [4.0, 3.0],
         environment="paper",
@@ -823,7 +825,9 @@ def test_opportunity_autonomous_restored_tracker_close_still_respects_risk_veto(
         _spy_runtime_position,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("paper_autonomous", side="SELL")])
+    result = controller.process_signals(
+        [_opportunity_autonomy_signal("paper_autonomous", side="SELL")]
+    )
 
     assert result == []
     assert execution.requests == []
@@ -831,7 +835,10 @@ def test_opportunity_autonomous_restored_tracker_close_still_respects_risk_veto(
     assert len(runtime_position_checks) == 1
     assert runtime_position_checks[0][0] == "paper"
     assert runtime_position_checks[0][1] == "BTC/USDT"
-    assert risk_engine.last_checks[0][0].metadata.get("opportunity_shadow_record_key") == "shadow-key-1"
+    assert (
+        risk_engine.last_checks[0][0].metadata.get("opportunity_shadow_record_key")
+        == "shadow-key-1"
+    )
     autonomy_event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert autonomy_event["status"] == "allowed"
     assert autonomy_event["autonomous_execution_allowed"] == "true"
@@ -9624,14 +9631,20 @@ def test_opportunity_autonomy_duplicate_open_guard_legacy_missing_scope_with_for
         [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
     )
     legacy_shadow = replace(
-        _shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp),
+        _shadow_record_for_key(
+            correlation_key=correlation_key, decision_timestamp=decision_timestamp
+        ),
         context=OpportunityShadowContext(environment="shadow"),
     )
     foreign_shadow = replace(
-        _shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp),
+        _shadow_record_for_key(
+            correlation_key=correlation_key, decision_timestamp=decision_timestamp
+        ),
         context=OpportunityShadowContext(environment="live"),
     )
-    repository.append_shadow_records([legacy_shadow, foreign_shadow] if legacy_first else [foreign_shadow, legacy_shadow])
+    repository.append_shadow_records(
+        [legacy_shadow, foreign_shadow] if legacy_first else [foreign_shadow, legacy_shadow]
+    )
     repository.upsert_open_outcome(
         repository.OpenOutcomeState(
             correlation_key=correlation_key,
@@ -10425,12 +10438,16 @@ def test_opportunity_autonomy_restored_tracker_partial_close_clamps_to_remaining
     assert len(execution.requests) == 1
     assert execution.requests[0].quantity == pytest.approx(0.6, rel=1e-6)
     request_metadata = execution.requests[0].metadata or {}
-    assert request_metadata.get("restored_tracker_remaining_quantity") == pytest.approx(0.6, rel=1e-6)
+    assert request_metadata.get("restored_tracker_remaining_quantity") == pytest.approx(
+        0.6, rel=1e-6
+    )
     assert request_metadata.get("restored_tracker_quantity_clamped") is True
     assert repository.load_open_outcomes() == []
 
 
-def test_opportunity_autonomy_restored_tracker_partial_close_allows_exact_remaining_quantity() -> None:
+def test_opportunity_autonomy_restored_tracker_partial_close_allows_exact_remaining_quantity() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 11, 13, 40, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -10486,7 +10503,9 @@ def test_opportunity_autonomy_restored_tracker_partial_close_allows_exact_remain
     assert repository.load_open_outcomes() == []
 
 
-def test_opportunity_autonomy_restored_tracker_inconsistent_closed_quantity_fail_closed_skip() -> None:
+def test_opportunity_autonomy_restored_tracker_inconsistent_closed_quantity_fail_closed_skip() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 11, 13, 50, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -10547,7 +10566,9 @@ def test_opportunity_autonomy_restored_tracker_inconsistent_closed_quantity_fail
     assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
 
 
-def test_opportunity_autonomy_restored_tracker_negative_closed_quantity_invalid_fail_closed_skip() -> None:
+def test_opportunity_autonomy_restored_tracker_negative_closed_quantity_invalid_fail_closed_skip() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 11, 13, 55, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -18974,7 +18995,9 @@ def test_opportunity_autonomous_open_partial_fill_creates_partial_tracker_withou
             )
         ]
     )
-    execution = StatusExecutionService(status="partially_filled", filled_quantity=0.4, avg_price=101.0)
+    execution = StatusExecutionService(
+        status="partially_filled", filled_quantity=0.4, avg_price=101.0
+    )
     controller, _journal = _build_autonomy_controller_with_execution(
         environment="paper",
         execution_service=execution,
