@@ -1465,17 +1465,25 @@ class TradingController:
             except Exception:  # pragma: no cover - diagnostics only
                 shadow_records = ()
             shadow_record = next(
-                (row for row in shadow_records if str(getattr(row, "record_key", "")) == correlation_key),
+                (
+                    row
+                    for row in shadow_records
+                    if str(getattr(row, "record_key", "")) == correlation_key
+                ),
                 None,
             )
             if shadow_record is not None:
-                proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                proposed_direction = (
+                    str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                )
                 expected_open_side = (
                     "BUY"
                     if proposed_direction in {"long", "buy"}
                     else ("SELL" if proposed_direction in {"short", "sell"} else "")
                 )
-                if expected_open_side and self._is_closing_side(expected_open_side, normalized_side):
+                if expected_open_side and self._is_closing_side(
+                    expected_open_side, normalized_side
+                ):
                     return None
         group_key = (
             str(signal.symbol).strip(),
