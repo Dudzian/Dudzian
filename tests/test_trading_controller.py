@@ -21479,12 +21479,16 @@ def test_controller_decision_rejection_blocks_autonomous_open_before_enforcement
     ]
     assert decision_events
     autonomy_events = [
-        event for event in journal.export() if event.get("event") == "opportunity_autonomy_enforcement"
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
     ]
     assert autonomy_events == []
 
 
-def test_upstream_handoff_single_accepted_autonomous_open_contract_reaches_controller_and_persistence() -> None:
+def test_upstream_handoff_single_accepted_autonomous_open_contract_reaches_controller_and_persistence() -> (
+    None
+):
     class _AcceptingDecisionOrchestrator:
         def evaluate_candidate(self, candidate, _context):
             return SimpleNamespace(
@@ -21616,17 +21620,18 @@ def test_upstream_handoff_single_accepted_autonomous_open_contract_reaches_contr
     assert open_rows[0].decision_timestamp.isoformat() == "2026-01-01T12:00:00+00:00"
     assert open_rows[0].provenance.get("model_version") == "opportunity-v1"
     assert open_rows[0].provenance.get("decision_source") == "upstream_governor_v2"
-    assert open_rows[0].provenance.get("upstream_autonomy_decision_source") == "upstream_governor_v2"
+    assert (
+        open_rows[0].provenance.get("upstream_autonomy_decision_source") == "upstream_governor_v2"
+    )
     assert open_rows[0].provenance.get("upstream_autonomy_inference_model") == "ensemble_v3"
     assert (
-        open_rows[0].provenance.get("upstream_autonomy_inference_model_version")
-        == "ensemble_v3.2"
+        open_rows[0].provenance.get("upstream_autonomy_inference_model_version") == "ensemble_v3.2"
     )
 
 
 @pytest.mark.parametrize("symbols", (("BTC/USDT", "ETH/USDT"), ("ETH/USDT", "BTC/USDT")))
 def test_upstream_handoff_mixed_batch_order_independent_for_accepted_autonomous_contract(
-    symbols: tuple[str, str]
+    symbols: tuple[str, str],
 ) -> None:
     class _MixedDecisionOrchestrator:
         def evaluate_candidate(self, candidate, _context):
@@ -21880,7 +21885,9 @@ def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_an
         }
         return signal
 
-    def _run(symbol_order: tuple[str, str]) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    def _run(
+        symbol_order: tuple[str, str],
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
         sink = DecisionAwareSignalSink(
             base_sink=InMemoryStrategySignalSink(),
             orchestrator=_MixedDecisionOrchestrator(),
@@ -21910,12 +21917,17 @@ def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_an
         assert emitted_metadata["opportunity_decision_timestamp"] == decision_timestamp.isoformat()
         assert emitted_metadata["expected_probability"] == 0.93
         assert emitted_metadata["expected_return_bps"] == 14.0
-        assert emitted_metadata["opportunity_autonomy_decision"]["inference_model"] == "accepted_model_v3"
+        assert (
+            emitted_metadata["opportunity_autonomy_decision"]["inference_model"]
+            == "accepted_model_v3"
+        )
         assert (
             emitted_metadata["opportunity_autonomy_decision"]["inference_model_version"]
             == "accepted_model_v3.1"
         )
-        assert "rejected" not in emitted_metadata["opportunity_autonomy_decision"]["inference_model"]
+        assert (
+            "rejected" not in emitted_metadata["opportunity_autonomy_decision"]["inference_model"]
+        )
 
         shadow_repo = _autonomy_shadow_repository_with_final_outcomes(
             [4.0, 3.0], environment="paper", portfolio_id="paper-1"
@@ -21963,7 +21975,9 @@ def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_an
             )
         }
         assert provenance_subset["upstream_autonomy_inference_model"] == "accepted_model_v3"
-        assert provenance_subset["upstream_autonomy_inference_model_version"] == "accepted_model_v3.1"
+        assert (
+            provenance_subset["upstream_autonomy_inference_model_version"] == "accepted_model_v3.1"
+        )
         assert provenance_subset["decision_source"] == "accepted_governor_v2"
         assert provenance_subset["upstream_autonomy_decision_source"] == "accepted_governor_v2"
 
@@ -21975,6 +21989,7 @@ def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_an
     assert first_run[0] == second_run[0]
     assert first_run[1] == second_run[1]
     assert first_run[2] == second_run[2]
+
 
 def test_controller_attaches_decision_metadata_for_execution() -> None:
     risk_engine = DummyRiskEngine()
