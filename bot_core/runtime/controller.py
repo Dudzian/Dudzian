@@ -2314,6 +2314,37 @@ class TradingController:
     def _is_autonomous_open_handoff_path(self, request: OrderRequest) -> bool:
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
+        has_handoff_decision_timestamp = bool(
+            str(request_metadata.get("opportunity_decision_timestamp") or "").strip()
+        )
+        decision_payload = request_metadata.get("opportunity_autonomy_decision")
+        has_performance_guard_payload = isinstance(decision_payload, Mapping) and isinstance(
+            decision_payload.get("performance_guard"), Mapping
+        )
+        handoff_mode_candidates: list[str] = []
+        request_mode_raw = request_metadata.get("opportunity_autonomy_mode")
+        if request_mode_raw is not None:
+            request_mode = str(request_mode_raw).strip().lower()
+            if request_mode:
+                handoff_mode_candidates.append(request_mode)
+        if isinstance(decision_payload, Mapping):
+            payload_mode_raw = decision_payload.get("effective_mode")
+            if payload_mode_raw is not None:
+                payload_mode = str(payload_mode_raw).strip().lower()
+                if payload_mode:
+                    handoff_mode_candidates.append(payload_mode)
+        has_accepted_autonomous_handoff_intent = any(
+            mode in {"paper_autonomous", "live_autonomous"} for mode in handoff_mode_candidates
+        )
+        if (
+            correlation_key
+            and not has_handoff_decision_timestamp
+            and has_performance_guard_payload
+            and has_accepted_autonomous_handoff_intent
+        ):
+            return True
+        if correlation_key and has_handoff_decision_timestamp and has_performance_guard_payload:
+            return False
         if not correlation_key:
             return True
         tracker = self._opportunity_open_outcomes.get(correlation_key)
@@ -2321,18 +2352,18 @@ class TradingController:
             return not self._is_closing_side(str(tracker.side), str(request.side))
         repository = self._opportunity_shadow_repository
         if repository is None:
-            return True
+            return has_handoff_decision_timestamp
         try:
             shadow_records = repository.load_shadow_records()
         except Exception:  # pragma: no cover - diagnostics only
-            return True
+            return has_handoff_decision_timestamp
         key_candidates = [
             row
             for row in shadow_records
             if str(getattr(row, "record_key", "")).strip() == correlation_key
         ]
         if not key_candidates:
-            return True
+            return has_handoff_decision_timestamp
         request_symbol = str(request.symbol).strip()
         symbol_candidates = [
             row
@@ -2340,7 +2371,7 @@ class TradingController:
             if not request_symbol or str(getattr(row, "symbol", "")).strip() == request_symbol
         ]
         if not symbol_candidates:
-            return True
+            return has_handoff_decision_timestamp
         runtime_environment = str(self.environment).strip().lower()
         scoped_candidates = []
         for candidate in symbol_candidates:
@@ -2352,7 +2383,7 @@ class TradingController:
                 continue
             scoped_candidates.append(candidate)
         if not scoped_candidates:
-            return True
+            return has_handoff_decision_timestamp
         implied_expected_open_sides = {
             "BUY"
             if str(getattr(candidate, "proposed_direction", "")).strip().lower() in {"long", "buy"}
