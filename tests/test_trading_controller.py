@@ -36,6 +36,7 @@ from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
 from bot_core.runtime import TradingController
 from bot_core.runtime.journal import TradingDecisionEvent
+from bot_core.runtime.pipeline import DecisionAwareSignalSink, InMemoryStrategySignalSink
 from bot_core.strategies import SignalLeg, StrategySignal
 
 from tests._alert_channel_helpers import CollectingChannel
@@ -21482,6 +21483,498 @@ def test_controller_decision_rejection_blocks_autonomous_open_before_enforcement
     ]
     assert autonomy_events == []
 
+
+def test_upstream_handoff_single_accepted_autonomous_open_contract_reaches_controller_and_persistence() -> None:
+    class _AcceptingDecisionOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=9.0,
+                model_name="upstream-gbm-v2",
+                latency_ms=None,
+            )
+
+    class _PolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key="shadow-key-accepted-1",
+                shadow_persistence_status="persisted",
+                shadow_persistence_error=None,
+            )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingDecisionOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_PolicyAdapter(),
+        opportunity_policy_mode="shadow",
+    )
+    signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        include_decision_payload=True,
+        decision_payload_inference_model="ensemble_v3",
+        decision_payload_inference_model_version="ensemble_v3.2",
+        decision_payload_decision_source="upstream_governor_v2",
+    )
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.93,
+        "expected_return_bps": 14.0,
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=decision_timestamp,
+        signals=(signal,),
+    )
+
+    emitted = sink.export()[0][1][0]
+    emitted_metadata = dict(emitted.metadata or {})
+    assert emitted_metadata["opportunity_autonomy_mode"] == "paper_autonomous"
+    assert emitted_metadata["opportunity_shadow_record_key"] == correlation_key
+    assert emitted_metadata["opportunity_decision_timestamp"] == "2026-01-01T12:00:00+00:00"
+    assert emitted_metadata["opportunity_model_version"] == "opportunity-v1"
+    assert emitted_metadata["opportunity_decision_source"] == "opportunity_ai_shadow"
+    assert emitted_metadata["expected_probability"] == 0.93
+    assert emitted_metadata["expected_return_bps"] == 14.0
+    assert isinstance(emitted_metadata["opportunity_autonomy_decision"], dict)
+    assert emitted_metadata["opportunity_autonomy_decision"]["inference_model"] == "ensemble_v3"
+    assert (
+        emitted_metadata["opportunity_autonomy_decision"]["inference_model_version"]
+        == "ensemble_v3.2"
+    )
+
+    shadow_repo = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    controller, execution, _journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+
+    results = controller.process_signals([emitted])
+    assert len(results) == 1
+    request = execution.requests[0]
+    request_metadata = dict(request.metadata or {})
+    for key in (
+        "opportunity_autonomy_mode",
+        "opportunity_shadow_record_key",
+        "opportunity_decision_timestamp",
+        "opportunity_model_version",
+        "opportunity_decision_source",
+        "expected_probability",
+        "expected_return_bps",
+        "opportunity_autonomy_decision",
+    ):
+        assert request_metadata.get(key) == emitted_metadata.get(key)
+
+    open_rows = shadow_repo.load_open_outcomes()
+    assert len(open_rows) == 1
+    assert open_rows[0].correlation_key == correlation_key
+    assert open_rows[0].decision_timestamp.isoformat() == "2026-01-01T12:00:00+00:00"
+    assert open_rows[0].provenance.get("model_version") == "opportunity-v1"
+    assert open_rows[0].provenance.get("decision_source") == "upstream_governor_v2"
+    assert open_rows[0].provenance.get("upstream_autonomy_decision_source") == "upstream_governor_v2"
+    assert open_rows[0].provenance.get("upstream_autonomy_inference_model") == "ensemble_v3"
+    assert (
+        open_rows[0].provenance.get("upstream_autonomy_inference_model_version")
+        == "ensemble_v3.2"
+    )
+
+
+@pytest.mark.parametrize("symbols", (("BTC/USDT", "ETH/USDT"), ("ETH/USDT", "BTC/USDT")))
+def test_upstream_handoff_mixed_batch_order_independent_for_accepted_autonomous_contract(
+    symbols: tuple[str, str]
+) -> None:
+    class _MixedDecisionOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            if candidate.symbol == "BTC/USDT":
+                return SimpleNamespace(
+                    candidate=candidate,
+                    accepted=True,
+                    reasons=(),
+                    risk_flags=(),
+                    stress_failures=(),
+                    cost_bps=2.0,
+                    net_edge_bps=9.0,
+                    model_name="upstream-gbm-v2",
+                    latency_ms=None,
+                )
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=False,
+                reasons=("rejected_contract",),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=25.0,
+                net_edge_bps=-2.0,
+                model_name="upstream-gbm-v1",
+                latency_ms=None,
+            )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_MixedDecisionOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=None,
+    )
+
+    signals: list[StrategySignal] = []
+    for symbol in symbols:
+        signal = _opportunity_autonomy_signal(
+            "paper_autonomous",
+            include_decision_payload=True,
+            decision_payload_inference_model=f"model-{symbol}",
+            decision_payload_inference_model_version=f"version-{symbol}",
+        )
+        signal.symbol = symbol
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "expected_probability": 0.93,
+            "expected_return_bps": 14.0,
+        }
+        signals.append(signal)
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=tuple(signals),
+    )
+
+    exported = sink.export()
+    assert len(exported) == 1
+    emitted = exported[0][1]
+    assert [row.symbol for row in emitted] == ["BTC/USDT"]
+    emitted_metadata = dict(emitted[0].metadata or {})
+    assert emitted_metadata["opportunity_autonomy_mode"] == "paper_autonomous"
+    assert emitted_metadata["expected_probability"] == 0.93
+    assert emitted_metadata["expected_return_bps"] == 14.0
+    assert emitted_metadata["opportunity_autonomy_decision"]["inference_model"] == "model-BTC/USDT"
+    assert (
+        emitted_metadata["opportunity_autonomy_decision"]["inference_model_version"]
+        == "version-BTC/USDT"
+    )
+
+
+def test_upstream_handoff_replay_same_accepted_candidate_keeps_controller_contract_stable() -> None:
+    class _AcceptingDecisionOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=9.0,
+                model_name="upstream-gbm-v2",
+                latency_ms=None,
+            )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingDecisionOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=None,
+    )
+    signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        include_decision_payload=True,
+        decision_payload_inference_model="ensemble_v3",
+        decision_payload_inference_model_version="ensemble_v3.2",
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.93,
+        "expected_return_bps": 14.0,
+        "opportunity_shadow_record_key": "stable-key-1",
+        "opportunity_decision_timestamp": "2026-01-01T12:00:00+00:00",
+    }
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    first_emitted_signal = sink.export()[0][1][0]
+    second_emitted_signal = sink.export()[1][1][0]
+    first_emitted = dict(first_emitted_signal.metadata or {})
+    second_emitted = dict(second_emitted_signal.metadata or {})
+    assert first_emitted == second_emitted
+
+    shadow_repo_first = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    controller_first, execution_first, _journal_first = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo_first,
+    )
+    shadow_repo_second = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    controller_second, execution_second, _journal_second = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo_second,
+    )
+    controller_first.process_signals([first_emitted_signal])
+    controller_second.process_signals([second_emitted_signal])
+
+    first_request_metadata = dict(execution_first.requests[0].metadata or {})
+    second_request_metadata = dict(execution_second.requests[0].metadata or {})
+    for key in (
+        "opportunity_autonomy_mode",
+        "opportunity_shadow_record_key",
+        "opportunity_decision_timestamp",
+        "opportunity_autonomy_decision",
+        "expected_probability",
+        "expected_return_bps",
+    ):
+        assert first_request_metadata.get(key) == second_request_metadata.get(key)
+
+
+def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_and_persistence_regardless_of_order() -> (
+    None
+):
+    class _MixedDecisionOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            if candidate.symbol == "BTC/USDT":
+                return SimpleNamespace(
+                    candidate=candidate,
+                    accepted=True,
+                    reasons=(),
+                    risk_flags=(),
+                    stress_failures=(),
+                    cost_bps=2.0,
+                    net_edge_bps=9.0,
+                    model_name="upstream-gbm-v2",
+                    latency_ms=None,
+                )
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=False,
+                reasons=("rejected_contract",),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=25.0,
+                net_edge_bps=-2.0,
+                model_name="upstream-gbm-v1",
+                latency_ms=None,
+            )
+
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    accepted_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    rejected_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="rejected-shadow-v1",
+        rank=2,
+    )
+
+    def _build_signal(symbol: str) -> StrategySignal:
+        if symbol == "BTC/USDT":
+            key = accepted_key
+            inference_model = "accepted_model_v3"
+            inference_model_version = "accepted_model_v3.1"
+            decision_source = "accepted_governor_v2"
+            expected_probability = 0.93
+            expected_return_bps = 14.0
+        else:
+            key = rejected_key
+            inference_model = "rejected_model_v9"
+            inference_model_version = "rejected_model_v9.4"
+            decision_source = "rejected_governor_v7"
+            expected_probability = 0.51
+            expected_return_bps = 1.0
+        signal = _opportunity_autonomy_signal(
+            "paper_autonomous",
+            include_decision_payload=True,
+            decision_payload_inference_model=inference_model,
+            decision_payload_inference_model_version=inference_model_version,
+            decision_payload_decision_source=decision_source,
+        )
+        signal.symbol = symbol
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "expected_probability": expected_probability,
+            "expected_return_bps": expected_return_bps,
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+        }
+        return signal
+
+    def _run(symbol_order: tuple[str, str]) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+        sink = DecisionAwareSignalSink(
+            base_sink=InMemoryStrategySignalSink(),
+            orchestrator=_MixedDecisionOrchestrator(),
+            risk_engine=DummyRiskEngine(),
+            default_notional=1_000.0,
+            environment="paper",
+            exchange="BINANCE",
+            min_probability=0.4,
+            journal=CollectingDecisionJournal(),
+            opportunity_shadow_adapter=None,
+        )
+        signals = tuple(_build_signal(symbol) for symbol in symbol_order)
+        sink.submit(
+            strategy_name="trend-d1",
+            schedule_name="trend-d1",
+            risk_profile="balanced",
+            timestamp=decision_timestamp,
+            signals=signals,
+        )
+        exported = sink.export()
+        assert len(exported) == 1
+        emitted = exported[0][1]
+        assert [row.symbol for row in emitted] == ["BTC/USDT"]
+        emitted_metadata = dict(emitted[0].metadata or {})
+        assert emitted_metadata["opportunity_autonomy_mode"] == "paper_autonomous"
+        assert emitted_metadata["opportunity_shadow_record_key"] == accepted_key
+        assert emitted_metadata["opportunity_decision_timestamp"] == decision_timestamp.isoformat()
+        assert emitted_metadata["expected_probability"] == 0.93
+        assert emitted_metadata["expected_return_bps"] == 14.0
+        assert emitted_metadata["opportunity_autonomy_decision"]["inference_model"] == "accepted_model_v3"
+        assert (
+            emitted_metadata["opportunity_autonomy_decision"]["inference_model_version"]
+            == "accepted_model_v3.1"
+        )
+        assert "rejected" not in emitted_metadata["opportunity_autonomy_decision"]["inference_model"]
+
+        shadow_repo = _autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+        )
+        shadow_repo.append_shadow_records(
+            [
+                _shadow_record_for_key(
+                    correlation_key=accepted_key,
+                    decision_timestamp=decision_timestamp,
+                )
+            ]
+        )
+        controller, execution, _journal = _build_autonomy_controller(
+            environment="paper",
+            opportunity_shadow_repository=shadow_repo,
+        )
+        results = controller.process_signals([emitted[0]])
+        assert len(results) == 1
+        request_metadata = dict(execution.requests[0].metadata or {})
+        request_subset = {
+            key: request_metadata.get(key)
+            for key in (
+                "opportunity_autonomy_mode",
+                "opportunity_shadow_record_key",
+                "opportunity_decision_timestamp",
+                "expected_probability",
+                "expected_return_bps",
+                "opportunity_autonomy_decision",
+            )
+        }
+
+        open_rows = shadow_repo.load_open_outcomes()
+        assert len(open_rows) == 1
+        provenance = dict(open_rows[0].provenance)
+        provenance_subset = {
+            key: provenance.get(key)
+            for key in (
+                "model_version",
+                "decision_source",
+                "upstream_autonomy_decision_source",
+                "upstream_autonomy_inference_model",
+                "upstream_autonomy_inference_model_version",
+                "autonomy_requested_mode",
+                "autonomy_final_mode",
+            )
+        }
+        assert provenance_subset["upstream_autonomy_inference_model"] == "accepted_model_v3"
+        assert provenance_subset["upstream_autonomy_inference_model_version"] == "accepted_model_v3.1"
+        assert provenance_subset["decision_source"] == "accepted_governor_v2"
+        assert provenance_subset["upstream_autonomy_decision_source"] == "accepted_governor_v2"
+
+        return emitted_metadata, request_subset, provenance_subset
+
+    first_run = _run(("BTC/USDT", "ETH/USDT"))
+    second_run = _run(("ETH/USDT", "BTC/USDT"))
+
+    assert first_run[0] == second_run[0]
+    assert first_run[1] == second_run[1]
+    assert first_run[2] == second_run[2]
 
 def test_controller_attaches_decision_metadata_for_execution() -> None:
     risk_engine = DummyRiskEngine()
