@@ -2190,10 +2190,7 @@ class TradingController:
             )
             mode = decision.mode.value
         except Exception:
-            mode_raw = request_metadata.get("opportunity_autonomy_mode")
-            if mode_raw is None:
-                mode_raw = signal_metadata.get("opportunity_autonomy_mode")
-            mode = str(mode_raw or "").strip().lower() or None
+            mode = "unavailable"
         if mode not in {"paper_autonomous", "live_autonomous"}:
             return True, (), None, ""
         missing_fields: list[str] = []
