@@ -9449,6 +9449,353 @@ def test_opportunity_autonomy_duplicate_open_reentry_same_runtime_is_suppressed(
     assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
 
 
+@pytest.mark.parametrize("reversed_input_order", [False, True])
+def test_opportunity_autonomy_batch_multiple_open_candidates_fail_closed_deterministically(
+    reversed_input_order: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 11, 12, 0, tzinfo=timezone.utc)
+    correlation_key_a = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    correlation_key_b = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key_a, decision_timestamp=decision_timestamp
+            ),
+            _shadow_record_for_key(
+                correlation_key=correlation_key_b, decision_timestamp=decision_timestamp
+            ),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    candidate_a = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key_a,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="candidate_a",
+    )
+    candidate_b = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key_b,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="candidate_b",
+    )
+    batch = [candidate_b, candidate_a] if reversed_input_order else [candidate_a, candidate_b]
+
+    results = controller.process_signals(batch)
+
+    assert results == []
+    assert len(execution.requests) == 0
+    assert repository.load_open_outcomes() == []
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert len(skipped_events) == 2
+    assert {
+        event.get("reason") for event in skipped_events
+    } == {"autonomous_open_candidate_arbitration_conflict_fail_closed"}
+
+
+def test_opportunity_autonomy_batch_multiple_open_candidates_replay_stays_fail_closed_without_provenance_mutation() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 11, 13, 0, tzinfo=timezone.utc)
+    correlation_key_a = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v2",
+        rank=1,
+    )
+    correlation_key_b = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v2",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key_a, decision_timestamp=decision_timestamp
+            ),
+            _shadow_record_for_key(
+                correlation_key=correlation_key_b, decision_timestamp=decision_timestamp
+            ),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    batch = [
+        _autonomy_signal_with_correlation(
+            mode="paper_autonomous",
+            side="BUY",
+            correlation_key=correlation_key_a,
+            decision_timestamp=decision_timestamp,
+            include_decision_payload=True,
+            decision_effective_mode="paper_autonomous",
+            decision_primary_reason="candidate_a",
+        ),
+        _autonomy_signal_with_correlation(
+            mode="paper_autonomous",
+            side="BUY",
+            correlation_key=correlation_key_b,
+            decision_timestamp=decision_timestamp,
+            include_decision_payload=True,
+            decision_effective_mode="paper_autonomous",
+            decision_primary_reason="candidate_b",
+        ),
+    ]
+    labels_before = repository.load_outcome_labels()
+
+    first = controller.process_signals(batch)
+    second = controller.process_signals(list(reversed(batch)))
+
+    assert first == []
+    assert second == []
+    assert len(execution.requests) == 0
+    assert repository.load_open_outcomes() == []
+    assert repository.load_outcome_labels() == labels_before
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert len(skipped_events) == 4
+    assert {
+        event.get("reason") for event in skipped_events
+    } == {"autonomous_open_candidate_arbitration_conflict_fail_closed"}
+
+
+def test_opportunity_autonomy_batch_mixed_buy_sell_does_not_trigger_open_arbitration_conflict() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 11, 14, 0, tzinfo=timezone.utc)
+    correlation_key_buy = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v3",
+        rank=1,
+    )
+    correlation_key_sell = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v3",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key_buy, decision_timestamp=decision_timestamp
+            ),
+            _shadow_record_for_key(
+                correlation_key=correlation_key_sell, decision_timestamp=decision_timestamp
+            ),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    buy_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key_buy,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="mixed_batch_buy",
+    )
+    sell_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key_sell,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="mixed_batch_sell",
+    )
+
+    results = controller.process_signals([buy_signal, sell_signal])
+
+    assert len(results) == 2
+    assert len(execution.requests) == 2
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert [
+        event
+        for event in skipped_events
+        if event.get("reason") == "autonomous_open_candidate_arbitration_conflict_fail_closed"
+    ] == []
+
+
+def test_opportunity_autonomy_close_signal_is_not_captured_by_open_arbitration_conflict_prescan() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 11, 15, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v4",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={"source": "existing_open_for_close_path"},
+        )
+    )
+
+    execution = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=99.0)
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="close_path_should_not_conflict",
+    )
+
+    results = controller.process_signals([close_signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert [
+        event
+        for event in skipped_events
+        if event.get("reason") == "autonomous_open_candidate_arbitration_conflict_fail_closed"
+    ] == []
+
+
+def test_opportunity_autonomy_no_tracker_close_replay_batch_is_not_classified_as_open_conflict() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 11, 16, 0, tzinfo=timezone.utc)
+    correlation_key_a = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v5",
+        rank=1,
+    )
+    correlation_key_b = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v5",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0, 5.0, 4.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key_a, decision_timestamp=decision_timestamp
+            ),
+            _shadow_record_for_key(
+                correlation_key=correlation_key_b, decision_timestamp=decision_timestamp
+            ),
+        ]
+    )
+    _append_autonomous_final_label_for_correlation(
+        repository,
+        correlation_key=correlation_key_a,
+        decision_timestamp=decision_timestamp,
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    _append_autonomous_final_label_for_correlation(
+        repository,
+        correlation_key=correlation_key_b,
+        decision_timestamp=decision_timestamp,
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    execution = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=99.0)
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    close_a = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key_a,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="close_replay_a",
+    )
+    close_b = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key_b,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="close_replay_b",
+    )
+
+    results = controller.process_signals([close_a, close_b])
+
+    assert results == []
+    assert len(execution.requests) == 0
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert [
+        event
+        for event in skipped_events
+        if event.get("reason") == "autonomous_open_candidate_arbitration_conflict_fail_closed"
+    ] == []
+    replay_events = [
+        event
+        for event in skipped_events
+        if event.get("reason") == "duplicate_autonomous_close_replay_suppressed"
+    ]
+    assert len(replay_events) == 2
+
+
 def test_opportunity_autonomy_duplicate_open_reentry_after_restart_is_suppressed_and_contract_stable() -> (
     None
 ):
