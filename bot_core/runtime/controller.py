@@ -1743,9 +1743,11 @@ class TradingController:
         request = self._build_order_request(signal, extra_metadata=decision_metadata)
         if self._is_opportunity_autonomy_enforced(signal, request):
             if self._is_autonomous_open_handoff_path(request):
-                contract_valid, missing_fields, mode, blocking_reason = self._validate_autonomous_open_handoff_contract(
-                    signal=signal,
-                    request=request,
+                contract_valid, missing_fields, mode, blocking_reason = (
+                    self._validate_autonomous_open_handoff_contract(
+                        signal=signal,
+                        request=request,
+                    )
                 )
                 if not contract_valid:
                     self._record_decision_event(
@@ -2198,7 +2200,9 @@ class TradingController:
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
         if not correlation_key:
             missing_fields.append("opportunity_shadow_record_key")
-        decision_timestamp = str(request_metadata.get("opportunity_decision_timestamp") or "").strip()
+        decision_timestamp = str(
+            request_metadata.get("opportunity_decision_timestamp") or ""
+        ).strip()
         if not decision_timestamp:
             missing_fields.append("opportunity_decision_timestamp")
         if missing_fields:
@@ -2285,7 +2289,9 @@ class TradingController:
         scoped_candidates = []
         for candidate in timestamp_candidates:
             candidate_context = getattr(candidate, "context", None)
-            candidate_environment = str(getattr(candidate_context, "environment", "")).strip().lower()
+            candidate_environment = (
+                str(getattr(candidate_context, "environment", "")).strip().lower()
+            )
             if runtime_environment and candidate_environment != runtime_environment:
                 continue
             scoped_candidates.append(candidate)
@@ -2339,14 +2345,18 @@ class TradingController:
         scoped_candidates = []
         for candidate in symbol_candidates:
             candidate_context = getattr(candidate, "context", None)
-            candidate_environment = str(getattr(candidate_context, "environment", "")).strip().lower()
+            candidate_environment = (
+                str(getattr(candidate_context, "environment", "")).strip().lower()
+            )
             if runtime_environment and candidate_environment != runtime_environment:
                 continue
             scoped_candidates.append(candidate)
         if len(scoped_candidates) != 1:
             return True
         scoped_shadow_record = scoped_candidates[0]
-        proposed_direction = str(getattr(scoped_shadow_record, "proposed_direction", "")).strip().lower()
+        proposed_direction = (
+            str(getattr(scoped_shadow_record, "proposed_direction", "")).strip().lower()
+        )
         expected_open_side = (
             "BUY"
             if proposed_direction in {"long", "buy"}
