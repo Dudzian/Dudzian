@@ -2318,21 +2318,17 @@ class TradingController:
         has_performance_guard_payload = isinstance(decision_payload, Mapping) and isinstance(
             decision_payload.get("performance_guard"), Mapping
         )
-        handoff_mode_candidates: list[str] = []
-        request_mode_raw = request_metadata.get("opportunity_autonomy_mode")
-        if request_mode_raw is not None:
-            request_mode = str(request_mode_raw).strip().lower()
-            if request_mode:
-                handoff_mode_candidates.append(request_mode)
+        payload_effective_mode: str | None = None
         if isinstance(decision_payload, Mapping):
             payload_mode_raw = decision_payload.get("effective_mode")
             if payload_mode_raw is not None:
                 payload_mode = str(payload_mode_raw).strip().lower()
                 if payload_mode:
-                    handoff_mode_candidates.append(payload_mode)
-        has_accepted_autonomous_handoff_intent = any(
-            mode in {"paper_autonomous", "live_autonomous"} for mode in handoff_mode_candidates
-        )
+                    payload_effective_mode = payload_mode
+        has_accepted_autonomous_handoff_intent = payload_effective_mode in {
+            "paper_autonomous",
+            "live_autonomous",
+        }
         if (
             correlation_key
             and not has_handoff_decision_timestamp
