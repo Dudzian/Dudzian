@@ -2319,7 +2319,9 @@ class TradingController:
         scoped_candidates = []
         for candidate in timestamp_candidates:
             candidate_context = getattr(candidate, "context", None)
-            candidate_environment = str(getattr(candidate_context, "environment", "")).strip().lower()
+            candidate_environment = (
+                str(getattr(candidate_context, "environment", "")).strip().lower()
+            )
             if candidate_environment == "shadow":
                 candidate_environment = ""
             if (
@@ -2427,7 +2429,9 @@ class TradingController:
         scoped_candidates = []
         for candidate in symbol_candidates:
             candidate_context = getattr(candidate, "context", None)
-            candidate_environment = str(getattr(candidate_context, "environment", "")).strip().lower()
+            candidate_environment = (
+                str(getattr(candidate_context, "environment", "")).strip().lower()
+            )
             if candidate_environment == "shadow":
                 candidate_environment = ""
             if (
