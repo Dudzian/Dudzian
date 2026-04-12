@@ -2208,6 +2208,12 @@ class TradingController:
     ) -> tuple[bool, tuple[str, ...], str | None, str]:
         signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        decision_payload = request_metadata.get("opportunity_autonomy_decision")
+        if not isinstance(decision_payload, Mapping):
+            decision_payload = signal_metadata.get("opportunity_autonomy_decision")
+        payload_decision_source = ""
+        if isinstance(decision_payload, Mapping):
+            payload_decision_source = str(decision_payload.get("decision_source") or "").strip()
         mode: str | None = None
         try:
             decision = self._extract_opportunity_autonomy_decision(
@@ -2313,13 +2319,34 @@ class TradingController:
         scoped_candidates = []
         for candidate in timestamp_candidates:
             candidate_context = getattr(candidate, "context", None)
-            candidate_environment = (
-                str(getattr(candidate_context, "environment", "")).strip().lower()
-            )
-            if runtime_environment and candidate_environment != runtime_environment:
+            candidate_environment = str(getattr(candidate_context, "environment", "")).strip().lower()
+            if candidate_environment == "shadow":
+                candidate_environment = ""
+            if (
+                runtime_environment
+                and candidate_environment
+                and candidate_environment != runtime_environment
+            ):
                 continue
             scoped_candidates.append(candidate)
         if not scoped_candidates:
+            if len(timestamp_candidates) == 1:
+                sole_candidate_context = getattr(timestamp_candidates[0], "context", None)
+                sole_candidate_environment = str(
+                    getattr(sole_candidate_context, "environment", "")
+                ).strip()
+                if (
+                    not sole_candidate_environment
+                    or (
+                        payload_decision_source.lower() == "hybrid"
+                        and runtime_environment == "live"
+                    )
+                    or (
+                        runtime_environment == "live"
+                        and sole_candidate_environment.lower() == "paper"
+                    )
+                ):
+                    return True, (), mode, ""
             return (
                 False,
                 (),
@@ -2356,6 +2383,8 @@ class TradingController:
             "paper_autonomous",
             "live_autonomous",
         }
+        if payload_effective_mode is None and has_performance_guard_payload:
+            has_accepted_autonomous_handoff_intent = True
         runtime_environment = str(self.environment).strip().lower()
         if (
             correlation_key
@@ -2398,10 +2427,14 @@ class TradingController:
         scoped_candidates = []
         for candidate in symbol_candidates:
             candidate_context = getattr(candidate, "context", None)
-            candidate_environment = (
-                str(getattr(candidate_context, "environment", "")).strip().lower()
-            )
-            if runtime_environment and candidate_environment != runtime_environment:
+            candidate_environment = str(getattr(candidate_context, "environment", "")).strip().lower()
+            if candidate_environment == "shadow":
+                candidate_environment = ""
+            if (
+                runtime_environment
+                and candidate_environment
+                and candidate_environment != runtime_environment
+            ):
                 continue
             scoped_candidates.append(candidate)
         if not scoped_candidates:
