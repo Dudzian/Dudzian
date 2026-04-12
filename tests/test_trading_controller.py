@@ -1826,19 +1826,19 @@ def test_opportunity_autonomy_runtime_missing_repository_allows_payload_guard_on
     None
 ):
     controller, execution, journal = _build_autonomy_controller(environment="paper")
-
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                performance_guard_effective_mode="shadow_only",
-                performance_guard_primary_reason="payload_block_fallback",
-                performance_guard_hard_breach=True,
-                performance_guard_blocked=True,
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        performance_guard_effective_mode="shadow_only",
+        performance_guard_primary_reason="payload_block_fallback",
+        performance_guard_hard_breach=True,
+        performance_guard_blocked=True,
     )
+    signal.metadata["opportunity_decision_timestamp"] = datetime(
+        2026, 1, 8, 12, 0, tzinfo=timezone.utc
+    ).isoformat()
+
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -9971,7 +9971,13 @@ def test_opportunity_autonomy_duplicate_open_guard_foreign_scope_restored_tracke
                     correlation_key=correlation_key, decision_timestamp=decision_timestamp
                 ),
                 context=OpportunityShadowContext(environment="live"),
-            )
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=correlation_key, decision_timestamp=decision_timestamp
+                ),
+                context=OpportunityShadowContext(environment="paper"),
+            ),
         ]
     )
     repository.upsert_open_outcome(
@@ -10370,7 +10376,13 @@ def test_opportunity_autonomy_duplicate_open_guard_explicit_same_scope_tracker_w
                     correlation_key=correlation_key, decision_timestamp=decision_timestamp
                 ),
                 context=OpportunityShadowContext(environment="live"),
-            )
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=correlation_key, decision_timestamp=decision_timestamp
+                ),
+                context=OpportunityShadowContext(environment="paper"),
+            ),
         ]
     )
     repository.upsert_open_outcome(
