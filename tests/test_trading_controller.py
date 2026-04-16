@@ -36,6 +36,7 @@ from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
 from bot_core.runtime import TradingController
 from bot_core.runtime.journal import TradingDecisionEvent
+from bot_core.runtime.opportunity_runtime_controls import OpportunityRuntimeControls
 from bot_core.runtime.pipeline import DecisionAwareSignalSink, InMemoryStrategySignalSink
 from bot_core.strategies import SignalLeg, StrategySignal
 
@@ -21880,6 +21881,286 @@ def test_upstream_handoff_replay_same_accepted_candidate_keeps_controller_contra
         "expected_return_bps",
     ):
         assert first_request_metadata.get(key) == second_request_metadata.get(key)
+
+
+def test_opportunity_autonomy_runtime_mode_hot_switch_applies_on_next_cycle_without_sink_restart() -> (
+    None
+):
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-hot-switch-model",
+                latency_ms=None,
+            )
+
+    class _RecordingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+            self.modes_seen: list[str] = []
+
+        def emit_shadow_proposal(self, **_kwargs):
+            self.modes_seen.append(str(self.mode))
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-hot-switch",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(policy_mode="live")
+    adapter = _RecordingPolicyAdapter()
+    journal = CollectingDecisionJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+    }
+    cycle_one_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=cycle_one_timestamp,
+        signals=(signal,),
+    )
+
+    runtime_controls.update(policy_mode="assist")
+    cycle_two_timestamp = datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=cycle_two_timestamp,
+        signals=(signal,),
+    )
+
+    decision_events = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
+    assert len(decision_events) == 2
+    first_cycle = decision_events[0]
+    second_cycle = decision_events[1]
+    assert first_cycle["opportunity_policy_mode"] == "live"
+    assert first_cycle["decision_authority"] == "shared_live_policy"
+    assert first_cycle["ai_required_for_execution"] == "true"
+    assert first_cycle["final_decision_accepted"] == "true"
+    assert second_cycle["opportunity_policy_mode"] == "assist"
+    assert second_cycle["decision_authority"] == "shared_assist_policy"
+    assert second_cycle["ai_required_for_execution"] == "false"
+    assert second_cycle["final_decision_accepted"] == "true"
+    assert adapter.modes_seen == ["live", "assist"]
+
+
+def test_opportunity_autonomy_runtime_mode_hot_switch_preserves_prior_cycle_journal_lineage() -> None:
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-hot-switch-model",
+                latency_ms=None,
+            )
+
+    class _RecordingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+            self.modes_seen: list[str] = []
+
+        def emit_shadow_proposal(self, **_kwargs):
+            self.modes_seen.append(str(self.mode))
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-hot-switch",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(policy_mode="live")
+    adapter = _RecordingPolicyAdapter()
+    journal = CollectingDecisionJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+    }
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    first_snapshot = tuple(journal.export())
+
+    runtime_controls.update(policy_mode="assist")
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    decision_events = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
+    assert len(decision_events) == 2
+    first_cycle = decision_events[0]
+    second_cycle = decision_events[1]
+    assert first_cycle["opportunity_policy_mode"] == "live"
+    assert first_cycle["decision_authority"] == "shared_live_policy"
+    assert first_cycle["ai_required_for_execution"] == "true"
+    assert first_cycle["final_decision_accepted"] == "true"
+    assert second_cycle["opportunity_policy_mode"] == "assist"
+    assert second_cycle["decision_authority"] == "shared_assist_policy"
+    assert second_cycle["ai_required_for_execution"] == "false"
+    assert second_cycle["final_decision_accepted"] == "true"
+    first_cycle_events_after_switch = tuple(journal.export())[: len(first_snapshot)]
+    assert first_cycle_events_after_switch == first_snapshot
+    assert adapter.modes_seen == ["live", "assist"]
+
+
+def test_opportunity_autonomy_runtime_mode_without_switch_has_no_regression() -> None:
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-hot-switch-model",
+                latency_ms=None,
+            )
+
+    class _RecordingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+            self.modes_seen: list[str] = []
+
+        def emit_shadow_proposal(self, **_kwargs):
+            self.modes_seen.append(str(self.mode))
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-hot-switch",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(policy_mode="assist")
+    adapter = _RecordingPolicyAdapter()
+    journal = CollectingDecisionJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+    }
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    decision_events = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
+    assert len(decision_events) == 2
+    first_cycle = decision_events[0]
+    second_cycle = decision_events[1]
+    assert first_cycle["opportunity_policy_mode"] == "assist"
+    assert first_cycle["decision_authority"] == "shared_assist_policy"
+    assert first_cycle["ai_required_for_execution"] == "false"
+    assert first_cycle["final_decision_accepted"] == "true"
+    assert second_cycle["opportunity_policy_mode"] == "assist"
+    assert second_cycle["decision_authority"] == "shared_assist_policy"
+    assert second_cycle["ai_required_for_execution"] == "false"
+    assert second_cycle["final_decision_accepted"] == "true"
+    assert adapter.modes_seen == ["assist", "assist"]
 
 
 @pytest.mark.parametrize(
