@@ -21912,13 +21912,13 @@ def test_opportunity_autonomy_runtime_mode_hot_switch_applies_on_next_cycle_with
         def emit_shadow_proposal(self, **_kwargs):
             self.modes_seen.append(str(self.mode))
             return SimpleNamespace(
-                status="proposal",
-                decision_available=True,
-                accepted=True,
+                status="degraded",
+                decision_available=False,
+                accepted=False,
                 model_version="opportunity-v-hot-switch",
                 decision_source="opportunity_ai_shadow",
                 rejection_reason=None,
-                degraded_reason=None,
+                degraded_reason="runtime_hot_switch_probe_unavailable",
                 shadow_record_key=None,
                 shadow_persistence_status="disabled",
                 shadow_persistence_error=None,
@@ -21927,8 +21927,9 @@ def test_opportunity_autonomy_runtime_mode_hot_switch_applies_on_next_cycle_with
     runtime_controls = OpportunityRuntimeControls(policy_mode="live")
     adapter = _RecordingPolicyAdapter()
     journal = CollectingDecisionJournal()
+    base_sink = InMemoryStrategySignalSink()
     sink = DecisionAwareSignalSink(
-        base_sink=InMemoryStrategySignalSink(),
+        base_sink=base_sink,
         orchestrator=_AlwaysAcceptingOrchestrator(),
         risk_engine=DummyRiskEngine(),
         default_notional=1_000.0,
@@ -21954,6 +21955,8 @@ def test_opportunity_autonomy_runtime_mode_hot_switch_applies_on_next_cycle_with
         timestamp=cycle_one_timestamp,
         signals=(signal,),
     )
+    cycle_one_journal_snapshot = tuple(journal.export())
+    cycle_one_forwarded_snapshot = tuple(base_sink.export())
 
     runtime_controls.update(policy_mode="assist")
     cycle_two_timestamp = datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc)
@@ -21964,22 +21967,49 @@ def test_opportunity_autonomy_runtime_mode_hot_switch_applies_on_next_cycle_with
         timestamp=cycle_two_timestamp,
         signals=(signal,),
     )
+    cycle_two_forwarded_snapshot = tuple(base_sink.export())
+
+    runtime_controls.update(policy_mode="live")
+    cycle_three_timestamp = datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=cycle_three_timestamp,
+        signals=(signal,),
+    )
 
     decision_events = [
         event for event in journal.export() if event.get("event") == "decision_evaluation"
     ]
-    assert len(decision_events) == 2
+    assert len(decision_events) == 3
     first_cycle = decision_events[0]
     second_cycle = decision_events[1]
+    third_cycle = decision_events[2]
     assert first_cycle["opportunity_policy_mode"] == "live"
-    assert first_cycle["decision_authority"] == "shared_live_policy"
+    assert first_cycle["decision_authority"] == "opportunity_ai_live_fail_closed"
+    assert first_cycle["ai_decision_available"] == "false"
     assert first_cycle["ai_required_for_execution"] == "true"
-    assert first_cycle["final_decision_accepted"] == "true"
+    assert first_cycle["final_decision_accepted"] == "false"
     assert second_cycle["opportunity_policy_mode"] == "assist"
-    assert second_cycle["decision_authority"] == "shared_assist_policy"
+    assert second_cycle["decision_authority"] == "decision_orchestrator"
+    assert second_cycle["ai_decision_available"] == "false"
     assert second_cycle["ai_required_for_execution"] == "false"
     assert second_cycle["final_decision_accepted"] == "true"
-    assert adapter.modes_seen == ["live", "assist"]
+    assert third_cycle["opportunity_policy_mode"] == "live"
+    assert third_cycle["decision_authority"] == "opportunity_ai_live_fail_closed"
+    assert third_cycle["ai_decision_available"] == "false"
+    assert third_cycle["ai_required_for_execution"] == "true"
+    assert third_cycle["final_decision_accepted"] == "false"
+    assert adapter.modes_seen == ["live", "assist", "live"]
+    assert cycle_one_forwarded_snapshot == ()
+    assert len(cycle_two_forwarded_snapshot) == 1
+    assert cycle_two_forwarded_snapshot[0][0] == "trend-d1"
+    assert len(cycle_two_forwarded_snapshot[0][1]) == 1
+    forwarded_after_cycle_three = tuple(base_sink.export())
+    assert forwarded_after_cycle_three == cycle_two_forwarded_snapshot
+    first_cycle_events_after_switches = tuple(journal.export())[: len(cycle_one_journal_snapshot)]
+    assert first_cycle_events_after_switches == cycle_one_journal_snapshot
 
 
 def test_opportunity_autonomy_runtime_mode_hot_switch_preserves_prior_cycle_journal_lineage() -> (
@@ -22281,14 +22311,17 @@ def test_opportunity_autonomy_runtime_mode_hot_switch_via_runtime_service_update
     third_cycle = decision_events[2]
     assert first_cycle["opportunity_policy_mode"] == "live"
     assert first_cycle["decision_authority"] == "shared_live_policy"
+    assert first_cycle["ai_decision_available"] == "true"
     assert first_cycle["ai_required_for_execution"] == "true"
     assert first_cycle["final_decision_accepted"] == "true"
     assert second_cycle["opportunity_policy_mode"] == "assist"
     assert second_cycle["decision_authority"] == "shared_assist_policy"
+    assert second_cycle["ai_decision_available"] == "true"
     assert second_cycle["ai_required_for_execution"] == "false"
     assert second_cycle["final_decision_accepted"] == "true"
     assert third_cycle["opportunity_policy_mode"] == "live"
     assert third_cycle["decision_authority"] == "shared_live_policy"
+    assert third_cycle["ai_decision_available"] == "true"
     assert third_cycle["ai_required_for_execution"] == "true"
     assert third_cycle["final_decision_accepted"] == "true"
     assert adapter.modes_seen == ["live", "assist", "live"]
