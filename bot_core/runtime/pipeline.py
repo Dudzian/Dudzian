@@ -2926,6 +2926,12 @@ class DecisionAwareSignalSink(StrategySignalSink):
         ai_shadow_persistence_error: str | None = None
         opportunity_ai_disabled_reason: str | None = None
 
+    @dataclass(slots=True, frozen=True)
+    class _BatchRuntimeControlSnapshot:
+        mode: "DecisionAwareSignalSink.OpportunityExecutionPolicyMode"
+        enabled: bool
+        manual_kill_switch: bool
+
     def __init__(
         self,
         *,
@@ -3127,6 +3133,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
 
         accepted: list[StrategySignal] = []
         risk_snapshot = self._build_risk_snapshot(risk_profile)
+        batch_runtime_controls_snapshot = self._snapshot_runtime_controls_for_batch()
         for signal in signals:
             candidate, rejection_info = self._build_candidate(
                 strategy_name,
@@ -3198,6 +3205,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 schedule_name=schedule_name,
                 risk_profile=risk_profile,
                 timestamp=timestamp,
+                batch_runtime_controls_snapshot=batch_runtime_controls_snapshot,
             )
             self._record_evaluation(
                 evaluation=evaluation,
@@ -3517,28 +3525,15 @@ class DecisionAwareSignalSink(StrategySignalSink):
         schedule_name: str,
         risk_profile: str,
         timestamp: datetime,
+        batch_runtime_controls_snapshot: "DecisionAwareSignalSink._BatchRuntimeControlSnapshot",
     ) -> "DecisionAwareSignalSink.OpportunityPolicyResolution":
         base_accepted = bool(getattr(evaluation, "accepted", False))
-        mode = self._opportunity_policy_mode
+        mode = batch_runtime_controls_snapshot.mode
         adapter = self._opportunity_shadow_adapter
-        enabled = self._opportunity_ai_enabled
-        runtime_manual_kill_switch = False
-        runtime_controls = self._opportunity_runtime_controls
-        if runtime_controls is not None and hasattr(runtime_controls, "snapshot"):
-            try:
-                runtime_snapshot = runtime_controls.snapshot()
-            except Exception:  # pragma: no cover - defensywne zabezpieczenie runtime bridge
-                runtime_snapshot = None
-            if runtime_snapshot is not None:
-                mode = self._parse_opportunity_policy_mode(
-                    getattr(runtime_snapshot, "policy_mode", mode.value)
-                )
-                enabled = bool(getattr(runtime_snapshot, "opportunity_ai_enabled", enabled))
-                runtime_manual_kill_switch = bool(
-                    getattr(runtime_snapshot, "manual_kill_switch", False)
-                )
-                if self._opportunity_shadow_adapter is not None:
-                    self._opportunity_shadow_adapter.mode = mode.value
+        enabled = batch_runtime_controls_snapshot.enabled
+        runtime_manual_kill_switch = batch_runtime_controls_snapshot.manual_kill_switch
+        if self._opportunity_shadow_adapter is not None:
+            self._opportunity_shadow_adapter.mode = mode.value
         disabled_reason: str | None = None
         manual_kill_switch = runtime_manual_kill_switch
         if self._opportunity_ai_enabled_override is not None:
@@ -3793,6 +3788,28 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 "Nie udało się zapisać decision_evaluation (filtered)",
                 exc_info=True,
             )
+
+    def _snapshot_runtime_controls_for_batch(self) -> "DecisionAwareSignalSink._BatchRuntimeControlSnapshot":
+        mode = self._opportunity_policy_mode
+        enabled = self._opportunity_ai_enabled
+        manual_kill_switch = False
+        runtime_controls = self._opportunity_runtime_controls
+        if runtime_controls is not None and hasattr(runtime_controls, "snapshot"):
+            try:
+                runtime_snapshot = runtime_controls.snapshot()
+            except Exception:  # pragma: no cover - defensywne zabezpieczenie runtime bridge
+                runtime_snapshot = None
+            if runtime_snapshot is not None:
+                mode = self._parse_opportunity_policy_mode(
+                    getattr(runtime_snapshot, "policy_mode", mode.value)
+                )
+                enabled = bool(getattr(runtime_snapshot, "opportunity_ai_enabled", enabled))
+                manual_kill_switch = bool(getattr(runtime_snapshot, "manual_kill_switch", False))
+        return self._BatchRuntimeControlSnapshot(
+            mode=mode,
+            enabled=enabled,
+            manual_kill_switch=manual_kill_switch,
+        )
 
     def _build_risk_snapshot(self, risk_profile: str) -> Mapping[str, object]:
         loader = getattr(self._risk_engine, "snapshot_state", None)
