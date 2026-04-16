@@ -21978,7 +21978,9 @@ def test_opportunity_autonomy_runtime_mode_hot_switch_applies_on_next_cycle_with
     assert adapter.modes_seen == ["live", "assist"]
 
 
-def test_opportunity_autonomy_runtime_mode_hot_switch_preserves_prior_cycle_journal_lineage() -> None:
+def test_opportunity_autonomy_runtime_mode_hot_switch_preserves_prior_cycle_journal_lineage() -> (
+    None
+):
     class _AlwaysAcceptingOrchestrator:
         def evaluate_candidate(self, candidate, _context):
             return SimpleNamespace(
