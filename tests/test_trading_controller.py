@@ -22013,9 +22013,7 @@ def test_opportunity_autonomy_runtime_mode_hot_switch_applies_on_next_cycle_with
     assert first_cycle_events_after_switches == cycle_one_journal_snapshot
 
 
-def test_opportunity_autonomy_runtime_controls_mid_batch_policy_mode_is_atomic_per_submit() -> (
-    None
-):
+def test_opportunity_autonomy_runtime_controls_mid_batch_policy_mode_is_atomic_per_submit() -> None:
     class _AlwaysAcceptingOrchestrator:
         def evaluate_candidate(self, candidate, _context):
             return SimpleNamespace(
@@ -22083,13 +22081,17 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_policy_mode_is_atomic_p
     assert tuple(base_sink.export()) == ()
 
     first_submit_decisions = [
-        event
-        for event in first_submit_snapshot
-        if event.get("event") == "decision_evaluation"
+        event for event in first_submit_snapshot if event.get("event") == "decision_evaluation"
     ]
     assert len(first_submit_decisions) == 2
-    assert [event["opportunity_policy_mode"] for event in first_submit_decisions] == ["live", "live"]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["false", "false"]
+    assert [event["opportunity_policy_mode"] for event in first_submit_decisions] == [
+        "live",
+        "live",
+    ]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert [event["decision_authority"] for event in first_submit_decisions] == [
         "opportunity_ai_live_fail_closed",
         "opportunity_ai_live_fail_closed",
@@ -22108,11 +22110,19 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_policy_mode_is_atomic_p
     first_submit_events_after_second_submit = tuple(journal.export())[: len(first_submit_snapshot)]
     assert first_submit_events_after_second_submit == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_policy_mode"] for event in second_submit_decisions] == ["assist", "assist"]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["true", "true"]
+    assert [event["opportunity_policy_mode"] for event in second_submit_decisions] == [
+        "assist",
+        "assist",
+    ]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
     assert [event["decision_authority"] for event in second_submit_decisions] == [
         "decision_orchestrator",
         "decision_orchestrator",
@@ -22191,13 +22201,17 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_policy_mode_restore_is_
     assert len(forwarded_after_first_submit[0][1]) == 2
 
     first_submit_decisions = [
-        event
-        for event in first_submit_snapshot
-        if event.get("event") == "decision_evaluation"
+        event for event in first_submit_snapshot if event.get("event") == "decision_evaluation"
     ]
     assert len(first_submit_decisions) == 2
-    assert [event["opportunity_policy_mode"] for event in first_submit_decisions] == ["assist", "assist"]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["true", "true"]
+    assert [event["opportunity_policy_mode"] for event in first_submit_decisions] == [
+        "assist",
+        "assist",
+    ]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "true",
+        "true",
+    ]
     assert [event["decision_authority"] for event in first_submit_decisions] == [
         "decision_orchestrator",
         "decision_orchestrator",
@@ -22206,9 +22220,18 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_policy_mode_restore_is_
         "false",
         "false",
     ]
-    assert [event["ai_decision_available"] for event in first_submit_decisions] == ["false", "false"]
-    assert [event["ai_decision_status"] for event in first_submit_decisions] == ["degraded", "degraded"]
-    assert [event["live_gate_failed_closed"] for event in first_submit_decisions] == ["false", "false"]
+    assert [event["ai_decision_available"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [event["ai_decision_status"] for event in first_submit_decisions] == [
+        "degraded",
+        "degraded",
+    ]
+    assert [event["live_gate_failed_closed"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
 
     sink.submit(
         strategy_name="trend-d1",
@@ -22222,11 +22245,19 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_policy_mode_restore_is_
     first_submit_events_after_second_submit = tuple(journal.export())[: len(first_submit_snapshot)]
     assert first_submit_events_after_second_submit == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_policy_mode"] for event in second_submit_decisions] == ["live", "live"]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["false", "false"]
+    assert [event["opportunity_policy_mode"] for event in second_submit_decisions] == [
+        "live",
+        "live",
+    ]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert [event["decision_authority"] for event in second_submit_decisions] == [
         "opportunity_ai_live_fail_closed",
         "opportunity_ai_live_fail_closed",
@@ -22235,9 +22266,18 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_policy_mode_restore_is_
         "true",
         "true",
     ]
-    assert [event["ai_decision_available"] for event in second_submit_decisions] == ["false", "false"]
-    assert [event["ai_decision_status"] for event in second_submit_decisions] == ["degraded", "degraded"]
-    assert [event["live_gate_failed_closed"] for event in second_submit_decisions] == ["true", "true"]
+    assert [event["ai_decision_available"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [event["ai_decision_status"] for event in second_submit_decisions] == [
+        "degraded",
+        "degraded",
+    ]
+    assert [event["live_gate_failed_closed"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -22340,16 +22380,17 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_flags_are_atomic_per_su
     assert tuple(base_sink.export()) == ()
 
     first_submit_decisions = [
-        event
-        for event in first_submit_snapshot
-        if event.get("event") == "decision_evaluation"
+        event for event in first_submit_snapshot if event.get("event") == "decision_evaluation"
     ]
     assert len(first_submit_decisions) == 2
     assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == ["true", "true"]
     assert [
         event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions
     ] == ["false", "false"]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["false", "false"]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
 
     sink.submit(
         strategy_name="trend-d1",
@@ -22364,17 +22405,26 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_flags_are_atomic_per_su
     first_submit_events_after_second_submit = tuple(journal.export())[: len(first_submit_snapshot)]
     assert first_submit_events_after_second_submit == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == ["false", "false"]
+    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert [
         event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions
     ] == [expected_manual_kill_switch_flag, expected_manual_kill_switch_flag]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["true", "true"]
-    assert [
-        event["opportunity_ai_disabled_reason"] for event in second_submit_decisions
-    ] == [expected_disabled_reason, expected_disabled_reason]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
+    assert [event["opportunity_ai_disabled_reason"] for event in second_submit_decisions] == [
+        expected_disabled_reason,
+        expected_disabled_reason,
+    ]
 
 
 @pytest.mark.parametrize(
@@ -22399,7 +22449,9 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_restore_flags_are_atomi
         if initial_controls["manual_kill_switch"]
         else "config_disabled"
     )
-    expected_first_submit_kill_switch_flag = "true" if initial_controls["manual_kill_switch"] else "false"
+    expected_first_submit_kill_switch_flag = (
+        "true" if initial_controls["manual_kill_switch"] else "false"
+    )
 
     class _RestoringOrchestrator:
         def __init__(
@@ -22485,13 +22537,17 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_restore_flags_are_atomi
     assert len(forwarded_after_first_submit[0][1]) == 2
 
     first_submit_decisions = [
-        event
-        for event in first_submit_snapshot
-        if event.get("event") == "decision_evaluation"
+        event for event in first_submit_snapshot if event.get("event") == "decision_evaluation"
     ]
     assert len(first_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == ["false", "false"]
-    assert [event["opportunity_policy_mode"] for event in first_submit_decisions] == ["live", "live"]
+    assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [event["opportunity_policy_mode"] for event in first_submit_decisions] == [
+        "live",
+        "live",
+    ]
     assert [
         event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions
     ] == [expected_first_submit_kill_switch_flag, expected_first_submit_kill_switch_flag]
@@ -22499,14 +22555,26 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_restore_flags_are_atomi
         expected_first_submit_disabled_reason,
         expected_first_submit_disabled_reason,
     ]
-    assert [event["ai_decision_status"] for event in first_submit_decisions] == ["disabled", "disabled"]
-    assert [event["ai_decision_available"] for event in first_submit_decisions] == ["false", "false"]
+    assert [event["ai_decision_status"] for event in first_submit_decisions] == [
+        "disabled",
+        "disabled",
+    ]
+    assert [event["ai_decision_available"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert [event["ai_required_for_execution"] for event in first_submit_decisions] == [
         "false",
         "false",
     ]
-    assert [event["live_gate_failed_closed"] for event in first_submit_decisions] == ["false", "false"]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["true", "true"]
+    assert [event["live_gate_failed_closed"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "true",
+        "true",
+    ]
     assert [event["decision_authority"] for event in first_submit_decisions] == [
         "decision_orchestrator",
         "decision_orchestrator",
@@ -22524,31 +22592,54 @@ def test_opportunity_autonomy_runtime_controls_mid_batch_restore_flags_are_atomi
     first_submit_events_after_second_submit = tuple(journal.export())[: len(first_submit_snapshot)]
     assert first_submit_events_after_second_submit == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == ["true", "true"]
-    assert [event["opportunity_policy_mode"] for event in second_submit_decisions] == ["live", "live"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions] == [
+    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
+    assert [event["opportunity_policy_mode"] for event in second_submit_decisions] == [
+        "live",
+        "live",
+    ]
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions
+    ] == [
         "false",
         "false",
     ]
-    assert [event["ai_decision_status"] for event in second_submit_decisions] == ["proposal", "proposal"]
+    assert [event["ai_decision_status"] for event in second_submit_decisions] == [
+        "proposal",
+        "proposal",
+    ]
     assert [event["ai_decision_available"] for event in second_submit_decisions] == ["true", "true"]
-    assert [event["ai_decision_accepted"] for event in second_submit_decisions] == ["false", "false"]
+    assert [event["ai_decision_accepted"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert [event["ai_required_for_execution"] for event in second_submit_decisions] == [
         "true",
         "true",
     ]
-    assert [event["live_gate_failed_closed"] for event in second_submit_decisions] == ["false", "false"]
+    assert [event["live_gate_failed_closed"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert [event["decision_authority"] for event in second_submit_decisions] == [
         "opportunity_ai_live_policy",
         "opportunity_ai_live_policy",
     ]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["false", "false"]
-    assert [
-        "opportunity_ai_disabled_reason" in event for event in second_submit_decisions
-    ] == [False, False]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert ["opportunity_ai_disabled_reason" in event for event in second_submit_decisions] == [
+        False,
+        False,
+    ]
 
 
 def test_opportunity_autonomy_override_enabled_mid_batch_toggle_is_atomic_per_submit() -> None:
@@ -22628,11 +22719,16 @@ def test_opportunity_autonomy_override_enabled_mid_batch_toggle_is_atomic_per_su
     ]
     assert len(first_submit_decisions) == 2
     assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == ["true", "true"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions] == [
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions
+    ] == [
         "false",
         "false",
     ]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["false", "false"]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert [event["decision_authority"] for event in first_submit_decisions] == [
         "opportunity_ai_live_policy",
         "opportunity_ai_live_policy",
@@ -22650,13 +22746,27 @@ def test_opportunity_autonomy_override_enabled_mid_batch_toggle_is_atomic_per_su
     assert len(forwarded_after_second_submit[0][1]) == 2
     assert tuple(journal.export())[: len(first_submit_snapshot)] == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == ["false", "false"]
-    assert [event["ai_decision_available"] for event in second_submit_decisions] == ["false", "false"]
-    assert [event["ai_decision_status"] for event in second_submit_decisions] == ["disabled", "disabled"]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["true", "true"]
+    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [event["ai_decision_available"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [event["ai_decision_status"] for event in second_submit_decisions] == [
+        "disabled",
+        "disabled",
+    ]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
     assert [event["opportunity_ai_disabled_reason"] for event in second_submit_decisions] == [
         f"runtime_override:{runtime_pipeline._OPPORTUNITY_AI_ENABLED_ENV}",
         f"runtime_override:{runtime_pipeline._OPPORTUNITY_AI_ENABLED_ENV}",
@@ -22740,9 +22850,18 @@ def test_opportunity_autonomy_override_enabled_restore_is_atomic_per_submit() ->
         event for event in first_submit_snapshot if event.get("event") == "decision_evaluation"
     ]
     assert len(first_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == ["false", "false"]
-    assert [event["ai_decision_status"] for event in first_submit_decisions] == ["disabled", "disabled"]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["true", "true"]
+    assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [event["ai_decision_status"] for event in first_submit_decisions] == [
+        "disabled",
+        "disabled",
+    ]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "true",
+        "true",
+    ]
     assert [event["opportunity_ai_disabled_reason"] for event in first_submit_decisions] == [
         f"runtime_override:{runtime_pipeline._OPPORTUNITY_AI_ENABLED_ENV}",
         f"runtime_override:{runtime_pipeline._OPPORTUNITY_AI_ENABLED_ENV}",
@@ -22758,16 +22877,29 @@ def test_opportunity_autonomy_override_enabled_restore_is_atomic_per_submit() ->
     assert tuple(base_sink.export()) == forwarded_after_first_submit
     assert tuple(journal.export())[: len(first_submit_snapshot)] == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == ["true", "true"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions] == [
+    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions
+    ] == [
         "false",
         "false",
     ]
-    assert [event["ai_decision_status"] for event in second_submit_decisions] == ["proposal", "proposal"]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["false", "false"]
+    assert [event["ai_decision_status"] for event in second_submit_decisions] == [
+        "proposal",
+        "proposal",
+    ]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert ["opportunity_ai_disabled_reason" in event for event in second_submit_decisions] == [
         False,
         False,
@@ -22851,11 +22983,16 @@ def test_opportunity_autonomy_override_kill_switch_mid_batch_toggle_is_atomic_pe
     ]
     assert len(first_submit_decisions) == 2
     assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == ["true", "true"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions] == [
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions
+    ] == [
         "false",
         "false",
     ]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["false", "false"]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
 
     sink.submit(
         strategy_name="trend-d1",
@@ -22869,16 +23006,29 @@ def test_opportunity_autonomy_override_kill_switch_mid_batch_toggle_is_atomic_pe
     assert len(forwarded_after_second_submit[0][1]) == 2
     assert tuple(journal.export())[: len(first_submit_snapshot)] == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == ["false", "false"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions] == [
+    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions
+    ] == [
         "true",
         "true",
     ]
-    assert [event["ai_decision_status"] for event in second_submit_decisions] == ["disabled", "disabled"]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["true", "true"]
+    assert [event["ai_decision_status"] for event in second_submit_decisions] == [
+        "disabled",
+        "disabled",
+    ]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
     assert [event["opportunity_ai_disabled_reason"] for event in second_submit_decisions] == [
         f"manual_kill_switch:{runtime_pipeline._OPPORTUNITY_AI_KILL_SWITCH_ENV}",
         f"manual_kill_switch:{runtime_pipeline._OPPORTUNITY_AI_KILL_SWITCH_ENV}",
@@ -22962,12 +23112,20 @@ def test_opportunity_autonomy_override_kill_switch_restore_is_atomic_per_submit(
         event for event in first_submit_snapshot if event.get("event") == "decision_evaluation"
     ]
     assert len(first_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == ["false", "false"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions] == [
+    assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions
+    ] == [
         "true",
         "true",
     ]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["true", "true"]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "true",
+        "true",
+    ]
     assert [event["opportunity_ai_disabled_reason"] for event in first_submit_decisions] == [
         f"manual_kill_switch:{runtime_pipeline._OPPORTUNITY_AI_KILL_SWITCH_ENV}",
         f"manual_kill_switch:{runtime_pipeline._OPPORTUNITY_AI_KILL_SWITCH_ENV}",
@@ -22983,16 +23141,29 @@ def test_opportunity_autonomy_override_kill_switch_restore_is_atomic_per_submit(
     assert tuple(base_sink.export()) == forwarded_after_first_submit
     assert tuple(journal.export())[: len(first_submit_snapshot)] == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == ["true", "true"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions] == [
+    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions
+    ] == [
         "false",
         "false",
     ]
-    assert [event["ai_decision_status"] for event in second_submit_decisions] == ["proposal", "proposal"]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["false", "false"]
+    assert [event["ai_decision_status"] for event in second_submit_decisions] == [
+        "proposal",
+        "proposal",
+    ]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert ["opportunity_ai_disabled_reason" in event for event in second_submit_decisions] == [
         False,
         False,
@@ -23138,7 +23309,10 @@ def test_opportunity_autonomy_override_combined_precedence_matrix_is_determinist
 
     decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
     assert len(decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in decisions] == [expected_enabled, expected_enabled]
+    assert [event["opportunity_ai_enabled"] for event in decisions] == [
+        expected_enabled,
+        expected_enabled,
+    ]
     assert [event["opportunity_ai_manual_kill_switch_active"] for event in decisions] == [
         expected_manual_kill_switch,
         expected_manual_kill_switch,
@@ -23253,8 +23427,13 @@ def test_opportunity_autonomy_override_partial_restore_consumed_on_next_submit_w
         event for event in first_submit_snapshot if event.get("event") == "decision_evaluation"
     ]
     assert len(first_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == ["false", "false"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions] == [
+    assert [event["opportunity_ai_enabled"] for event in first_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in first_submit_decisions
+    ] == [
         "true",
         "true",
     ]
@@ -23262,7 +23441,10 @@ def test_opportunity_autonomy_override_partial_restore_consumed_on_next_submit_w
         f"manual_kill_switch:{runtime_pipeline._OPPORTUNITY_AI_KILL_SWITCH_ENV}",
         f"manual_kill_switch:{runtime_pipeline._OPPORTUNITY_AI_KILL_SWITCH_ENV}",
     ]
-    assert [event["final_decision_accepted"] for event in first_submit_decisions] == ["true", "true"]
+    assert [event["final_decision_accepted"] for event in first_submit_decisions] == [
+        "true",
+        "true",
+    ]
 
     sink.submit(
         strategy_name="trend-d1",
@@ -23273,11 +23455,18 @@ def test_opportunity_autonomy_override_partial_restore_consumed_on_next_submit_w
     )
     assert tuple(journal.export())[: len(first_submit_snapshot)] == first_submit_snapshot
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == ["false", "false"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions] == [
+    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions
+    ] == [
         expected_manual_kill_switch,
         expected_manual_kill_switch,
     ]
@@ -23285,14 +23474,19 @@ def test_opportunity_autonomy_override_partial_restore_consumed_on_next_submit_w
         expected_disabled_reason,
         expected_disabled_reason,
     ]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["true", "true"]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
     forwarded = tuple(base_sink.export())
     assert len(forwarded) == 2
     assert len(forwarded[0][1]) == 2
     assert len(forwarded[1][1]) == 2
 
 
-def test_opportunity_autonomy_override_full_restore_cleans_disabled_markers_on_next_submit() -> None:
+def test_opportunity_autonomy_override_full_restore_cleans_disabled_markers_on_next_submit() -> (
+    None
+):
     class _RestoringOrchestrator:
         def __init__(self, sink: DecisionAwareSignalSink) -> None:
             self._sink = sink
@@ -23377,18 +23571,34 @@ def test_opportunity_autonomy_override_full_restore_cleans_disabled_markers_on_n
     assert tuple(journal.export())[: len(first_submit_snapshot)] == first_submit_snapshot
     assert tuple(base_sink.export()) == forwarded_after_first_submit
 
-    all_decisions = [event for event in journal.export() if event.get("event") == "decision_evaluation"]
+    all_decisions = [
+        event for event in journal.export() if event.get("event") == "decision_evaluation"
+    ]
     second_submit_decisions = all_decisions[2:]
     assert len(second_submit_decisions) == 2
-    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == ["true", "true"]
-    assert [event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions] == [
+    assert [event["opportunity_ai_enabled"] for event in second_submit_decisions] == [
+        "true",
+        "true",
+    ]
+    assert [
+        event["opportunity_ai_manual_kill_switch_active"] for event in second_submit_decisions
+    ] == [
         "false",
         "false",
     ]
-    assert [event["ai_decision_status"] for event in second_submit_decisions] == ["proposal", "proposal"]
+    assert [event["ai_decision_status"] for event in second_submit_decisions] == [
+        "proposal",
+        "proposal",
+    ]
     assert [event["ai_decision_available"] for event in second_submit_decisions] == ["true", "true"]
-    assert [event["live_gate_failed_closed"] for event in second_submit_decisions] == ["false", "false"]
-    assert [event["final_decision_accepted"] for event in second_submit_decisions] == ["false", "false"]
+    assert [event["live_gate_failed_closed"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
+    assert [event["final_decision_accepted"] for event in second_submit_decisions] == [
+        "false",
+        "false",
+    ]
     assert ["opportunity_ai_disabled_reason" in event for event in second_submit_decisions] == [
         False,
         False,
