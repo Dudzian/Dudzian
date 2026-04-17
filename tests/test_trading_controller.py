@@ -24131,7 +24131,8 @@ def test_opportunity_autonomy_runtime_lineage_sink_snapshot_propagates_downstrea
             "opportunity_ai_manual_kill_switch_active": (
                 str(metadata.get("opportunity_ai_manual_kill_switch_active") or "") or None
             ),
-            "ai_required_for_execution": str(metadata.get("ai_required_for_execution") or "") or None,
+            "ai_required_for_execution": str(metadata.get("ai_required_for_execution") or "")
+            or None,
             "decision_authority": str(metadata.get("decision_authority") or "") or None,
             "ai_decision_status": str(metadata.get("ai_decision_status") or "") or None,
             "ai_decision_available": str(metadata.get("ai_decision_available") or "") or None,
@@ -24228,7 +24229,9 @@ def test_opportunity_autonomy_runtime_lineage_sink_snapshot_propagates_downstrea
         "final_decision_accepted": "true",
         "opportunity_ai_disabled_reason": None,
     }
-    assert live_snapshot == _snapshot_from_request_metadata(dict(execution.requests[0].metadata or {}))
+    assert live_snapshot == _snapshot_from_request_metadata(
+        dict(execution.requests[0].metadata or {})
+    )
 
     # C. AI OFF snapshot z fallbackiem jest widoczny downstream.
     runtime_controls.update(policy_mode="live", opportunity_ai_enabled=False)
@@ -24255,7 +24258,9 @@ def test_opportunity_autonomy_runtime_lineage_sink_snapshot_propagates_downstrea
     }
 
     # D. restore usuwa disabled markers i wraca do normalnego live behavior.
-    runtime_controls.update(opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live")
+    runtime_controls.update(
+        opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live"
+    )
     sink.submit(
         strategy_name="trend-d1",
         schedule_name="trend-d1",
@@ -24286,7 +24291,9 @@ def test_opportunity_autonomy_runtime_lineage_sink_snapshot_propagates_downstrea
     exported_after_block = tuple(base_sink.export())
     assert len(exported_after_block) == 4
     assert len(execution.requests) == request_count_before_block
-    assert _snapshot_from_request_metadata(dict(execution.requests[0].metadata or {})) == live_snapshot
+    assert (
+        _snapshot_from_request_metadata(dict(execution.requests[0].metadata or {})) == live_snapshot
+    )
     sink_decision_events = [
         event for event in sink_journal.export() if event.get("event") == "decision_evaluation"
     ]
@@ -24496,7 +24503,9 @@ def test_opportunity_autonomy_runtime_lineage_restore_cleans_disabled_markers_on
     assert disabled_request_metadata["opportunity_ai_disabled_reason"] == "config_disabled"
 
     # restore cycle
-    runtime_controls.update(opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live")
+    runtime_controls.update(
+        opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live"
+    )
     sink.submit(
         strategy_name="trend-d1",
         schedule_name="trend-d1",
@@ -24608,7 +24617,9 @@ def test_opportunity_autonomy_runtime_lineage_restore_cleans_disabled_markers_on
     )
 
     # restore cycle
-    runtime_controls.update(manual_kill_switch=False, opportunity_ai_enabled=True, policy_mode="live")
+    runtime_controls.update(
+        manual_kill_switch=False, opportunity_ai_enabled=True, policy_mode="live"
+    )
     sink.submit(
         strategy_name="trend-d1",
         schedule_name="trend-d1",
@@ -24723,7 +24734,9 @@ def test_opportunity_autonomy_runtime_lineage_ai_decision_accepted_re_materializ
     assert disabled_request_metadata["opportunity_ai_disabled_reason"] == "config_disabled"
 
     # B. restore/live accepted cycle
-    runtime_controls.update(opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live")
+    runtime_controls.update(
+        opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live"
+    )
     sink.submit(
         strategy_name="trend-d1",
         schedule_name="trend-d1",
