@@ -2931,6 +2931,8 @@ class DecisionAwareSignalSink(StrategySignalSink):
         mode: "DecisionAwareSignalSink.OpportunityExecutionPolicyMode"
         enabled: bool
         manual_kill_switch: bool
+        enabled_override: bool | None
+        kill_switch_override: bool | None
 
     def __init__(
         self,
@@ -3536,14 +3538,16 @@ class DecisionAwareSignalSink(StrategySignalSink):
             self._opportunity_shadow_adapter.mode = mode.value
         disabled_reason: str | None = None
         manual_kill_switch = runtime_manual_kill_switch
-        if self._opportunity_ai_enabled_override is not None:
-            enabled = bool(self._opportunity_ai_enabled_override)
+        enabled_override = batch_runtime_controls_snapshot.enabled_override
+        kill_switch_override = batch_runtime_controls_snapshot.kill_switch_override
+        if enabled_override is not None:
+            enabled = bool(enabled_override)
             disabled_reason = f"runtime_override:{_OPPORTUNITY_AI_ENABLED_ENV}"
-        if self._opportunity_ai_kill_switch_override is True:
+        if kill_switch_override is True:
             enabled = False
             manual_kill_switch = True
             disabled_reason = f"manual_kill_switch:{_OPPORTUNITY_AI_KILL_SWITCH_ENV}"
-        elif self._opportunity_ai_kill_switch_override is False:
+        elif kill_switch_override is False:
             manual_kill_switch = False
         elif manual_kill_switch:
             enabled = False
@@ -3793,6 +3797,8 @@ class DecisionAwareSignalSink(StrategySignalSink):
         mode = self._opportunity_policy_mode
         enabled = self._opportunity_ai_enabled
         manual_kill_switch = False
+        enabled_override = self._opportunity_ai_enabled_override
+        kill_switch_override = self._opportunity_ai_kill_switch_override
         runtime_controls = self._opportunity_runtime_controls
         if runtime_controls is not None and hasattr(runtime_controls, "snapshot"):
             try:
@@ -3809,6 +3815,8 @@ class DecisionAwareSignalSink(StrategySignalSink):
             mode=mode,
             enabled=enabled,
             manual_kill_switch=manual_kill_switch,
+            enabled_override=enabled_override,
+            kill_switch_override=kill_switch_override,
         )
 
     def _build_risk_snapshot(self, risk_profile: str) -> Mapping[str, object]:
