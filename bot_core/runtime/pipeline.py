@@ -3828,7 +3828,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 exc_info=True,
             )
 
-    def _snapshot_runtime_controls_for_batch(self) -> "DecisionAwareSignalSink._BatchRuntimeControlSnapshot":
+    def _snapshot_runtime_controls_for_batch(
+        self,
+    ) -> "DecisionAwareSignalSink._BatchRuntimeControlSnapshot":
         mode = self._opportunity_policy_mode
         enabled = self._opportunity_ai_enabled
         manual_kill_switch = False
