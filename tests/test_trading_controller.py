@@ -23878,6 +23878,667 @@ def test_opportunity_autonomy_runtime_hot_switch_shared_controls_toggle_ai_and_r
     assert adapter.modes_seen == ["live", "live"]
 
 
+def test_opportunity_autonomy_runtime_lineage_sink_snapshot_propagates_downstream_and_respects_hot_switch_restore() -> (
+    None
+):
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-model",
+                latency_ms=None,
+            )
+
+    class _ConfigurablePolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+            self.accepted = True
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=self.accepted,
+                model_version="opportunity-v-runtime-lineage",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason="runtime_lineage_block" if not self.accepted else None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    def _snapshot_from_request_metadata(metadata: Mapping[str, object]) -> dict[str, str | None]:
+        return {
+            "opportunity_policy_mode": str(metadata.get("opportunity_policy_mode") or "") or None,
+            "opportunity_ai_enabled": str(metadata.get("opportunity_ai_enabled") or "") or None,
+            "opportunity_ai_manual_kill_switch_active": (
+                str(metadata.get("opportunity_ai_manual_kill_switch_active") or "") or None
+            ),
+            "ai_required_for_execution": str(metadata.get("ai_required_for_execution") or "") or None,
+            "decision_authority": str(metadata.get("decision_authority") or "") or None,
+            "ai_decision_status": str(metadata.get("ai_decision_status") or "") or None,
+            "ai_decision_available": str(metadata.get("ai_decision_available") or "") or None,
+            "final_decision_accepted": str(metadata.get("final_decision_accepted") or "") or None,
+            "opportunity_ai_disabled_reason": (
+                str(metadata.get("opportunity_ai_disabled_reason") or "") or None
+            ),
+        }
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=True,
+        manual_kill_switch=False,
+    )
+    adapter = _ConfigurablePolicyAdapter()
+    base_sink = InMemoryStrategySignalSink()
+    sink_journal = CollectingDecisionJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=sink_journal,
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    controller, execution, _controller_journal = _build_autonomy_controller(environment="paper")
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+    }
+
+    # A. live snapshot jest przenoszony do downstream request/journal.
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported = tuple(base_sink.export())
+    assert len(exported) == 1
+    assert len(exported[0][1]) == 1
+    forwarded_live_signal = exported[0][1][0]
+    assert forwarded_live_signal.metadata["opportunity_policy_mode"] == "live"
+    assert forwarded_live_signal.metadata["opportunity_ai_enabled"] == "true"
+    assert forwarded_live_signal.metadata["decision_authority"] == "shared_live_policy"
+    assert forwarded_live_signal.metadata["ai_required_for_execution"] == "true"
+    assert forwarded_live_signal.metadata["final_decision_accepted"] == "true"
+    controller.process_signals(list(exported[0][1]))
+    live_snapshot = _snapshot_from_request_metadata(dict(execution.requests[-1].metadata or {}))
+    assert live_snapshot == {
+        "opportunity_policy_mode": "live",
+        "opportunity_ai_enabled": "true",
+        "opportunity_ai_manual_kill_switch_active": "false",
+        "ai_required_for_execution": "true",
+        "decision_authority": "shared_live_policy",
+        "ai_decision_status": "proposal",
+        "ai_decision_available": "true",
+        "final_decision_accepted": "true",
+        "opportunity_ai_disabled_reason": None,
+    }
+
+    # B. hot-switch live -> assist nie mutuje pierwszego snapshotu i zmienia tylko kolejne.
+    runtime_controls.update(policy_mode="assist")
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported_after_assist = tuple(base_sink.export())
+    assert len(exported_after_assist) == 2
+    controller.process_signals(list(exported_after_assist[1][1]))
+    assist_snapshot = _snapshot_from_request_metadata(dict(execution.requests[-1].metadata or {}))
+    assert assist_snapshot == {
+        "opportunity_policy_mode": "assist",
+        "opportunity_ai_enabled": "true",
+        "opportunity_ai_manual_kill_switch_active": "false",
+        "ai_required_for_execution": "false",
+        "decision_authority": "shared_assist_policy",
+        "ai_decision_status": "proposal",
+        "ai_decision_available": "true",
+        "final_decision_accepted": "true",
+        "opportunity_ai_disabled_reason": None,
+    }
+    assert live_snapshot == _snapshot_from_request_metadata(dict(execution.requests[0].metadata or {}))
+
+    # C. AI OFF snapshot z fallbackiem jest widoczny downstream.
+    runtime_controls.update(policy_mode="live", opportunity_ai_enabled=False)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported_after_disabled = tuple(base_sink.export())
+    assert len(exported_after_disabled) == 3
+    controller.process_signals(list(exported_after_disabled[2][1]))
+    assert _snapshot_from_request_metadata(dict(execution.requests[-1].metadata or {})) == {
+        "opportunity_policy_mode": "live",
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "false",
+        "ai_required_for_execution": "false",
+        "decision_authority": "decision_orchestrator",
+        "ai_decision_status": "disabled",
+        "ai_decision_available": "false",
+        "final_decision_accepted": "true",
+        "opportunity_ai_disabled_reason": "config_disabled",
+    }
+
+    # D. restore usuwa disabled markers i wraca do normalnego live behavior.
+    runtime_controls.update(opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live")
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 3, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported_after_restore = tuple(base_sink.export())
+    assert len(exported_after_restore) == 4
+    controller.process_signals(list(exported_after_restore[3][1]))
+    restored_snapshot = _snapshot_from_request_metadata(dict(execution.requests[-1].metadata or {}))
+    assert restored_snapshot["opportunity_policy_mode"] == "live"
+    assert restored_snapshot["opportunity_ai_enabled"] == "true"
+    assert restored_snapshot["decision_authority"] == "shared_live_policy"
+    assert restored_snapshot["ai_required_for_execution"] == "true"
+    assert restored_snapshot["opportunity_ai_disabled_reason"] is None
+
+    # E. blocked sygnał (nie-forwarded) nie tworzy downstream request lineage.
+    adapter.accepted = False
+    request_count_before_block = len(execution.requests)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 4, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported_after_block = tuple(base_sink.export())
+    assert len(exported_after_block) == 4
+    assert len(execution.requests) == request_count_before_block
+    assert _snapshot_from_request_metadata(dict(execution.requests[0].metadata or {})) == live_snapshot
+    sink_decision_events = [
+        event for event in sink_journal.export() if event.get("event") == "decision_evaluation"
+    ]
+    assert sink_decision_events[-1]["decision_status"] == "rejected"
+    assert sink_decision_events[-1]["opportunity_policy_mode"] == "live"
+    assert sink_decision_events[-1]["decision_authority"] == "opportunity_ai_live_policy"
+
+
+def test_opportunity_autonomy_runtime_lineage_conflict_overwrite_uses_sink_snapshot() -> None:
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-overwrite-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-runtime-lineage-overwrite",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=True,
+        manual_kill_switch=False,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    controller, execution, _journal = _build_autonomy_controller(environment="paper")
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+        # stale/conflicting upstream values – sink-owned runtime lineage must overwrite these.
+        "opportunity_policy_mode": "assist",
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "false",
+        "ai_decision_available": "false",
+        "ai_decision_status": "disabled",
+        "live_gate_failed_closed": "true",
+        "decision_authority": "decision_orchestrator",
+        "final_decision_accepted": "false",
+        "ai_decision_accepted": "false",
+        "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+    }
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    exported = tuple(base_sink.export())
+    assert len(exported) == 1
+    forwarded = exported[0][1][0]
+    assert forwarded.metadata["opportunity_policy_mode"] == "live"
+    assert forwarded.metadata["opportunity_ai_enabled"] == "true"
+    assert forwarded.metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert forwarded.metadata["ai_required_for_execution"] == "true"
+    assert forwarded.metadata["ai_decision_available"] == "true"
+    assert forwarded.metadata["ai_decision_status"] == "proposal"
+    assert forwarded.metadata["live_gate_failed_closed"] == "false"
+    assert forwarded.metadata["decision_authority"] == "shared_live_policy"
+    assert forwarded.metadata["final_decision_accepted"] == "true"
+    assert forwarded.metadata["ai_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in forwarded.metadata
+
+    controller.process_signals(list(exported[0][1]))
+    request_metadata = dict(execution.requests[-1].metadata or {})
+    assert request_metadata["opportunity_policy_mode"] == "live"
+    assert request_metadata["opportunity_ai_enabled"] == "true"
+    assert request_metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert request_metadata["ai_required_for_execution"] == "true"
+    assert request_metadata["ai_decision_available"] == "true"
+    assert request_metadata["ai_decision_status"] == "proposal"
+    assert request_metadata["live_gate_failed_closed"] == "false"
+    assert request_metadata["decision_authority"] == "shared_live_policy"
+    assert request_metadata["final_decision_accepted"] == "true"
+    assert request_metadata["ai_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in request_metadata
+
+
+def test_opportunity_autonomy_runtime_lineage_restore_cleans_disabled_markers_on_request_metadata() -> (
+    None
+):
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-restore-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-runtime-lineage-restore",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=False,
+        manual_kill_switch=False,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink_journal = CollectingDecisionJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=sink_journal,
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    controller, execution, _journal = _build_autonomy_controller(environment="paper")
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+        "opportunity_ai_disabled_reason": "stale_disabled_reason_from_upstream",
+    }
+
+    # disabled cycle
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported = tuple(base_sink.export())
+    assert len(exported) == 1
+    controller.process_signals(list(exported[0][1]))
+    disabled_request_metadata = dict(execution.requests[-1].metadata or {})
+    assert disabled_request_metadata["opportunity_ai_enabled"] == "false"
+    assert disabled_request_metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert disabled_request_metadata["ai_decision_status"] == "disabled"
+    assert disabled_request_metadata["ai_decision_available"] == "false"
+    assert disabled_request_metadata["decision_authority"] == "decision_orchestrator"
+    assert disabled_request_metadata["final_decision_accepted"] == "true"
+    assert disabled_request_metadata["opportunity_ai_disabled_reason"] == "config_disabled"
+
+    # restore cycle
+    runtime_controls.update(opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live")
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported_after_restore = tuple(base_sink.export())
+    assert len(exported_after_restore) == 2
+    controller.process_signals(list(exported_after_restore[1][1]))
+    restored_request_metadata = dict(execution.requests[-1].metadata or {})
+    assert restored_request_metadata["opportunity_ai_enabled"] == "true"
+    assert restored_request_metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert restored_request_metadata["ai_decision_status"] == "proposal"
+    assert restored_request_metadata["ai_decision_available"] == "true"
+    assert restored_request_metadata["decision_authority"] == "shared_live_policy"
+    assert restored_request_metadata["final_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in restored_request_metadata
+
+
+def test_opportunity_autonomy_runtime_lineage_restore_cleans_disabled_markers_on_request_metadata_manual_kill_switch() -> (
+    None
+):
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-restore-manual-kill-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-runtime-lineage-restore-manual-kill",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=True,
+        manual_kill_switch=True,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    controller, execution, _journal = _build_autonomy_controller(environment="paper")
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+    }
+
+    # disabled cycle via manual kill switch
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported = tuple(base_sink.export())
+    assert len(exported) == 1
+    assert len(exported[0][1]) == 1
+    controller.process_signals(list(exported[0][1]))
+    disabled_request_metadata = dict(execution.requests[-1].metadata or {})
+    disabled_snapshot = dict(disabled_request_metadata)
+    assert disabled_request_metadata["opportunity_ai_enabled"] == "false"
+    assert disabled_request_metadata["opportunity_ai_manual_kill_switch_active"] == "true"
+    assert disabled_request_metadata["ai_decision_status"] == "disabled"
+    assert disabled_request_metadata["ai_decision_available"] == "false"
+    assert disabled_request_metadata["decision_authority"] == "decision_orchestrator"
+    assert disabled_request_metadata["final_decision_accepted"] == "true"
+    assert (
+        disabled_request_metadata["opportunity_ai_disabled_reason"]
+        == "manual_kill_switch:runtime_control_plane"
+    )
+
+    # restore cycle
+    runtime_controls.update(manual_kill_switch=False, opportunity_ai_enabled=True, policy_mode="live")
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported_after_restore = tuple(base_sink.export())
+    assert len(exported_after_restore) == 2
+    assert len(exported_after_restore[1][1]) == 1
+    controller.process_signals(list(exported_after_restore[1][1]))
+    restored_request_metadata = dict(execution.requests[-1].metadata or {})
+    assert restored_request_metadata["opportunity_ai_enabled"] == "true"
+    assert restored_request_metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert restored_request_metadata["ai_decision_status"] == "proposal"
+    assert restored_request_metadata["ai_decision_available"] == "true"
+    assert restored_request_metadata["decision_authority"] == "shared_live_policy"
+    assert restored_request_metadata["final_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in restored_request_metadata
+
+    # brak retro-mutacji disabled request lineage
+    assert dict(execution.requests[0].metadata or {}) == disabled_snapshot
+
+
+def test_opportunity_autonomy_runtime_lineage_ai_decision_accepted_re_materializes_after_restore() -> (
+    None
+):
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-ai-decision-accepted-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-runtime-lineage-ai-decision-accepted",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=False,
+        manual_kill_switch=False,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    controller, execution, _journal = _build_autonomy_controller(environment="paper")
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+        "ai_decision_accepted": "false",
+    }
+
+    # A. disabled accepted fallback cycle
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported = tuple(base_sink.export())
+    assert len(exported) == 1
+    assert len(exported[0][1]) == 1
+    controller.process_signals(list(exported[0][1]))
+    disabled_request_metadata = dict(execution.requests[-1].metadata or {})
+    disabled_snapshot = dict(disabled_request_metadata)
+    assert "ai_decision_accepted" not in disabled_request_metadata
+    assert disabled_request_metadata["opportunity_ai_enabled"] == "false"
+    assert disabled_request_metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert disabled_request_metadata["ai_decision_status"] == "disabled"
+    assert disabled_request_metadata["ai_decision_available"] == "false"
+    assert disabled_request_metadata["decision_authority"] == "decision_orchestrator"
+    assert disabled_request_metadata["final_decision_accepted"] == "true"
+    assert disabled_request_metadata["opportunity_ai_disabled_reason"] == "config_disabled"
+
+    # B. restore/live accepted cycle
+    runtime_controls.update(opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live")
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported_after_restore = tuple(base_sink.export())
+    assert len(exported_after_restore) == 2
+    assert len(exported_after_restore[1][1]) == 1
+    controller.process_signals(list(exported_after_restore[1][1]))
+    restored_request_metadata = dict(execution.requests[-1].metadata or {})
+    assert restored_request_metadata["ai_decision_accepted"] == "true"
+    assert restored_request_metadata["opportunity_ai_enabled"] == "true"
+    assert restored_request_metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert restored_request_metadata["ai_decision_status"] == "proposal"
+    assert restored_request_metadata["ai_decision_available"] == "true"
+    assert restored_request_metadata["decision_authority"] == "shared_live_policy"
+    assert restored_request_metadata["final_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in restored_request_metadata
+
+    # C. brak retro-mutacji poprzedniego request lineage
+    assert dict(execution.requests[0].metadata or {}) == disabled_snapshot
+
+
 @pytest.mark.parametrize(
     ("missing_key", "missing_timestamp"),
     (
