@@ -3221,6 +3221,41 @@ class DecisionAwareSignalSink(StrategySignalSink):
             )
             if policy_resolution.final_accepted:
                 enriched_signal_metadata = dict(signal.metadata or {})
+                enriched_signal_metadata["opportunity_policy_mode"] = policy_resolution.mode.value
+                enriched_signal_metadata["opportunity_ai_enabled"] = (
+                    "true" if policy_resolution.opportunity_ai_enabled else "false"
+                )
+                enriched_signal_metadata["opportunity_ai_manual_kill_switch_active"] = (
+                    "true"
+                    if policy_resolution.opportunity_ai_manual_kill_switch_active
+                    else "false"
+                )
+                enriched_signal_metadata["ai_required_for_execution"] = (
+                    "true" if policy_resolution.ai_required_for_execution else "false"
+                )
+                enriched_signal_metadata["ai_decision_available"] = (
+                    "true" if policy_resolution.ai_decision_available else "false"
+                )
+                enriched_signal_metadata["ai_decision_status"] = policy_resolution.ai_status
+                enriched_signal_metadata["live_gate_failed_closed"] = (
+                    "true" if policy_resolution.live_gate_failed_closed else "false"
+                )
+                enriched_signal_metadata["decision_authority"] = policy_resolution.decision_authority
+                enriched_signal_metadata["final_decision_accepted"] = (
+                    "true" if policy_resolution.final_accepted else "false"
+                )
+                if policy_resolution.ai_decision_accepted is not None:
+                    enriched_signal_metadata["ai_decision_accepted"] = (
+                        "true" if policy_resolution.ai_decision_accepted else "false"
+                    )
+                else:
+                    enriched_signal_metadata.pop("ai_decision_accepted", None)
+                if policy_resolution.opportunity_ai_disabled_reason:
+                    enriched_signal_metadata["opportunity_ai_disabled_reason"] = (
+                        policy_resolution.opportunity_ai_disabled_reason
+                    )
+                else:
+                    enriched_signal_metadata.pop("opportunity_ai_disabled_reason", None)
                 if policy_resolution.ai_shadow_record_key:
                     enriched_signal_metadata.setdefault(
                         "opportunity_shadow_record_key",
