@@ -3240,7 +3240,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 enriched_signal_metadata["live_gate_failed_closed"] = (
                     "true" if policy_resolution.live_gate_failed_closed else "false"
                 )
-                enriched_signal_metadata["decision_authority"] = policy_resolution.decision_authority
+                enriched_signal_metadata["decision_authority"] = (
+                    policy_resolution.decision_authority
+                )
                 enriched_signal_metadata["final_decision_accepted"] = (
                     "true" if policy_resolution.final_accepted else "false"
                 )
