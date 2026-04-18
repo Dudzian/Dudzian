@@ -487,7 +487,20 @@ def test_decision_aware_sink_filters_signals() -> None:
     records = sink.export()
     assert len(records) == 1
     _, exported_signals = records[0]
-    assert exported_signals == (accepted_signal,)
+    assert len(exported_signals) == 1
+    forwarded = exported_signals[0]
+    assert forwarded.symbol == "BTC/USDT"
+    assert forwarded.side == "BUY"
+    assert forwarded.confidence == pytest.approx(0.8)
+    assert forwarded.metadata["opportunity_policy_mode"] == "shadow"
+    assert forwarded.metadata["opportunity_ai_enabled"] == "true"
+    assert forwarded.metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert forwarded.metadata["ai_required_for_execution"] == "false"
+    assert forwarded.metadata["ai_decision_available"] == "false"
+    assert forwarded.metadata["ai_decision_status"] == "unwired"
+    assert forwarded.metadata["live_gate_failed_closed"] == "false"
+    assert forwarded.metadata["decision_authority"] == "decision_orchestrator"
+    assert forwarded.metadata["final_decision_accepted"] == "true"
     assert len(orchestrator.invocations) == 1
     assert orchestrator.invocations[0].symbol == "BTC/USDT"
     assert [event.status for event in journal.events] == ["accepted", "filtered"]
@@ -541,7 +554,22 @@ def test_decision_aware_sink_handles_missing_metadata() -> None:
     )
 
     records = sink.export()
-    assert records and records[0][1] == (signal,)
+    assert records
+    _, exported_signals = records[0]
+    assert len(exported_signals) == 1
+    forwarded = exported_signals[0]
+    assert forwarded.symbol == "ETH/USDT"
+    assert forwarded.side == "BUY"
+    assert forwarded.confidence == pytest.approx(0.7)
+    assert forwarded.metadata["opportunity_policy_mode"] == "shadow"
+    assert forwarded.metadata["opportunity_ai_enabled"] == "true"
+    assert forwarded.metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert forwarded.metadata["ai_required_for_execution"] == "false"
+    assert forwarded.metadata["ai_decision_available"] == "false"
+    assert forwarded.metadata["ai_decision_status"] == "unwired"
+    assert forwarded.metadata["live_gate_failed_closed"] == "false"
+    assert forwarded.metadata["decision_authority"] == "decision_orchestrator"
+    assert forwarded.metadata["final_decision_accepted"] == "true"
 
 
 def test_decision_aware_sink_respects_min_probability_threshold() -> None:
@@ -708,7 +736,23 @@ def test_decision_aware_sink_handles_missing_confidence_for_expected_return() ->
     candidate = orchestrator.invocations[0]
     assert candidate.expected_return_bps == pytest.approx(5.0)
     records = sink.export()
-    assert records and records[0][1] == (signal,)
+    assert records
+    _, exported_signals = records[0]
+    assert len(exported_signals) == 1
+    forwarded = exported_signals[0]
+    assert forwarded.symbol == "BTC/USDT"
+    assert forwarded.side == "BUY"
+    assert forwarded.confidence is None
+    assert forwarded.metadata["expected_probability"] == 0.7
+    assert forwarded.metadata["opportunity_policy_mode"] == "shadow"
+    assert forwarded.metadata["opportunity_ai_enabled"] == "true"
+    assert forwarded.metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert forwarded.metadata["ai_required_for_execution"] == "false"
+    assert forwarded.metadata["ai_decision_available"] == "false"
+    assert forwarded.metadata["ai_decision_status"] == "unwired"
+    assert forwarded.metadata["live_gate_failed_closed"] == "false"
+    assert forwarded.metadata["decision_authority"] == "decision_orchestrator"
+    assert forwarded.metadata["final_decision_accepted"] == "true"
 
 
 def test_decision_aware_sink_exposes_history_and_summary() -> None:
