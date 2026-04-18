@@ -1626,6 +1626,257 @@ def test_decision_aware_sink_arbitrates_same_scope_autonomous_open_candidates_de
     assert evaluation_events[0].metadata.get("expected_return_bps") == "9.0"
 
 
+@pytest.mark.parametrize("reversed_input_order", [False, True])
+def test_decision_aware_sink_arbitrates_same_scope_autonomous_open_candidates_when_shadow_key_missing(
+    reversed_input_order: bool,
+) -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+    )
+    ts = datetime(2026, 4, 18, 12, 30, tzinfo=timezone.utc)
+    candidate_weaker = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.6,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 8.0,
+            "expected_probability": 0.7,
+        },
+    )
+    candidate_stronger = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.55,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 9.0,
+            "expected_probability": 0.65,
+            "arbitration_hint": "winner",
+        },
+    )
+    batch = (
+        (candidate_weaker, candidate_stronger)
+        if reversed_input_order
+        else (candidate_stronger, candidate_weaker)
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=batch,
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, exported_signals = records[0]
+    assert len(exported_signals) == 1
+    assert exported_signals[0].metadata.get("arbitration_hint") == "winner"
+    filtered_events = [event for event in journal.events if event.status == "filtered"]
+    assert len(filtered_events) == 1
+    assert (
+        filtered_events[0].metadata.get("decision_reason")
+        == "autonomous_open_candidate_arbitration_loser"
+    )
+    assert filtered_events[0].metadata.get("winner_shadow_record_key") in (None, "")
+
+
+@pytest.mark.parametrize("reversed_input_order", [False, True])
+def test_decision_aware_sink_missing_shadow_key_tie_uses_stable_technical_tiebreak(
+    reversed_input_order: bool,
+) -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=_DummyJournal(),
+    )
+
+    def _open_candidate_override(
+        self,
+        strategy_name: str,
+        risk_profile: str,
+        signal: StrategySignal,
+    ):
+        metadata = dict(signal.metadata or {})
+        metadata.setdefault("environment", self._environment)
+        metadata.setdefault("exchange", self._exchange)
+        metadata.setdefault("schedule", strategy_name)
+        return (
+            pipeline_module.DecisionCandidate(
+                strategy=strategy_name,
+                action="enter",
+                risk_profile=risk_profile,
+                symbol=signal.symbol,
+                notional=1_000.0,
+                expected_return_bps=float(metadata["expected_return_bps"]),
+                expected_probability=float(metadata["expected_probability"]),
+                cost_bps_override=None,
+                latency_ms=None,
+                metadata=metadata,
+            ),
+            None,
+        )
+
+    sink._build_candidate = MethodType(_open_candidate_override, sink)  # type: ignore[assignment]
+    ts = datetime(2026, 4, 18, 12, 45, tzinfo=timezone.utc)
+    candidate_alpha = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 10.0,
+            "expected_probability": 0.65,
+            "candidate_tag": "alpha",
+        },
+    )
+    candidate_beta = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.8,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 10.0,
+            "expected_probability": 0.65,
+            "candidate_tag": "beta",
+        },
+    )
+    batch = (
+        (candidate_beta, candidate_alpha)
+        if reversed_input_order
+        else (candidate_alpha, candidate_beta)
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=batch,
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    assert len(forwarded) == 1
+    assert forwarded[0].metadata.get("candidate_tag") == "alpha"
+
+
+def test_decision_aware_sink_single_key_duplicate_contract_requires_same_candidate_identity() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=_DummyJournal(),
+    )
+    ts = datetime(2026, 4, 18, 12, 50, tzinfo=timezone.utc)
+    duplicate_one = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.7,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-duplicate",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 10.0,
+            "expected_probability": 0.6,
+        },
+    )
+    duplicate_two = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.7,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-duplicate",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 10.0,
+            "expected_probability": 0.6,
+        },
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=(duplicate_one, duplicate_two),
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    assert len(forwarded) == 2
+
+
 def test_decision_aware_sink_arbitration_does_not_mix_symbols_or_non_autonomous_or_close() -> None:
     base_sink = InMemoryStrategySignalSink()
 
