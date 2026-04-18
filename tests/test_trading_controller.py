@@ -26267,6 +26267,267 @@ def test_opportunity_autonomy_runtime_lineage_controller_journal_acceptance_matr
 
 
 @pytest.mark.parametrize(
+    ("execution_status", "expected_event_type"),
+    (
+        ("pending", "order_execution_result"),
+        ("partially_filled", "order_partially_executed"),
+    ),
+)
+def test_opportunity_autonomy_runtime_lineage_snapshot_is_canonical_for_non_fill_and_partial_paths(
+    execution_status: str,
+    expected_event_type: str,
+) -> None:
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-non-fill-and-partial-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+            self.accepted = True
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=self.accepted,
+                model_version="opportunity-v-runtime-lineage-non-fill-and-partial",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=True,
+        manual_kill_switch=False,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    execution = StatusExecutionService(
+        status=execution_status,
+        filled_quantity=0.4 if execution_status == "partially_filled" else 0.0,
+        avg_price=101.0 if execution_status == "partially_filled" else None,
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+    )
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+        # stale/conflicting upstream values — runtime snapshot must override them.
+        "opportunity_policy_mode": "assist",
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "false",
+        "ai_decision_available": "false",
+        "ai_decision_status": "disabled",
+        "live_gate_failed_closed": "true",
+        "decision_authority": "decision_orchestrator",
+        "final_decision_accepted": "false",
+        "ai_decision_accepted": "false",
+        "opportunity_ai_disabled_reason": "stale_disabled_reason_from_upstream",
+    }
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    exported = tuple(base_sink.export())
+    assert len(exported) == 1
+    controller.process_signals(list(exported[0][1]))
+
+    request_metadata = dict(execution.requests[-1].metadata or {})
+    expected_lineage = {
+        "opportunity_policy_mode": "live",
+        "opportunity_ai_enabled": "true",
+        "opportunity_ai_manual_kill_switch_active": "false",
+        "ai_required_for_execution": "true",
+        "ai_decision_available": "true",
+        "ai_decision_status": "proposal",
+        "live_gate_failed_closed": "false",
+        "decision_authority": "shared_live_policy",
+        "final_decision_accepted": "true",
+        "ai_decision_accepted": "true",
+    }
+    for key, expected_value in expected_lineage.items():
+        assert request_metadata[key] == expected_value
+    assert "opportunity_ai_disabled_reason" not in request_metadata
+
+    event = _last_event(journal, expected_event_type)
+    for key, expected_value in expected_lineage.items():
+        assert event[f"order_{key}"] == expected_value
+        assert event[f"order_{key}"] == request_metadata[key]
+    assert "order_opportunity_ai_disabled_reason" not in event
+
+
+def test_opportunity_autonomy_runtime_lineage_snapshot_is_canonical_for_execution_failure_path() -> (
+    None
+):
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-failure-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+            self.accepted = True
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=self.accepted,
+                model_version="opportunity-v-runtime-lineage-failure",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    class _FailingExecutionService(ExecutionService):
+        def __init__(self) -> None:
+            self.requests: list[OrderRequest] = []
+
+        def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+            self.requests.append(request)
+            raise RuntimeError("runtime-lineage-failure")
+
+        def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+            return None
+
+        def flush(self) -> None:
+            return None
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=True,
+        manual_kill_switch=False,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    execution = _FailingExecutionService()
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+    )
+    signal = _signal("BUY")
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.95,
+        "expected_return_bps": 16.0,
+        # stale/conflicting upstream values — runtime snapshot must override them.
+        "opportunity_policy_mode": "assist",
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "false",
+        "ai_decision_available": "false",
+        "ai_decision_status": "disabled",
+        "live_gate_failed_closed": "true",
+        "decision_authority": "decision_orchestrator",
+        "final_decision_accepted": "false",
+        "ai_decision_accepted": "false",
+        "opportunity_ai_disabled_reason": "stale_disabled_reason_from_upstream",
+    }
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported = tuple(base_sink.export())
+    assert len(exported) == 1
+
+    with pytest.raises(RuntimeError, match="runtime-lineage-failure"):
+        controller.process_signals(list(exported[0][1]))
+
+    request_metadata = dict(execution.requests[-1].metadata or {})
+    expected_lineage = {
+        "opportunity_policy_mode": "live",
+        "opportunity_ai_enabled": "true",
+        "opportunity_ai_manual_kill_switch_active": "false",
+        "ai_required_for_execution": "true",
+        "ai_decision_available": "true",
+        "ai_decision_status": "proposal",
+        "live_gate_failed_closed": "false",
+        "decision_authority": "shared_live_policy",
+        "final_decision_accepted": "true",
+        "ai_decision_accepted": "true",
+    }
+    for key, expected_value in expected_lineage.items():
+        assert request_metadata[key] == expected_value
+    assert "opportunity_ai_disabled_reason" not in request_metadata
+
+    failure_event = _last_event(journal, "order_failed")
+    for key, expected_value in expected_lineage.items():
+        assert failure_event[f"order_{key}"] == expected_value
+        assert failure_event[f"order_{key}"] == request_metadata[key]
+    assert "order_opportunity_ai_disabled_reason" not in failure_event
+
+
+@pytest.mark.parametrize(
     ("restore_name", "initial_runtime_controls", "initial_disabled_reason"),
     (
         (
