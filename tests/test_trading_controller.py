@@ -24415,6 +24415,598 @@ def test_opportunity_autonomy_runtime_lineage_conflict_overwrite_uses_sink_snaps
     assert "opportunity_ai_disabled_reason" not in request_metadata
 
 
+@pytest.mark.parametrize(
+    ("initial_ai_enabled", "initial_manual_kill_switch", "expected_disabled_reason"),
+    [
+        (False, False, "config_disabled"),
+        (True, True, "manual_kill_switch:runtime_control_plane"),
+    ],
+)
+def test_opportunity_autonomy_runtime_lineage_same_key_restore_refreshes_final_provenance_without_open_retro_mutation(
+    initial_ai_enabled: bool,
+    initial_manual_kill_switch: bool,
+    expected_disabled_reason: str,
+) -> None:
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-durable-provenance-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+            self.accepted = True
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=self.accepted,
+                model_version="opportunity-v-runtime-lineage-durable",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason="runtime_lineage_blocked" if not self.accepted else None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=initial_ai_enabled,
+        manual_kill_switch=initial_manual_kill_switch,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    adapter = _AlwaysAcceptingPolicyAdapter()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+
+    decision_ts_a = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    same_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_ts_a,
+        model_version="runtime-lineage-same-key",
+        rank=1,
+    )
+    blocked_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+        model_version="runtime-lineage-blocked-key",
+        rank=1,
+    )
+    shadow_repo = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=same_key, decision_timestamp=decision_ts_a),
+            _shadow_record_for_key(
+                correlation_key=blocked_key,
+                decision_timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    controller, execution, _journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+
+    def _signal_for_key(*, side: str, key: str, timestamp: datetime) -> StrategySignal:
+        signal = _signal(side)
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            # stale upstream values — sink/request snapshot must stay canonical.
+            "opportunity_policy_mode": "assist",
+            "opportunity_ai_enabled": "true",
+            "opportunity_ai_manual_kill_switch_active": "true",
+            "ai_required_for_execution": "true",
+            "ai_decision_available": "true",
+            "ai_decision_status": "proposal",
+            "live_gate_failed_closed": "true",
+            "decision_authority": "shared_live_policy",
+            "final_decision_accepted": "false",
+            "ai_decision_accepted": "true",
+            "opportunity_ai_disabled_reason": "stale_disabled_reason_from_upstream",
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": timestamp.isoformat(),
+        }
+        return signal
+
+    open_signal = _signal_for_key(side="BUY", key=same_key, timestamp=decision_ts_a)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=decision_ts_a,
+        signals=(open_signal,),
+    )
+    first_forwarded = tuple(base_sink.export())[-1][1][0]
+    controller.process_signals([first_forwarded])
+
+    first_request_metadata = dict(execution.requests[-1].metadata or {})
+    assert first_request_metadata["opportunity_policy_mode"] == "live"
+    assert first_request_metadata["opportunity_ai_enabled"] == "false"
+    assert first_request_metadata["opportunity_ai_manual_kill_switch_active"] == (
+        "true" if initial_manual_kill_switch else "false"
+    )
+    assert first_request_metadata["ai_required_for_execution"] == "false"
+    assert first_request_metadata["ai_decision_available"] == "false"
+    assert first_request_metadata["ai_decision_status"] == "disabled"
+    assert first_request_metadata["live_gate_failed_closed"] == "false"
+    assert first_request_metadata["decision_authority"] == "decision_orchestrator"
+    assert first_request_metadata["final_decision_accepted"] == "true"
+    assert "ai_decision_accepted" not in first_request_metadata
+    assert first_request_metadata["opportunity_ai_disabled_reason"] == expected_disabled_reason
+
+    first_open_rows = shadow_repo.load_open_outcomes()
+    first_row = next(row for row in first_open_rows if row.correlation_key == same_key)
+    first_provenance = dict(first_row.provenance)
+    assert first_provenance["opportunity_policy_mode"] == "live"
+    assert first_provenance["opportunity_ai_enabled"] == "false"
+    assert first_provenance["opportunity_ai_manual_kill_switch_active"] == (
+        "true" if initial_manual_kill_switch else "false"
+    )
+    assert first_provenance["ai_required_for_execution"] == "false"
+    assert first_provenance["ai_decision_available"] == "false"
+    assert first_provenance["ai_decision_status"] == "disabled"
+    assert first_provenance["live_gate_failed_closed"] == "false"
+    assert first_provenance["decision_authority"] == "decision_orchestrator"
+    assert first_provenance["final_decision_accepted"] == "true"
+    assert "ai_decision_accepted" not in first_provenance
+    assert first_provenance["opportunity_ai_disabled_reason"] == expected_disabled_reason
+
+    runtime_controls.update(policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False)
+    close_signal = _signal_for_key(side="SELL", key=same_key, timestamp=decision_ts_a)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(close_signal,),
+    )
+    second_forwarded = tuple(base_sink.export())[-1][1][0]
+    controller.process_signals([second_forwarded])
+
+    second_request_metadata = dict(execution.requests[-1].metadata or {})
+    assert second_request_metadata["opportunity_policy_mode"] == "live"
+    assert second_request_metadata["opportunity_ai_enabled"] == "true"
+    assert second_request_metadata["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert second_request_metadata["ai_required_for_execution"] == "true"
+    assert second_request_metadata["ai_decision_available"] == "true"
+    assert second_request_metadata["ai_decision_status"] == "proposal"
+    assert second_request_metadata["live_gate_failed_closed"] == "false"
+    assert second_request_metadata["decision_authority"] == "shared_live_policy"
+    assert second_request_metadata["final_decision_accepted"] == "true"
+    assert second_request_metadata["ai_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in second_request_metadata
+
+    final_labels = [
+        row
+        for row in shadow_repo.load_outcome_labels()
+        if row.correlation_key == same_key and str(row.label_quality).startswith("final")
+    ]
+    assert len(final_labels) == 1
+    final_provenance = dict(final_labels[0].provenance)
+    assert final_provenance["opportunity_policy_mode"] == "live"
+    assert final_provenance["opportunity_ai_enabled"] == "true"
+    assert final_provenance["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert final_provenance["ai_required_for_execution"] == "true"
+    assert final_provenance["ai_decision_available"] == "true"
+    assert final_provenance["ai_decision_status"] == "proposal"
+    assert final_provenance["live_gate_failed_closed"] == "false"
+    assert final_provenance["decision_authority"] == "shared_live_policy"
+    assert final_provenance["final_decision_accepted"] == "true"
+    assert final_provenance["ai_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in final_provenance
+    assert first_provenance["opportunity_ai_disabled_reason"] == expected_disabled_reason
+
+    # blocked / non-forwarded path should not create durable false provenance.
+    adapter.accepted = False
+    labels_before_block = tuple(shadow_repo.load_outcome_labels())
+    requests_before_block = len(execution.requests)
+    blocked_signal = _signal_for_key(
+        side="BUY",
+        key=blocked_key,
+        timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+        signals=(blocked_signal,),
+    )
+    assert len(execution.requests) == requests_before_block
+    assert tuple(shadow_repo.load_outcome_labels()) == labels_before_block
+    assert all(row.correlation_key != blocked_key for row in shadow_repo.load_open_outcomes())
+
+
+def test_opportunity_autonomy_runtime_lineage_same_key_restore_refreshes_partial_provenance() -> (
+    None
+):
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-partial-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-runtime-lineage-partial",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=False,
+        manual_kill_switch=False,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    decision_ts = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    same_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_ts,
+        model_version="runtime-lineage-same-key-partial",
+        rank=1,
+    )
+    shadow_repo = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=same_key, decision_timestamp=decision_ts)]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "partial", "filled_quantity": 0.4, "avg_price": 101.0},
+        ]
+    )
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+
+    def _signal_for_key(*, side: str) -> StrategySignal:
+        signal = _signal(side)
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "opportunity_policy_mode": "assist",
+            "opportunity_ai_enabled": "true",
+            "opportunity_ai_manual_kill_switch_active": "true",
+            "ai_required_for_execution": "true",
+            "ai_decision_available": "true",
+            "ai_decision_status": "proposal",
+            "live_gate_failed_closed": "true",
+            "decision_authority": "shared_live_policy",
+            "final_decision_accepted": "false",
+            "ai_decision_accepted": "true",
+            "opportunity_ai_disabled_reason": "stale_disabled_reason_from_upstream",
+            "opportunity_shadow_record_key": same_key,
+            "opportunity_decision_timestamp": decision_ts.isoformat(),
+        }
+        return signal
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=decision_ts,
+        signals=(_signal_for_key(side="BUY"),),
+    )
+    controller.process_signals([tuple(base_sink.export())[-1][1][0]])
+
+    runtime_controls.update(policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(_signal_for_key(side="SELL"),),
+    )
+    controller.process_signals([tuple(base_sink.export())[-1][1][0]])
+
+    partial_labels = [
+        row
+        for row in shadow_repo.load_outcome_labels()
+        if row.correlation_key == same_key and row.label_quality == "partial_exit_unconfirmed"
+    ]
+    assert len(partial_labels) == 1
+    partial_provenance = dict(partial_labels[0].provenance)
+    assert partial_provenance["opportunity_policy_mode"] == "live"
+    assert partial_provenance["opportunity_ai_enabled"] == "true"
+    assert partial_provenance["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert partial_provenance["ai_decision_status"] == "proposal"
+    assert partial_provenance["ai_decision_available"] == "true"
+    assert partial_provenance["decision_authority"] == "shared_live_policy"
+    assert partial_provenance["ai_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in partial_provenance
+
+
+@pytest.mark.parametrize(
+    ("initial_ai_enabled", "initial_manual_kill_switch", "expected_disabled_reason"),
+    [
+        (False, False, "config_disabled"),
+        (True, True, "manual_kill_switch:runtime_control_plane"),
+    ],
+)
+def test_opportunity_autonomy_runtime_lineage_same_key_restore_refreshes_proxy_provenance_and_keeps_open_durable_snapshot_immutable(
+    initial_ai_enabled: bool,
+    initial_manual_kill_switch: bool,
+    expected_disabled_reason: str,
+) -> None:
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-proxy-model",
+                latency_ms=None,
+            )
+
+    class _ConfigurablePolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+            self.accepted = True
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=self.accepted,
+                model_version="opportunity-v-runtime-lineage-proxy",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason="runtime_lineage_blocked" if not self.accepted else None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=initial_ai_enabled,
+        manual_kill_switch=initial_manual_kill_switch,
+    )
+    adapter = _ConfigurablePolicyAdapter()
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=adapter,
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+    same_key_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    same_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=same_key_timestamp,
+        model_version="runtime-lineage-same-key-proxy",
+        rank=1,
+    )
+    blocked_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+        model_version="runtime-lineage-blocked-key-proxy",
+        rank=1,
+    )
+    shadow_repo = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=same_key, decision_timestamp=same_key_timestamp),
+            _shadow_record_for_key(
+                correlation_key=blocked_key,
+                decision_timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "canceled", "filled_quantity": None, "avg_price": None},
+        ]
+    )
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+
+    def _signal_for_key(*, side: str, key: str, timestamp: datetime) -> StrategySignal:
+        signal = _signal(side)
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            # stale upstream values — sink/request canonical snapshot must win.
+            "opportunity_policy_mode": "assist",
+            "opportunity_ai_enabled": "true",
+            "opportunity_ai_manual_kill_switch_active": "true",
+            "ai_required_for_execution": "true",
+            "ai_decision_available": "true",
+            "ai_decision_status": "proposal",
+            "live_gate_failed_closed": "true",
+            "decision_authority": "shared_live_policy",
+            "final_decision_accepted": "false",
+            "ai_decision_accepted": "true",
+            "opportunity_ai_disabled_reason": "stale_disabled_reason_from_upstream",
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": timestamp.isoformat(),
+        }
+        return signal
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=same_key_timestamp,
+        signals=(_signal_for_key(side="BUY", key=same_key, timestamp=same_key_timestamp),),
+    )
+    controller.process_signals([tuple(base_sink.export())[-1][1][0]])
+
+    open_rows_after_disabled_open = shadow_repo.load_open_outcomes()
+    same_key_open_row = next(
+        row for row in open_rows_after_disabled_open if row.correlation_key == same_key
+    )
+    first_open_provenance = dict(same_key_open_row.provenance)
+    assert first_open_provenance["opportunity_policy_mode"] == "live"
+    assert first_open_provenance["opportunity_ai_enabled"] == "false"
+    assert first_open_provenance["opportunity_ai_manual_kill_switch_active"] == (
+        "true" if initial_manual_kill_switch else "false"
+    )
+    assert first_open_provenance["ai_decision_status"] == "disabled"
+    assert first_open_provenance["ai_decision_available"] == "false"
+    assert first_open_provenance["decision_authority"] == "decision_orchestrator"
+    assert first_open_provenance["final_decision_accepted"] == "true"
+    assert "ai_decision_accepted" not in first_open_provenance
+    assert first_open_provenance["opportunity_ai_disabled_reason"] == expected_disabled_reason
+
+    # Isolate same-key restore proxy creation from pre-existing proxy row emitted on open-fill.
+    retained_labels = [
+        row for row in shadow_repo.load_outcome_labels() if row.correlation_key != same_key
+    ]
+    shadow_repo.outcome_labels_path.write_text(
+        "".join(f"{json.dumps(row.to_dict())}\n" for row in retained_labels),
+        encoding="utf-8",
+    )
+
+    runtime_controls.update(policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(
+            _signal_for_key(
+                side="BUY",
+                key=same_key,
+                timestamp=same_key_timestamp,
+            ),
+        ),
+    )
+    controller.process_signals([tuple(base_sink.export())[-1][1][0]])
+
+    proxy_labels = [
+        row
+        for row in shadow_repo.load_outcome_labels()
+        if row.correlation_key == same_key and row.label_quality == "execution_proxy_pending_exit"
+    ]
+    assert len(proxy_labels) == 1
+    proxy_provenance = dict(proxy_labels[0].provenance)
+    assert proxy_provenance["opportunity_policy_mode"] == "live"
+    assert proxy_provenance["opportunity_ai_enabled"] == "true"
+    assert proxy_provenance["opportunity_ai_manual_kill_switch_active"] == "false"
+    assert proxy_provenance["ai_required_for_execution"] == "true"
+    assert proxy_provenance["ai_decision_available"] == "true"
+    assert proxy_provenance["ai_decision_status"] == "proposal"
+    assert proxy_provenance["decision_authority"] == "shared_live_policy"
+    assert proxy_provenance["final_decision_accepted"] == "true"
+    assert proxy_provenance["ai_decision_accepted"] == "true"
+    assert "opportunity_ai_disabled_reason" not in proxy_provenance
+
+    # Durable anti-retro-mutation proof: re-read open artifact from repository after restore/proxy cycle.
+    open_rows_after_restore_proxy = shadow_repo.load_open_outcomes()
+    same_key_open_row_after_restore_proxy = next(
+        row for row in open_rows_after_restore_proxy if row.correlation_key == same_key
+    )
+    assert dict(same_key_open_row_after_restore_proxy.provenance) == first_open_provenance
+
+    # blocked / non-forwarded path must not create false durable provenance.
+    adapter.accepted = False
+    labels_before_block = tuple(shadow_repo.load_outcome_labels())
+    open_before_block = tuple(shadow_repo.load_open_outcomes())
+    requests_before_block = len(execution.requests)
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+        signals=(
+            _signal_for_key(
+                side="BUY",
+                key=blocked_key,
+                timestamp=datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc),
+            ),
+        ),
+    )
+    assert len(execution.requests) == requests_before_block
+    assert tuple(shadow_repo.load_outcome_labels()) == labels_before_block
+    assert tuple(shadow_repo.load_open_outcomes()) == open_before_block
+
+
 def test_opportunity_autonomy_runtime_lineage_controller_journal_matches_canonical_request_snapshot() -> (
     None
 ):

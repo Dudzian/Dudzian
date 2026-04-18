@@ -219,6 +219,19 @@ _OPPORTUNITY_AUTONOMY_PROVENANCE_KEYS = (
     "upstream_autonomy_inference_model",
     "upstream_autonomy_inference_model_version",
 )
+_OPPORTUNITY_RUNTIME_LINEAGE_PROVENANCE_KEYS = (
+    "opportunity_policy_mode",
+    "opportunity_ai_enabled",
+    "opportunity_ai_manual_kill_switch_active",
+    "ai_required_for_execution",
+    "ai_decision_available",
+    "ai_decision_status",
+    "live_gate_failed_closed",
+    "decision_authority",
+    "final_decision_accepted",
+    "ai_decision_accepted",
+    "opportunity_ai_disabled_reason",
+)
 _LIVE_AUTONOMY_ADMISSION_BLOCKER_REASONS = frozenset(
     {
         "promotion_not_ready_for_live_autonomous",
@@ -276,6 +289,7 @@ class _OpportunityOpenOutcomeTracker:
     upstream_autonomy_decision_source: str | None = None
     upstream_autonomy_inference_model: str | None = None
     upstream_autonomy_inference_model_version: str | None = None
+    runtime_lineage_snapshot: dict[str, str] = field(default_factory=dict)
     environment_scope: str | None = None
     portfolio_scope: str | None = None
     restored_from_repository: bool = False
@@ -711,6 +725,9 @@ class TradingController:
             autonomy_chain = self._extract_opportunity_autonomy_provenance_chain(
                 restored_provenance
             )
+            runtime_lineage_snapshot = self._extract_opportunity_runtime_lineage_snapshot(
+                restored_provenance
+            )
             self._opportunity_open_outcomes[row.correlation_key] = _OpportunityOpenOutcomeTracker(
                 correlation_key=row.correlation_key,
                 symbol=row.symbol,
@@ -744,6 +761,7 @@ class TradingController:
                 upstream_autonomy_inference_model_version=autonomy_chain.get(
                     "upstream_autonomy_inference_model_version"
                 ),
+                runtime_lineage_snapshot=runtime_lineage_snapshot,
                 environment_scope=restored_environment or None,
                 portfolio_scope=restored_portfolio or None,
                 restored_from_repository=True,
@@ -766,6 +784,7 @@ class TradingController:
                     provenance={
                         "source": "trading_controller_open_execution",
                         **self._extract_opportunity_autonomy_provenance_chain_from_tracker(tracker),
+                        **self._extract_opportunity_runtime_lineage_snapshot_from_tracker(tracker),
                         **(
                             {"environment": tracker.environment_scope}
                             if tracker.environment_scope is not None
@@ -852,6 +871,31 @@ class TradingController:
             }.items()
             if value is not None
         }
+
+    def _extract_opportunity_runtime_lineage_snapshot(
+        self, metadata: Mapping[str, object] | None
+    ) -> dict[str, str]:
+        if not isinstance(metadata, Mapping):
+            return {}
+        snapshot: dict[str, str] = {}
+        for key in _OPPORTUNITY_RUNTIME_LINEAGE_PROVENANCE_KEYS:
+            raw_value = metadata.get(key)
+            if raw_value is None:
+                continue
+            if isinstance(raw_value, bool):
+                candidate = "true" if raw_value else "false"
+            else:
+                candidate = str(raw_value).strip()
+            if candidate:
+                snapshot[key] = candidate
+        return snapshot
+
+    def _extract_opportunity_runtime_lineage_snapshot_from_tracker(
+        self, tracker: _OpportunityOpenOutcomeTracker | None
+    ) -> dict[str, str]:
+        if tracker is None:
+            return {}
+        return self._extract_opportunity_runtime_lineage_snapshot(tracker.runtime_lineage_snapshot)
 
     def _discard_open_outcome_tracker(self, correlation_key: str) -> None:
         self._opportunity_open_outcomes.pop(correlation_key, None)
@@ -3269,6 +3313,12 @@ class TradingController:
         signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
         autonomy_chain = self._extract_opportunity_autonomy_provenance_chain(request_metadata)
+        runtime_lineage_snapshot = self._extract_opportunity_runtime_lineage_snapshot(
+            request_metadata
+        )
+        has_canonical_request_runtime_lineage_snapshot = bool(
+            runtime_lineage_snapshot.get("opportunity_policy_mode")
+        )
 
         def _resolve_runtime_lineage(
             correlation_key_hint: str | None,
@@ -3403,6 +3453,15 @@ class TradingController:
                 and tracker_hint.restored_from_repository
                 and (tracker_hint.environment_scope is None or tracker_hint.portfolio_scope is None)
             )
+
+        def _resolve_artifact_runtime_lineage_snapshot(
+            tracker_hint: _OpportunityOpenOutcomeTracker | None,
+        ) -> dict[str, str]:
+            if has_canonical_request_runtime_lineage_snapshot:
+                return dict(runtime_lineage_snapshot)
+            if tracker_hint is None:
+                return dict(runtime_lineage_snapshot)
+            return self._extract_opportunity_runtime_lineage_snapshot_from_tracker(tracker_hint)
 
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
         side = str(request.side or "").upper()
@@ -3634,6 +3693,9 @@ class TradingController:
                         tracked.upstream_autonomy_inference_model_version
                         or autonomy_chain.get("upstream_autonomy_inference_model_version")
                     )
+                    final_runtime_lineage_snapshot = _resolve_artifact_runtime_lineage_snapshot(
+                        tracked
+                    )
                     final_label = OpportunityOutcomeLabel(
                         symbol=request.symbol,
                         decision_timestamp=tracked.decision_timestamp,
@@ -3647,6 +3709,7 @@ class TradingController:
                             **self._extract_opportunity_autonomy_provenance_chain_from_tracker(
                                 tracked
                             ),
+                            **final_runtime_lineage_snapshot,
                             **({"environment": scope_environment} if scope_environment else {}),
                             **({"portfolio": scope_portfolio} if scope_portfolio else {}),
                             **(
@@ -3766,6 +3829,9 @@ class TradingController:
                             tracked.upstream_autonomy_inference_model_version
                             or autonomy_chain.get("upstream_autonomy_inference_model_version")
                         )
+                        partial_runtime_lineage_snapshot = (
+                            _resolve_artifact_runtime_lineage_snapshot(tracked)
+                        )
                         self._persist_open_outcome_tracker(tracked)
                         partial_label = OpportunityOutcomeLabel(
                             symbol=request.symbol,
@@ -3780,6 +3846,7 @@ class TradingController:
                                 **self._extract_opportunity_autonomy_provenance_chain_from_tracker(
                                     tracked
                                 ),
+                                **partial_runtime_lineage_snapshot,
                                 **({"environment": scope_environment} if scope_environment else {}),
                                 **({"portfolio": scope_portfolio} if scope_portfolio else {}),
                                 **(
@@ -3851,6 +3918,7 @@ class TradingController:
                     upstream_autonomy_inference_model_version=autonomy_chain.get(
                         "upstream_autonomy_inference_model_version"
                     ),
+                    runtime_lineage_snapshot=dict(runtime_lineage_snapshot),
                     environment_scope=str(self.environment).strip() or None,
                     portfolio_scope=str(self.portfolio_id).strip() or None,
                     restored_from_repository=False,
@@ -3887,6 +3955,9 @@ class TradingController:
             return
         if correlation_key and final_label is None and partial_label is None:
             proxy_tracker = self._opportunity_open_outcomes.get(correlation_key)
+            proxy_runtime_lineage_snapshot = _resolve_artifact_runtime_lineage_snapshot(
+                proxy_tracker
+            )
             model_version, decision_source = _resolve_runtime_lineage(
                 correlation_key,
                 tracker_hint=proxy_tracker,
@@ -3912,6 +3983,7 @@ class TradingController:
                         if proxy_tracker is not None
                         else autonomy_chain
                     ),
+                    **proxy_runtime_lineage_snapshot,
                     **({"environment": scope_environment} if scope_environment else {}),
                     **({"portfolio": scope_portfolio} if scope_portfolio else {}),
                     **(
