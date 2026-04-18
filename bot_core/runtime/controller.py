@@ -897,6 +897,36 @@ class TradingController:
             return {}
         return self._extract_opportunity_runtime_lineage_snapshot(tracker.runtime_lineage_snapshot)
 
+    def _apply_restored_runtime_lineage_to_request_metadata(
+        self,
+        *,
+        request: OrderRequest,
+        tracker: _OpportunityOpenOutcomeTracker | None,
+    ) -> OrderRequest:
+        if tracker is None or not tracker.restored_from_repository:
+            return request
+        request_metadata = self._clone_metadata(getattr(request, "metadata", None))
+        request_runtime_lineage_snapshot = self._extract_opportunity_runtime_lineage_snapshot(
+            request_metadata
+        )
+        if request_runtime_lineage_snapshot.get("opportunity_policy_mode"):
+            return request
+        tracker_runtime_lineage_snapshot = (
+            self._extract_opportunity_runtime_lineage_snapshot_from_tracker(tracker)
+        )
+        if not tracker_runtime_lineage_snapshot:
+            return request
+        merged_metadata = {
+            **request_metadata,
+            **tracker_runtime_lineage_snapshot,
+        }
+        if merged_metadata == request_metadata:
+            return request
+        return replace(
+            request,
+            metadata=merged_metadata,
+        )
+
     def _discard_open_outcome_tracker(self, correlation_key: str) -> None:
         self._opportunity_open_outcomes.pop(correlation_key, None)
         repository = self._opportunity_shadow_repository
@@ -1903,6 +1933,10 @@ class TradingController:
                 and str(existing_open_tracker.symbol) == str(request.symbol)
                 and not self._is_closing_side(str(existing_open_tracker.side), str(request.side))
             ):
+                request = self._apply_restored_runtime_lineage_to_request_metadata(
+                    request=request,
+                    tracker=existing_open_tracker,
+                )
                 self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
                 self._record_decision_event(
                     "signal_skipped",
@@ -1921,6 +1955,10 @@ class TradingController:
         ).strip()
         existing_open_tracker = (
             self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
+        )
+        request = self._apply_restored_runtime_lineage_to_request_metadata(
+            request=request,
+            tracker=existing_open_tracker,
         )
         if (
             correlation_key
