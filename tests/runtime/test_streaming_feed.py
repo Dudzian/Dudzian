@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import json
 import asyncio
 import time
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from contextlib import suppress
 from typing import Sequence
 
@@ -503,17 +503,18 @@ def test_decision_aware_sink_filters_signals() -> None:
     assert forwarded.metadata["final_decision_accepted"] == "true"
     assert len(orchestrator.invocations) == 1
     assert orchestrator.invocations[0].symbol == "BTC/USDT"
-    assert [event.status for event in journal.events] == ["accepted", "filtered"]
+    assert [event.status for event in journal.events] == ["filtered", "accepted"]
     assert all(event.portfolio == "paper-01" for event in journal.events)
-    accepted_event = journal.events[0]
+    accepted_event = next(event for event in journal.events if event.status == "accepted")
     thresholds_payload = json.loads(accepted_event.metadata["decision_thresholds"])
     assert thresholds_payload["max_cost_bps"] == pytest.approx(12.0)
     selection_payload = json.loads(accepted_event.metadata["model_selection"])
     assert selection_payload["selected"] == "gbm_v1"
     assert accepted_event.metadata["model_name"] == "gbm_v1"
     assert accepted_event.metadata["model_success_probability"] == "0.700000"
-    assert journal.events[1].metadata.get("decision_reason") == "probability_below_threshold"
-    assert journal.events[1].metadata.get("decision_status") == "filtered"
+    filtered_event = next(event for event in journal.events if event.status == "filtered")
+    assert filtered_event.metadata.get("decision_reason") == "probability_below_threshold"
+    assert filtered_event.metadata.get("decision_status") == "filtered"
 
 
 def test_decision_aware_sink_handles_missing_metadata() -> None:
@@ -1536,3 +1537,385 @@ def test_consume_stream_async_respects_async_stop_condition() -> None:
     assert processed[0].events[0]["close"] == pytest.approx(100.0)
     assert stream.aclose_calls == 1
     assert stream.next_calls == 1
+
+
+@pytest.mark.parametrize("reversed_input_order", [False, True])
+def test_decision_aware_sink_arbitrates_same_scope_autonomous_open_candidates_deterministically(
+    reversed_input_order: bool,
+) -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+    )
+    ts = datetime(2026, 4, 18, 12, 0, tzinfo=timezone.utc)
+    candidate_weaker = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.6,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-b",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 8.0,
+            "expected_probability": 0.7,
+        },
+    )
+    candidate_stronger = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.55,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-a",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 9.0,
+            "expected_probability": 0.65,
+        },
+    )
+    batch = (
+        (candidate_weaker, candidate_stronger)
+        if reversed_input_order
+        else (candidate_stronger, candidate_weaker)
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=batch,
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, exported_signals = records[0]
+    assert len(exported_signals) == 1
+    assert exported_signals[0].metadata["opportunity_shadow_record_key"] == "shadow-a"
+    filtered_events = [event for event in journal.events if event.status == "filtered"]
+    assert len(filtered_events) == 1
+    assert (
+        filtered_events[0].metadata.get("decision_reason")
+        == "autonomous_open_candidate_arbitration_loser"
+    )
+    assert filtered_events[0].metadata.get("winner_shadow_record_key") == "shadow-a"
+    evaluation_events = [event for event in journal.events if event.status == "accepted"]
+    assert len(evaluation_events) == 1
+    assert evaluation_events[0].metadata.get("decision_status") == "accepted"
+    assert evaluation_events[0].metadata.get("expected_return_bps") == "9.0"
+
+
+def test_decision_aware_sink_arbitration_does_not_mix_symbols_or_non_autonomous_or_close() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+    )
+    ts = datetime(2026, 4, 18, 13, 0, tzinfo=timezone.utc)
+    signals = (
+        StrategySignal(
+            symbol="BTC/USDT",
+            side="BUY",
+            confidence=0.6,
+            metadata={
+                "opportunity_autonomy_mode": "paper_autonomous",
+                "opportunity_shadow_record_key": "shadow-btc-1",
+                "opportunity_decision_timestamp": ts.isoformat(),
+                "expected_return_bps": 9.0,
+                "expected_probability": 0.7,
+            },
+        ),
+        StrategySignal(
+            symbol="ETH/USDT",
+            side="BUY",
+            confidence=0.7,
+            metadata={
+                "opportunity_autonomy_mode": "paper_autonomous",
+                "opportunity_shadow_record_key": "shadow-eth-1",
+                "opportunity_decision_timestamp": ts.isoformat(),
+                "expected_return_bps": 8.0,
+                "expected_probability": 0.7,
+            },
+        ),
+        StrategySignal(
+            symbol="BTC/USDT",
+            side="SELL",
+            confidence=0.4,
+            metadata={
+                "opportunity_autonomy_mode": "paper_autonomous",
+                "opportunity_shadow_record_key": "shadow-btc-close",
+                "opportunity_decision_timestamp": ts.isoformat(),
+                "expected_return_bps": 7.0,
+                "expected_probability": 0.7,
+            },
+        ),
+        StrategySignal(
+            symbol="BTC/USDT",
+            side="BUY",
+            confidence=0.3,
+            metadata={
+                "opportunity_shadow_record_key": "shadow-non-autonomous",
+                "opportunity_decision_timestamp": ts.isoformat(),
+                "expected_return_bps": 6.0,
+                "expected_probability": 0.7,
+            },
+        ),
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=signals,
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    assert len(forwarded) == 4
+    assert [event for event in journal.events if event.status == "filtered"] == []
+
+
+@pytest.mark.parametrize("reversed_input_order", [False, True])
+def test_decision_aware_sink_arbitrates_opposite_side_autonomous_open_candidates_in_same_scope(
+    reversed_input_order: bool,
+) -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+    )
+
+    def _open_candidate_override(
+        self,
+        strategy_name: str,
+        risk_profile: str,
+        signal: StrategySignal,
+    ):
+        metadata = dict(signal.metadata or {})
+        metadata.setdefault("environment", self._environment)
+        metadata.setdefault("exchange", self._exchange)
+        metadata.setdefault("schedule", strategy_name)
+        return (
+            pipeline_module.DecisionCandidate(
+                strategy=strategy_name,
+                action="enter",
+                risk_profile=risk_profile,
+                symbol=signal.symbol,
+                notional=1_000.0,
+                expected_return_bps=float(metadata["expected_return_bps"]),
+                expected_probability=float(metadata["expected_probability"]),
+                cost_bps_override=None,
+                latency_ms=None,
+                metadata=metadata,
+            ),
+            None,
+        )
+
+    sink._build_candidate = MethodType(_open_candidate_override, sink)  # type: ignore[assignment]
+    ts = datetime(2026, 4, 18, 14, 0, tzinfo=timezone.utc)
+    buy_open = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.6,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-buy",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 9.0,
+            "expected_probability": 0.7,
+        },
+    )
+    sell_open = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.7,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-sell",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 8.0,
+            "expected_probability": 0.7,
+        },
+    )
+    batch = (sell_open, buy_open) if reversed_input_order else (buy_open, sell_open)
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=batch,
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    assert len(forwarded) == 1
+    assert forwarded[0].metadata["opportunity_shadow_record_key"] == "shadow-buy"
+    filtered_events = [event for event in journal.events if event.status == "filtered"]
+    assert len(filtered_events) == 1
+    assert (
+        filtered_events[0].metadata.get("decision_reason")
+        == "autonomous_open_candidate_arbitration_loser"
+    )
+    assert filtered_events[0].metadata.get("winner_shadow_record_key") == "shadow-buy"
+
+
+def test_decision_aware_sink_opposite_side_open_arbitration_tie_uses_stable_technical_tiebreak() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=_DummyJournal(),
+    )
+
+    def _open_candidate_override(
+        self,
+        strategy_name: str,
+        risk_profile: str,
+        signal: StrategySignal,
+    ):
+        metadata = dict(signal.metadata or {})
+        metadata.setdefault("environment", self._environment)
+        metadata.setdefault("exchange", self._exchange)
+        metadata.setdefault("schedule", strategy_name)
+        return (
+            pipeline_module.DecisionCandidate(
+                strategy=strategy_name,
+                action="enter",
+                risk_profile=risk_profile,
+                symbol=signal.symbol,
+                notional=1_000.0,
+                expected_return_bps=10.0,
+                expected_probability=0.65,
+                cost_bps_override=None,
+                latency_ms=None,
+                metadata=metadata,
+            ),
+            None,
+        )
+
+    sink._build_candidate = MethodType(_open_candidate_override, sink)  # type: ignore[assignment]
+    ts = datetime(2026, 4, 18, 15, 0, tzinfo=timezone.utc)
+    buy_open = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-a",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 10.0,
+            "expected_probability": 0.65,
+        },
+    )
+    sell_open = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.8,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-b",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 10.0,
+            "expected_probability": 0.65,
+        },
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=(sell_open, buy_open),
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    assert len(forwarded) == 1
+    assert forwarded[0].metadata["opportunity_shadow_record_key"] == "shadow-a"

@@ -3134,6 +3134,14 @@ class DecisionAwareSignalSink(StrategySignalSink):
             return
 
         accepted: list[StrategySignal] = []
+        pending_accepted: list[
+            tuple[
+                StrategySignal,
+                DecisionCandidate,
+                DecisionEvaluation,
+                DecisionAwareSignalSink.OpportunityPolicyResolution,
+            ]
+        ] = []
         risk_snapshot = self._build_risk_snapshot(risk_profile)
         batch_runtime_controls_snapshot = self._snapshot_runtime_controls_for_batch()
         for signal in signals:
@@ -3209,6 +3217,34 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 timestamp=timestamp,
                 batch_runtime_controls_snapshot=batch_runtime_controls_snapshot,
             )
+            if policy_resolution.final_accepted:
+                pending_accepted.append((signal, candidate, evaluation, policy_resolution))
+            else:
+                self._record_evaluation(
+                    evaluation=evaluation,
+                    candidate=candidate,
+                    signal=signal,
+                    strategy_name=strategy_name,
+                    schedule_name=schedule_name,
+                    risk_profile=risk_profile,
+                    timestamp=timestamp,
+                    policy_resolution=policy_resolution,
+                )
+                self._logger.debug(
+                    "DecisionOrchestrator odrzucił sygnał %s/%s: %s",
+                    strategy_name,
+                    signal.symbol,
+                    ", ".join(evaluation.reasons) or "brak powodów",
+                )
+
+        pending_accepted = self._apply_autonomous_open_candidate_arbitration(
+            pending_accepted=pending_accepted,
+            strategy_name=strategy_name,
+            schedule_name=schedule_name,
+            risk_profile=risk_profile,
+            timestamp=timestamp,
+        )
+        for signal, candidate, evaluation, policy_resolution in pending_accepted:
             self._record_evaluation(
                 evaluation=evaluation,
                 candidate=candidate,
@@ -3219,82 +3255,13 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 timestamp=timestamp,
                 policy_resolution=policy_resolution,
             )
-            if policy_resolution.final_accepted:
-                enriched_signal_metadata = dict(signal.metadata or {})
-                enriched_signal_metadata["opportunity_policy_mode"] = policy_resolution.mode.value
-                enriched_signal_metadata["opportunity_ai_enabled"] = (
-                    "true" if policy_resolution.opportunity_ai_enabled else "false"
+            accepted.append(
+                self._build_enriched_forward_signal(
+                    signal=signal,
+                    policy_resolution=policy_resolution,
+                    timestamp=timestamp,
                 )
-                enriched_signal_metadata["opportunity_ai_manual_kill_switch_active"] = (
-                    "true"
-                    if policy_resolution.opportunity_ai_manual_kill_switch_active
-                    else "false"
-                )
-                enriched_signal_metadata["ai_required_for_execution"] = (
-                    "true" if policy_resolution.ai_required_for_execution else "false"
-                )
-                enriched_signal_metadata["ai_decision_available"] = (
-                    "true" if policy_resolution.ai_decision_available else "false"
-                )
-                enriched_signal_metadata["ai_decision_status"] = policy_resolution.ai_status
-                enriched_signal_metadata["live_gate_failed_closed"] = (
-                    "true" if policy_resolution.live_gate_failed_closed else "false"
-                )
-                enriched_signal_metadata["decision_authority"] = (
-                    policy_resolution.decision_authority
-                )
-                enriched_signal_metadata["final_decision_accepted"] = (
-                    "true" if policy_resolution.final_accepted else "false"
-                )
-                if policy_resolution.ai_decision_accepted is not None:
-                    enriched_signal_metadata["ai_decision_accepted"] = (
-                        "true" if policy_resolution.ai_decision_accepted else "false"
-                    )
-                else:
-                    enriched_signal_metadata.pop("ai_decision_accepted", None)
-                if policy_resolution.opportunity_ai_disabled_reason:
-                    enriched_signal_metadata["opportunity_ai_disabled_reason"] = (
-                        policy_resolution.opportunity_ai_disabled_reason
-                    )
-                else:
-                    enriched_signal_metadata.pop("opportunity_ai_disabled_reason", None)
-                if policy_resolution.ai_shadow_record_key:
-                    enriched_signal_metadata.setdefault(
-                        "opportunity_shadow_record_key",
-                        policy_resolution.ai_shadow_record_key,
-                    )
-                    enriched_signal_metadata.setdefault(
-                        "opportunity_decision_timestamp",
-                        timestamp.isoformat(),
-                    )
-                if policy_resolution.ai_model_version:
-                    enriched_signal_metadata.setdefault(
-                        "opportunity_model_version",
-                        policy_resolution.ai_model_version,
-                    )
-                if policy_resolution.ai_decision_source:
-                    enriched_signal_metadata.setdefault(
-                        "opportunity_decision_source",
-                        policy_resolution.ai_decision_source,
-                    )
-                accepted.append(
-                    StrategySignal(
-                        symbol=signal.symbol,
-                        side=signal.side,
-                        confidence=signal.confidence,
-                        quantity=signal.quantity,
-                        intent=signal.intent,
-                        legs=signal.legs,
-                        metadata=enriched_signal_metadata,
-                    )
-                )
-            else:
-                self._logger.debug(
-                    "DecisionOrchestrator odrzucił sygnał %s/%s: %s",
-                    strategy_name,
-                    signal.symbol,
-                    ", ".join(evaluation.reasons) or "brak powodów",
-                )
+            )
 
         if not accepted:
             return
@@ -3305,6 +3272,224 @@ class DecisionAwareSignalSink(StrategySignalSink):
             risk_profile=risk_profile,
             timestamp=timestamp,
             signals=tuple(accepted),
+        )
+
+    def _build_enriched_forward_signal(
+        self,
+        *,
+        signal: StrategySignal,
+        policy_resolution: "DecisionAwareSignalSink.OpportunityPolicyResolution",
+        timestamp: datetime,
+    ) -> StrategySignal:
+        enriched_signal_metadata = dict(signal.metadata or {})
+        enriched_signal_metadata["opportunity_policy_mode"] = policy_resolution.mode.value
+        enriched_signal_metadata["opportunity_ai_enabled"] = (
+            "true" if policy_resolution.opportunity_ai_enabled else "false"
+        )
+        enriched_signal_metadata["opportunity_ai_manual_kill_switch_active"] = (
+            "true" if policy_resolution.opportunity_ai_manual_kill_switch_active else "false"
+        )
+        enriched_signal_metadata["ai_required_for_execution"] = (
+            "true" if policy_resolution.ai_required_for_execution else "false"
+        )
+        enriched_signal_metadata["ai_decision_available"] = (
+            "true" if policy_resolution.ai_decision_available else "false"
+        )
+        enriched_signal_metadata["ai_decision_status"] = policy_resolution.ai_status
+        enriched_signal_metadata["live_gate_failed_closed"] = (
+            "true" if policy_resolution.live_gate_failed_closed else "false"
+        )
+        enriched_signal_metadata["decision_authority"] = policy_resolution.decision_authority
+        enriched_signal_metadata["final_decision_accepted"] = (
+            "true" if policy_resolution.final_accepted else "false"
+        )
+        if policy_resolution.ai_decision_accepted is not None:
+            enriched_signal_metadata["ai_decision_accepted"] = (
+                "true" if policy_resolution.ai_decision_accepted else "false"
+            )
+        else:
+            enriched_signal_metadata.pop("ai_decision_accepted", None)
+        if policy_resolution.opportunity_ai_disabled_reason:
+            enriched_signal_metadata["opportunity_ai_disabled_reason"] = (
+                policy_resolution.opportunity_ai_disabled_reason
+            )
+        else:
+            enriched_signal_metadata.pop("opportunity_ai_disabled_reason", None)
+        if policy_resolution.ai_shadow_record_key:
+            enriched_signal_metadata.setdefault(
+                "opportunity_shadow_record_key",
+                policy_resolution.ai_shadow_record_key,
+            )
+            enriched_signal_metadata.setdefault(
+                "opportunity_decision_timestamp",
+                timestamp.isoformat(),
+            )
+        if policy_resolution.ai_model_version:
+            enriched_signal_metadata.setdefault(
+                "opportunity_model_version",
+                policy_resolution.ai_model_version,
+            )
+        if policy_resolution.ai_decision_source:
+            enriched_signal_metadata.setdefault(
+                "opportunity_decision_source",
+                policy_resolution.ai_decision_source,
+            )
+        return StrategySignal(
+            symbol=signal.symbol,
+            side=signal.side,
+            confidence=signal.confidence,
+            quantity=signal.quantity,
+            intent=signal.intent,
+            legs=signal.legs,
+            metadata=enriched_signal_metadata,
+        )
+
+    def _apply_autonomous_open_candidate_arbitration(
+        self,
+        *,
+        pending_accepted: list[
+            tuple[
+                StrategySignal,
+                DecisionCandidate,
+                DecisionEvaluation,
+                OpportunityPolicyResolution,
+            ]
+        ],
+        strategy_name: str,
+        schedule_name: str,
+        risk_profile: str,
+        timestamp: datetime,
+    ) -> list[
+        tuple[
+            StrategySignal,
+            DecisionCandidate,
+            DecisionEvaluation,
+            OpportunityPolicyResolution,
+        ]
+    ]:
+        if len(pending_accepted) < 2:
+            return pending_accepted
+
+        grouped: dict[
+            tuple[str, str, str, str],
+            list[
+                tuple[
+                    StrategySignal,
+                    DecisionCandidate,
+                    DecisionEvaluation,
+                    "DecisionAwareSignalSink.OpportunityPolicyResolution",
+                ]
+            ],
+        ] = {}
+        passthrough: list[
+            tuple[
+                StrategySignal,
+                DecisionCandidate,
+                DecisionEvaluation,
+                "DecisionAwareSignalSink.OpportunityPolicyResolution",
+            ]
+        ] = []
+        for record in pending_accepted:
+            signal, candidate, _evaluation, _policy = record
+            scope_key = self._autonomous_open_arbitration_scope_key(signal=signal, candidate=candidate)
+            if scope_key is None:
+                passthrough.append(record)
+                continue
+            grouped.setdefault(scope_key, []).append(record)
+
+        survivors: list[
+            tuple[
+                StrategySignal,
+                DecisionCandidate,
+                DecisionEvaluation,
+                "DecisionAwareSignalSink.OpportunityPolicyResolution",
+            ]
+        ] = list(passthrough)
+        for scope_key, records in grouped.items():
+            if len(records) == 1:
+                survivors.extend(records)
+                continue
+            correlation_keys = {
+                str((record[0].metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+                for record in records
+            }
+            if len(correlation_keys) <= 1:
+                survivors.extend(records)
+                continue
+            ranked = sorted(records, key=self._autonomous_open_candidate_rank_key)
+            winner = ranked[0]
+            survivors.append(winner)
+            winner_signal = winner[0]
+            winner_correlation_key = str(
+                (winner_signal.metadata or {}).get("opportunity_shadow_record_key") or ""
+            )
+            for loser in ranked[1:]:
+                loser_signal = loser[0]
+                self._record_filtered_signal(
+                    signal=loser_signal,
+                    strategy_name=strategy_name,
+                    schedule_name=schedule_name,
+                    risk_profile=risk_profile,
+                    timestamp=timestamp,
+                    rejection_info={
+                        "reason": "autonomous_open_candidate_arbitration_loser",
+                        "winner_shadow_record_key": winner_correlation_key,
+                        "arbitration_scope": "|".join(scope_key),
+                    },
+                )
+        return survivors
+
+    def _autonomous_open_arbitration_scope_key(
+        self,
+        *,
+        signal: StrategySignal,
+        candidate: DecisionCandidate,
+    ) -> tuple[str, str, str, str] | None:
+        if str(getattr(candidate, "action", "")).strip().lower() != "enter":
+            return None
+        metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        autonomy_mode = str(metadata.get("opportunity_autonomy_mode") or "").strip().lower()
+        if autonomy_mode not in {"paper_autonomous", "live_autonomous"}:
+            return None
+        portfolio_scope = str(metadata.get("portfolio_id") or metadata.get("portfolio") or "").strip()
+        if not portfolio_scope:
+            portfolio_scope = self._portfolio or self._environment
+        return (
+            str(candidate.symbol).strip(),
+            str(self._environment).strip(),
+            str(portfolio_scope).strip(),
+            autonomy_mode,
+        )
+
+    def _autonomous_open_candidate_rank_key(
+        self,
+        record: tuple[
+            StrategySignal,
+            DecisionCandidate,
+            DecisionEvaluation,
+            OpportunityPolicyResolution,
+        ],
+    ) -> tuple[float, float, float, str]:
+        signal, candidate, _evaluation, _policy = record
+        expected_return_bps = self._coerce_float(getattr(candidate, "expected_return_bps", None))
+        expected_probability = self._coerce_float(getattr(candidate, "expected_probability", None))
+        confidence = self._coerce_float(getattr(signal, "confidence", None))
+        metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        tiebreak = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        if not tiebreak:
+            try:
+                metadata_key = json.dumps(dict(metadata), ensure_ascii=False, sort_keys=True)
+            except (TypeError, ValueError):
+                metadata_key = repr(metadata)
+            tiebreak = (
+                f"{signal.symbol}|{signal.side}|{metadata_key}|"
+                f"{self._coerce_float(getattr(signal, 'quantity', None))}"
+            )
+        return (
+            -(expected_return_bps if expected_return_bps is not None else float("-inf")),
+            -(expected_probability if expected_probability is not None else float("-inf")),
+            -(confidence if confidence is not None else float("-inf")),
+            tiebreak,
         )
 
     def export(self) -> Sequence[tuple[str, Sequence[StrategySignal]]]:
@@ -3767,12 +3952,18 @@ class DecisionAwareSignalSink(StrategySignalSink):
         min_probability: float | None = None
         error_detail: str | None = None
         evaluation_type: str | None = None
+        winner_shadow_record_key: str | None = None
+        arbitration_scope: str | None = None
         if rejection_info:
             reason = str(rejection_info.get("reason") or "") or None
             raw_probability = rejection_info.get("probability")
             raw_min_probability = rejection_info.get("min_probability")
             error_detail = str(rejection_info.get("error") or "") or None
             evaluation_type = str(rejection_info.get("evaluation_type") or "") or None
+            winner_shadow_record_key = (
+                str(rejection_info.get("winner_shadow_record_key") or "") or None
+            )
+            arbitration_scope = str(rejection_info.get("arbitration_scope") or "") or None
             try:
                 probability = float(raw_probability) if raw_probability is not None else None
             except (TypeError, ValueError):  # pragma: no cover - defensywnie
@@ -3794,6 +3985,10 @@ class DecisionAwareSignalSink(StrategySignalSink):
             metadata.setdefault("decision_error", error_detail)
         if evaluation_type:
             metadata.setdefault("evaluation_type", evaluation_type)
+        if winner_shadow_record_key:
+            metadata.setdefault("winner_shadow_record_key", winner_shadow_record_key)
+        if arbitration_scope:
+            metadata.setdefault("arbitration_scope", arbitration_scope)
 
         metadata.setdefault("environment", self._environment)
         metadata.setdefault("exchange", self._exchange)
