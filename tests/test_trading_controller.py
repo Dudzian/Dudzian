@@ -871,9 +871,8 @@ def test_opportunity_autonomy_risk_rejected_event_uses_canonical_runtime_lineage
     assert result == []
     assert execution.requests == []
     event = _last_event(journal, "risk_rejected")
-    expected_ai_enabled = (
-        bool(runtime_controls_kwargs["opportunity_ai_enabled"])
-        and not bool(runtime_controls_kwargs["manual_kill_switch"])
+    expected_ai_enabled = bool(runtime_controls_kwargs["opportunity_ai_enabled"]) and not bool(
+        runtime_controls_kwargs["manual_kill_switch"]
     )
     expected_manual_kill_active = bool(runtime_controls_kwargs["manual_kill_switch"])
     assert event["order_opportunity_policy_mode"] == str(runtime_controls_kwargs["policy_mode"])
@@ -11552,7 +11551,12 @@ def test_opportunity_autonomy_restored_tracker_runtime_position_absent_suppresse
 
 
 @pytest.mark.parametrize(
-    ("case_name", "restored_runtime_lineage", "incoming_runtime_lineage", "expected_runtime_lineage"),
+    (
+        "case_name",
+        "restored_runtime_lineage",
+        "incoming_runtime_lineage",
+        "expected_runtime_lineage",
+    ),
     (
         (
             "restored_runtime_lineage_config_disabled_used_for_skip_event",
@@ -25172,7 +25176,9 @@ def test_opportunity_autonomy_runtime_lineage_same_key_restore_refreshes_final_p
     assert "ai_decision_accepted" not in first_provenance
     assert first_provenance["opportunity_ai_disabled_reason"] == expected_disabled_reason
 
-    runtime_controls.update(policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False)
+    runtime_controls.update(
+        policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False
+    )
     close_signal = _signal_for_key(side="SELL", key=same_key, timestamp=decision_ts_a)
     sink.submit(
         strategy_name="trend-d1",
@@ -25349,7 +25355,9 @@ def test_opportunity_autonomy_runtime_lineage_same_key_restore_refreshes_partial
     )
     controller.process_signals([tuple(base_sink.export())[-1][1][0]])
 
-    runtime_controls.update(policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False)
+    runtime_controls.update(
+        policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False
+    )
     sink.submit(
         strategy_name="trend-d1",
         schedule_name="trend-d1",
@@ -25537,7 +25545,9 @@ def test_opportunity_autonomy_runtime_lineage_same_key_restore_refreshes_proxy_p
         encoding="utf-8",
     )
 
-    runtime_controls.update(policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False)
+    runtime_controls.update(
+        policy_mode="live", opportunity_ai_enabled=True, manual_kill_switch=False
+    )
     sink.submit(
         strategy_name="trend-d1",
         schedule_name="trend-d1",
@@ -25862,9 +25872,8 @@ def test_opportunity_autonomy_enforcement_event_uses_canonical_runtime_lineage_s
 
     enforcement_event = _last_event(journal, "opportunity_autonomy_enforcement")
     expected_policy_mode = str(runtime_controls_kwargs["policy_mode"])
-    expected_ai_enabled = (
-        bool(runtime_controls_kwargs["opportunity_ai_enabled"])
-        and not bool(runtime_controls_kwargs["manual_kill_switch"])
+    expected_ai_enabled = bool(runtime_controls_kwargs["opportunity_ai_enabled"]) and not bool(
+        runtime_controls_kwargs["manual_kill_switch"]
     )
     expected_manual_kill_active = bool(runtime_controls_kwargs["manual_kill_switch"])
     assert enforcement_event["order_opportunity_policy_mode"] == expected_policy_mode
