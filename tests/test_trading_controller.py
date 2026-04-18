@@ -9957,6 +9957,146 @@ def test_opportunity_autonomy_duplicate_open_reentry_after_restart_is_suppressed
     assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
 
 
+@pytest.mark.parametrize(
+    ("incoming_runtime_lineage", "expected_runtime_lineage"),
+    (
+        (
+            {},
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "false",
+                "opportunity_ai_manual_kill_switch_active": "true",
+                "ai_required_for_execution": "false",
+                "ai_decision_available": "false",
+                "ai_decision_status": "disabled",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "decision_orchestrator",
+                "final_decision_accepted": "true",
+                "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+            },
+        ),
+        (
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "true",
+                "opportunity_ai_manual_kill_switch_active": "false",
+                "ai_required_for_execution": "true",
+                "ai_decision_available": "true",
+                "ai_decision_status": "proposal",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "shared_live_policy",
+                "final_decision_accepted": "true",
+            },
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "true",
+                "opportunity_ai_manual_kill_switch_active": "false",
+                "ai_required_for_execution": "true",
+                "ai_decision_available": "true",
+                "ai_decision_status": "proposal",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "shared_live_policy",
+                "final_decision_accepted": "true",
+            },
+        ),
+    ),
+)
+def test_opportunity_autonomy_duplicate_open_reentry_after_restart_runtime_lineage_on_skip_event(
+    incoming_runtime_lineage: Mapping[str, str],
+    expected_runtime_lineage: Mapping[str, str],
+) -> None:
+    decision_timestamp = datetime(2026, 1, 8, 12, 5, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="dup-open-lineage-")))
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    restored_runtime_lineage = {
+        "opportunity_policy_mode": "live",
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "false",
+        "ai_decision_available": "false",
+        "ai_decision_status": "disabled",
+        "live_gate_failed_closed": "false",
+        "decision_authority": "decision_orchestrator",
+        "final_decision_accepted": "true",
+        "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+    }
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "source": "restored_duplicate_open_runtime_lineage",
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_requested_mode": "paper_autonomous",
+                "autonomy_upstream_effective_mode": "paper_autonomous",
+                "autonomy_local_guard_effective_mode": "paper_autonomous",
+                "autonomy_final_mode": "paper_autonomous",
+                **restored_runtime_lineage,
+            },
+        )
+    )
+
+    execution_replay = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=100.0)
+    controller_replay, replay_journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution_replay,
+        opportunity_shadow_repository=repository,
+    )
+    replay_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=True,
+    )
+    replay_signal.metadata = {
+        **dict(replay_signal.metadata),
+        **dict(incoming_runtime_lineage),
+    }
+    open_rows_before = repository.load_open_outcomes()
+    assert len(open_rows_before) == 1
+    open_provenance_before = dict(open_rows_before[0].provenance)
+    labels_before = repository.load_outcome_labels()
+
+    controller_replay.process_signals([replay_signal])
+
+    assert len(execution_replay.requests) == 0
+    assert repository.load_open_outcomes() == open_rows_before
+    assert repository.load_outcome_labels() == labels_before
+    skipped_events = [
+        event for event in replay_journal.export() if event["event"] == "signal_skipped"
+    ]
+    assert skipped_events
+    event = skipped_events[-1]
+    assert event["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+    assert event["proxy_correlation_key"] == correlation_key
+    for key, expected in expected_runtime_lineage.items():
+        assert event[f"order_{key}"] == expected
+    for key in restored_runtime_lineage:
+        if key not in expected_runtime_lineage:
+            assert f"order_{key}" not in event
+    assert dict(repository.load_open_outcomes()[0].provenance) == open_provenance_before
+
+
 def test_opportunity_autonomy_duplicate_open_guard_foreign_scope_restored_tracker_does_not_suppress() -> (
     None
 ):
@@ -11151,6 +11291,202 @@ def test_opportunity_autonomy_restored_tracker_runtime_position_absent_suppresse
         event.get("reason") == "duplicate_autonomous_close_replay_suppressed"
         for event in all_skipped_events
     )
+
+
+@pytest.mark.parametrize(
+    ("case_name", "restored_runtime_lineage", "incoming_runtime_lineage", "expected_runtime_lineage"),
+    (
+        (
+            "restored_runtime_lineage_config_disabled_used_for_skip_event",
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "false",
+                "opportunity_ai_manual_kill_switch_active": "false",
+                "ai_required_for_execution": "false",
+                "ai_decision_available": "false",
+                "ai_decision_status": "disabled",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "decision_orchestrator",
+                "final_decision_accepted": "true",
+                "opportunity_ai_disabled_reason": "config_disabled",
+            },
+            {},
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "false",
+                "opportunity_ai_manual_kill_switch_active": "false",
+                "ai_required_for_execution": "false",
+                "ai_decision_available": "false",
+                "ai_decision_status": "disabled",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "decision_orchestrator",
+                "final_decision_accepted": "true",
+                "opportunity_ai_disabled_reason": "config_disabled",
+            },
+        ),
+        (
+            "restored_runtime_lineage_manual_kill_switch_used_for_skip_event",
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "false",
+                "opportunity_ai_manual_kill_switch_active": "true",
+                "ai_required_for_execution": "false",
+                "ai_decision_available": "false",
+                "ai_decision_status": "disabled",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "decision_orchestrator",
+                "final_decision_accepted": "true",
+                "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+            },
+            {},
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "false",
+                "opportunity_ai_manual_kill_switch_active": "true",
+                "ai_required_for_execution": "false",
+                "ai_decision_available": "false",
+                "ai_decision_status": "disabled",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "decision_orchestrator",
+                "final_decision_accepted": "true",
+                "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+            },
+        ),
+        (
+            "incoming_canonical_runtime_lineage_precedes_restored_runtime_lineage_for_skip_event",
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "false",
+                "opportunity_ai_manual_kill_switch_active": "true",
+                "ai_required_for_execution": "false",
+                "ai_decision_available": "false",
+                "ai_decision_status": "disabled",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "decision_orchestrator",
+                "final_decision_accepted": "true",
+                "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+            },
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "true",
+                "opportunity_ai_manual_kill_switch_active": "false",
+                "ai_required_for_execution": "true",
+                "ai_decision_available": "true",
+                "ai_decision_status": "proposal",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "shared_live_policy",
+                "final_decision_accepted": "true",
+            },
+            {
+                "opportunity_policy_mode": "live",
+                "opportunity_ai_enabled": "true",
+                "opportunity_ai_manual_kill_switch_active": "false",
+                "ai_required_for_execution": "true",
+                "ai_decision_available": "true",
+                "ai_decision_status": "proposal",
+                "live_gate_failed_closed": "false",
+                "decision_authority": "shared_live_policy",
+                "final_decision_accepted": "true",
+            },
+        ),
+    ),
+)
+def test_opportunity_autonomy_restored_runtime_lineage_is_available_for_controller_skip_events_after_restart(
+    case_name: str,
+    restored_runtime_lineage: Mapping[str, str],
+    incoming_runtime_lineage: Mapping[str, str],
+    expected_runtime_lineage: Mapping[str, str],
+) -> None:
+    del case_name  # readable parametrized case ids only
+    decision_timestamp = datetime(2026, 1, 11, 14, 1, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="restored-lineage-")))
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "source": "restored_tracker_runtime_lineage_skip",
+                "autonomy_requested_mode": "paper_autonomous",
+                "autonomy_upstream_effective_mode": "paper_autonomous",
+                "autonomy_local_guard_effective_mode": "paper_autonomous",
+                "autonomy_final_mode": "paper_autonomous",
+                **dict(restored_runtime_lineage),
+            },
+        )
+    )
+
+    replay_execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 106.0}]
+    )
+    replay_journal = CollectingDecisionJournal()
+    controller_replay = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=replay_execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=lambda: AccountSnapshot(
+            balances={"BTC/USDT_position": 0.0},
+            total_equity=100_000.0,
+            available_margin=90_000.0,
+            maintenance_margin=10_000.0,
+        ),
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=replay_journal,
+        opportunity_shadow_repository=repository,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    close_signal.metadata = {**dict(close_signal.metadata), **dict(incoming_runtime_lineage)}
+
+    controller_replay.process_signals([close_signal])
+
+    assert replay_execution.requests == []
+    assert repository.load_open_outcomes() == []
+    correlated_labels = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
+    assert not any(
+        row.label_quality in {"partial_exit_unconfirmed", "final"} for row in correlated_labels
+    )
+    skipped_events = [
+        event
+        for event in replay_journal.export()
+        if event["event"] == "signal_skipped"
+        and event.get("reason") == "restored_tracker_runtime_position_absent_suppressed"
+    ]
+    assert skipped_events
+    event = skipped_events[-1]
+    assert event["proxy_correlation_key"] == correlation_key
+    for key, expected in expected_runtime_lineage.items():
+        assert event[f"order_{key}"] == expected
+    for key in restored_runtime_lineage:
+        if key not in expected_runtime_lineage:
+            assert f"order_{key}" not in event
 
 
 def test_opportunity_autonomy_reason_precedence_restored_runtime_absent_beats_duplicate_close_replay() -> (
