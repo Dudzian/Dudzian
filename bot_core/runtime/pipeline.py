@@ -3409,13 +3409,20 @@ class DecisionAwareSignalSink(StrategySignalSink):
             if len(records) == 1:
                 survivors.extend(records)
                 continue
-            correlation_keys = {
+            correlation_keys = [
                 str((record[0].metadata or {}).get("opportunity_shadow_record_key") or "").strip()
                 for record in records
-            }
-            if len(correlation_keys) <= 1:
-                survivors.extend(records)
-                continue
+            ]
+            non_empty_correlation_keys = {key for key in correlation_keys if key}
+            if len(non_empty_correlation_keys) == 1:
+                shared_key = next(iter(non_empty_correlation_keys))
+                if all(key == shared_key for key in correlation_keys):
+                    candidate_identities = {
+                        self._autonomous_open_candidate_identity_key(record) for record in records
+                    }
+                    if len(candidate_identities) == 1:
+                        survivors.extend(records)
+                        continue
             ranked = sorted(records, key=self._autonomous_open_candidate_rank_key)
             winner = ranked[0]
             survivors.append(winner)
@@ -3490,6 +3497,26 @@ class DecisionAwareSignalSink(StrategySignalSink):
             -(expected_probability if expected_probability is not None else float("-inf")),
             -(confidence if confidence is not None else float("-inf")),
             tiebreak,
+        )
+
+    def _autonomous_open_candidate_identity_key(
+        self,
+        record: tuple[
+            StrategySignal,
+            DecisionCandidate,
+            DecisionEvaluation,
+            OpportunityPolicyResolution,
+        ],
+    ) -> tuple[str, float | None, float | None, float | None, float | None, str]:
+        signal, candidate, _evaluation, _policy = record
+        metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        return (
+            str(signal.side).strip().upper(),
+            self._coerce_float(getattr(candidate, "expected_return_bps", None)),
+            self._coerce_float(getattr(candidate, "expected_probability", None)),
+            self._coerce_float(getattr(signal, "confidence", None)),
+            self._coerce_float(getattr(signal, "quantity", None)),
+            str(metadata.get("opportunity_shadow_record_key") or "").strip(),
         )
 
     def export(self) -> Sequence[tuple[str, Sequence[StrategySignal]]]:
