@@ -749,6 +749,264 @@ def test_opportunity_live_autonomous_open_respects_active_risk_veto_and_never_ex
     assert rejected_event["reason"] == "risk_veto_active"
 
 
+@pytest.mark.parametrize(
+    ("scenario_name", "runtime_controls_kwargs", "expected_disabled_reason"),
+    (
+        (
+            "live_enabled",
+            {"policy_mode": "live", "opportunity_ai_enabled": True, "manual_kill_switch": False},
+            None,
+        ),
+        (
+            "config_disabled",
+            {"policy_mode": "live", "opportunity_ai_enabled": False, "manual_kill_switch": False},
+            "config_disabled",
+        ),
+        (
+            "manual_kill_switch",
+            {"policy_mode": "live", "opportunity_ai_enabled": True, "manual_kill_switch": True},
+            "manual_kill_switch:runtime_control_plane",
+        ),
+    ),
+)
+def test_opportunity_autonomy_risk_rejected_event_uses_canonical_runtime_lineage_snapshot(
+    scenario_name: str,
+    runtime_controls_kwargs: Mapping[str, object],
+    expected_disabled_reason: str | None,
+) -> None:
+    del scenario_name  # readable pytest param ids only
+
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-risk-rejected-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-runtime-lineage-risk-rejected",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode=str(runtime_controls_kwargs["policy_mode"]),
+        opportunity_ai_enabled=bool(runtime_controls_kwargs["opportunity_ai_enabled"]),
+        manual_kill_switch=bool(runtime_controls_kwargs["manual_kill_switch"]),
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result(RiskCheckResult(allowed=False, reason="risk_veto_active"))
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+        ),
+    )
+    signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_policy_mode": "assist",
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "false",
+        "ai_decision_available": "false",
+        "ai_decision_status": "disabled",
+        "live_gate_failed_closed": "true",
+        "decision_authority": "decision_orchestrator",
+        "final_decision_accepted": "false",
+        "ai_decision_accepted": "false",
+        "opportunity_ai_disabled_reason": "stale_disabled_reason_from_upstream",
+    }
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    exported = tuple(base_sink.export())
+    assert len(exported) == 1
+    result = controller.process_signals(list(exported[0][1]))
+
+    assert result == []
+    assert execution.requests == []
+    event = _last_event(journal, "risk_rejected")
+    expected_ai_enabled = (
+        bool(runtime_controls_kwargs["opportunity_ai_enabled"])
+        and not bool(runtime_controls_kwargs["manual_kill_switch"])
+    )
+    expected_manual_kill_active = bool(runtime_controls_kwargs["manual_kill_switch"])
+    assert event["order_opportunity_policy_mode"] == str(runtime_controls_kwargs["policy_mode"])
+    assert event["order_opportunity_ai_enabled"] == ("true" if expected_ai_enabled else "false")
+    assert event["order_opportunity_ai_manual_kill_switch_active"] == (
+        "true" if expected_manual_kill_active else "false"
+    )
+    assert event["order_ai_decision_available"] == ("true" if expected_ai_enabled else "false")
+    assert event["order_ai_decision_status"] == ("proposal" if expected_ai_enabled else "disabled")
+    assert event["order_ai_required_for_execution"] == ("true" if expected_ai_enabled else "false")
+    assert event["order_live_gate_failed_closed"] == "false"
+    assert event["order_final_decision_accepted"] == "true"
+    assert event["order_decision_authority"] == (
+        "shared_live_policy" if expected_ai_enabled else "decision_orchestrator"
+    )
+    if expected_disabled_reason is None:
+        assert "order_opportunity_ai_disabled_reason" not in event
+        assert event["order_ai_decision_accepted"] == "true"
+    else:
+        assert event["order_opportunity_ai_disabled_reason"] == expected_disabled_reason
+        assert "order_ai_decision_accepted" not in event
+
+
+def test_opportunity_autonomy_risk_rejected_event_restore_cleans_disabled_lineage_markers() -> None:
+    class _AlwaysAcceptingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=2.0,
+                net_edge_bps=8.0,
+                model_name="runtime-lineage-risk-rejected-restore-model",
+                latency_ms=None,
+            )
+
+    class _AlwaysAcceptingPolicyAdapter:
+        def __init__(self) -> None:
+            self.mode = "shadow"
+
+        def emit_shadow_proposal(self, **_kwargs):
+            return SimpleNamespace(
+                status="proposal",
+                decision_available=True,
+                accepted=True,
+                model_version="opportunity-v-runtime-lineage-risk-rejected-restore",
+                decision_source="opportunity_ai_shadow",
+                rejection_reason=None,
+                degraded_reason=None,
+                shadow_record_key=None,
+                shadow_persistence_status="disabled",
+                shadow_persistence_error=None,
+            )
+
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=False,
+        manual_kill_switch=False,
+    )
+    base_sink = InMemoryStrategySignalSink()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_AlwaysAcceptingOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=_AlwaysAcceptingPolicyAdapter(),
+        opportunity_policy_mode="shadow",
+        opportunity_runtime_controls=runtime_controls,
+    )
+
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result(RiskCheckResult(allowed=False, reason="risk_veto_active"))
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+        ),
+    )
+    signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_ai_disabled_reason": "stale_disabled_reason_from_upstream",
+    }
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    controller.process_signals(list(tuple(base_sink.export())[-1][1]))
+    assert execution.requests == []
+    disabled_event = _last_event(journal, "risk_rejected")
+    assert disabled_event["order_ai_required_for_execution"] == "false"
+    assert disabled_event["order_live_gate_failed_closed"] == "false"
+    assert disabled_event["order_final_decision_accepted"] == "true"
+    assert disabled_event["order_opportunity_ai_disabled_reason"] == "config_disabled"
+    assert "order_ai_decision_accepted" not in disabled_event
+
+    runtime_controls.update(
+        opportunity_ai_enabled=True,
+        manual_kill_switch=False,
+        policy_mode="live",
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+    controller.process_signals(list(tuple(base_sink.export())[-1][1]))
+    assert execution.requests == []
+    restored_event = _last_event(journal, "risk_rejected")
+    assert restored_event["order_ai_required_for_execution"] == "true"
+    assert restored_event["order_live_gate_failed_closed"] == "false"
+    assert restored_event["order_final_decision_accepted"] == "true"
+    assert "order_opportunity_ai_disabled_reason" not in restored_event
+    assert restored_event["order_ai_decision_accepted"] == "true"
+
+
 def test_opportunity_autonomous_replay_after_restart_does_not_flip_risk_rejection_into_execute() -> (
     None
 ):
