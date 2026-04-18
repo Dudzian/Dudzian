@@ -24517,7 +24517,9 @@ def test_opportunity_autonomy_runtime_lineage_controller_journal_matches_canonic
     assert request_metadata["ai_decision_accepted"] == "true"
     assert "opportunity_ai_disabled_reason" not in request_metadata
 
-    order_submitted_events = [event for event in journal.export() if event.get("event") == "order_submitted"]
+    order_submitted_events = [
+        event for event in journal.export() if event.get("event") == "order_submitted"
+    ]
     assert len(order_submitted_events) == 1
     submitted_event = order_submitted_events[0]
     assert submitted_event["order_opportunity_policy_mode"] == "live"
@@ -24704,9 +24706,10 @@ def test_opportunity_autonomy_runtime_lineage_controller_journal_acceptance_matr
     request_metadata = dict(execution.requests[-1].metadata or {})
     assert request_metadata["opportunity_policy_mode"] == expected["opportunity_policy_mode"]
     assert request_metadata["opportunity_ai_enabled"] == expected["opportunity_ai_enabled"]
-    assert request_metadata["opportunity_ai_manual_kill_switch_active"] == expected[
-        "opportunity_ai_manual_kill_switch_active"
-    ]
+    assert (
+        request_metadata["opportunity_ai_manual_kill_switch_active"]
+        == expected["opportunity_ai_manual_kill_switch_active"]
+    )
     assert request_metadata["ai_required_for_execution"] == expected["ai_required_for_execution"]
     assert request_metadata["ai_decision_available"] == expected["ai_decision_available"]
     assert request_metadata["ai_decision_status"] == expected["ai_decision_status"]
@@ -24732,9 +24735,10 @@ def test_opportunity_autonomy_runtime_lineage_controller_journal_acceptance_matr
     order_event = order_submitted_events[0]
     assert order_event["order_opportunity_policy_mode"] == expected["opportunity_policy_mode"]
     assert order_event["order_opportunity_ai_enabled"] == expected["opportunity_ai_enabled"]
-    assert order_event["order_opportunity_ai_manual_kill_switch_active"] == expected[
-        "opportunity_ai_manual_kill_switch_active"
-    ]
+    assert (
+        order_event["order_opportunity_ai_manual_kill_switch_active"]
+        == expected["opportunity_ai_manual_kill_switch_active"]
+    )
     assert order_event["order_ai_required_for_execution"] == expected["ai_required_for_execution"]
     assert order_event["order_ai_decision_available"] == expected["ai_decision_available"]
     assert order_event["order_ai_decision_status"] == expected["ai_decision_status"]
@@ -24752,18 +24756,27 @@ def test_opportunity_autonomy_runtime_lineage_controller_journal_acceptance_matr
             order_event["order_opportunity_ai_disabled_reason"]
             == expected["opportunity_ai_disabled_reason"]
         )
-    assert order_event["order_opportunity_policy_mode"] == request_metadata["opportunity_policy_mode"]
+    assert (
+        order_event["order_opportunity_policy_mode"] == request_metadata["opportunity_policy_mode"]
+    )
     assert order_event["order_opportunity_ai_enabled"] == request_metadata["opportunity_ai_enabled"]
     assert (
         order_event["order_opportunity_ai_manual_kill_switch_active"]
         == request_metadata["opportunity_ai_manual_kill_switch_active"]
     )
-    assert order_event["order_ai_required_for_execution"] == request_metadata["ai_required_for_execution"]
+    assert (
+        order_event["order_ai_required_for_execution"]
+        == request_metadata["ai_required_for_execution"]
+    )
     assert order_event["order_ai_decision_available"] == request_metadata["ai_decision_available"]
     assert order_event["order_ai_decision_status"] == request_metadata["ai_decision_status"]
-    assert order_event["order_live_gate_failed_closed"] == request_metadata["live_gate_failed_closed"]
+    assert (
+        order_event["order_live_gate_failed_closed"] == request_metadata["live_gate_failed_closed"]
+    )
     assert order_event["order_decision_authority"] == request_metadata["decision_authority"]
-    assert order_event["order_final_decision_accepted"] == request_metadata["final_decision_accepted"]
+    assert (
+        order_event["order_final_decision_accepted"] == request_metadata["final_decision_accepted"]
+    )
     if "ai_decision_accepted" in request_metadata:
         assert order_event["order_ai_decision_accepted"] == request_metadata["ai_decision_accepted"]
     else:
@@ -24968,12 +24981,14 @@ def test_opportunity_autonomy_runtime_lineage_controller_journal_restore_cleanup
     assert restored_order_event["order_decision_authority"] == "shared_live_policy"
     assert restored_order_event["order_final_decision_accepted"] == "true"
     assert "order_opportunity_ai_disabled_reason" not in restored_order_event
-    assert restored_order_event["order_opportunity_policy_mode"] == restored_request_metadata[
-        "opportunity_policy_mode"
-    ]
-    assert restored_order_event["order_opportunity_ai_enabled"] == restored_request_metadata[
-        "opportunity_ai_enabled"
-    ]
+    assert (
+        restored_order_event["order_opportunity_policy_mode"]
+        == restored_request_metadata["opportunity_policy_mode"]
+    )
+    assert (
+        restored_order_event["order_opportunity_ai_enabled"]
+        == restored_request_metadata["opportunity_ai_enabled"]
+    )
     assert (
         restored_order_event["order_opportunity_ai_manual_kill_switch_active"]
         == restored_request_metadata["opportunity_ai_manual_kill_switch_active"]
@@ -24998,12 +25013,14 @@ def test_opportunity_autonomy_runtime_lineage_controller_journal_restore_cleanup
         restored_order_event["order_live_gate_failed_closed"]
         == restored_request_metadata["live_gate_failed_closed"]
     )
-    assert restored_order_event["order_decision_authority"] == restored_request_metadata[
-        "decision_authority"
-    ]
-    assert restored_order_event["order_final_decision_accepted"] == restored_request_metadata[
-        "final_decision_accepted"
-    ]
+    assert (
+        restored_order_event["order_decision_authority"]
+        == restored_request_metadata["decision_authority"]
+    )
+    assert (
+        restored_order_event["order_final_decision_accepted"]
+        == restored_request_metadata["final_decision_accepted"]
+    )
 
 
 def test_opportunity_autonomy_runtime_lineage_restore_cleans_disabled_markers_on_request_metadata() -> (
