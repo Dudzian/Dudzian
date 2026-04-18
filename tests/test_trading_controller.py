@@ -25622,6 +25622,11 @@ def test_opportunity_autonomy_enforcement_event_uses_canonical_runtime_lineage_s
     assert enforcement_event["order_ai_decision_status"] == (
         "proposal" if expected_ai_enabled else "disabled"
     )
+    assert enforcement_event["order_ai_required_for_execution"] == (
+        "true" if expected_ai_enabled and expected_policy_mode == "live" else "false"
+    )
+    assert enforcement_event["order_live_gate_failed_closed"] == "false"
+    assert enforcement_event["order_final_decision_accepted"] == "true"
     assert enforcement_event["order_decision_authority"] == (
         "shared_assist_policy"
         if expected_ai_enabled and expected_policy_mode == "assist"
@@ -25629,8 +25634,10 @@ def test_opportunity_autonomy_enforcement_event_uses_canonical_runtime_lineage_s
     )
     if expected_disabled_reason is None:
         assert "order_opportunity_ai_disabled_reason" not in enforcement_event
+        assert enforcement_event["order_ai_decision_accepted"] == "true"
         assert enforcement_event["order_opportunity_policy_mode"] != "shadow"
     else:
+        assert "order_ai_decision_accepted" not in enforcement_event
         assert enforcement_event["order_opportunity_ai_disabled_reason"] == expected_disabled_reason
 
 
@@ -25708,6 +25715,9 @@ def test_opportunity_autonomy_enforcement_event_restore_cleans_disabled_lineage_
     )
     controller.process_signals(list(tuple(base_sink.export())[-1][1]))
     disabled_event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert disabled_event["order_ai_required_for_execution"] == "false"
+    assert disabled_event["order_live_gate_failed_closed"] == "false"
+    assert disabled_event["order_final_decision_accepted"] == "true"
     assert disabled_event["order_opportunity_ai_disabled_reason"] == "config_disabled"
     assert "order_ai_decision_accepted" not in disabled_event
 
@@ -25725,6 +25735,9 @@ def test_opportunity_autonomy_enforcement_event_restore_cleans_disabled_lineage_
     )
     controller.process_signals(list(tuple(base_sink.export())[-1][1]))
     restored_event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert restored_event["order_ai_required_for_execution"] == "true"
+    assert restored_event["order_live_gate_failed_closed"] == "false"
+    assert restored_event["order_final_decision_accepted"] == "true"
     assert "order_opportunity_ai_disabled_reason" not in restored_event
     assert restored_event["order_ai_decision_accepted"] == "true"
 
