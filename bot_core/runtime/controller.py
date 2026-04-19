@@ -1570,9 +1570,7 @@ class TradingController:
                 results.append(result)
                 normalized_status = _normalize_execution_status(result.status)
                 metric_result = (
-                    "executed"
-                    if normalized_status in _FILLED_EXECUTION_STATUSES
-                    else "not_filled"
+                    "executed" if normalized_status in _FILLED_EXECUTION_STATUSES else "not_filled"
                 )
                 self._metric_orders_total.inc(
                     labels={
@@ -1648,9 +1646,8 @@ class TradingController:
         existing_open_tracker = (
             self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
         )
-        if (
-            existing_open_tracker is not None
-            and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+        if existing_open_tracker is not None and self._is_closing_side(
+            str(existing_open_tracker.side), str(request.side)
         ):
             return False
         duplicate_open_tracker_key = correlation_key
