@@ -509,6 +509,7 @@ class TradingController:
     opportunity_shadow_repository: OpportunityShadowRepository | None = None
     performance_guard_recent_final_window_size: int | None = None
     performance_guard_max_scan_labels: int | None = None
+    max_active_autonomous_open_positions: int | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -553,6 +554,11 @@ class TradingController:
         repr=False,
         default_factory=dict,
     )
+    _max_active_autonomous_open_positions: int | None = field(
+        init=False,
+        repr=False,
+        default=None,
+    )
 
     def __post_init__(self) -> None:
         self.performance_guard_recent_final_window_size = _validate_optional_positive_int(
@@ -562,6 +568,11 @@ class TradingController:
         self.performance_guard_max_scan_labels = _validate_optional_positive_int(
             self.performance_guard_max_scan_labels,
             field_name="performance_guard_max_scan_labels",
+        )
+        self._max_active_autonomous_open_positions = (
+            None
+            if self.max_active_autonomous_open_positions is None
+            else max(0, int(self.max_active_autonomous_open_positions))
         )
         self._clock = self.clock
         self._health_interval = _as_timedelta(self.health_check_interval)
@@ -1229,6 +1240,20 @@ class TradingController:
             return normalized_timestamp, tracked_correlation_key
 
         return min(matching_trackers, key=_tracker_order)
+
+    def _count_scope_active_autonomous_open_trackers(self) -> int:
+        count = 0
+        for tracked_correlation_key, tracker in self._opportunity_open_outcomes.items():
+            if not self._is_autonomous_restored_tracker_contract(tracker):
+                continue
+            if not self._matches_current_open_tracker_scope(
+                correlation_key=tracked_correlation_key,
+                symbol=str(tracker.symbol),
+                tracker=tracker,
+            ):
+                continue
+            count += 1
+        return count
 
     def _record_decision_event(
         self,
@@ -2001,6 +2026,35 @@ class TradingController:
                     },
                 )
                 return None
+            if (
+                duplicate_open_guard_enabled
+                and (
+                    existing_open_tracker is None
+                    or not self._is_closing_side(
+                        str(existing_open_tracker.side), str(request.side)
+                    )
+                )
+                and self._max_active_autonomous_open_positions is not None
+            ):
+                active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
+                if active_autonomous_open_count >= self._max_active_autonomous_open_positions:
+                    self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                    self._record_decision_event(
+                        "signal_skipped",
+                        signal=signal,
+                        request=request,
+                        status="skipped",
+                        metadata={
+                            "reason": "autonomous_open_active_budget_exhausted",
+                            "active_autonomous_open_positions": str(
+                                active_autonomous_open_count
+                            ),
+                            "max_active_autonomous_open_positions": str(
+                                self._max_active_autonomous_open_positions
+                            ),
+                        },
+                    )
+                    return None
         correlation_key = str(
             (request.metadata or {}).get("opportunity_shadow_record_key") or ""
         ).strip()
