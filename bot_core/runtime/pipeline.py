@@ -2953,6 +2953,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         opportunity_ai_enabled_override: bool | None = None,
         opportunity_ai_kill_switch_override: bool | None = None,
         opportunity_runtime_controls: object | None = None,
+        max_autonomous_open_winners_per_batch: int | None = None,
     ) -> None:
         self._base_sink = base_sink
         self._orchestrator = orchestrator
@@ -2973,6 +2974,11 @@ class DecisionAwareSignalSink(StrategySignalSink):
         self._opportunity_ai_enabled_override = opportunity_ai_enabled_override
         self._opportunity_ai_kill_switch_override = opportunity_ai_kill_switch_override
         self._opportunity_runtime_controls = opportunity_runtime_controls
+        self._max_autonomous_open_winners_per_batch = (
+            None
+            if max_autonomous_open_winners_per_batch is None
+            else max(0, int(max_autonomous_open_winners_per_batch))
+        )
         if self._opportunity_shadow_adapter is not None:
             self._opportunity_shadow_adapter.mode = self._opportunity_policy_mode.value
 
@@ -3244,6 +3250,13 @@ class DecisionAwareSignalSink(StrategySignalSink):
             risk_profile=risk_profile,
             timestamp=timestamp,
         )
+        pending_accepted = self._apply_autonomous_open_batch_cap(
+            pending_accepted=pending_accepted,
+            strategy_name=strategy_name,
+            schedule_name=schedule_name,
+            risk_profile=risk_profile,
+            timestamp=timestamp,
+        )
         for signal, candidate, evaluation, policy_resolution in pending_accepted:
             self._record_evaluation(
                 evaluation=evaluation,
@@ -3445,6 +3458,150 @@ class DecisionAwareSignalSink(StrategySignalSink):
                     },
                 )
         return survivors
+
+    def _apply_autonomous_open_batch_cap(
+        self,
+        *,
+        pending_accepted: list[
+            tuple[
+                StrategySignal,
+                DecisionCandidate,
+                DecisionEvaluation,
+                OpportunityPolicyResolution,
+            ]
+        ],
+        strategy_name: str,
+        schedule_name: str,
+        risk_profile: str,
+        timestamp: datetime,
+    ) -> list[
+        tuple[
+            StrategySignal,
+            DecisionCandidate,
+            DecisionEvaluation,
+            OpportunityPolicyResolution,
+        ]
+    ]:
+        batch_cap = self._max_autonomous_open_winners_per_batch
+        if batch_cap is None:
+            return pending_accepted
+        if batch_cap < 0:
+            return pending_accepted
+        if not pending_accepted:
+            return pending_accepted
+
+        autonomous_open_records: list[
+            tuple[
+                StrategySignal,
+                DecisionCandidate,
+                DecisionEvaluation,
+                "DecisionAwareSignalSink.OpportunityPolicyResolution",
+            ]
+        ] = []
+        passthrough_records: list[
+            tuple[
+                StrategySignal,
+                DecisionCandidate,
+                DecisionEvaluation,
+                "DecisionAwareSignalSink.OpportunityPolicyResolution",
+            ]
+        ] = []
+        for record in pending_accepted:
+            signal, candidate, _evaluation, _policy = record
+            scope_key = self._autonomous_open_arbitration_scope_key(signal=signal, candidate=candidate)
+            if scope_key is None:
+                passthrough_records.append(record)
+            else:
+                autonomous_open_records.append(record)
+
+        if len(autonomous_open_records) <= batch_cap:
+            return pending_accepted
+
+        grouped_records: dict[
+            tuple[str, tuple[str, float | None, float | None, float | None, float | None, str]],
+            list[
+                tuple[
+                    StrategySignal,
+                    DecisionCandidate,
+                    DecisionEvaluation,
+                    "DecisionAwareSignalSink.OpportunityPolicyResolution",
+                ]
+            ],
+        ] = {}
+        standalone_units: list[
+            list[
+                tuple[
+                    StrategySignal,
+                    DecisionCandidate,
+                    DecisionEvaluation,
+                    "DecisionAwareSignalSink.OpportunityPolicyResolution",
+                ]
+            ]
+        ] = []
+        for record in autonomous_open_records:
+            shadow_record_key = str((record[0].metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+            if not shadow_record_key:
+                standalone_units.append([record])
+                continue
+            identity_key = self._autonomous_open_candidate_identity_key(record)
+            grouped_records.setdefault((shadow_record_key, identity_key), []).append(record)
+
+        logical_units: list[
+            list[
+                tuple[
+                    StrategySignal,
+                    DecisionCandidate,
+                    DecisionEvaluation,
+                    "DecisionAwareSignalSink.OpportunityPolicyResolution",
+                ]
+            ]
+        ] = [*standalone_units, *grouped_records.values()]
+        if len(logical_units) <= batch_cap:
+            return pending_accepted
+
+        ranked_units = sorted(
+            logical_units,
+            key=lambda records: self._autonomous_open_candidate_rank_key(
+                sorted(records, key=self._autonomous_open_candidate_rank_key)[0]
+            ),
+        )
+        winner_units = ranked_units[:batch_cap]
+        loser_units = ranked_units[batch_cap:]
+        winners = [record for unit in winner_units for record in unit]
+        winner_shadow_keys = [
+            str((record[0].metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+            for record in winners
+        ]
+        winner_shadow_keys = list(dict.fromkeys(key for key in winner_shadow_keys if key))
+        winner_shadow_keys_payload = ",".join(winner_shadow_keys)
+        winner_primary_shadow_key = winner_shadow_keys[0] if winner_shadow_keys else ""
+        for loser_rank, loser_unit in enumerate(loser_units, start=batch_cap + 1):
+            for loser_signal, loser_candidate, _evaluation, _policy in loser_unit:
+                scope_key = self._autonomous_open_arbitration_scope_key(
+                    signal=loser_signal,
+                    candidate=loser_candidate,
+                )
+                rejection_info: dict[str, object] = {
+                    "reason": "autonomous_open_batch_cap_loser",
+                    "autonomous_open_batch_cap": str(batch_cap),
+                    "autonomous_open_batch_rank": str(loser_rank),
+                }
+                if winner_primary_shadow_key:
+                    rejection_info["winner_shadow_record_key"] = winner_primary_shadow_key
+                if winner_shadow_keys_payload:
+                    rejection_info["batch_winner_shadow_record_keys"] = winner_shadow_keys_payload
+                if scope_key is not None:
+                    rejection_info["arbitration_scope"] = "|".join(scope_key)
+                self._record_filtered_signal(
+                    signal=loser_signal,
+                    strategy_name=strategy_name,
+                    schedule_name=schedule_name,
+                    risk_profile=risk_profile,
+                    timestamp=timestamp,
+                    rejection_info=rejection_info,
+                )
+
+        return [*passthrough_records, *winners]
 
     def _autonomous_open_arbitration_scope_key(
         self,
@@ -3980,7 +4137,10 @@ class DecisionAwareSignalSink(StrategySignalSink):
         error_detail: str | None = None
         evaluation_type: str | None = None
         winner_shadow_record_key: str | None = None
+        batch_winner_shadow_record_keys: str | None = None
         arbitration_scope: str | None = None
+        autonomous_open_batch_cap: str | None = None
+        autonomous_open_batch_rank: str | None = None
         if rejection_info:
             reason = str(rejection_info.get("reason") or "") or None
             raw_probability = rejection_info.get("probability")
@@ -3990,7 +4150,16 @@ class DecisionAwareSignalSink(StrategySignalSink):
             winner_shadow_record_key = (
                 str(rejection_info.get("winner_shadow_record_key") or "") or None
             )
+            batch_winner_shadow_record_keys = (
+                str(rejection_info.get("batch_winner_shadow_record_keys") or "") or None
+            )
             arbitration_scope = str(rejection_info.get("arbitration_scope") or "") or None
+            autonomous_open_batch_cap = (
+                str(rejection_info.get("autonomous_open_batch_cap") or "") or None
+            )
+            autonomous_open_batch_rank = (
+                str(rejection_info.get("autonomous_open_batch_rank") or "") or None
+            )
             try:
                 probability = float(raw_probability) if raw_probability is not None else None
             except (TypeError, ValueError):  # pragma: no cover - defensywnie
@@ -4014,8 +4183,14 @@ class DecisionAwareSignalSink(StrategySignalSink):
             metadata.setdefault("evaluation_type", evaluation_type)
         if winner_shadow_record_key:
             metadata.setdefault("winner_shadow_record_key", winner_shadow_record_key)
+        if batch_winner_shadow_record_keys:
+            metadata.setdefault("batch_winner_shadow_record_keys", batch_winner_shadow_record_keys)
         if arbitration_scope:
             metadata.setdefault("arbitration_scope", arbitration_scope)
+        if autonomous_open_batch_cap:
+            metadata.setdefault("autonomous_open_batch_cap", autonomous_open_batch_cap)
+        if autonomous_open_batch_rank:
+            metadata.setdefault("autonomous_open_batch_rank", autonomous_open_batch_rank)
 
         metadata.setdefault("environment", self._environment)
         metadata.setdefault("exchange", self._exchange)

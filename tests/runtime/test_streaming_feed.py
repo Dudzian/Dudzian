@@ -2077,6 +2077,399 @@ def test_decision_aware_sink_arbitrates_opposite_side_autonomous_open_candidates
     assert filtered_events[0].metadata.get("winner_shadow_record_key") == "shadow-buy"
 
 
+@pytest.mark.parametrize("reversed_input_order", [False, True])
+def test_decision_aware_sink_batch_cap_limits_autonomous_open_winners_only(
+    reversed_input_order: bool,
+) -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+        max_autonomous_open_winners_per_batch=1,
+    )
+    ts = datetime(2026, 4, 18, 14, 30, tzinfo=timezone.utc)
+    btc_weaker = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-btc-weaker",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 9.0,
+            "expected_probability": 0.7,
+        },
+    )
+    btc_stronger = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.7,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-btc-stronger",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 11.0,
+            "expected_probability": 0.7,
+        },
+    )
+    eth_global_winner = StrategySignal(
+        symbol="ETH/USDT",
+        side="BUY",
+        confidence=0.6,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-eth-winner",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 12.0,
+            "expected_probability": 0.65,
+        },
+    )
+    close_signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.5,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-close",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 5.0,
+            "expected_probability": 0.5,
+        },
+    )
+    non_autonomous_signal = StrategySignal(
+        symbol="SOL/USDT",
+        side="BUY",
+        confidence=0.4,
+        metadata={
+            "opportunity_shadow_record_key": "shadow-non-autonomous",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 4.0,
+            "expected_probability": 0.5,
+        },
+    )
+    ordered_signals = [btc_weaker, btc_stronger, eth_global_winner, close_signal, non_autonomous_signal]
+    if reversed_input_order:
+        ordered_signals.reverse()
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=tuple(ordered_signals),
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    forwarded_keys = {
+        str(signal.metadata.get("opportunity_shadow_record_key"))
+        for signal in forwarded
+        if isinstance(signal.metadata, dict)
+    }
+    assert forwarded_keys == {
+        "shadow-eth-winner",
+        "shadow-close",
+        "shadow-non-autonomous",
+    }
+
+    filtered_events = [event for event in journal.events if event.status == "filtered"]
+    assert len(filtered_events) == 2
+    filtered_reasons = sorted(event.metadata.get("decision_reason") for event in filtered_events)
+    assert filtered_reasons == [
+        "autonomous_open_batch_cap_loser",
+        "autonomous_open_candidate_arbitration_loser",
+    ]
+    batch_cap_event = next(
+        event
+        for event in filtered_events
+        if event.metadata.get("decision_reason") == "autonomous_open_batch_cap_loser"
+    )
+    assert batch_cap_event.metadata.get("winner_shadow_record_key") == "shadow-eth-winner"
+    assert batch_cap_event.metadata.get("batch_winner_shadow_record_keys") == "shadow-eth-winner"
+    assert batch_cap_event.metadata.get("autonomous_open_batch_cap") == "1"
+    assert batch_cap_event.metadata.get("autonomous_open_batch_rank") == "2"
+    assert batch_cap_event.metadata.get("arbitration_scope") == "BTC/USDT|paper|paper-01|paper_autonomous"
+
+
+def test_decision_aware_sink_without_batch_cap_preserves_multi_symbol_autonomous_open_behavior() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=_DummyJournal(),
+    )
+    ts = datetime(2026, 4, 18, 14, 45, tzinfo=timezone.utc)
+    signals = (
+        StrategySignal(
+            symbol="BTC/USDT",
+            side="BUY",
+            confidence=0.7,
+            metadata={
+                "opportunity_autonomy_mode": "paper_autonomous",
+                "opportunity_shadow_record_key": "shadow-btc",
+                "opportunity_decision_timestamp": ts.isoformat(),
+                "expected_return_bps": 9.0,
+                "expected_probability": 0.7,
+            },
+        ),
+        StrategySignal(
+            symbol="ETH/USDT",
+            side="BUY",
+            confidence=0.8,
+            metadata={
+                "opportunity_autonomy_mode": "paper_autonomous",
+                "opportunity_shadow_record_key": "shadow-eth",
+                "opportunity_decision_timestamp": ts.isoformat(),
+                "expected_return_bps": 8.0,
+                "expected_probability": 0.8,
+            },
+        ),
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=signals,
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    assert {signal.metadata.get("opportunity_shadow_record_key") for signal in forwarded} == {
+        "shadow-btc",
+        "shadow-eth",
+    }
+
+
+def test_decision_aware_sink_batch_cap_counts_true_duplicate_group_as_one_slot_when_group_wins() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+        max_autonomous_open_winners_per_batch=1,
+    )
+    ts = datetime(2026, 4, 18, 15, 10, tzinfo=timezone.utc)
+    duplicate_one = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-duplicate-group",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 12.0,
+            "expected_probability": 0.7,
+        },
+    )
+    duplicate_two = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-duplicate-group",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 12.0,
+            "expected_probability": 0.7,
+        },
+    )
+    weaker_other = StrategySignal(
+        symbol="ETH/USDT",
+        side="BUY",
+        confidence=0.6,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-other-weaker",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 9.0,
+            "expected_probability": 0.7,
+        },
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=(duplicate_one, duplicate_two, weaker_other),
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    forwarded_keys = [signal.metadata.get("opportunity_shadow_record_key") for signal in forwarded]
+    assert forwarded_keys.count("shadow-duplicate-group") == 2
+    assert "shadow-other-weaker" not in forwarded_keys
+
+    filtered_events = [event for event in journal.events if event.status == "filtered"]
+    assert len(filtered_events) == 1
+    event = filtered_events[0]
+    assert event.metadata.get("decision_reason") == "autonomous_open_batch_cap_loser"
+    assert event.metadata.get("winner_shadow_record_key") == "shadow-duplicate-group"
+    assert event.metadata.get("batch_winner_shadow_record_keys") == "shadow-duplicate-group"
+
+
+def test_decision_aware_sink_batch_cap_filters_entire_true_duplicate_group_when_group_loses() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+        max_autonomous_open_winners_per_batch=1,
+    )
+    ts = datetime(2026, 4, 18, 15, 20, tzinfo=timezone.utc)
+    stronger_other = StrategySignal(
+        symbol="ETH/USDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-other-stronger",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 15.0,
+            "expected_probability": 0.8,
+        },
+    )
+    duplicate_one = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.7,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-duplicate-loser-group",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 12.0,
+            "expected_probability": 0.7,
+        },
+    )
+    duplicate_two = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.7,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-duplicate-loser-group",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 12.0,
+            "expected_probability": 0.7,
+        },
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=(stronger_other, duplicate_one, duplicate_two),
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    assert [signal.metadata.get("opportunity_shadow_record_key") for signal in forwarded] == [
+        "shadow-other-stronger"
+    ]
+
+    filtered_events = [event for event in journal.events if event.status == "filtered"]
+    assert len(filtered_events) == 2
+    assert all(
+        event.metadata.get("decision_reason") == "autonomous_open_batch_cap_loser"
+        for event in filtered_events
+    )
+    assert all(
+        event.metadata.get("winner_shadow_record_key") == "shadow-other-stronger"
+        for event in filtered_events
+    )
+    assert all(
+        event.metadata.get("batch_winner_shadow_record_keys") == "shadow-other-stronger"
+        for event in filtered_events
+    )
+
+
 def test_decision_aware_sink_opposite_side_open_arbitration_tie_uses_stable_technical_tiebreak() -> None:
     base_sink = InMemoryStrategySignalSink()
 
