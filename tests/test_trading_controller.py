@@ -11575,7 +11575,9 @@ def test_opportunity_autonomy_active_budget_mixed_batch_close_then_open_frees_sl
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=active_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=active_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=new_open_key,
@@ -11677,7 +11679,9 @@ def test_opportunity_autonomy_active_budget_mixed_batch_open_then_close_preserve
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=active_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=active_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=blocked_open_key,
