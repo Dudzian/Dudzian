@@ -2284,6 +2284,119 @@ def test_decision_aware_sink_without_batch_cap_preserves_multi_symbol_autonomous
     }
 
 
+def test_decision_aware_sink_batch_cap_zero_filters_all_autonomous_open_and_keeps_passthrough() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+        max_autonomous_open_winners_per_batch=0,
+    )
+    ts = datetime(2026, 4, 18, 14, 50, tzinfo=timezone.utc)
+    autonomous_open_btc = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.7,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-btc-autonomous-open",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 12.0,
+            "expected_probability": 0.8,
+        },
+    )
+    autonomous_open_eth = StrategySignal(
+        symbol="ETH/USDT",
+        side="BUY",
+        confidence=0.6,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-eth-autonomous-open",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 10.0,
+            "expected_probability": 0.7,
+        },
+    )
+    close_signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.5,
+        metadata={
+            "opportunity_autonomy_mode": "paper_autonomous",
+            "opportunity_shadow_record_key": "shadow-close-passthrough",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 4.0,
+            "expected_probability": 0.5,
+        },
+    )
+    non_autonomous_signal = StrategySignal(
+        symbol="SOL/USDT",
+        side="BUY",
+        confidence=0.4,
+        metadata={
+            "opportunity_shadow_record_key": "shadow-non-autonomous-passthrough",
+            "opportunity_decision_timestamp": ts.isoformat(),
+            "expected_return_bps": 3.0,
+            "expected_probability": 0.4,
+        },
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=ts,
+        signals=(
+            autonomous_open_btc,
+            autonomous_open_eth,
+            close_signal,
+            non_autonomous_signal,
+        ),
+    )
+
+    records = sink.export()
+    assert len(records) == 1
+    _, forwarded = records[0]
+    forwarded_keys = {
+        str(signal.metadata.get("opportunity_shadow_record_key"))
+        for signal in forwarded
+        if isinstance(signal.metadata, dict)
+    }
+    assert forwarded_keys == {
+        "shadow-close-passthrough",
+        "shadow-non-autonomous-passthrough",
+    }
+
+    filtered_events = [event for event in journal.events if event.status == "filtered"]
+    assert len(filtered_events) == 2
+    assert all(
+        event.metadata.get("decision_reason") == "autonomous_open_batch_cap_loser"
+        for event in filtered_events
+    )
+    assert all(event.metadata.get("autonomous_open_batch_cap") == "0" for event in filtered_events)
+    assert {event.metadata.get("autonomous_open_batch_rank") for event in filtered_events} == {"1", "2"}
+
+
 def test_build_decision_sink_passes_batch_cap_from_decision_engine_config() -> None:
     base_sink = InMemoryStrategySignalSink()
     bootstrap = SimpleNamespace(
