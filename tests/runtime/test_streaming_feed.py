@@ -1811,7 +1811,9 @@ def test_decision_aware_sink_missing_shadow_key_tie_uses_stable_technical_tiebre
     assert forwarded[0].metadata.get("candidate_tag") == "alpha"
 
 
-def test_decision_aware_sink_single_key_duplicate_contract_requires_same_candidate_identity() -> None:
+def test_decision_aware_sink_single_key_duplicate_contract_requires_same_candidate_identity() -> (
+    None
+):
     base_sink = InMemoryStrategySignalSink()
 
     class _StubOrchestrator:
@@ -2168,7 +2170,13 @@ def test_decision_aware_sink_batch_cap_limits_autonomous_open_winners_only(
             "expected_probability": 0.5,
         },
     )
-    ordered_signals = [btc_weaker, btc_stronger, eth_global_winner, close_signal, non_autonomous_signal]
+    ordered_signals = [
+        btc_weaker,
+        btc_stronger,
+        eth_global_winner,
+        close_signal,
+        non_autonomous_signal,
+    ]
     if reversed_input_order:
         ordered_signals.reverse()
 
@@ -2210,10 +2218,15 @@ def test_decision_aware_sink_batch_cap_limits_autonomous_open_winners_only(
     assert batch_cap_event.metadata.get("batch_winner_shadow_record_keys") == "shadow-eth-winner"
     assert batch_cap_event.metadata.get("autonomous_open_batch_cap") == "1"
     assert batch_cap_event.metadata.get("autonomous_open_batch_rank") == "2"
-    assert batch_cap_event.metadata.get("arbitration_scope") == "BTC/USDT|paper|paper-01|paper_autonomous"
+    assert (
+        batch_cap_event.metadata.get("arbitration_scope")
+        == "BTC/USDT|paper|paper-01|paper_autonomous"
+    )
 
 
-def test_decision_aware_sink_without_batch_cap_preserves_multi_symbol_autonomous_open_behavior() -> None:
+def test_decision_aware_sink_without_batch_cap_preserves_multi_symbol_autonomous_open_behavior() -> (
+    None
+):
     base_sink = InMemoryStrategySignalSink()
 
     class _StubOrchestrator:
@@ -2284,7 +2297,9 @@ def test_decision_aware_sink_without_batch_cap_preserves_multi_symbol_autonomous
     }
 
 
-def test_decision_aware_sink_batch_cap_zero_filters_all_autonomous_open_and_keeps_passthrough() -> None:
+def test_decision_aware_sink_batch_cap_zero_filters_all_autonomous_open_and_keeps_passthrough() -> (
+    None
+):
     base_sink = InMemoryStrategySignalSink()
 
     class _StubOrchestrator:
@@ -2394,7 +2409,10 @@ def test_decision_aware_sink_batch_cap_zero_filters_all_autonomous_open_and_keep
         for event in filtered_events
     )
     assert all(event.metadata.get("autonomous_open_batch_cap") == "0" for event in filtered_events)
-    assert {event.metadata.get("autonomous_open_batch_rank") for event in filtered_events} == {"1", "2"}
+    assert {event.metadata.get("autonomous_open_batch_rank") for event in filtered_events} == {
+        "1",
+        "2",
+    }
 
 
 def test_build_decision_sink_passes_batch_cap_from_decision_engine_config() -> None:
@@ -2425,7 +2443,9 @@ def test_build_decision_sink_passes_batch_cap_from_decision_engine_config() -> N
     assert sink._max_autonomous_open_winners_per_batch == 2
 
 
-def test_decision_aware_sink_batch_cap_counts_true_duplicate_group_as_one_slot_when_group_wins() -> None:
+def test_decision_aware_sink_batch_cap_counts_true_duplicate_group_as_one_slot_when_group_wins() -> (
+    None
+):
     base_sink = InMemoryStrategySignalSink()
 
     class _StubOrchestrator:
@@ -2514,7 +2534,9 @@ def test_decision_aware_sink_batch_cap_counts_true_duplicate_group_as_one_slot_w
     assert event.metadata.get("batch_winner_shadow_record_keys") == "shadow-duplicate-group"
 
 
-def test_decision_aware_sink_batch_cap_filters_entire_true_duplicate_group_when_group_loses() -> None:
+def test_decision_aware_sink_batch_cap_filters_entire_true_duplicate_group_when_group_loses() -> (
+    None
+):
     base_sink = InMemoryStrategySignalSink()
 
     class _StubOrchestrator:
@@ -2611,7 +2633,9 @@ def test_decision_aware_sink_batch_cap_filters_entire_true_duplicate_group_when_
     )
 
 
-def test_decision_aware_sink_opposite_side_open_arbitration_tie_uses_stable_technical_tiebreak() -> None:
+def test_decision_aware_sink_opposite_side_open_arbitration_tie_uses_stable_technical_tiebreak() -> (
+    None
+):
     base_sink = InMemoryStrategySignalSink()
 
     class _StubOrchestrator:

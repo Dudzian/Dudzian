@@ -416,12 +416,8 @@ def _assert_no_durable_artifacts_for_shadow_key(
     *,
     shadow_key: str,
 ) -> None:
-    assert all(
-        row.correlation_key != shadow_key for row in repository.load_open_outcomes()
-    )
-    assert all(
-        row.correlation_key != shadow_key for row in repository.load_outcome_labels()
-    )
+    assert all(row.correlation_key != shadow_key for row in repository.load_open_outcomes())
+    assert all(row.correlation_key != shadow_key for row in repository.load_outcome_labels())
 
 
 _AUTONOMY_CHAIN_EXPECTED_KEYS = (
@@ -9892,7 +9888,9 @@ def test_opportunity_autonomy_opposite_side_cross_correlation_is_not_suppressed_
         row for row in repository.load_open_outcomes() if row.correlation_key == buy_correlation_key
     )
     buy_labels_before_sell = [
-        row for row in repository.load_outcome_labels() if row.correlation_key == buy_correlation_key
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == buy_correlation_key
     ]
     controller.process_signals([sell_signal_other_key])
 
@@ -9904,25 +9902,31 @@ def test_opportunity_autonomy_opposite_side_cross_correlation_is_not_suppressed_
         event.get("reason") != "duplicate_autonomous_open_reentry_suppressed"
         for event in skipped_events
     )
-    open_outcomes_by_key = {
-        row.correlation_key: row for row in repository.load_open_outcomes()
-    }
+    open_outcomes_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
     assert buy_correlation_key in open_outcomes_by_key
     assert sell_correlation_key in open_outcomes_by_key
     assert open_outcomes_by_key[buy_correlation_key].side == "BUY"
     assert open_outcomes_by_key[sell_correlation_key].side == "SELL"
-    assert open_outcomes_by_key[buy_correlation_key].closed_quantity == buy_state_before_sell.closed_quantity
+    assert (
+        open_outcomes_by_key[buy_correlation_key].closed_quantity
+        == buy_state_before_sell.closed_quantity
+    )
     buy_labels_after_sell = [
-        row for row in repository.load_outcome_labels() if row.correlation_key == buy_correlation_key
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == buy_correlation_key
     ]
     assert [row.label_quality for row in buy_labels_after_sell] == [
         row.label_quality for row in buy_labels_before_sell
     ]
     assert all(
-        row.label_quality not in {"partial_exit_unconfirmed", "final"} for row in buy_labels_after_sell
+        row.label_quality not in {"partial_exit_unconfirmed", "final"}
+        for row in buy_labels_after_sell
     )
     sell_labels = [
-        row for row in repository.load_outcome_labels() if row.correlation_key == sell_correlation_key
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == sell_correlation_key
     ]
     assert sell_labels
     assert any(row.label_quality == "execution_proxy_pending_exit" for row in sell_labels)
@@ -10029,15 +10033,14 @@ def test_opportunity_autonomy_opposite_side_cross_correlation_after_restore_is_n
         }
         for event in skipped_events
     )
-    open_outcomes_by_key = {
-        row.correlation_key: row for row in repository.load_open_outcomes()
-    }
+    open_outcomes_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
     assert restored_buy_key in open_outcomes_by_key
     assert fresh_sell_key in open_outcomes_by_key
     assert open_outcomes_by_key[restored_buy_key].side == "BUY"
     assert open_outcomes_by_key[fresh_sell_key].side == "SELL"
     assert (
-        open_outcomes_by_key[restored_buy_key].closed_quantity == restored_state_before_sell.closed_quantity
+        open_outcomes_by_key[restored_buy_key].closed_quantity
+        == restored_state_before_sell.closed_quantity
     )
     restored_labels_after_sell = [
         row for row in repository.load_outcome_labels() if row.correlation_key == restored_buy_key
@@ -10131,10 +10134,11 @@ def test_opportunity_autonomy_opposite_side_cross_correlation_ignores_foreign_sc
 
     assert len(execution.requests) == 1
     skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
-    assert all(event.get("reason") != "duplicate_autonomous_open_reentry_suppressed" for event in skipped_events)
-    open_outcomes_by_key = {
-        row.correlation_key: row for row in repository.load_open_outcomes()
-    }
+    assert all(
+        event.get("reason") != "duplicate_autonomous_open_reentry_suppressed"
+        for event in skipped_events
+    )
+    open_outcomes_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
     assert foreign_buy_key in open_outcomes_by_key
     assert open_outcomes_by_key[foreign_buy_key].side == "BUY"
     assert open_outcomes_by_key[fresh_sell_key].side == "SELL"
@@ -10206,10 +10210,11 @@ def test_non_autonomous_opposite_side_cross_correlation_does_not_emit_autonomous
     assert execution.requests[0].side == "BUY"
     assert execution.requests[1].side == "SELL"
     skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
-    assert all(event.get("reason") != "duplicate_autonomous_open_reentry_suppressed" for event in skipped_events)
-    open_outcomes_by_key = {
-        row.correlation_key: row for row in repository.load_open_outcomes()
-    }
+    assert all(
+        event.get("reason") != "duplicate_autonomous_open_reentry_suppressed"
+        for event in skipped_events
+    )
+    open_outcomes_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
     assert open_outcomes_by_key[buy_key].side == "BUY"
     assert open_outcomes_by_key[sell_key].side == "SELL"
 
@@ -10501,7 +10506,9 @@ def test_opportunity_autonomy_duplicate_open_reentry_cross_correlation_multi_tra
     smaller_correlation_key = "aaa-cross-key"
     larger_correlation_key = "zzz-cross-key"
     replay_correlation_key = "mmm-cross-key"
-    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="dup-open-cross-key-tie-")))
+    repository = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="dup-open-cross-key-tie-"))
+    )
     repository.append_shadow_records(
         [
             replace(
@@ -10750,7 +10757,9 @@ def test_opportunity_autonomy_active_budget_blocks_second_open_across_submits() 
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=second_key,
@@ -10818,7 +10827,9 @@ def test_opportunity_autonomy_active_budget_restore_aware_blocks_new_open() -> N
         model_version="opportunity-budget-v2",
         rank=2,
     )
-    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="autonomy-budget-restore-")))
+    repository = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="autonomy-budget-restore-"))
+    )
     repository.append_shadow_records(
         [
             replace(
@@ -10966,12 +10977,20 @@ def test_opportunity_autonomy_active_budget_close_frees_slot() -> None:
 
     assert len(execution.requests) == 3
     assert [request.side for request in execution.requests] == ["BUY", "SELL", "BUY"]
-    assert [request.symbol for request in execution.requests] == ["BTC/USDT", "BTC/USDT", "ETH/USDT"]
+    assert [request.symbol for request in execution.requests] == [
+        "BTC/USDT",
+        "BTC/USDT",
+        "ETH/USDT",
+    ]
     skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
-    assert all(event.get("reason") != "autonomous_open_active_budget_exhausted" for event in skipped_events)
+    assert all(
+        event.get("reason") != "autonomous_open_active_budget_exhausted" for event in skipped_events
+    )
 
 
-def test_opportunity_autonomy_active_budget_ignores_foreign_scope_tracker_for_autonomous_open() -> None:
+def test_opportunity_autonomy_active_budget_ignores_foreign_scope_tracker_for_autonomous_open() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 13, 0, tzinfo=timezone.utc)
     local_key = OpportunityShadowRecord.build_record_key(
         symbol="ETH/USDT",
@@ -10979,7 +10998,9 @@ def test_opportunity_autonomy_active_budget_ignores_foreign_scope_tracker_for_au
         model_version="opportunity-budget-v4",
         rank=1,
     )
-    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="autonomy-budget-mixed-")))
+    repository = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="autonomy-budget-mixed-"))
+    )
     repository.append_shadow_records(
         [
             replace(
@@ -11046,7 +11067,9 @@ def test_opportunity_autonomy_active_budget_ignores_foreign_scope_tracker_for_au
 
 def test_opportunity_autonomy_active_budget_does_not_block_non_autonomous_open() -> None:
     decision_timestamp = datetime(2026, 1, 12, 13, 30, tzinfo=timezone.utc)
-    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="autonomy-budget-non-auto-")))
+    repository = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="autonomy-budget-non-auto-"))
+    )
     repository.upsert_open_outcome(
         repository.OpenOutcomeState(
             correlation_key="existing-autonomous-open",
@@ -11116,7 +11139,9 @@ def test_opportunity_autonomy_active_budget_none_is_backward_compatible() -> Non
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=second_key,
@@ -11168,7 +11193,9 @@ def test_opportunity_autonomy_active_budget_none_is_backward_compatible() -> Non
     assert any(row.correlation_key == first_key for row in repository.load_open_outcomes())
     assert any(row.correlation_key == second_key for row in repository.load_open_outcomes())
     skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
-    assert all(event.get("reason") != "autonomous_open_active_budget_exhausted" for event in skipped_events)
+    assert all(
+        event.get("reason") != "autonomous_open_active_budget_exhausted" for event in skipped_events
+    )
 
 
 @pytest.mark.parametrize("reversed_input_order", [False, True])
@@ -31612,9 +31639,9 @@ def test_opportunity_autonomy_batch_cap_e2e_winner_only_downstream_without_loser
     results = controller.process_signals(list(emitted))
 
     assert len(results) == 1
-    assert [request.metadata.get("opportunity_shadow_record_key") for request in execution.requests] == [
-        winner_key
-    ]
+    assert [
+        request.metadata.get("opportunity_shadow_record_key") for request in execution.requests
+    ] == [winner_key]
     order_events = [
         event
         for event in journal.export()
@@ -31627,8 +31654,12 @@ def test_opportunity_autonomy_batch_cap_e2e_winner_only_downstream_without_loser
             "order_partially_executed",
         }
     ]
-    assert {event.get("order_opportunity_shadow_record_key") for event in order_events} == {winner_key}
-    assert all(event.get("order_opportunity_shadow_record_key") != loser_key for event in order_events)
+    assert {event.get("order_opportunity_shadow_record_key") for event in order_events} == {
+        winner_key
+    }
+    assert all(
+        event.get("order_opportunity_shadow_record_key") != loser_key for event in order_events
+    )
 
     open_rows = repository.load_open_outcomes()
     assert [row.correlation_key for row in open_rows] == [winner_key]
@@ -31787,7 +31818,9 @@ def test_opportunity_autonomy_batch_cap_e2e_is_order_independent() -> None:
     assert loser_key not in forward[3]
 
 
-def test_opportunity_autonomy_batch_cap_e2e_applies_arbitration_then_cap_without_loser_leakage() -> None:
+def test_opportunity_autonomy_batch_cap_e2e_applies_arbitration_then_cap_without_loser_leakage() -> (
+    None
+):
     class _AcceptedOrchestrator:
         def evaluate_candidate(self, candidate, _context):
             return SimpleNamespace(
@@ -31889,7 +31922,9 @@ def test_opportunity_autonomy_batch_cap_e2e_applies_arbitration_then_cap_without
 
     exported = sink.export()
     emitted = exported[0][1]
-    assert [row.metadata.get("opportunity_shadow_record_key") for row in emitted] == [batch_winner_key]
+    assert [row.metadata.get("opportunity_shadow_record_key") for row in emitted] == [
+        batch_winner_key
+    ]
 
     repository = _autonomy_shadow_repository_with_final_outcomes(
         [4.0, 3.0], environment="paper", portfolio_id="paper-1"
@@ -31907,9 +31942,9 @@ def test_opportunity_autonomy_batch_cap_e2e_applies_arbitration_then_cap_without
     )
     controller.process_signals(list(emitted))
 
-    assert [request.metadata.get("opportunity_shadow_record_key") for request in execution.requests] == [
-        batch_winner_key
-    ]
+    assert [
+        request.metadata.get("opportunity_shadow_record_key") for request in execution.requests
+    ] == [batch_winner_key]
     order_events = [
         event
         for event in journal.export()
@@ -32028,7 +32063,10 @@ def test_opportunity_autonomy_batch_cap_none_preserves_previous_behavior_e2e() -
 
     exported = sink.export()
     emitted = exported[0][1]
-    assert {row.metadata.get("opportunity_shadow_record_key") for row in emitted} == {btc_key, eth_key}
+    assert {row.metadata.get("opportunity_shadow_record_key") for row in emitted} == {
+        btc_key,
+        eth_key,
+    }
 
     repository = _autonomy_shadow_repository_with_final_outcomes(
         [4.0, 3.0], environment="paper", portfolio_id="paper-1"
@@ -32045,7 +32083,9 @@ def test_opportunity_autonomy_batch_cap_none_preserves_previous_behavior_e2e() -
     )
     controller.process_signals(list(emitted))
 
-    request_keys = {request.metadata.get("opportunity_shadow_record_key") for request in execution.requests}
+    request_keys = {
+        request.metadata.get("opportunity_shadow_record_key") for request in execution.requests
+    }
     assert request_keys == {btc_key, eth_key}
     open_keys = {row.correlation_key for row in repository.load_open_outcomes()}
     assert open_keys == {btc_key, eth_key}
@@ -32148,9 +32188,9 @@ def test_opportunity_autonomy_batch_cap_duplicate_group_wins_as_single_slot_with
     )
     emitted = sink.export()[0][1]
     assert emitted
-    assert {
-        row.metadata.get("opportunity_shadow_record_key") for row in emitted
-    } == {duplicate_group_key}
+    assert {row.metadata.get("opportunity_shadow_record_key") for row in emitted} == {
+        duplicate_group_key
+    }
 
     repository = _autonomy_shadow_repository_with_final_outcomes(
         [4.0, 3.0], environment="paper", portfolio_id="paper-1"
@@ -32167,7 +32207,9 @@ def test_opportunity_autonomy_batch_cap_duplicate_group_wins_as_single_slot_with
     )
     controller.process_signals(list(emitted))
 
-    request_keys = [request.metadata.get("opportunity_shadow_record_key") for request in execution.requests]
+    request_keys = [
+        request.metadata.get("opportunity_shadow_record_key") for request in execution.requests
+    ]
     assert request_keys == [duplicate_group_key]
     assert weaker_other_symbol_key not in request_keys
     order_events = [
@@ -32310,7 +32352,9 @@ def test_opportunity_autonomy_batch_cap_duplicate_group_loses_without_any_downst
     )
     controller.process_signals(list(emitted))
 
-    request_keys = [request.metadata.get("opportunity_shadow_record_key") for request in execution.requests]
+    request_keys = [
+        request.metadata.get("opportunity_shadow_record_key") for request in execution.requests
+    ]
     assert request_keys == [stronger_other_symbol_key]
     assert duplicate_group_loser_key not in request_keys
     order_events = [

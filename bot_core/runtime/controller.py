@@ -2030,9 +2030,7 @@ class TradingController:
                 duplicate_open_guard_enabled
                 and (
                     existing_open_tracker is None
-                    or not self._is_closing_side(
-                        str(existing_open_tracker.side), str(request.side)
-                    )
+                    or not self._is_closing_side(str(existing_open_tracker.side), str(request.side))
                 )
                 and self._max_active_autonomous_open_positions is not None
             ):
@@ -2046,9 +2044,7 @@ class TradingController:
                         status="skipped",
                         metadata={
                             "reason": "autonomous_open_active_budget_exhausted",
-                            "active_autonomous_open_positions": str(
-                                active_autonomous_open_count
-                            ),
+                            "active_autonomous_open_positions": str(active_autonomous_open_count),
                             "max_active_autonomous_open_positions": str(
                                 self._max_active_autonomous_open_positions
                             ),
