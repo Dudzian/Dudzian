@@ -377,6 +377,53 @@ def _last_event(journal: CollectingDecisionJournal, event_type: str) -> Mapping[
     return events[-1]
 
 
+_ORDER_PATH_EVENT_TYPES = {
+    "order_submitted",
+    "order_executed",
+    "order_failed",
+    "order_execution_result",
+    "order_partially_executed",
+}
+
+
+def _request_shadow_keys(requests: Sequence[OrderRequest]) -> list[str]:
+    keys: list[str] = []
+    for request in requests:
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        if shadow_key:
+            keys.append(shadow_key)
+    return keys
+
+
+def _order_path_events_with_shadow_key(
+    journal: CollectingDecisionJournal, shadow_key: str
+) -> list[Mapping[str, str]]:
+    return [
+        event
+        for event in journal.export()
+        if event.get("event") in _ORDER_PATH_EVENT_TYPES
+        and (
+            str(event.get("order_opportunity_shadow_record_key") or "").strip() == shadow_key
+            or str(event.get("proxy_correlation_key") or "").strip() == shadow_key
+            or str(event.get("correlation_key") or "").strip() == shadow_key
+        )
+    ]
+
+
+def _assert_no_durable_artifacts_for_shadow_key(
+    repository: OpportunityShadowRepository,
+    *,
+    shadow_key: str,
+) -> None:
+    assert all(
+        row.correlation_key != shadow_key for row in repository.load_open_outcomes()
+    )
+    assert all(
+        row.correlation_key != shadow_key for row in repository.load_outcome_labels()
+    )
+
+
 _AUTONOMY_CHAIN_EXPECTED_KEYS = (
     "autonomy_requested_mode",
     "autonomy_upstream_effective_mode",
@@ -505,6 +552,7 @@ def _build_autonomy_controller(
     order_metadata_defaults: Mapping[str, object] | None = None,
     performance_guard_recent_final_window_size: int | None = None,
     performance_guard_max_scan_labels: int | None = None,
+    max_active_autonomous_open_positions: int | None = None,
 ) -> tuple[TradingController, DummyExecutionService, CollectingDecisionJournal]:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -523,6 +571,7 @@ def _build_autonomy_controller(
         opportunity_shadow_repository=opportunity_shadow_repository,
         performance_guard_recent_final_window_size=performance_guard_recent_final_window_size,
         performance_guard_max_scan_labels=performance_guard_max_scan_labels,
+        max_active_autonomous_open_positions=max_active_autonomous_open_positions,
     )
     return controller, execution, journal
 
@@ -556,6 +605,7 @@ def _build_autonomy_controller_with_execution(
     environment: str,
     execution_service: ExecutionService,
     opportunity_shadow_repository: OpportunityShadowRepository | None = None,
+    max_active_autonomous_open_positions: int | None = None,
 ) -> tuple[TradingController, CollectingDecisionJournal]:
     risk_engine = DummyRiskEngine()
     router, _channel, _audit = _router_with_channel()
@@ -570,6 +620,7 @@ def _build_autonomy_controller_with_execution(
         risk_profile="balanced",
         decision_journal=journal,
         opportunity_shadow_repository=opportunity_shadow_repository,
+        max_active_autonomous_open_positions=max_active_autonomous_open_positions,
     )
     return controller, journal
 
@@ -10678,6 +10729,446 @@ def test_opportunity_autonomy_duplicate_open_reentry_cross_correlation_does_not_
         and event.get("proxy_correlation_key") == close_correlation_key
     ]
     assert suppressed_events == []
+
+
+def test_opportunity_autonomy_active_budget_blocks_second_open_across_submits() -> None:
+    decision_timestamp = datetime(2026, 1, 12, 10, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-v1",
+        rank=1,
+    )
+    second_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-v1",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=second_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+    )
+    first_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="first_open",
+    )
+    second_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=second_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="second_open_should_be_budget_blocked",
+    )
+    second_signal.symbol = "ETH/USDT"
+
+    controller.process_signals([first_signal])
+    labels_before_second = repository.load_outcome_labels()
+    open_rows_before_second = repository.load_open_outcomes()
+    controller.process_signals([second_signal])
+
+    assert len(execution.requests) == 1
+    assert second_key not in _request_shadow_keys(execution.requests)
+    assert repository.load_open_outcomes() == open_rows_before_second
+    assert repository.load_outcome_labels() == labels_before_second
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=second_key)
+    assert _order_path_events_with_shadow_key(journal, second_key) == []
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert skipped_events[-1]["reason"] == "autonomous_open_active_budget_exhausted"
+    assert skipped_events[-1]["active_autonomous_open_positions"] == "1"
+    assert skipped_events[-1]["max_active_autonomous_open_positions"] == "1"
+
+
+def test_opportunity_autonomy_active_budget_restore_aware_blocks_new_open() -> None:
+    decision_timestamp = datetime(2026, 1, 12, 11, 0, tzinfo=timezone.utc)
+    restored_key = "restored-budget-key"
+    replay_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-v2",
+        rank=2,
+    )
+    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="autonomy-budget-restore-")))
+    repository.append_shadow_records(
+        [
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=replay_key,
+                    decision_timestamp=decision_timestamp,
+                ),
+                symbol="ETH/USDT",
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=restored_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=2),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+                "opportunity_policy_mode": "restored-live",
+                "decision_authority": "restored-authority",
+            },
+        )
+    )
+    execution = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=200.0)
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=replay_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="new_open_after_restore",
+    )
+    signal.symbol = "ETH/USDT"
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_policy_mode": "paper",
+        "decision_authority": "request-authority",
+    }
+
+    open_rows_before = repository.load_open_outcomes()
+    controller.process_signals([signal])
+
+    assert len(execution.requests) == 0
+    assert replay_key not in _request_shadow_keys(execution.requests)
+    assert repository.load_open_outcomes() == open_rows_before
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=replay_key)
+    assert _order_path_events_with_shadow_key(journal, replay_key) == []
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert skipped_events[-1]["reason"] == "autonomous_open_active_budget_exhausted"
+    assert skipped_events[-1]["order_opportunity_policy_mode"] == "paper"
+    assert skipped_events[-1]["order_decision_authority"] == "request-authority"
+    assert "order_opportunity_ai_enabled" not in skipped_events[-1]
+
+
+def test_opportunity_autonomy_active_budget_close_frees_slot() -> None:
+    decision_timestamp = datetime(2026, 1, 12, 12, 0, tzinfo=timezone.utc)
+    open_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-v3",
+        rank=1,
+    )
+    next_open_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-v3",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=open_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=next_open_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+    )
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="BUY",
+                correlation_key=open_key,
+                decision_timestamp=decision_timestamp,
+                include_decision_payload=True,
+                decision_effective_mode="paper_autonomous",
+                decision_primary_reason="open_first",
+            )
+        ]
+    )
+    controller.process_signals(
+        [
+            _autonomy_signal_with_correlation(
+                mode="paper_autonomous",
+                side="SELL",
+                correlation_key=open_key,
+                decision_timestamp=decision_timestamp,
+                include_mode=False,
+            )
+        ]
+    )
+    second_open = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=next_open_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="open_after_close",
+    )
+    second_open.symbol = "ETH/USDT"
+    controller.process_signals([second_open])
+
+    assert len(execution.requests) == 3
+    assert [request.side for request in execution.requests] == ["BUY", "SELL", "BUY"]
+    assert [request.symbol for request in execution.requests] == ["BTC/USDT", "BTC/USDT", "ETH/USDT"]
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert all(event.get("reason") != "autonomous_open_active_budget_exhausted" for event in skipped_events)
+
+
+def test_opportunity_autonomy_active_budget_ignores_foreign_scope_tracker_for_autonomous_open() -> None:
+    decision_timestamp = datetime(2026, 1, 12, 13, 0, tzinfo=timezone.utc)
+    local_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-v4",
+        rank=1,
+    )
+    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="autonomy-budget-mixed-")))
+    repository.append_shadow_records(
+        [
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=local_key,
+                    decision_timestamp=decision_timestamp,
+                ),
+                symbol="ETH/USDT",
+            ),
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key="foreign-scope-open",
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=3),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "live",
+                "portfolio": "live-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=local_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    signal.symbol = "ETH/USDT"
+
+    controller.process_signals([signal])
+
+    assert len(execution.requests) == 1
+    assert local_key in _request_shadow_keys(execution.requests)
+    assert _order_path_events_with_shadow_key(journal, local_key)
+    assert any(row.correlation_key == local_key for row in repository.load_open_outcomes())
+    skipped_events = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and event.get("reason") == "autonomous_open_active_budget_exhausted"
+    ]
+    assert skipped_events == []
+
+
+def test_opportunity_autonomy_active_budget_does_not_block_non_autonomous_open() -> None:
+    decision_timestamp = datetime(2026, 1, 12, 13, 30, tzinfo=timezone.utc)
+    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="autonomy-budget-non-auto-")))
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key="existing-autonomous-open",
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=2),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 1.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+    )
+    non_autonomous_key = "non-autonomous-open-key"
+    signal = _signal("BUY")
+    signal.symbol = "XRP/USDT"
+    signal.metadata = {
+        **dict(signal.metadata),
+        "opportunity_shadow_record_key": non_autonomous_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    controller.process_signals([signal])
+
+    assert len(execution.requests) == 1
+    assert non_autonomous_key in _request_shadow_keys(execution.requests)
+    assert _order_path_events_with_shadow_key(journal, non_autonomous_key)
+    skipped_events = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and event.get("reason") == "autonomous_open_active_budget_exhausted"
+    ]
+    assert skipped_events == []
+
+
+def test_opportunity_autonomy_active_budget_none_is_backward_compatible() -> None:
+    decision_timestamp = datetime(2026, 1, 12, 14, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-v5",
+        rank=1,
+    )
+    second_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-v5",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=second_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=None,
+    )
+    first_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    second_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=second_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    second_signal.symbol = "ETH/USDT"
+
+    controller.process_signals([first_signal])
+    controller.process_signals([second_signal])
+
+    assert len(execution.requests) == 2
+    request_shadow_keys = _request_shadow_keys(execution.requests)
+    assert first_key in request_shadow_keys
+    assert second_key in request_shadow_keys
+    assert _order_path_events_with_shadow_key(journal, first_key)
+    assert _order_path_events_with_shadow_key(journal, second_key)
+    assert any(row.correlation_key == first_key for row in repository.load_open_outcomes())
+    assert any(row.correlation_key == second_key for row in repository.load_open_outcomes())
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
+    assert all(event.get("reason") != "autonomous_open_active_budget_exhausted" for event in skipped_events)
 
 
 @pytest.mark.parametrize("reversed_input_order", [False, True])
