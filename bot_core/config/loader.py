@@ -3228,6 +3228,18 @@ def _load_decision_engine_config(
             raise ValueError(
                 "decision_engine.evaluation_history_limit musi być liczbą całkowitą"
             ) from exc
+    max_autonomous_open_winners_per_batch_raw = raw.get("max_autonomous_open_winners_per_batch")
+    max_autonomous_open_winners_per_batch: int | None = None
+    if max_autonomous_open_winners_per_batch_raw not in (None, ""):
+        try:
+            max_autonomous_open_winners_per_batch = max(
+                0,
+                _coerce_int(max_autonomous_open_winners_per_batch_raw, 0),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "decision_engine.max_autonomous_open_winners_per_batch musi być liczbą całkowitą"
+            ) from exc
     tco_config: DecisionEngineTCOConfig | None = None
     tco_raw = raw.get("tco")
     if DecisionEngineTCOConfig is not None and tco_raw:
@@ -3329,6 +3341,7 @@ def _load_decision_engine_config(
         require_cost_data=require_cost_data,
         penalty_cost_bps=penalty_cost_bps,
         evaluation_history_limit=evaluation_history_limit,
+        max_autonomous_open_winners_per_batch=max_autonomous_open_winners_per_batch,
         opportunity_policy_mode=opportunity_policy_mode,
         opportunity_ai_enabled=opportunity_ai_enabled,
         tco=tco_config,
