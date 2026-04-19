@@ -1190,6 +1190,46 @@ class TradingController:
             scope_portfolio and not tracker_portfolio
         )
 
+    def _find_matching_active_open_tracker_for_autonomous_open(
+        self,
+        *,
+        symbol: str,
+        current_side: str,
+        exclude_correlation_key: str,
+    ) -> tuple[str, _OpportunityOpenOutcomeTracker] | None:
+        matching_trackers: list[tuple[str, _OpportunityOpenOutcomeTracker]] = []
+        for tracked_correlation_key, tracker in self._opportunity_open_outcomes.items():
+            if exclude_correlation_key and tracked_correlation_key == exclude_correlation_key:
+                continue
+            if str(tracker.symbol) != str(symbol):
+                continue
+            if self._is_closing_side(str(tracker.side), current_side):
+                continue
+            if not self._matches_current_open_tracker_scope(
+                correlation_key=tracked_correlation_key,
+                symbol=str(symbol),
+                tracker=tracker,
+            ):
+                continue
+            matching_trackers.append((tracked_correlation_key, tracker))
+        if not matching_trackers:
+            return None
+
+        def _tracker_order(
+            item: tuple[str, _OpportunityOpenOutcomeTracker],
+        ) -> tuple[datetime, str]:
+            tracked_correlation_key, tracker = item
+            decision_timestamp = tracker.decision_timestamp
+            if not isinstance(decision_timestamp, datetime):
+                normalized_timestamp = datetime.max.replace(tzinfo=timezone.utc)
+            elif decision_timestamp.tzinfo is None:
+                normalized_timestamp = decision_timestamp.replace(tzinfo=timezone.utc)
+            else:
+                normalized_timestamp = decision_timestamp.astimezone(timezone.utc)
+            return normalized_timestamp, tracked_correlation_key
+
+        return min(matching_trackers, key=_tracker_order)
+
     def _record_decision_event(
         self,
         event_type: str,
@@ -1922,20 +1962,30 @@ class TradingController:
                 "paper_autonomous",
                 "live_autonomous",
             }
+            duplicate_open_tracker_key = correlation_key
+            duplicate_open_tracker = existing_open_tracker
+            if duplicate_open_guard_enabled and duplicate_open_tracker is None:
+                matching_tracker = self._find_matching_active_open_tracker_for_autonomous_open(
+                    symbol=str(request.symbol),
+                    current_side=str(request.side),
+                    exclude_correlation_key=correlation_key,
+                )
+                if matching_tracker is not None:
+                    duplicate_open_tracker_key, duplicate_open_tracker = matching_tracker
             if (
                 duplicate_open_guard_enabled
-                and existing_open_tracker is not None
+                and duplicate_open_tracker is not None
                 and self._matches_current_open_tracker_scope(
-                    correlation_key=correlation_key,
+                    correlation_key=duplicate_open_tracker_key,
                     symbol=str(request.symbol),
-                    tracker=existing_open_tracker,
+                    tracker=duplicate_open_tracker,
                 )
-                and str(existing_open_tracker.symbol) == str(request.symbol)
-                and not self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+                and str(duplicate_open_tracker.symbol) == str(request.symbol)
+                and not self._is_closing_side(str(duplicate_open_tracker.side), str(request.side))
             ):
                 request = self._apply_restored_runtime_lineage_to_request_metadata(
                     request=request,
-                    tracker=existing_open_tracker,
+                    tracker=duplicate_open_tracker,
                 )
                 self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
                 self._record_decision_event(
@@ -1946,7 +1996,8 @@ class TradingController:
                     metadata={
                         "reason": "duplicate_autonomous_open_reentry_suppressed",
                         "proxy_correlation_key": correlation_key,
-                        "existing_open_side": str(existing_open_tracker.side),
+                        "existing_open_side": str(duplicate_open_tracker.side),
+                        "existing_open_correlation_key": duplicate_open_tracker_key,
                     },
                 )
                 return None
