@@ -10840,7 +10840,9 @@ def test_opportunity_autonomy_active_budget_blocks_losers_within_single_process_
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=second_key,
@@ -10930,7 +10932,9 @@ def test_opportunity_autonomy_active_budget_preserves_duplicate_guard_precedence
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=primary_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=primary_key, decision_timestamp=decision_timestamp
+            ),
             _shadow_record_for_key(correlation_key=replay_key, decision_timestamp=replay_timestamp),
         ]
     )
@@ -10983,8 +10987,7 @@ def test_opportunity_autonomy_active_budget_preserves_duplicate_guard_precedence
     assert skipped_events[-1]["proxy_correlation_key"] == replay_key
     assert skipped_events[-1]["existing_open_correlation_key"] == primary_key
     assert all(
-        event.get("reason") != "autonomous_open_active_budget_exhausted"
-        for event in skipped_events
+        event.get("reason") != "autonomous_open_active_budget_exhausted" for event in skipped_events
     )
 
 
@@ -11007,8 +11010,12 @@ def test_opportunity_autonomy_active_budget_restore_aware_preserves_duplicate_gu
     repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="autonomy-budget-dup-")))
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=restored_key, decision_timestamp=decision_timestamp),
-            _shadow_record_for_key(correlation_key=replay_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=restored_key, decision_timestamp=decision_timestamp
+            ),
+            _shadow_record_for_key(
+                correlation_key=replay_key, decision_timestamp=decision_timestamp
+            ),
         ]
     )
     repository.upsert_open_outcome(
@@ -11065,9 +11072,7 @@ def test_opportunity_autonomy_active_budget_restore_aware_preserves_duplicate_gu
     assert repository.load_outcome_labels() == labels_before
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=replay_key)
     assert _order_path_events_with_shadow_key(journal, replay_key) == []
-    skipped_events = [
-        event for event in journal.export() if event["event"] == "signal_skipped"
-    ]
+    skipped_events = [event for event in journal.export() if event["event"] == "signal_skipped"]
     assert skipped_events
     event = skipped_events[-1]
     assert event["reason"] == "duplicate_autonomous_open_reentry_suppressed"
