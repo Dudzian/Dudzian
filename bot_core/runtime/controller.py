@@ -510,6 +510,7 @@ class TradingController:
     performance_guard_recent_final_window_size: int | None = None
     performance_guard_max_scan_labels: int | None = None
     max_active_autonomous_open_positions: int | None = None
+    enable_autonomous_open_ranked_selection_within_batch: bool = False
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -559,6 +560,11 @@ class TradingController:
         repr=False,
         default=None,
     )
+    _enable_autonomous_open_ranked_selection_within_batch: bool = field(
+        init=False,
+        repr=False,
+        default=False,
+    )
 
     def __post_init__(self) -> None:
         self.performance_guard_recent_final_window_size = _validate_optional_positive_int(
@@ -573,6 +579,9 @@ class TradingController:
             None
             if self.max_active_autonomous_open_positions is None
             else max(0, int(self.max_active_autonomous_open_positions))
+        )
+        self._enable_autonomous_open_ranked_selection_within_batch = bool(
+            self.enable_autonomous_open_ranked_selection_within_batch
         )
         self._clock = self.clock
         self._health_interval = _as_timedelta(self.health_check_interval)
@@ -1516,39 +1525,171 @@ class TradingController:
             prioritized.append((priority, index, signal, mode))
 
         prioritized.sort(key=lambda item: (-item[0], item[1]))
+        expanded_batch: list[tuple[int, StrategySignal]] = []
+        expanded_batch_index = 0
         for _priority, _index, signal, _mode in prioritized:
             expanded_signals = self._expand_signal(signal)
             if not expanded_signals:
                 continue
             for expanded_signal in expanded_signals:
-                per_leg_labels = dict(self._metric_labels)
-                per_leg_labels["symbol"] = expanded_signal.symbol
-                try:
-                    result = self._handle_signal(expanded_signal)
-                except Exception:  # noqa: BLE001
-                    _LOGGER.exception(
-                        "Błąd podczas przetwarzania rozszerzonego sygnału %s",
-                        expanded_signal,
-                    )
-                    raise
-                if result is not None:
-                    results.append(result)
-                    normalized_status = _normalize_execution_status(result.status)
-                    metric_result = (
-                        "executed"
-                        if normalized_status in _FILLED_EXECUTION_STATUSES
-                        else "not_filled"
-                    )
-                    self._metric_orders_total.inc(
-                        labels={
-                            **per_leg_labels,
-                            "result": metric_result,
-                            "side": expanded_signal.side.upper(),
-                        },
-                    )
+                expanded_batch.append((expanded_batch_index, expanded_signal))
+                expanded_batch_index += 1
+        for batch_index, expanded_signal in expanded_batch:
+            per_leg_labels = dict(self._metric_labels)
+            per_leg_labels["symbol"] = expanded_signal.symbol
+            if self._should_skip_signal_as_ranked_autonomous_open_loser(
+                batch_index=batch_index,
+                expanded_batch=expanded_batch,
+            ):
+                request = self._build_order_request(expanded_signal)
+                active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
+                self._metric_signals_total.inc(labels={**per_leg_labels, "status": "skipped"})
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=expanded_signal,
+                    request=request,
+                    status="skipped",
+                    metadata={
+                        "reason": "autonomous_open_active_budget_ranked_loser",
+                        "active_autonomous_open_positions": str(active_autonomous_open_count),
+                        "max_active_autonomous_open_positions": str(
+                            self._max_active_autonomous_open_positions
+                        ),
+                    },
+                )
+                continue
+            try:
+                result = self._handle_signal(expanded_signal)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Błąd podczas przetwarzania rozszerzonego sygnału %s",
+                    expanded_signal,
+                )
+                raise
+            if result is not None:
+                results.append(result)
+                normalized_status = _normalize_execution_status(result.status)
+                metric_result = (
+                    "executed"
+                    if normalized_status in _FILLED_EXECUTION_STATUSES
+                    else "not_filled"
+                )
+                self._metric_orders_total.inc(
+                    labels={
+                        **per_leg_labels,
+                        "result": metric_result,
+                        "side": expanded_signal.side.upper(),
+                    },
+                )
 
         self.maybe_report_health()
         return results
+
+    def _should_skip_signal_as_ranked_autonomous_open_loser(
+        self,
+        *,
+        batch_index: int,
+        expanded_batch: Sequence[tuple[int, StrategySignal]],
+    ) -> bool:
+        if not self._enable_autonomous_open_ranked_selection_within_batch:
+            return False
+        if self._max_active_autonomous_open_positions is None:
+            return False
+        active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
+        remaining_slots = self._max_active_autonomous_open_positions - active_autonomous_open_count
+        if remaining_slots < 0:
+            remaining_slots = 0
+
+        scored_candidates: list[tuple[float, float, float, tuple[str, ...], int]] = []
+        for candidate_batch_index, signal in expanded_batch:
+            if candidate_batch_index < batch_index:
+                continue
+            if self._is_budget_ranked_autonomous_open_candidate(signal):
+                metadata = self._normalize_signal_metadata(signal)
+                expected_return = self._decision_extract_expected_return(signal, metadata)
+                expected_probability = self._decision_extract_probability(signal, metadata)
+                try:
+                    confidence = float(signal.confidence)
+                except (TypeError, ValueError):
+                    confidence = 0.0
+                scored_candidates.append(
+                    (
+                        expected_return,
+                        expected_probability,
+                        confidence,
+                        self._ranked_autonomous_open_stable_tie_break_key(signal),
+                        candidate_batch_index,
+                    )
+                )
+        if not any(item[4] == batch_index for item in scored_candidates):
+            return False
+        if len(scored_candidates) <= remaining_slots:
+            return False
+        ranked_candidates = sorted(
+            scored_candidates,
+            key=lambda item: (-item[0], -item[1], -item[2], item[3]),
+        )
+        winner_indices = {item[4] for item in ranked_candidates[:remaining_slots]}
+        return batch_index not in winner_indices
+
+    def _is_budget_ranked_autonomous_open_candidate(self, signal: StrategySignal) -> bool:
+        metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        mode_raw = metadata.get("opportunity_autonomy_mode")
+        mode = str(mode_raw or "").strip().lower()
+        if mode not in {"paper_autonomous", "live_autonomous"}:
+            return False
+        normalized_side = _normalize_trade_side(signal.side)
+        if normalized_side is None:
+            return False
+        request = self._build_order_request(signal)
+        correlation_key = str(
+            (request.metadata or {}).get("opportunity_shadow_record_key") or ""
+        ).strip()
+        existing_open_tracker = (
+            self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
+        )
+        if (
+            existing_open_tracker is not None
+            and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+        ):
+            return False
+        duplicate_open_tracker_key = correlation_key
+        duplicate_open_tracker = existing_open_tracker
+        if duplicate_open_tracker is None:
+            matching_tracker = self._find_matching_active_open_tracker_for_autonomous_open(
+                symbol=str(request.symbol),
+                current_side=str(request.side),
+                exclude_correlation_key=correlation_key,
+            )
+            if matching_tracker is not None:
+                duplicate_open_tracker_key, duplicate_open_tracker = matching_tracker
+        if (
+            duplicate_open_tracker is not None
+            and self._matches_current_open_tracker_scope(
+                correlation_key=duplicate_open_tracker_key,
+                symbol=str(request.symbol),
+                tracker=duplicate_open_tracker,
+            )
+            and str(duplicate_open_tracker.symbol) == str(request.symbol)
+            and not self._is_closing_side(str(duplicate_open_tracker.side), str(request.side))
+        ):
+            return False
+        return True
+
+    def _ranked_autonomous_open_stable_tie_break_key(
+        self,
+        signal: StrategySignal,
+    ) -> tuple[str, ...]:
+        metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        return (
+            str(metadata.get("client_order_id") or "").strip(),
+            str(metadata.get("opportunity_shadow_record_key") or "").strip(),
+            str(metadata.get("opportunity_decision_timestamp") or "").strip(),
+            str(signal.symbol).strip(),
+            str(_normalize_trade_side(signal.side) or "").strip(),
+            str(metadata.get("opportunity_model_version") or "").strip(),
+            str(metadata.get("opportunity_decision_source") or "").strip(),
+        )
 
     def _collect_autonomous_open_arbitration_conflicts(
         self,
