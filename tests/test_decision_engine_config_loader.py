@@ -8,6 +8,50 @@ import yaml
 from bot_core.config.loader import load_core_config
 
 
+def _decision_engine_loader_base_payload() -> dict:
+    return {
+        "risk_profiles": {
+            "conservative": {
+                "max_daily_loss_pct": 0.02,
+                "max_position_pct": 0.1,
+                "target_volatility": 0.1,
+                "max_leverage": 2.0,
+                "stop_loss_atr_multiple": 1.0,
+                "max_open_positions": 5,
+                "hard_drawdown_pct": 0.2,
+            }
+        },
+        "alerts": {},
+        "environments": {
+            "paper_binance": {
+                "exchange": "binance_spot",
+                "environment": "paper",
+                "keychain_key": "binance_key",
+                "credential_purpose": "trading",
+                "data_cache_path": "./cache",
+                "risk_profile": "conservative",
+                "alert_channels": [],
+                "ip_allowlist": [],
+                "required_permissions": [],
+                "forbidden_permissions": [],
+            }
+        },
+        "decision_engine": {
+            "orchestrator": {
+                "max_cost_bps": 25.0,
+                "min_net_edge_bps": 5.0,
+                "max_daily_loss_pct": 0.2,
+                "max_drawdown_pct": 0.3,
+                "max_position_ratio": 3.0,
+                "max_open_positions": 8,
+                "max_latency_ms": 250.0,
+            },
+            "min_probability": 0.5,
+            "require_cost_data": True,
+        },
+    }
+
+
 def test_load_core_config_parses_decision_engine_tco(tmp_path: Path) -> None:
     config_data = {
         "risk_profiles": {
@@ -192,3 +236,60 @@ def test_load_core_config_maps_thresholds_and_overrides(tmp_path: Path) -> None:
     )
     assert len(normalized_paths) == 1
     assert Path(normalized_paths[0]).resolve() == report_path.resolve()
+
+
+def test_load_core_config_parses_autonomous_open_batch_cap_integer(tmp_path: Path) -> None:
+    config_data = _decision_engine_loader_base_payload()
+    config_data["decision_engine"]["max_autonomous_open_winners_per_batch"] = 3
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    core_config = load_core_config(config_path)
+
+    assert core_config.decision_engine is not None
+    assert core_config.decision_engine.max_autonomous_open_winners_per_batch == 3
+
+
+@pytest.mark.parametrize("raw_value", [None, ""])
+def test_load_core_config_keeps_autonomous_open_batch_cap_none_for_empty_values(
+    tmp_path: Path,
+    raw_value: object,
+) -> None:
+    config_data = _decision_engine_loader_base_payload()
+    config_data["decision_engine"]["max_autonomous_open_winners_per_batch"] = raw_value
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    core_config = load_core_config(config_path)
+
+    assert core_config.decision_engine is not None
+    assert core_config.decision_engine.max_autonomous_open_winners_per_batch is None
+
+
+def test_load_core_config_rejects_invalid_autonomous_open_batch_cap_type(tmp_path: Path) -> None:
+    config_data = _decision_engine_loader_base_payload()
+    config_data["decision_engine"]["max_autonomous_open_winners_per_batch"] = {"invalid": "type"}
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"decision_engine.max_autonomous_open_winners_per_batch musi być liczbą całkowitą",
+    ):
+        load_core_config(config_path)
+
+
+def test_load_core_config_clamps_negative_autonomous_open_batch_cap_to_zero(tmp_path: Path) -> None:
+    config_data = _decision_engine_loader_base_payload()
+    config_data["decision_engine"]["max_autonomous_open_winners_per_batch"] = -7
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    core_config = load_core_config(config_path)
+
+    assert core_config.decision_engine is not None
+    assert core_config.decision_engine.max_autonomous_open_winners_per_batch == 0

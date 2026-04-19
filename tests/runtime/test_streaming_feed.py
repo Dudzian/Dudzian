@@ -2284,6 +2284,34 @@ def test_decision_aware_sink_without_batch_cap_preserves_multi_symbol_autonomous
     }
 
 
+def test_build_decision_sink_passes_batch_cap_from_decision_engine_config() -> None:
+    base_sink = InMemoryStrategySignalSink()
+    bootstrap = SimpleNamespace(
+        decision_orchestrator=SimpleNamespace(),
+        risk_engine=SimpleNamespace(),
+        decision_engine_config=SimpleNamespace(
+            min_probability=0.6,
+            opportunity_policy_mode="shadow",
+            opportunity_ai_enabled=True,
+            evaluation_history_limit=128,
+            max_autonomous_open_winners_per_batch=2,
+        ),
+        environment=SimpleNamespace(exchange="binance_spot"),
+        decision_journal=None,
+    )
+
+    sink = pipeline_module._build_decision_sink(
+        bootstrap=bootstrap,
+        base_sink=base_sink,
+        default_notional=1_000.0,
+        environment_name="paper",
+        portfolio_id="paper-01",
+    )
+
+    assert sink is not None
+    assert sink._max_autonomous_open_winners_per_batch == 2
+
+
 def test_decision_aware_sink_batch_cap_counts_true_duplicate_group_as_one_slot_when_group_wins() -> None:
     base_sink = InMemoryStrategySignalSink()
 

@@ -2861,11 +2861,18 @@ def _build_decision_sink(
     exchange_name = getattr(bootstrap.environment, "exchange", "")
     journal = getattr(bootstrap, "decision_journal", None)
     history_limit = 256
+    max_autonomous_open_winners_per_batch: int | None = None
     if decision_config is not None:
         try:
             history_limit = int(getattr(decision_config, "evaluation_history_limit", history_limit))
         except (TypeError, ValueError):  # pragma: no cover - konfiguracja może być uszkodzona
             history_limit = 256
+        raw_batch_cap = getattr(decision_config, "max_autonomous_open_winners_per_batch", None)
+        if raw_batch_cap not in (None, ""):
+            try:
+                max_autonomous_open_winners_per_batch = max(0, int(raw_batch_cap))
+            except (TypeError, ValueError):  # pragma: no cover - konfiguracja może być uszkodzona
+                max_autonomous_open_winners_per_batch = None
 
     opportunity_shadow_adapter = OpportunityRuntimeShadowAdapter(
         journal=journal,
@@ -2892,6 +2899,7 @@ def _build_decision_sink(
         opportunity_ai_enabled_override=enabled_override,
         opportunity_ai_kill_switch_override=kill_switch_override,
         opportunity_runtime_controls=get_opportunity_runtime_controls(),
+        max_autonomous_open_winners_per_batch=max_autonomous_open_winners_per_batch,
     )
 
 

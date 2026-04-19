@@ -655,6 +655,7 @@ class DecisionEngineConfig:
     require_cost_data: bool = False
     penalty_cost_bps: float = 0.0
     evaluation_history_limit: int = 256
+    max_autonomous_open_winners_per_batch: int | None = None
     opportunity_policy_mode: str = "shadow"
     opportunity_ai_enabled: bool = True
     tco: DecisionEngineTCOConfig | None = None
