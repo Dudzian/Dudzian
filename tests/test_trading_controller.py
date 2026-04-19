@@ -11042,7 +11042,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_exact_tie_is_order_indep
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=second_key,
@@ -11311,7 +11313,10 @@ def test_opportunity_autonomy_active_budget_ranked_mode_full_stable_key_tie_is_d
 
     assert len(execution.requests) == 1
     assert _request_shadow_keys(execution.requests) == [shared_key]
-    assert str((execution.requests[0].metadata or {}).get("audit_probe") or "") == expected_winner_probe
+    assert (
+        str((execution.requests[0].metadata or {}).get("audit_probe") or "")
+        == expected_winner_probe
+    )
     assert all(
         str((request.metadata or {}).get("audit_probe") or "") != expected_loser_probe
         for request in execution.requests
@@ -11330,9 +11335,12 @@ def test_opportunity_autonomy_active_budget_ranked_mode_full_stable_key_tie_is_d
     ]
     assert order_events
     assert {
-        str(event.get("order_opportunity_shadow_record_key") or "").strip() for event in order_events
+        str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        for event in order_events
     } == {shared_key}
-    assert all(str(event.get("order_audit_probe") or "") != expected_loser_probe for event in order_events)
+    assert all(
+        str(event.get("order_audit_probe") or "") != expected_loser_probe for event in order_events
+    )
     assert [row.correlation_key for row in repository.load_open_outcomes()] == [shared_key]
     label_keys_after = {
         str(label.correlation_key or "").strip()
@@ -11476,7 +11484,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_close_then_open_frees_sl
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=existing_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=existing_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=new_key,
@@ -11544,7 +11554,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_close_then_open_frees_sl
     assert skipped_new_key == []
 
 
-def test_opportunity_autonomy_active_budget_ranked_mode_open_then_close_preserves_input_order() -> None:
+def test_opportunity_autonomy_active_budget_ranked_mode_open_then_close_preserves_input_order() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 40, tzinfo=timezone.utc)
     existing_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -11563,7 +11575,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_open_then_close_preserve
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=existing_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=existing_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=blocked_open_key,
@@ -11813,14 +11827,18 @@ def test_opportunity_autonomy_active_budget_ranked_mode_restore_aware_preserves_
         model_version="opportunity-budget-ranked-dup-v2",
         rank=2,
     )
-    repository = OpportunityShadowRepository(Path(tempfile.mkdtemp(prefix="autonomy-budget-ranked-dup-")))
+    repository = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="autonomy-budget-ranked-dup-"))
+    )
     repository.append_shadow_records(
         [
             _shadow_record_for_key(
                 correlation_key=restored_key,
                 decision_timestamp=decision_timestamp,
             ),
-            _shadow_record_for_key(correlation_key=replay_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=replay_key, decision_timestamp=decision_timestamp
+            ),
         ]
     )
     repository.upsert_open_outcome(
@@ -11844,7 +11862,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_restore_aware_preserves_
             },
         )
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="paper",
         execution_service=execution,
