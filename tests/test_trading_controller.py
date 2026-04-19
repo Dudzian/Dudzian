@@ -31012,6 +31012,841 @@ def test_upstream_handoff_mixed_batch_e2e_contract_is_identical_in_controller_an
     assert first_run[2] == second_run[2]
 
 
+def test_opportunity_autonomy_batch_cap_e2e_winner_only_downstream_without_loser_leakage() -> None:
+    class _AcceptedOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=0.0,
+                net_edge_bps=float(getattr(candidate, "expected_return_bps", 0.0) or 0.0),
+                model_name="batch-cap-e2e",
+                latency_ms=None,
+            )
+
+    decision_timestamp = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
+    winner_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=1,
+    )
+    loser_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=2,
+    )
+
+    def _build_signal(symbol: str, key: str, expected_return_bps: float) -> StrategySignal:
+        signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+        signal.symbol = symbol
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "expected_probability": 0.8,
+            "expected_return_bps": expected_return_bps,
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+        }
+        return signal
+
+    def _shadow_record_for_symbol(symbol: str, key: str) -> OpportunityShadowRecord:
+        return OpportunityShadowRecord(
+            record_key=key,
+            symbol=symbol,
+            decision_timestamp=decision_timestamp,
+            model_version="opportunity-v1",
+            decision_source="opportunity_ai_shadow",
+            expected_edge_bps=5.0,
+            success_probability=0.7,
+            confidence=0.3,
+            proposed_direction="long",
+            accepted=True,
+            rejection_reason=None,
+            rank=1,
+            provenance={"probability_method": "test"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+            context=OpportunityShadowContext(environment="paper"),
+        )
+
+    sink_journal = CollectingDecisionJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptedOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=sink_journal,
+        opportunity_shadow_adapter=None,
+        max_autonomous_open_winners_per_batch=1,
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=decision_timestamp,
+        signals=(
+            _build_signal("BTC/USDT", winner_key, 15.0),
+            _build_signal("ETH/USDT", loser_key, 7.0),
+        ),
+    )
+
+    exported = sink.export()
+    assert len(exported) == 1
+    emitted = exported[0][1]
+    assert [row.metadata.get("opportunity_shadow_record_key") for row in emitted] == [winner_key]
+
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_symbol("BTC/USDT", winner_key),
+            _shadow_record_for_symbol("ETH/USDT", loser_key),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    results = controller.process_signals(list(emitted))
+
+    assert len(results) == 1
+    assert [request.metadata.get("opportunity_shadow_record_key") for request in execution.requests] == [
+        winner_key
+    ]
+    order_events = [
+        event
+        for event in journal.export()
+        if event.get("event")
+        in {
+            "order_submitted",
+            "order_executed",
+            "order_failed",
+            "order_execution_result",
+            "order_partially_executed",
+        }
+    ]
+    assert {event.get("order_opportunity_shadow_record_key") for event in order_events} == {winner_key}
+    assert all(event.get("order_opportunity_shadow_record_key") != loser_key for event in order_events)
+
+    open_rows = repository.load_open_outcomes()
+    assert [row.correlation_key for row in open_rows] == [winner_key]
+    all_labels = repository.load_outcome_labels()
+    assert all(label.correlation_key != loser_key for label in all_labels)
+
+
+def test_opportunity_autonomy_batch_cap_e2e_is_order_independent() -> None:
+    class _AcceptedOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=0.0,
+                net_edge_bps=float(getattr(candidate, "expected_return_bps", 0.0) or 0.0),
+                model_name="batch-cap-e2e",
+                latency_ms=None,
+            )
+
+    decision_timestamp = datetime(2026, 1, 2, 12, 30, tzinfo=timezone.utc)
+    winner_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=1,
+    )
+    loser_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=2,
+    )
+
+    def _build_signal(symbol: str, key: str, expected_return_bps: float) -> StrategySignal:
+        signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+        signal.symbol = symbol
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "expected_probability": 0.8,
+            "expected_return_bps": expected_return_bps,
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+        }
+        return signal
+
+    def _shadow_record_for_symbol(symbol: str, key: str) -> OpportunityShadowRecord:
+        return OpportunityShadowRecord(
+            record_key=key,
+            symbol=symbol,
+            decision_timestamp=decision_timestamp,
+            model_version="opportunity-v1",
+            decision_source="opportunity_ai_shadow",
+            expected_edge_bps=5.0,
+            success_probability=0.7,
+            confidence=0.3,
+            proposed_direction="long",
+            accepted=True,
+            rejection_reason=None,
+            rank=1,
+            provenance={"probability_method": "test"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+            context=OpportunityShadowContext(environment="paper"),
+        )
+
+    def _run(
+        order: tuple[str, str],
+    ) -> tuple[list[str | None], list[tuple[str | None, str | None]], list[str], set[str]]:
+        sink = DecisionAwareSignalSink(
+            base_sink=InMemoryStrategySignalSink(),
+            orchestrator=_AcceptedOrchestrator(),
+            risk_engine=DummyRiskEngine(),
+            default_notional=1_000.0,
+            environment="paper",
+            exchange="BINANCE",
+            min_probability=0.4,
+            journal=CollectingDecisionJournal(),
+            opportunity_shadow_adapter=None,
+            max_autonomous_open_winners_per_batch=1,
+        )
+        signals_by_symbol = {
+            "BTC/USDT": _build_signal("BTC/USDT", winner_key, 15.0),
+            "ETH/USDT": _build_signal("ETH/USDT", loser_key, 7.0),
+        }
+        sink.submit(
+            strategy_name="trend-d1",
+            schedule_name="trend-d1",
+            risk_profile="balanced",
+            timestamp=decision_timestamp,
+            signals=tuple(signals_by_symbol[symbol] for symbol in order),
+        )
+        exported = sink.export()
+        emitted = exported[0][1]
+
+        repository = _autonomy_shadow_repository_with_final_outcomes(
+            [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+        )
+        repository.append_shadow_records(
+            [
+                _shadow_record_for_symbol("BTC/USDT", winner_key),
+                _shadow_record_for_symbol("ETH/USDT", loser_key),
+            ]
+        )
+        controller, execution, journal = _build_autonomy_controller(
+            environment="paper",
+            opportunity_shadow_repository=repository,
+        )
+        controller.process_signals(list(emitted))
+
+        request_keys = [
+            request.metadata.get("opportunity_shadow_record_key") for request in execution.requests
+        ]
+        order_events = [
+            event
+            for event in journal.export()
+            if event.get("event")
+            in {
+                "order_submitted",
+                "order_executed",
+                "order_failed",
+                "order_execution_result",
+                "order_partially_executed",
+            }
+        ]
+        order_event_snapshot = [
+            (
+                event.get("event"),
+                event.get("order_opportunity_shadow_record_key"),
+            )
+            for event in order_events
+        ]
+        order_event_keys = {
+            str(event.get("order_opportunity_shadow_record_key") or "")
+            for event in order_events
+            if str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        }
+        open_keys = [row.correlation_key for row in repository.load_open_outcomes()]
+        return request_keys, order_event_snapshot, open_keys, order_event_keys
+
+    forward = _run(("BTC/USDT", "ETH/USDT"))
+    reversed_order = _run(("ETH/USDT", "BTC/USDT"))
+
+    assert forward == reversed_order
+    assert forward[0] == [winner_key]
+    assert forward[1] == [
+        ("order_submitted", winner_key),
+        ("order_executed", winner_key),
+    ]
+    assert forward[2] == [winner_key]
+    assert loser_key not in forward[3]
+
+
+def test_opportunity_autonomy_batch_cap_e2e_applies_arbitration_then_cap_without_loser_leakage() -> None:
+    class _AcceptedOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=0.0,
+                net_edge_bps=float(getattr(candidate, "expected_return_bps", 0.0) or 0.0),
+                model_name="batch-cap-e2e",
+                latency_ms=None,
+            )
+
+    decision_timestamp = datetime(2026, 1, 2, 13, 0, tzinfo=timezone.utc)
+    batch_winner_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=1,
+    )
+    arbitration_winner_batch_loser_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=2,
+    )
+    arbitration_loser_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=3,
+    )
+
+    def _build_signal(symbol: str, key: str, expected_return_bps: float) -> StrategySignal:
+        signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+        signal.symbol = symbol
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "expected_probability": 0.8,
+            "expected_return_bps": expected_return_bps,
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+        }
+        return signal
+
+    def _shadow_record_for_symbol(symbol: str, key: str) -> OpportunityShadowRecord:
+        return OpportunityShadowRecord(
+            record_key=key,
+            symbol=symbol,
+            decision_timestamp=decision_timestamp,
+            model_version="opportunity-v1",
+            decision_source="opportunity_ai_shadow",
+            expected_edge_bps=5.0,
+            success_probability=0.7,
+            confidence=0.3,
+            proposed_direction="long",
+            accepted=True,
+            rejection_reason=None,
+            rank=1,
+            provenance={"probability_method": "test"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+            context=OpportunityShadowContext(environment="paper"),
+        )
+
+    sink_journal = CollectingDecisionJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptedOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=sink_journal,
+        opportunity_shadow_adapter=None,
+        max_autonomous_open_winners_per_batch=1,
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=decision_timestamp,
+        signals=(
+            _build_signal("BTC/USDT", arbitration_loser_key, 8.0),
+            _build_signal("BTC/USDT", arbitration_winner_batch_loser_key, 12.0),
+            _build_signal("ETH/USDT", batch_winner_key, 16.0),
+        ),
+    )
+
+    filtered = [event for event in sink_journal.export() if event.get("status") == "filtered"]
+    filtered_reasons = {event.get("decision_reason") for event in filtered}
+    assert "autonomous_open_candidate_arbitration_loser" in filtered_reasons
+    assert "autonomous_open_batch_cap_loser" in filtered_reasons
+
+    exported = sink.export()
+    emitted = exported[0][1]
+    assert [row.metadata.get("opportunity_shadow_record_key") for row in emitted] == [batch_winner_key]
+
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_symbol("ETH/USDT", batch_winner_key),
+            _shadow_record_for_symbol("BTC/USDT", arbitration_winner_batch_loser_key),
+            _shadow_record_for_symbol("BTC/USDT", arbitration_loser_key),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(list(emitted))
+
+    assert [request.metadata.get("opportunity_shadow_record_key") for request in execution.requests] == [
+        batch_winner_key
+    ]
+    order_events = [
+        event
+        for event in journal.export()
+        if event.get("event")
+        in {
+            "order_submitted",
+            "order_executed",
+            "order_failed",
+            "order_execution_result",
+            "order_partially_executed",
+        }
+    ]
+    assert {event.get("order_opportunity_shadow_record_key") for event in order_events} == {
+        batch_winner_key
+    }
+    assert all(
+        event.get("order_opportunity_shadow_record_key")
+        not in {arbitration_winner_batch_loser_key, arbitration_loser_key}
+        for event in order_events
+    )
+
+    loser_keys = {arbitration_winner_batch_loser_key, arbitration_loser_key}
+    open_keys = {row.correlation_key for row in repository.load_open_outcomes()}
+    assert open_keys == {batch_winner_key}
+    assert loser_keys.isdisjoint(open_keys)
+    all_label_keys = {label.correlation_key for label in repository.load_outcome_labels()}
+    assert loser_keys.isdisjoint(all_label_keys)
+
+
+def test_opportunity_autonomy_batch_cap_none_preserves_previous_behavior_e2e() -> None:
+    class _AcceptedOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=0.0,
+                net_edge_bps=float(getattr(candidate, "expected_return_bps", 0.0) or 0.0),
+                model_name="batch-cap-e2e",
+                latency_ms=None,
+            )
+
+    decision_timestamp = datetime(2026, 1, 2, 13, 30, tzinfo=timezone.utc)
+    btc_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=1,
+    )
+    eth_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-v1",
+        rank=2,
+    )
+
+    def _build_signal(symbol: str, key: str, expected_return_bps: float) -> StrategySignal:
+        signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+        signal.symbol = symbol
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "expected_probability": 0.8,
+            "expected_return_bps": expected_return_bps,
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+        }
+        return signal
+
+    def _shadow_record_for_symbol(symbol: str, key: str) -> OpportunityShadowRecord:
+        return OpportunityShadowRecord(
+            record_key=key,
+            symbol=symbol,
+            decision_timestamp=decision_timestamp,
+            model_version="opportunity-v1",
+            decision_source="opportunity_ai_shadow",
+            expected_edge_bps=5.0,
+            success_probability=0.7,
+            confidence=0.3,
+            proposed_direction="long",
+            accepted=True,
+            rejection_reason=None,
+            rank=1,
+            provenance={"probability_method": "test"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+            context=OpportunityShadowContext(environment="paper"),
+        )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptedOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=None,
+        max_autonomous_open_winners_per_batch=None,
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=decision_timestamp,
+        signals=(
+            _build_signal("BTC/USDT", btc_key, 15.0),
+            _build_signal("ETH/USDT", eth_key, 14.0),
+        ),
+    )
+
+    exported = sink.export()
+    emitted = exported[0][1]
+    assert {row.metadata.get("opportunity_shadow_record_key") for row in emitted} == {btc_key, eth_key}
+
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_symbol("BTC/USDT", btc_key),
+            _shadow_record_for_symbol("ETH/USDT", eth_key),
+        ]
+    )
+    controller, execution, _journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(list(emitted))
+
+    request_keys = {request.metadata.get("opportunity_shadow_record_key") for request in execution.requests}
+    assert request_keys == {btc_key, eth_key}
+    open_keys = {row.correlation_key for row in repository.load_open_outcomes()}
+    assert open_keys == {btc_key, eth_key}
+
+
+def test_opportunity_autonomy_batch_cap_duplicate_group_wins_as_single_slot_without_loser_leakage() -> (
+    None
+):
+    class _AcceptedOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=0.0,
+                net_edge_bps=float(getattr(candidate, "expected_return_bps", 0.0) or 0.0),
+                model_name="batch-cap-e2e-duplicate",
+                latency_ms=None,
+            )
+
+    decision_timestamp = datetime(2026, 1, 2, 14, 0, tzinfo=timezone.utc)
+    duplicate_group_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-dup-v1",
+        rank=1,
+    )
+    weaker_other_symbol_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-dup-v1",
+        rank=2,
+    )
+
+    def _build_signal(
+        symbol: str,
+        key: str,
+        expected_return_bps: float,
+        confidence: float,
+    ) -> StrategySignal:
+        signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+        signal.symbol = symbol
+        signal.confidence = confidence
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "expected_probability": 0.8,
+            "expected_return_bps": expected_return_bps,
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+        }
+        return signal
+
+    def _shadow_record_for_symbol(symbol: str, key: str) -> OpportunityShadowRecord:
+        return OpportunityShadowRecord(
+            record_key=key,
+            symbol=symbol,
+            decision_timestamp=decision_timestamp,
+            model_version="opportunity-v1",
+            decision_source="opportunity_ai_shadow",
+            expected_edge_bps=5.0,
+            success_probability=0.7,
+            confidence=0.3,
+            proposed_direction="long",
+            accepted=True,
+            rejection_reason=None,
+            rank=1,
+            provenance={"probability_method": "test"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+            context=OpportunityShadowContext(environment="paper"),
+        )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptedOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=None,
+        max_autonomous_open_winners_per_batch=1,
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=decision_timestamp,
+        signals=(
+            _build_signal("BTC/USDT", duplicate_group_key, 15.0, 0.85),
+            _build_signal("BTC/USDT", duplicate_group_key, 15.0, 0.85),
+            _build_signal("ETH/USDT", weaker_other_symbol_key, 9.0, 0.7),
+        ),
+    )
+    emitted = sink.export()[0][1]
+    assert emitted
+    assert {
+        row.metadata.get("opportunity_shadow_record_key") for row in emitted
+    } == {duplicate_group_key}
+
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_symbol("BTC/USDT", duplicate_group_key),
+            _shadow_record_for_symbol("ETH/USDT", weaker_other_symbol_key),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(list(emitted))
+
+    request_keys = [request.metadata.get("opportunity_shadow_record_key") for request in execution.requests]
+    assert request_keys == [duplicate_group_key]
+    assert weaker_other_symbol_key not in request_keys
+    order_events = [
+        event
+        for event in journal.export()
+        if event.get("event")
+        in {
+            "order_submitted",
+            "order_executed",
+            "order_failed",
+            "order_execution_result",
+            "order_partially_executed",
+        }
+    ]
+    assert {event.get("order_opportunity_shadow_record_key") for event in order_events} == {
+        duplicate_group_key
+    }
+    assert all(
+        event.get("order_opportunity_shadow_record_key") != weaker_other_symbol_key
+        for event in order_events
+    )
+    open_keys = {row.correlation_key for row in repository.load_open_outcomes()}
+    assert open_keys == {duplicate_group_key}
+    all_label_keys = {label.correlation_key for label in repository.load_outcome_labels()}
+    assert weaker_other_symbol_key not in all_label_keys
+
+
+def test_opportunity_autonomy_batch_cap_duplicate_group_loses_without_any_downstream_leakage() -> (
+    None
+):
+    class _AcceptedOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+                cost_bps=0.0,
+                net_edge_bps=float(getattr(candidate, "expected_return_bps", 0.0) or 0.0),
+                model_name="batch-cap-e2e-duplicate",
+                latency_ms=None,
+            )
+
+    decision_timestamp = datetime(2026, 1, 2, 14, 15, tzinfo=timezone.utc)
+    stronger_other_symbol_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-dup-v1",
+        rank=1,
+    )
+    duplicate_group_loser_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="batch-cap-dup-v1",
+        rank=2,
+    )
+
+    def _build_signal(
+        symbol: str,
+        key: str,
+        expected_return_bps: float,
+        confidence: float,
+    ) -> StrategySignal:
+        signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+        signal.symbol = symbol
+        signal.confidence = confidence
+        signal.metadata = {
+            **dict(signal.metadata),
+            "quantity": "1.0",
+            "price": "100.0",
+            "order_type": "market",
+            "expected_probability": 0.8,
+            "expected_return_bps": expected_return_bps,
+            "opportunity_shadow_record_key": key,
+            "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+        }
+        return signal
+
+    def _shadow_record_for_symbol(symbol: str, key: str) -> OpportunityShadowRecord:
+        return OpportunityShadowRecord(
+            record_key=key,
+            symbol=symbol,
+            decision_timestamp=decision_timestamp,
+            model_version="opportunity-v1",
+            decision_source="opportunity_ai_shadow",
+            expected_edge_bps=5.0,
+            success_probability=0.7,
+            confidence=0.3,
+            proposed_direction="long",
+            accepted=True,
+            rejection_reason=None,
+            rank=1,
+            provenance={"probability_method": "test"},
+            threshold_config=OpportunityThresholdConfig(),
+            snapshot={},
+            context=OpportunityShadowContext(environment="paper"),
+        )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptedOrchestrator(),
+        risk_engine=DummyRiskEngine(),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.4,
+        journal=CollectingDecisionJournal(),
+        opportunity_shadow_adapter=None,
+        max_autonomous_open_winners_per_batch=1,
+    )
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=decision_timestamp,
+        signals=(
+            _build_signal("ETH/USDT", stronger_other_symbol_key, 16.0, 0.9),
+            _build_signal("BTC/USDT", duplicate_group_loser_key, 10.0, 0.75),
+            _build_signal("BTC/USDT", duplicate_group_loser_key, 10.0, 0.74),
+        ),
+    )
+    emitted = sink.export()[0][1]
+    assert [row.metadata.get("opportunity_shadow_record_key") for row in emitted] == [
+        stronger_other_symbol_key
+    ]
+
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [4.0, 3.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_symbol("ETH/USDT", stronger_other_symbol_key),
+            _shadow_record_for_symbol("BTC/USDT", duplicate_group_loser_key),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    controller.process_signals(list(emitted))
+
+    request_keys = [request.metadata.get("opportunity_shadow_record_key") for request in execution.requests]
+    assert request_keys == [stronger_other_symbol_key]
+    assert duplicate_group_loser_key not in request_keys
+    order_events = [
+        event
+        for event in journal.export()
+        if event.get("event")
+        in {
+            "order_submitted",
+            "order_executed",
+            "order_failed",
+            "order_execution_result",
+            "order_partially_executed",
+        }
+    ]
+    assert {event.get("order_opportunity_shadow_record_key") for event in order_events} == {
+        stronger_other_symbol_key
+    }
+    assert all(
+        event.get("order_opportunity_shadow_record_key") != duplicate_group_loser_key
+        for event in order_events
+    )
+    open_keys = {row.correlation_key for row in repository.load_open_outcomes()}
+    assert open_keys == {stronger_other_symbol_key}
+    all_label_keys = {label.correlation_key for label in repository.load_outcome_labels()}
+    assert duplicate_group_loser_key not in all_label_keys
+
+
 def test_controller_attaches_decision_metadata_for_execution() -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
