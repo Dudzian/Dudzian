@@ -3412,7 +3412,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
         ] = []
         for record in pending_accepted:
             signal, candidate, _evaluation, _policy = record
-            scope_key = self._autonomous_open_arbitration_scope_key(signal=signal, candidate=candidate)
+            scope_key = self._autonomous_open_arbitration_scope_key(
+                signal=signal, candidate=candidate
+            )
             if scope_key is None:
                 passthrough.append(record)
                 continue
@@ -3516,7 +3518,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
         ] = []
         for record in pending_accepted:
             signal, candidate, _evaluation, _policy = record
-            scope_key = self._autonomous_open_arbitration_scope_key(signal=signal, candidate=candidate)
+            scope_key = self._autonomous_open_arbitration_scope_key(
+                signal=signal, candidate=candidate
+            )
             if scope_key is None:
                 passthrough_records.append(record)
             else:
@@ -3547,7 +3551,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
             ]
         ] = []
         for record in autonomous_open_records:
-            shadow_record_key = str((record[0].metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+            shadow_record_key = str(
+                (record[0].metadata or {}).get("opportunity_shadow_record_key") or ""
+            ).strip()
             if not shadow_record_key:
                 standalone_units.append([record])
                 continue
@@ -3623,7 +3629,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
         autonomy_mode = str(metadata.get("opportunity_autonomy_mode") or "").strip().lower()
         if autonomy_mode not in {"paper_autonomous", "live_autonomous"}:
             return None
-        portfolio_scope = str(metadata.get("portfolio_id") or metadata.get("portfolio") or "").strip()
+        portfolio_scope = str(
+            metadata.get("portfolio_id") or metadata.get("portfolio") or ""
+        ).strip()
         if not portfolio_scope:
             portfolio_scope = self._portfolio or self._environment
         return (
