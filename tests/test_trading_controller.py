@@ -377,6 +377,53 @@ def _last_event(journal: CollectingDecisionJournal, event_type: str) -> Mapping[
     return events[-1]
 
 
+def _ranked_selection_events(journal: CollectingDecisionJournal) -> list[Mapping[str, str]]:
+    return [
+        event
+        for event in journal.export()
+        if event.get("event") == "ranked_autonomous_open_selection"
+    ]
+
+
+def _ranked_selection_shadow_keys(event: Mapping[str, str], field: str) -> list[str]:
+    payload = json.loads(str(event.get(field) or "[]"))
+    assert isinstance(payload, list)
+    return [str(item) for item in payload]
+
+
+def _assert_single_ranked_selection_event_payload(
+    journal: CollectingDecisionJournal,
+    *,
+    remaining_slots: str,
+    candidate_count: str,
+    selected_count: str,
+    loser_count: str,
+    selected_shadow_keys: list[str],
+    loser_shadow_keys: list[str],
+) -> None:
+    ranked_selection_events = _ranked_selection_events(journal)
+    assert len(ranked_selection_events) == 1
+    ranked_selection_event = ranked_selection_events[0]
+    assert ranked_selection_event["remaining_slots"] == remaining_slots
+    assert ranked_selection_event["candidate_count"] == candidate_count
+    assert ranked_selection_event["selected_count"] == selected_count
+    assert ranked_selection_event["loser_count"] == loser_count
+    assert _ranked_selection_shadow_keys(ranked_selection_event, "selected_shadow_keys") == (
+        selected_shadow_keys
+    )
+    assert _ranked_selection_shadow_keys(ranked_selection_event, "loser_shadow_keys") == (
+        loser_shadow_keys
+    )
+    assert (
+        ranked_selection_event["ranking_basis"]
+        == "expected_return_bps,expected_probability,signal_confidence,stable_tie_break_key"
+    )
+    assert (
+        ranked_selection_event["ranked_mode_source"]
+        == "enable_autonomous_open_ranked_selection_within_batch"
+    )
+
+
 _ORDER_PATH_EVENT_TYPES = {
     "order_submitted",
     "order_executed",
@@ -11016,6 +11063,15 @@ def test_opportunity_autonomy_active_budget_ranked_mode_is_order_independent_wit
     assert skipped_events
     assert skipped_events[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
     assert skipped_events[-1]["max_active_autonomous_open_positions"] == "1"
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count="2",
+        selected_count="1",
+        loser_count="1",
+        selected_shadow_keys=[high_rank_key],
+        loser_shadow_keys=[low_rank_key],
+    )
 
 
 @pytest.mark.parametrize("reversed_input_order", [False, True])
@@ -11119,7 +11175,17 @@ def test_opportunity_autonomy_active_budget_ranked_mode_exact_tie_is_order_indep
         if event["event"] == "signal_skipped"
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == expected_loser
     ]
+    assert skipped_events
     assert skipped_events[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count="2",
+        selected_count="1",
+        loser_count="1",
+        selected_shadow_keys=[expected_winner],
+        loser_shadow_keys=[expected_loser],
+    )
 
 
 @pytest.mark.parametrize("reversed_input_order", [False, True])
@@ -11228,6 +11294,15 @@ def test_opportunity_autonomy_active_budget_ranked_mode_exact_tie_with_sparse_id
     ]
     assert skipped_events
     assert skipped_events[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count="2",
+        selected_count="1",
+        loser_count="1",
+        selected_shadow_keys=[first_key],
+        loser_shadow_keys=[second_key],
+    )
 
 
 @pytest.mark.parametrize("reversed_input_order", [False, True])
@@ -11352,6 +11427,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_full_stable_key_tie_is_d
     assert skipped_events
     assert skipped_events[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
     assert skipped_events[-1]["reason"] != "autonomous_open_active_budget_ranked_loser"
+    assert _ranked_selection_events(journal) == []
 
 
 def test_opportunity_autonomy_active_budget_ranked_mode_full_stable_key_tie_is_unreachable_for_non_duplicate_candidates() -> (
@@ -11465,6 +11541,1106 @@ def test_opportunity_autonomy_active_budget_ranked_mode_full_stable_key_tie_is_u
     assert skipped_events[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
 
 
+@pytest.mark.parametrize("reversed_input_order", [False, True])
+def test_opportunity_autonomy_active_budget_ranked_proof_keeps_duplicate_replay_candidate_in_mixed_batch(
+    reversed_input_order: bool,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 12, 11, 14, tzinfo=timezone.utc)
+    winner_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-mixed-dup-v1",
+        rank=1,
+    )
+    loser_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-mixed-dup-v1",
+        rank=2,
+    )
+    duplicate_replay_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-mixed-dup-v1",
+        rank=3,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=winner_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=loser_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            _shadow_record_for_key(
+                correlation_key=duplicate_replay_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=2),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 98.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    winner_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=winner_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    winner_signal.metadata = {
+        **dict(winner_signal.metadata),
+        "expected_return_bps": 12.0,
+        "expected_probability": 0.72,
+    }
+    loser_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=loser_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    loser_signal.symbol = "ETH/USDT"
+    loser_signal.metadata = {
+        **dict(loser_signal.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
+    duplicate_replay_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=duplicate_replay_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    duplicate_replay_signal.metadata = {
+        **dict(duplicate_replay_signal.metadata),
+        "expected_return_bps": 2.0,
+        "expected_probability": 0.5,
+    }
+
+    batch = [winner_signal, loser_signal, duplicate_replay_signal]
+    if reversed_input_order:
+        batch = [duplicate_replay_signal, winner_signal, loser_signal]
+
+    controller.process_signals(batch)
+
+    assert len(execution.requests) == 1
+    assert _request_shadow_keys(execution.requests) == [winner_key]
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=loser_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=duplicate_replay_key)
+    assert _order_path_events_with_shadow_key(journal, loser_key) == []
+    assert _order_path_events_with_shadow_key(journal, duplicate_replay_key) == []
+    expected_candidate_count = "3" if reversed_input_order else "2"
+    expected_loser_count = "2" if reversed_input_order else "1"
+    expected_loser_shadow_keys = (
+        [loser_key, duplicate_replay_key] if reversed_input_order else [loser_key]
+    )
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count=expected_candidate_count,
+        selected_count="1",
+        loser_count=expected_loser_count,
+        selected_shadow_keys=[winner_key],
+        loser_shadow_keys=expected_loser_shadow_keys,
+    )
+    ranked_selection_event = _ranked_selection_events(journal)[0]
+    assert duplicate_replay_key not in _ranked_selection_shadow_keys(
+        ranked_selection_event, "selected_shadow_keys"
+    )
+    if reversed_input_order:
+        assert duplicate_replay_key in _ranked_selection_shadow_keys(
+            ranked_selection_event, "loser_shadow_keys"
+        )
+    else:
+        assert duplicate_replay_key not in _ranked_selection_shadow_keys(
+            ranked_selection_event, "loser_shadow_keys"
+        )
+    replay_events = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == duplicate_replay_key
+    ]
+    assert replay_events
+    if reversed_input_order:
+        assert replay_events[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+    else:
+        assert replay_events[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+        assert replay_events[-1]["reason"] != "autonomous_open_active_budget_ranked_loser"
+    ranked_loser_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == loser_key
+    ]
+    assert ranked_loser_skips
+    assert ranked_loser_skips[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+
+
+def test_opportunity_autonomy_active_budget_ranked_proof_contains_full_set_for_three_ranked_candidates() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 16, tzinfo=timezone.utc)
+    high_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-top3-v1",
+        rank=1,
+    )
+    mid_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-top3-v1",
+        rank=2,
+    )
+    low_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-top3-v1",
+        rank=3,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=high_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=mid_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=low_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="XRP/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 98.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    high_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=high_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    high_signal.metadata = {
+        **dict(high_signal.metadata),
+        "expected_return_bps": 12.0,
+        "expected_probability": 0.72,
+    }
+    mid_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=mid_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    mid_signal.symbol = "ETH/USDT"
+    mid_signal.metadata = {
+        **dict(mid_signal.metadata),
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.66,
+    }
+    low_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=low_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    low_signal.symbol = "XRP/USDT"
+    low_signal.metadata = {
+        **dict(low_signal.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
+
+    controller.process_signals([high_signal, mid_signal, low_signal])
+
+    assert len(execution.requests) == 1
+    assert _request_shadow_keys(execution.requests) == [high_key]
+    assert _order_path_events_with_shadow_key(journal, high_key)
+    assert _order_path_events_with_shadow_key(journal, mid_key) == []
+    assert _order_path_events_with_shadow_key(journal, low_key) == []
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=mid_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=low_key)
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count="3",
+        selected_count="1",
+        loser_count="2",
+        selected_shadow_keys=[high_key],
+        loser_shadow_keys=[mid_key, low_key],
+    )
+    loser_events = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() in {mid_key, low_key}
+    ]
+    assert len(loser_events) == 2
+    loser_reasons = {event["reason"] for event in loser_events}
+    assert loser_reasons == {"autonomous_open_active_budget_ranked_loser"}
+
+
+def test_opportunity_autonomy_active_budget_ranked_duplicate_replay_not_suppressed_against_non_opened_primary() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 18, tzinfo=timezone.utc)
+    winner_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-dup-non-open-primary-v1",
+        rank=1,
+    )
+    primary_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-dup-non-open-primary-v1",
+        rank=2,
+    )
+    replay_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-dup-non-open-primary-v1",
+        rank=3,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=winner_b_key,
+                    decision_timestamp=decision_timestamp,
+                ),
+                symbol="ETH/USDT",
+            ),
+            _shadow_record_for_key(
+                correlation_key=primary_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=1),
+            ),
+            _shadow_record_for_key(
+                correlation_key=replay_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=2),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    winner_b_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=winner_b_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    winner_b_signal.symbol = "ETH/USDT"
+    winner_b_signal.metadata = {
+        **dict(winner_b_signal.metadata),
+        "expected_return_bps": 15.0,
+        "expected_probability": 0.8,
+    }
+    primary_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=primary_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    primary_a_signal.metadata = {
+        **dict(primary_a_signal.metadata),
+        "expected_return_bps": 7.0,
+        "expected_probability": 0.62,
+    }
+    replay_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=replay_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    replay_a_signal.metadata = {
+        **dict(replay_a_signal.metadata),
+        "expected_return_bps": 2.0,
+        "expected_probability": 0.51,
+    }
+
+    controller.process_signals([winner_b_signal, primary_a_signal, replay_a_signal])
+
+    assert len(execution.requests) == 1
+    assert _request_shadow_keys(execution.requests) == [winner_b_key]
+    assert _order_path_events_with_shadow_key(journal, winner_b_key)
+    assert _order_path_events_with_shadow_key(journal, primary_a_key) == []
+    assert _order_path_events_with_shadow_key(journal, replay_a_key) == []
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=primary_a_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=replay_a_key)
+    primary_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == primary_a_key
+    ]
+    replay_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == replay_a_key
+    ]
+    assert primary_skips
+    assert replay_skips
+    assert primary_skips[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+    assert replay_skips[-1]["reason"] != "duplicate_autonomous_open_reentry_suppressed"
+    assert replay_skips[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+
+
+def test_opportunity_autonomy_active_budget_ranked_duplicate_replay_not_suppressed_against_selected_primary_rejected_before_open() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 19, tzinfo=timezone.utc)
+    primary_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-selected-primary-rejected-v1",
+        rank=1,
+    )
+    replay_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-selected-primary-rejected-v1",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=primary_a_key,
+                decision_timestamp=decision_timestamp,
+            ),
+            _shadow_record_for_key(
+                correlation_key=replay_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=1),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {
+                "status": "rejected",
+                "filled_quantity": 0.0,
+                "avg_price": None,
+            },
+            {
+                "status": "filled",
+                "filled_quantity": 1.0,
+                "avg_price": 101.0,
+            },
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    primary_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=primary_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    primary_a_signal.metadata = {
+        **dict(primary_a_signal.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.66,
+    }
+    replay_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=replay_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    replay_a_signal.metadata = {
+        **dict(replay_a_signal.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
+
+    controller.process_signals([primary_a_signal, replay_a_signal])
+
+    assert len(execution.requests) == 2
+    assert _request_shadow_keys(execution.requests) == [primary_a_key, replay_a_key]
+    duplicate_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == replay_a_key
+    ]
+    assert duplicate_skips == []
+    replay_order_events = _order_path_events_with_shadow_key(journal, replay_a_key)
+    assert replay_order_events
+    assert any(event.get("event") == "order_executed" for event in replay_order_events)
+    assert any(row.correlation_key == replay_a_key for row in repository.load_open_outcomes())
+
+
+def test_opportunity_autonomy_active_budget_ranked_replay_before_selected_primary_rejected_is_not_duplicate_suppressed() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 21, tzinfo=timezone.utc)
+    replay_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-replay-before-primary-rejected-v1",
+        rank=1,
+    )
+    primary_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-replay-before-primary-rejected-v1",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=replay_a_key,
+                decision_timestamp=decision_timestamp,
+            ),
+            _shadow_record_for_key(
+                correlation_key=primary_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=1),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {
+                "status": "rejected",
+                "filled_quantity": 0.0,
+                "avg_price": None,
+            },
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    replay_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=replay_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    replay_a_signal.metadata = {
+        **dict(replay_a_signal.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
+    primary_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=primary_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    primary_a_signal.metadata = {
+        **dict(primary_a_signal.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.66,
+    }
+
+    controller.process_signals([replay_a_signal, primary_a_signal])
+
+    assert _request_shadow_keys(execution.requests) == [primary_a_key]
+    replay_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == replay_a_key
+    ]
+    assert replay_skips
+    assert replay_skips[-1]["reason"] != "duplicate_autonomous_open_reentry_suppressed"
+    assert replay_skips[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+    assert "existing_open_correlation_key" not in replay_skips[-1]
+    primary_events = _order_path_events_with_shadow_key(journal, primary_a_key)
+    assert primary_events
+    assert any(event.get("event") == "order_execution_result" for event in primary_events)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=replay_a_key)
+
+
+def test_opportunity_autonomy_active_budget_ranked_proof_includes_replay_when_primary_later_rejected() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 24, tzinfo=timezone.utc)
+    replay_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-proof-replay-primary-rejected-v1",
+        rank=1,
+    )
+    primary_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-proof-replay-primary-rejected-v1",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=replay_a_key,
+                decision_timestamp=decision_timestamp,
+            ),
+            _shadow_record_for_key(
+                correlation_key=primary_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=1),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {
+                "status": "rejected",
+                "filled_quantity": 0.0,
+                "avg_price": None,
+            },
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    replay_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=replay_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    replay_a_signal.metadata = {
+        **dict(replay_a_signal.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
+    primary_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=primary_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    primary_a_signal.metadata = {
+        **dict(primary_a_signal.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.66,
+    }
+
+    controller.process_signals([replay_a_signal, primary_a_signal])
+
+    replay_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == replay_a_key
+    ]
+    assert replay_skips
+    assert replay_skips[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+    assert replay_skips[-1]["reason"] != "duplicate_autonomous_open_reentry_suppressed"
+    assert "existing_open_correlation_key" not in replay_skips[-1]
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count="2",
+        selected_count="1",
+        loser_count="1",
+        selected_shadow_keys=[primary_a_key],
+        loser_shadow_keys=[replay_a_key],
+    )
+
+
+def test_opportunity_autonomy_active_budget_ranked_proof_includes_replay_when_primary_loses_to_other_symbol_winner() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 26, tzinfo=timezone.utc)
+    replay_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-proof-cross-symbol-winner-v1",
+        rank=1,
+    )
+    primary_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-proof-cross-symbol-winner-v1",
+        rank=2,
+    )
+    winner_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-proof-cross-symbol-winner-v1",
+        rank=3,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=replay_a_key,
+                decision_timestamp=decision_timestamp,
+            ),
+            _shadow_record_for_key(
+                correlation_key=primary_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=1),
+            ),
+            _shadow_record_for_key(
+                correlation_key=winner_b_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=2),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {
+                "status": "filled",
+                "filled_quantity": 1.0,
+                "avg_price": 101.0,
+            }
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    replay_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=replay_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    replay_a_signal.metadata = {
+        **dict(replay_a_signal.metadata),
+        "expected_return_bps": 4.0,
+        "expected_probability": 0.55,
+    }
+    primary_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=primary_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    primary_a_signal.metadata = {
+        **dict(primary_a_signal.metadata),
+        "expected_return_bps": 7.0,
+        "expected_probability": 0.62,
+    }
+    winner_b_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=winner_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    winner_b_signal.metadata = {
+        **dict(winner_b_signal.metadata),
+        "expected_return_bps": 10.0,
+        "expected_probability": 0.71,
+    }
+
+    controller.process_signals([replay_a_signal, primary_a_signal, winner_b_signal])
+
+    assert _request_shadow_keys(execution.requests) == [winner_b_key]
+    replay_events = _order_path_events_with_shadow_key(journal, replay_a_key)
+    primary_events = _order_path_events_with_shadow_key(journal, primary_a_key)
+    assert replay_events == []
+    assert primary_events == []
+    replay_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == replay_a_key
+    ]
+    assert replay_skips
+    assert replay_skips[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+    assert replay_skips[-1]["reason"] != "duplicate_autonomous_open_reentry_suppressed"
+    primary_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == primary_a_key
+    ]
+    assert primary_skips
+    assert primary_skips[-1]["reason"] == "autonomous_open_active_budget_ranked_loser"
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count="3",
+        selected_count="1",
+        loser_count="2",
+        selected_shadow_keys=[winner_b_key],
+        loser_shadow_keys=[primary_a_key, replay_a_key],
+    )
+
+
+def test_opportunity_autonomy_active_budget_ranked_proof_late_duplicate_after_earlier_ranked_loser_is_finalized() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 28, tzinfo=timezone.utc)
+    loser_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-proof-late-duplicate-v1",
+        rank=1,
+    )
+    primary_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-proof-late-duplicate-v1",
+        rank=2,
+    )
+    replay_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-proof-late-duplicate-v1",
+        rank=3,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=loser_b_key,
+                    decision_timestamp=decision_timestamp,
+                ),
+                symbol="ETH/USDT",
+            ),
+            _shadow_record_for_key(
+                correlation_key=primary_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=1),
+            ),
+            _shadow_record_for_key(
+                correlation_key=replay_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=2),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    loser_b_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=loser_b_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    loser_b_signal.symbol = "ETH/USDT"
+    loser_b_signal.metadata = {
+        **dict(loser_b_signal.metadata),
+        "expected_return_bps": 6.0,
+        "expected_probability": 0.60,
+    }
+    primary_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=primary_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    primary_a_signal.metadata = {
+        **dict(primary_a_signal.metadata),
+        "expected_return_bps": 10.0,
+        "expected_probability": 0.72,
+    }
+    replay_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=replay_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    replay_a_signal.metadata = {
+        **dict(replay_a_signal.metadata),
+        "expected_return_bps": 2.0,
+        "expected_probability": 0.51,
+    }
+
+    controller.process_signals([loser_b_signal, primary_a_signal, replay_a_signal])
+
+    assert _request_shadow_keys(execution.requests) == [primary_a_key]
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=loser_b_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=replay_a_key)
+    assert _order_path_events_with_shadow_key(journal, loser_b_key) == []
+    assert _order_path_events_with_shadow_key(journal, replay_a_key) == []
+    replay_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == replay_a_key
+    ]
+    assert replay_skips
+    assert replay_skips[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count="2",
+        selected_count="1",
+        loser_count="1",
+        selected_shadow_keys=[primary_a_key],
+        loser_shadow_keys=[loser_b_key],
+    )
+
+
+def test_opportunity_autonomy_active_budget_ranked_proof_late_duplicate_with_multiple_ranked_losers_is_finalized() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 11, 30, tzinfo=timezone.utc)
+    loser_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-proof-late-duplicate-multi-v1",
+        rank=1,
+    )
+    loser_c_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-proof-late-duplicate-multi-v1",
+        rank=2,
+    )
+    primary_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-proof-late-duplicate-multi-v1",
+        rank=3,
+    )
+    replay_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        model_version="opportunity-budget-ranked-proof-late-duplicate-multi-v1",
+        rank=4,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=loser_b_key,
+                    decision_timestamp=decision_timestamp,
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=loser_c_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="XRP/USDT",
+            ),
+            _shadow_record_for_key(
+                correlation_key=primary_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=2),
+            ),
+            _shadow_record_for_key(
+                correlation_key=replay_a_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=3),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 102.0}]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    loser_b_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=loser_b_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    loser_b_signal.symbol = "ETH/USDT"
+    loser_b_signal.metadata = {
+        **dict(loser_b_signal.metadata),
+        "expected_return_bps": 7.0,
+        "expected_probability": 0.62,
+    }
+    loser_c_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=loser_c_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    loser_c_signal.symbol = "XRP/USDT"
+    loser_c_signal.metadata = {
+        **dict(loser_c_signal.metadata),
+        "expected_return_bps": 5.0,
+        "expected_probability": 0.57,
+    }
+    primary_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=primary_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    primary_a_signal.metadata = {
+        **dict(primary_a_signal.metadata),
+        "expected_return_bps": 10.0,
+        "expected_probability": 0.71,
+    }
+    replay_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=replay_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    replay_a_signal.metadata = {
+        **dict(replay_a_signal.metadata),
+        "expected_return_bps": 2.0,
+        "expected_probability": 0.51,
+    }
+
+    controller.process_signals([loser_b_signal, loser_c_signal, primary_a_signal, replay_a_signal])
+
+    assert _request_shadow_keys(execution.requests) == [primary_a_key]
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=loser_b_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=loser_c_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=replay_a_key)
+    replay_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == replay_a_key
+    ]
+    assert replay_skips
+    assert replay_skips[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="1",
+        candidate_count="3",
+        selected_count="1",
+        loser_count="2",
+        selected_shadow_keys=[primary_a_key],
+        loser_shadow_keys=[loser_b_key, loser_c_key],
+    )
+
+
 def test_opportunity_autonomy_active_budget_ranked_mode_close_then_open_frees_slot() -> None:
     decision_timestamp = datetime(2026, 1, 12, 11, 20, tzinfo=timezone.utc)
     existing_key = OpportunityShadowRecord.build_record_key(
@@ -11552,6 +12728,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_close_then_open_frees_sl
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == new_key
     ]
     assert skipped_new_key == []
+    assert _ranked_selection_events(journal) == []
 
 
 def test_opportunity_autonomy_active_budget_ranked_mode_open_then_close_preserves_input_order() -> (
@@ -11726,6 +12903,7 @@ def test_opportunity_autonomy_active_budget_preserves_duplicate_guard_precedence
     assert all(
         event.get("reason") != "autonomous_open_active_budget_exhausted" for event in skipped_events
     )
+    assert _ranked_selection_events(journal) == []
 
 
 def test_opportunity_autonomy_active_budget_ranked_mode_preserves_duplicate_guard_precedence_within_single_batch() -> (
@@ -11809,6 +12987,83 @@ def test_opportunity_autonomy_active_budget_ranked_mode_preserves_duplicate_guar
         event.get("reason") != "autonomous_open_active_budget_ranked_loser"
         for event in skipped_events
     )
+    ranked_selection_events = _ranked_selection_events(journal)
+    assert ranked_selection_events == []
+
+
+def test_opportunity_autonomy_active_budget_non_ranked_mode_has_no_ranked_selection_proof_event() -> None:
+    decision_timestamp = datetime(2026, 1, 12, 12, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-default-mode-v1",
+        rank=1,
+    )
+    second_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-default-mode-v1",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=second_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=False,
+    )
+    first_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    second_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=second_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    second_signal.symbol = "ETH/USDT"
+
+    controller.process_signals([first_signal, second_signal])
+
+    assert len(execution.requests) == 1
+    assert _request_shadow_keys(execution.requests) == [first_key]
+    skipped_events = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == second_key
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["reason"] == "autonomous_open_active_budget_exhausted"
+    assert _ranked_selection_events(journal) == []
 
 
 def test_opportunity_autonomy_active_budget_ranked_mode_restore_aware_preserves_duplicate_guard_precedence() -> (
@@ -11904,6 +13159,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_restore_aware_preserves_
     assert event["order_opportunity_policy_mode"] == "paper"
     assert event["order_decision_authority"] == "shared_live_policy"
     assert "order_opportunity_ai_enabled" not in event
+    assert _ranked_selection_events(journal) == []
 
 
 def test_opportunity_autonomy_active_budget_restore_aware_preserves_duplicate_guard_precedence() -> (
