@@ -11797,7 +11797,9 @@ def test_opportunity_autonomy_active_budget_ranked_proof_keeps_duplicate_replay_
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=winner_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=winner_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=loser_key,
@@ -12049,7 +12051,8 @@ def test_opportunity_autonomy_active_budget_ranked_proof_contains_full_set_for_t
         event
         for event in journal.export()
         if event["event"] == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() in {mid_key, low_key}
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        in {mid_key, low_key}
     ]
     assert len(loser_events) == 2
     loser_reasons = {event["reason"] for event in loser_events}
@@ -12374,9 +12377,12 @@ def test_opportunity_autonomy_active_budget_ranked_mode_later_candidate_executes
     assert lower_rank_events
     assert any(event.get("event") == "order_executed" for event in lower_rank_events)
 
-    assert not any(row.correlation_key == higher_rank_key for row in repository.load_open_outcomes())
     assert not any(
-        row.correlation_key == higher_rank_key and row.label_quality in {"final", "partial_exit_unconfirmed"}
+        row.correlation_key == higher_rank_key for row in repository.load_open_outcomes()
+    )
+    assert not any(
+        row.correlation_key == higher_rank_key
+        and row.label_quality in {"final", "partial_exit_unconfirmed"}
         for row in repository.load_outcome_labels()
     )
     open_outcome_keys = sorted(row.correlation_key for row in repository.load_open_outcomes())
@@ -12384,9 +12390,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_later_candidate_executes
     assert _ranked_selection_events(journal) == []
 
     rejected_first_labels = [
-        row
-        for row in repository.load_outcome_labels()
-        if row.correlation_key == higher_rank_key
+        row for row in repository.load_outcome_labels() if row.correlation_key == higher_rank_key
     ]
     assert all(
         row.label_quality not in {"final", "partial_exit_unconfirmed"}
@@ -12768,9 +12772,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_deferred_promotion_proof
     assert high_key not in _ranked_selection_shadow_keys(
         ranked_selection_event, "selected_shadow_keys"
     )
-    assert mid_key not in _ranked_selection_shadow_keys(
-        ranked_selection_event, "loser_shadow_keys"
-    )
+    assert mid_key not in _ranked_selection_shadow_keys(ranked_selection_event, "loser_shadow_keys")
 
 
 @pytest.mark.parametrize("reversed_input_order", [False, True])
@@ -12854,7 +12856,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         include_decision_payload=True,
         decision_effective_mode="paper_autonomous",
     )
-    signal_a.metadata = {**dict(signal_a.metadata), "expected_return_bps": 9.0, "expected_probability": 0.66}
+    signal_a.metadata = {
+        **dict(signal_a.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.66,
+    }
     signal_b = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -12864,7 +12870,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_b.symbol = "ETH/USDT"
-    signal_b.metadata = {**dict(signal_b.metadata), "expected_return_bps": 8.0, "expected_probability": 0.64}
+    signal_b.metadata = {
+        **dict(signal_b.metadata),
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.64,
+    }
     signal_c = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -12874,7 +12884,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_c.symbol = "XRP/USDT"
-    signal_c.metadata = {**dict(signal_c.metadata), "expected_return_bps": 6.0, "expected_probability": 0.60}
+    signal_c.metadata = {
+        **dict(signal_c.metadata),
+        "expected_return_bps": 6.0,
+        "expected_probability": 0.60,
+    }
     signal_d = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -12884,7 +12898,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_d.symbol = "SOL/USDT"
-    signal_d.metadata = {**dict(signal_d.metadata), "expected_return_bps": 3.0, "expected_probability": 0.55}
+    signal_d.metadata = {
+        **dict(signal_d.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
 
     signals = [signal_a, signal_c, signal_d, signal_b]
     if reversed_input_order:
@@ -12895,8 +12913,14 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
     expected_primary_filled_key = key_b if reversed_input_order else key_a
     expected_primary_rejected_key = key_a if reversed_input_order else key_b
 
-    assert _request_shadow_keys(execution.requests) == [expected_primary_filled_key, expected_primary_rejected_key, key_c]
-    rejected_selected_events = _order_path_events_with_shadow_key(journal, expected_primary_rejected_key)
+    assert _request_shadow_keys(execution.requests) == [
+        expected_primary_filled_key,
+        expected_primary_rejected_key,
+        key_c,
+    ]
+    rejected_selected_events = _order_path_events_with_shadow_key(
+        journal, expected_primary_rejected_key
+    )
     assert rejected_selected_events
     assert any(
         event.get("event") == "order_execution_result" and event.get("status") == "rejected"
@@ -12936,10 +12960,14 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
     assert expected_primary_rejected_key not in _ranked_selection_shadow_keys(
         ranked_selection_event, "loser_shadow_keys"
     )
-    assert all(row.correlation_key != expected_primary_rejected_key for row in repository.load_open_outcomes())
+    assert all(
+        row.correlation_key != expected_primary_rejected_key
+        for row in repository.load_open_outcomes()
+    )
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=key_d)
     assert not any(
-        row.correlation_key == expected_primary_rejected_key and row.label_quality in {"final", "partial_exit_unconfirmed"}
+        row.correlation_key == expected_primary_rejected_key
+        and row.label_quality in {"final", "partial_exit_unconfirmed"}
         for row in repository.load_outcome_labels()
     )
 
@@ -13026,7 +13054,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
         include_decision_payload=True,
         decision_effective_mode="paper_autonomous",
     )
-    signal_a.metadata = {**dict(signal_a.metadata), "expected_return_bps": 9.0, "expected_probability": 0.66}
+    signal_a.metadata = {
+        **dict(signal_a.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.66,
+    }
     signal_b = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -13036,7 +13068,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
         decision_effective_mode="paper_autonomous",
     )
     signal_b.symbol = "ETH/USDT"
-    signal_b.metadata = {**dict(signal_b.metadata), "expected_return_bps": 8.0, "expected_probability": 0.64}
+    signal_b.metadata = {
+        **dict(signal_b.metadata),
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.64,
+    }
     signal_c = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -13046,7 +13082,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
         decision_effective_mode="paper_autonomous",
     )
     signal_c.symbol = "XRP/USDT"
-    signal_c.metadata = {**dict(signal_c.metadata), "expected_return_bps": 6.0, "expected_probability": 0.60}
+    signal_c.metadata = {
+        **dict(signal_c.metadata),
+        "expected_return_bps": 6.0,
+        "expected_probability": 0.60,
+    }
     signal_d = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -13056,7 +13096,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
         decision_effective_mode="paper_autonomous",
     )
     signal_d.symbol = "SOL/USDT"
-    signal_d.metadata = {**dict(signal_d.metadata), "expected_return_bps": 3.0, "expected_probability": 0.55}
+    signal_d.metadata = {
+        **dict(signal_d.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
 
     signals = [signal_d, signal_c, signal_a, signal_b]
     if reversed_input_order:
@@ -13064,7 +13108,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
 
     controller.process_signals(signals)
 
-    expected_request_shadow_keys = [key_b, key_a, key_c, key_d] if reversed_input_order else [key_a, key_b, key_c, key_d]
+    expected_request_shadow_keys = (
+        [key_b, key_a, key_c, key_d] if reversed_input_order else [key_a, key_b, key_c, key_d]
+    )
     request_shadow_keys = _request_shadow_keys(execution.requests)
     assert request_shadow_keys == expected_request_shadow_keys
     open_outcome_keys = sorted(row.correlation_key for row in repository.load_open_outcomes())
@@ -13093,7 +13139,8 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
     )
     for rejected_key in rejected_keys:
         assert not any(
-            row.correlation_key == rejected_key and row.label_quality in {"final", "partial_exit_unconfirmed"}
+            row.correlation_key == rejected_key
+            and row.label_quality in {"final", "partial_exit_unconfirmed"}
             for row in repository.load_outcome_labels()
         )
 
@@ -13756,8 +13803,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_duplicate_rep
     )
 
 
-def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_duplicate_replay_not_suppressed_when_primary_is_ranked_loser(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_duplicate_replay_not_suppressed_when_primary_is_ranked_loser() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 31, tzinfo=timezone.utc)
     winner_c_key = OpportunityShadowRecord.build_record_key(
         symbol="ETH/USDT",
@@ -13881,7 +13929,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_duplicate_rep
         "expected_probability": 0.58,
     }
 
-    controller.process_signals([winner_c_signal, winner_d_signal, primary_a_signal, replay_a_signal])
+    controller.process_signals(
+        [winner_c_signal, winner_d_signal, primary_a_signal, replay_a_signal]
+    )
 
     assert set(_request_shadow_keys(execution.requests)) == {winner_c_key, winner_d_key}
     assert _order_path_events_with_shadow_key(journal, primary_a_key) == []
@@ -14423,7 +14473,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_preserves_duplicate_guar
     assert ranked_selection_events == []
 
 
-def test_opportunity_autonomy_active_budget_non_ranked_mode_has_no_ranked_selection_proof_event() -> None:
+def test_opportunity_autonomy_active_budget_non_ranked_mode_has_no_ranked_selection_proof_event() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 12, 0, tzinfo=timezone.utc)
     first_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -14442,7 +14494,9 @@ def test_opportunity_autonomy_active_budget_non_ranked_mode_has_no_ranked_select
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=second_key,
