@@ -1543,6 +1543,9 @@ class TradingController:
             else {}
         )
         in_batch_actual_duplicate_suppressed_shadow_keys: set[str] = set()
+        ranked_runtime_loser_shadow_keys: set[str] = set()
+        ranked_runtime_promoted_shadow_keys: set[str] = set()
+        deferred_ranked_loser_candidates: list[tuple[int, StrategySignal, Mapping[str, str]]] = []
         for batch_index, expanded_signal in expanded_batch:
             per_leg_labels = dict(self._metric_labels)
             per_leg_labels["symbol"] = expanded_signal.symbol
@@ -1584,14 +1587,19 @@ class TradingController:
                 and ranked_selection["loser_count"] > 0
             ):
                 ranked_selection_proof_candidate = dict(ranked_selection)
-            if (
-                not ranked_selection_proof_pending
-                and ranked_selection is not None
-                and ranked_selection["skip_current"]
-                and ranked_selection["loser_count"] > 0
-            ):
-                ranked_selection_proof_pending = True
             if ranked_selection is not None and ranked_selection["skip_current"]:
+                remaining_slots_raw = ranked_selection.get("remaining_slots", 0)
+                try:
+                    remaining_slots = int(remaining_slots_raw)
+                except (TypeError, ValueError):
+                    remaining_slots = 0
+                if (
+                    remaining_slots > 0
+                    and duplicate_primary_key is None
+                    and self._max_active_autonomous_open_positions is not None
+                ):
+                    deferred_ranked_loser_candidates.append((batch_index, expanded_signal, per_leg_labels))
+                    continue
                 request = self._build_order_request(expanded_signal)
                 active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
                 self._metric_signals_total.inc(labels={**per_leg_labels, "status": "skipped"})
@@ -1608,6 +1616,10 @@ class TradingController:
                         ),
                     },
                 )
+                if pre_rank_shadow_key:
+                    ranked_runtime_loser_shadow_keys.add(pre_rank_shadow_key)
+                if not ranked_selection_proof_pending and ranked_selection["loser_count"] > 0:
+                    ranked_selection_proof_pending = True
                 continue
             try:
                 result = self._handle_signal(expanded_signal)
@@ -1630,17 +1642,102 @@ class TradingController:
                         "side": expanded_signal.side.upper(),
                     },
                 )
+        deferred_ranked_loser_candidates = sorted(
+            deferred_ranked_loser_candidates,
+            key=lambda item: (
+                -self._decision_extract_expected_return(
+                    item[1],
+                    self._normalize_signal_metadata(item[1]),
+                ),
+                -self._decision_extract_probability(
+                    item[1],
+                    self._normalize_signal_metadata(item[1]),
+                ),
+                -self._safe_float(getattr(item[1], "confidence", 0.0), default=0.0),
+                self._ranked_autonomous_open_stable_tie_break_key(item[1]),
+                item[0],
+            ),
+        )
+        for _, deferred_signal, deferred_labels in deferred_ranked_loser_candidates:
+            deferred_signal_metadata = self._normalize_signal_metadata(deferred_signal)
+            deferred_shadow_key = str(
+                deferred_signal_metadata.get("opportunity_shadow_record_key") or ""
+            ).strip()
+            if self._max_active_autonomous_open_positions is not None:
+                active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
+                if active_autonomous_open_count >= self._max_active_autonomous_open_positions:
+                    deferred_request = self._build_order_request(deferred_signal)
+                    self._metric_signals_total.inc(labels={**deferred_labels, "status": "skipped"})
+                    self._record_decision_event(
+                        "signal_skipped",
+                        signal=deferred_signal,
+                        request=deferred_request,
+                        status="skipped",
+                        metadata={
+                            "reason": "autonomous_open_active_budget_ranked_loser",
+                            "active_autonomous_open_positions": str(active_autonomous_open_count),
+                            "max_active_autonomous_open_positions": str(
+                                self._max_active_autonomous_open_positions
+                            ),
+                        },
+                    )
+                    if deferred_shadow_key:
+                        ranked_runtime_loser_shadow_keys.add(deferred_shadow_key)
+                    if not ranked_selection_proof_pending and ranked_selection_proof_candidate is not None:
+                        ranked_selection_proof_pending = bool(
+                            ranked_selection_proof_candidate.get("loser_count", 0)
+                        )
+                    continue
+            try:
+                deferred_result = self._handle_signal(deferred_signal)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Błąd podczas przetwarzania odroczonego sygnału ranked-loser %s",
+                    deferred_signal,
+                )
+                raise
+            if deferred_result is not None:
+                results.append(deferred_result)
+                if deferred_shadow_key:
+                    ranked_runtime_promoted_shadow_keys.add(deferred_shadow_key)
+                normalized_status = _normalize_execution_status(deferred_result.status)
+                metric_result = (
+                    "executed" if normalized_status in _FILLED_EXECUTION_STATUSES else "not_filled"
+                )
+                self._metric_orders_total.inc(
+                    labels={
+                        **deferred_labels,
+                        "result": metric_result,
+                        "side": deferred_signal.side.upper(),
+                    },
+                )
 
         if ranked_selection_proof_pending and ranked_selection_proof_candidate is not None:
-            selected_shadow_keys = [
-                key
-                for key in list(ranked_selection_proof_candidate["selected_shadow_keys"])
-                if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
-            ]
-            loser_shadow_keys = [
+            participant_shadow_keys = [
                 key
                 for key in list(ranked_selection_proof_candidate["loser_shadow_keys"])
+                + list(ranked_selection_proof_candidate["selected_shadow_keys"])
                 if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
+            ]
+            if ranked_runtime_promoted_shadow_keys:
+                selected_shadow_keys = [
+                    key
+                    for key in participant_shadow_keys
+                    if str(key).strip() in self._opportunity_open_outcomes
+                ]
+            else:
+                selected_shadow_keys = [
+                    key
+                    for key in list(ranked_selection_proof_candidate["selected_shadow_keys"])
+                    if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
+                ]
+            loser_shadow_keys = [
+                key
+                for key in participant_shadow_keys
+                if (
+                    str(key).strip() in ranked_runtime_loser_shadow_keys
+                    and str(key).strip() not in self._opportunity_open_outcomes
+                )
             ]
             self._record_decision_event(
                 "ranked_autonomous_open_selection",
