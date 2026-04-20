@@ -1483,6 +1483,8 @@ class TradingController:
         results: list[OrderResult] = []
         ai_blocked = self._update_ai_failover_state()
         autonomous_open_conflicts = self._collect_autonomous_open_arbitration_conflicts(signals)
+        ranked_selection_proof_pending = False
+        ranked_selection_proof_candidate: dict[str, object] | None = None
 
         prioritized: list[tuple[int, int, StrategySignal, str]] = []
         for index, signal in enumerate(signals):
@@ -1534,13 +1536,62 @@ class TradingController:
             for expanded_signal in expanded_signals:
                 expanded_batch.append((expanded_batch_index, expanded_signal))
                 expanded_batch_index += 1
+        in_batch_ranked_duplicate_replay_pairs = (
+            self._collect_in_batch_ranked_duplicate_replay_pairs(expanded_batch)
+            if self._enable_autonomous_open_ranked_selection_within_batch
+            and self._max_active_autonomous_open_positions is not None
+            else {}
+        )
+        in_batch_actual_duplicate_suppressed_shadow_keys: set[str] = set()
         for batch_index, expanded_signal in expanded_batch:
             per_leg_labels = dict(self._metric_labels)
             per_leg_labels["symbol"] = expanded_signal.symbol
-            if self._should_skip_signal_as_ranked_autonomous_open_loser(
+            pre_rank_request = self._build_order_request(expanded_signal)
+            pre_rank_request_metadata = (
+                pre_rank_request.metadata if isinstance(pre_rank_request.metadata, Mapping) else {}
+            )
+            pre_rank_shadow_key = str(
+                pre_rank_request_metadata.get("opportunity_shadow_record_key") or ""
+            ).strip()
+            duplicate_primary_key = in_batch_ranked_duplicate_replay_pairs.get(pre_rank_shadow_key)
+            if (
+                duplicate_primary_key is not None
+                and str(duplicate_primary_key).strip() in self._opportunity_open_outcomes
+            ):
+                self._metric_signals_total.inc(labels={**per_leg_labels, "status": "skipped"})
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=expanded_signal,
+                    request=pre_rank_request,
+                    status="skipped",
+                    metadata={
+                        "reason": "duplicate_autonomous_open_reentry_suppressed",
+                        "proxy_correlation_key": pre_rank_shadow_key,
+                        "existing_open_side": str(pre_rank_request.side),
+                        "existing_open_correlation_key": duplicate_primary_key,
+                    },
+                )
+                if pre_rank_shadow_key:
+                    in_batch_actual_duplicate_suppressed_shadow_keys.add(pre_rank_shadow_key)
+                continue
+            ranked_selection = self._evaluate_ranked_autonomous_open_selection(
                 batch_index=batch_index,
                 expanded_batch=expanded_batch,
+            )
+            if (
+                ranked_selection_proof_candidate is None
+                and ranked_selection is not None
+                and ranked_selection["loser_count"] > 0
             ):
+                ranked_selection_proof_candidate = dict(ranked_selection)
+            if (
+                not ranked_selection_proof_pending
+                and ranked_selection is not None
+                and ranked_selection["skip_current"]
+                and ranked_selection["loser_count"] > 0
+            ):
+                ranked_selection_proof_pending = True
+            if ranked_selection is not None and ranked_selection["skip_current"]:
                 request = self._build_order_request(expanded_signal)
                 active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
                 self._metric_signals_total.inc(labels={**per_leg_labels, "status": "skipped"})
@@ -1582,8 +1633,83 @@ class TradingController:
                     },
                 )
 
+        if ranked_selection_proof_pending and ranked_selection_proof_candidate is not None:
+            selected_shadow_keys = [
+                key
+                for key in list(ranked_selection_proof_candidate["selected_shadow_keys"])
+                if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
+            ]
+            loser_shadow_keys = [
+                key
+                for key in list(ranked_selection_proof_candidate["loser_shadow_keys"])
+                if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
+            ]
+            self._record_decision_event(
+                "ranked_autonomous_open_selection",
+                status="evaluated",
+                metadata={
+                    "remaining_slots": str(ranked_selection_proof_candidate["remaining_slots"]),
+                    "candidate_count": str(len(selected_shadow_keys) + len(loser_shadow_keys)),
+                    "selected_count": str(len(selected_shadow_keys)),
+                    "loser_count": str(len(loser_shadow_keys)),
+                    "selected_shadow_keys": selected_shadow_keys,
+                    "loser_shadow_keys": loser_shadow_keys,
+                    "ranking_basis": ranked_selection_proof_candidate["ranking_basis"],
+                    "ranked_mode_source": ranked_selection_proof_candidate["ranked_mode_source"],
+                },
+            )
         self.maybe_report_health()
         return results
+
+    def _collect_in_batch_ranked_duplicate_replay_pairs(
+        self,
+        expanded_batch: Sequence[tuple[int, StrategySignal]],
+    ) -> Mapping[str, str]:
+        grouped_candidates: MutableMapping[
+            tuple[str, str], list[tuple[float, float, float, tuple[str, ...], int, str]]
+        ] = {}
+        for candidate_batch_index, signal in expanded_batch:
+            if not self._is_budget_ranked_autonomous_open_candidate(signal):
+                continue
+            normalized_side = _normalize_trade_side(signal.side)
+            if normalized_side is None:
+                continue
+            metadata = self._normalize_signal_metadata(signal)
+            symbol = str(signal.symbol).strip()
+            shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+            if not shadow_key:
+                continue
+            expected_return = self._decision_extract_expected_return(signal, metadata)
+            expected_probability = self._decision_extract_probability(signal, metadata)
+            try:
+                confidence = float(signal.confidence)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            grouped_candidates.setdefault((symbol, normalized_side), []).append(
+                (
+                    expected_return,
+                    expected_probability,
+                    confidence,
+                    self._ranked_autonomous_open_stable_tie_break_key(signal),
+                    candidate_batch_index,
+                    shadow_key,
+                )
+            )
+
+        duplicate_pairs: dict[str, str] = {}
+        for candidates in grouped_candidates.values():
+            if len(candidates) <= 1:
+                continue
+            ranked_candidates = sorted(
+                candidates,
+                key=lambda item: (-item[0], -item[1], -item[2], item[3], item[4]),
+            )
+            primary_shadow_key = ranked_candidates[0][5]
+            for _, _, _, _, _, shadow_key in ranked_candidates[1:]:
+                if shadow_key == primary_shadow_key:
+                    continue
+                duplicate_pairs[shadow_key] = primary_shadow_key
+        return duplicate_pairs
 
     def _should_skip_signal_as_ranked_autonomous_open_loser(
         self,
@@ -1591,16 +1717,28 @@ class TradingController:
         batch_index: int,
         expanded_batch: Sequence[tuple[int, StrategySignal]],
     ) -> bool:
+        ranked_selection = self._evaluate_ranked_autonomous_open_selection(
+            batch_index=batch_index,
+            expanded_batch=expanded_batch,
+        )
+        return bool(ranked_selection is not None and ranked_selection["skip_current"])
+
+    def _evaluate_ranked_autonomous_open_selection(
+        self,
+        *,
+        batch_index: int,
+        expanded_batch: Sequence[tuple[int, StrategySignal]],
+    ) -> dict[str, object] | None:
         if not self._enable_autonomous_open_ranked_selection_within_batch:
-            return False
+            return None
         if self._max_active_autonomous_open_positions is None:
-            return False
+            return None
         active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
         remaining_slots = self._max_active_autonomous_open_positions - active_autonomous_open_count
         if remaining_slots < 0:
             remaining_slots = 0
 
-        scored_candidates: list[tuple[float, float, float, tuple[str, ...], int]] = []
+        scored_candidates: list[tuple[float, float, float, tuple[str, ...], int, str]] = []
         for candidate_batch_index, signal in expanded_batch:
             if candidate_batch_index < batch_index:
                 continue
@@ -1612,6 +1750,7 @@ class TradingController:
                     confidence = float(signal.confidence)
                 except (TypeError, ValueError):
                     confidence = 0.0
+                shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
                 scored_candidates.append(
                     (
                         expected_return,
@@ -1619,18 +1758,34 @@ class TradingController:
                         confidence,
                         self._ranked_autonomous_open_stable_tie_break_key(signal),
                         candidate_batch_index,
+                        shadow_key,
                     )
                 )
-        if not any(item[4] == batch_index for item in scored_candidates):
-            return False
+        current_item = next((item for item in scored_candidates if item[4] == batch_index), None)
+        if current_item is None:
+            return None
         if len(scored_candidates) <= remaining_slots:
-            return False
+            return None
         ranked_candidates = sorted(
             scored_candidates,
             key=lambda item: (-item[0], -item[1], -item[2], item[3]),
         )
         winner_indices = {item[4] for item in ranked_candidates[:remaining_slots]}
-        return batch_index not in winner_indices
+        winner_shadow_keys = [item[5] for item in ranked_candidates[:remaining_slots] if item[5]]
+        loser_shadow_keys = [item[5] for item in ranked_candidates[remaining_slots:] if item[5]]
+        return {
+            "skip_current": batch_index not in winner_indices,
+            "remaining_slots": remaining_slots,
+            "candidate_count": len(scored_candidates),
+            "selected_count": len(ranked_candidates[:remaining_slots]),
+            "loser_count": len(ranked_candidates[remaining_slots:]),
+            "selected_shadow_keys": winner_shadow_keys,
+            "loser_shadow_keys": loser_shadow_keys,
+            "ranking_basis": (
+                "expected_return_bps,expected_probability,signal_confidence,stable_tie_break_key"
+            ),
+            "ranked_mode_source": "enable_autonomous_open_ranked_selection_within_batch",
+        }
 
     def _is_budget_ranked_autonomous_open_candidate(self, signal: StrategySignal) -> bool:
         metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
