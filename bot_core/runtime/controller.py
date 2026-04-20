@@ -1719,7 +1719,7 @@ class TradingController:
                 + list(ranked_selection_proof_candidate["selected_shadow_keys"])
                 if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
             ]
-            if ranked_runtime_promoted_shadow_keys:
+            if ranked_runtime_promoted_shadow_keys or in_batch_actual_duplicate_suppressed_shadow_keys:
                 selected_shadow_keys = [
                     key
                     for key in participant_shadow_keys
