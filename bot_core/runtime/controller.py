@@ -1593,11 +1593,22 @@ class TradingController:
                     remaining_slots = int(remaining_slots_raw)
                 except (TypeError, ValueError):
                     remaining_slots = 0
+                has_future_potential_close = self._has_future_potential_slot_releasing_close(
+                    batch_index=batch_index,
+                    expanded_batch=expanded_batch,
+                )
                 if (
-                    remaining_slots > 0
-                    and duplicate_primary_key is None
+                    remaining_slots > 0 or has_future_potential_close
+                ) and (
+                    duplicate_primary_key is None
                     and self._max_active_autonomous_open_positions is not None
                 ):
+                    if (
+                        has_future_potential_close
+                        and not ranked_selection_proof_pending
+                        and ranked_selection["loser_count"] > 0
+                    ):
+                        ranked_selection_proof_pending = True
                     deferred_ranked_loser_candidates.append((batch_index, expanded_signal, per_leg_labels))
                     continue
                 request = self._build_order_request(expanded_signal)
@@ -1698,7 +1709,7 @@ class TradingController:
                 raise
             if deferred_result is not None:
                 results.append(deferred_result)
-                if deferred_shadow_key:
+                if deferred_shadow_key and deferred_shadow_key in self._opportunity_open_outcomes:
                     ranked_runtime_promoted_shadow_keys.add(deferred_shadow_key)
                 normalized_status = _normalize_execution_status(deferred_result.status)
                 metric_result = (
@@ -1712,7 +1723,11 @@ class TradingController:
                     },
                 )
 
-        if ranked_selection_proof_pending and ranked_selection_proof_candidate is not None:
+        if (
+            ranked_selection_proof_pending
+            and ranked_selection_proof_candidate is not None
+            and (ranked_runtime_promoted_shadow_keys or ranked_runtime_loser_shadow_keys)
+        ):
             participant_shadow_keys = [
                 key
                 for key in list(ranked_selection_proof_candidate["loser_shadow_keys"])
@@ -1765,6 +1780,12 @@ class TradingController:
         ] = {}
         for candidate_batch_index, signal in expanded_batch:
             if not self._is_budget_ranked_autonomous_open_candidate(signal):
+                continue
+            if self._is_late_opposite_side_replay_within_batch(
+                batch_index=candidate_batch_index,
+                signal=signal,
+                expanded_batch=expanded_batch,
+            ):
                 continue
             normalized_side = _normalize_trade_side(signal.side)
             if normalized_side is None:
@@ -1837,25 +1858,32 @@ class TradingController:
         for candidate_batch_index, signal in expanded_batch:
             if candidate_batch_index < batch_index:
                 continue
-            if self._is_budget_ranked_autonomous_open_candidate(signal):
-                metadata = self._normalize_signal_metadata(signal)
-                expected_return = self._decision_extract_expected_return(signal, metadata)
-                expected_probability = self._decision_extract_probability(signal, metadata)
-                try:
-                    confidence = float(signal.confidence)
-                except (TypeError, ValueError):
-                    confidence = 0.0
-                shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
-                scored_candidates.append(
-                    (
-                        expected_return,
-                        expected_probability,
-                        confidence,
-                        self._ranked_autonomous_open_stable_tie_break_key(signal),
-                        candidate_batch_index,
-                        shadow_key,
-                    )
+            if not self._is_budget_ranked_autonomous_open_candidate(signal):
+                continue
+            if self._is_late_opposite_side_replay_within_batch(
+                batch_index=candidate_batch_index,
+                signal=signal,
+                expanded_batch=expanded_batch,
+            ):
+                continue
+            metadata = self._normalize_signal_metadata(signal)
+            expected_return = self._decision_extract_expected_return(signal, metadata)
+            expected_probability = self._decision_extract_probability(signal, metadata)
+            try:
+                confidence = float(signal.confidence)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+            scored_candidates.append(
+                (
+                    expected_return,
+                    expected_probability,
+                    confidence,
+                    self._ranked_autonomous_open_stable_tie_break_key(signal),
+                    candidate_batch_index,
+                    shadow_key,
                 )
+            )
         current_item = next((item for item in scored_candidates if item[4] == batch_index), None)
         if current_item is None:
             return None
@@ -1881,6 +1909,65 @@ class TradingController:
             ),
             "ranked_mode_source": "enable_autonomous_open_ranked_selection_within_batch",
         }
+
+    def _has_future_potential_slot_releasing_close(
+        self,
+        *,
+        batch_index: int,
+        expanded_batch: Sequence[tuple[int, StrategySignal]],
+    ) -> bool:
+        for candidate_batch_index, candidate_signal in expanded_batch:
+            if candidate_batch_index <= batch_index:
+                continue
+            request = self._build_order_request(candidate_signal)
+            metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+            correlation_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+            if not correlation_key:
+                continue
+            tracker = self._opportunity_open_outcomes.get(correlation_key)
+            if tracker is None:
+                continue
+            if not self._is_late_opposite_side_replay_within_batch(
+                batch_index=candidate_batch_index,
+                signal=candidate_signal,
+                expanded_batch=expanded_batch,
+            ):
+                continue
+            if self._is_closing_side(str(tracker.side), str(request.side)):
+                return True
+        return False
+
+    def _is_late_opposite_side_replay_within_batch(
+        self,
+        *,
+        batch_index: int,
+        signal: StrategySignal,
+        expanded_batch: Sequence[tuple[int, StrategySignal]],
+    ) -> bool:
+        request = self._build_order_request(signal)
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        correlation_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        normalized_side = _normalize_trade_side(request.side)
+        if not correlation_key or normalized_side is None:
+            return False
+        for previous_index, previous_signal in expanded_batch:
+            if previous_index >= batch_index:
+                break
+            previous_request = self._build_order_request(previous_signal)
+            previous_metadata = (
+                previous_request.metadata
+                if isinstance(previous_request.metadata, Mapping)
+                else {}
+            )
+            previous_key = str(previous_metadata.get("opportunity_shadow_record_key") or "").strip()
+            if previous_key != correlation_key:
+                continue
+            previous_side = _normalize_trade_side(previous_request.side)
+            if previous_side is None:
+                continue
+            if self._is_closing_side(previous_side, normalized_side):
+                return True
+        return False
 
     def _is_budget_ranked_autonomous_open_candidate(self, signal: StrategySignal) -> bool:
         metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
