@@ -12639,9 +12639,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_deferred_losers_rejected
 @pytest.mark.parametrize("open_partial_status", ["partially_filled", "partial"])
 def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_close_without_mode_in_same_batch_promotes_deferred_loser_with_exact_proof_event(
     open_partial_status: str,
-) -> (
-    None
-):
+) -> None:
     decision_timestamp = datetime(2026, 1, 12, 11, 22, 30, tzinfo=timezone.utc)
     primary_a_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -12737,7 +12735,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_close_
 
     controller.process_signals([open_a_signal, deferred_b_signal, close_a_signal])
 
-    assert _request_shadow_keys(execution.requests) == [primary_a_key, primary_a_key, deferred_b_key]
+    assert _request_shadow_keys(execution.requests) == [
+        primary_a_key,
+        primary_a_key,
+        deferred_b_key,
+    ]
     primary_a_order_events = _order_path_events_with_shadow_key(journal, primary_a_key)
     assert any(
         event.get("event") == "order_partially_executed"
@@ -12749,16 +12751,12 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_close_
         and str(event.get("side") or "").upper() == "BUY"
         for event in primary_a_order_events
     )
-    assert any(
-        event.get("event") == "order_executed"
-        for event in primary_a_order_events
-    )
+    assert any(event.get("event") == "order_executed" for event in primary_a_order_events)
     assert (
         sum(1 for event in primary_a_order_events if event.get("event") == "order_submitted") == 2
     )
     assert any(
-        event.get("event") == "order_executed"
-        and str(event.get("side") or "").upper() == "SELL"
+        event.get("event") == "order_executed" and str(event.get("side") or "").upper() == "SELL"
         for event in primary_a_order_events
     )
     assert any(
@@ -12780,9 +12778,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_close_
     )
     open_outcome_keys = sorted(row.correlation_key for row in repository.load_open_outcomes())
     assert open_outcome_keys == [deferred_b_key]
-    assert not any(
-        row.correlation_key == primary_a_key for row in repository.load_open_outcomes()
-    )
+    assert not any(row.correlation_key == primary_a_key for row in repository.load_open_outcomes())
     _assert_single_ranked_selection_event_payload(
         journal,
         remaining_slots="1",
@@ -13816,7 +13812,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_future_close_deferred_re
 
     controller.process_signals([open_a_signal, deferred_b_signal, close_a_signal])
 
-    assert _request_shadow_keys(execution.requests) == [primary_a_key, primary_a_key, deferred_b_key]
+    assert _request_shadow_keys(execution.requests) == [
+        primary_a_key,
+        primary_a_key,
+        deferred_b_key,
+    ]
     open_outcome_keys = sorted(row.correlation_key for row in repository.load_open_outcomes())
     assert open_outcome_keys == []
     deferred_b_order_events = _order_path_events_with_shadow_key(journal, deferred_b_key)
@@ -13842,9 +13842,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_future_close_deferred_re
 @pytest.mark.parametrize("open_partial_status", ["partially_filled", "partial"])
 def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_close_in_same_batch_real_reverse_keeps_deferred_loser(
     open_partial_status: str,
-) -> (
-    None
-):
+) -> None:
     decision_timestamp = datetime(2026, 1, 12, 11, 22, 31, tzinfo=timezone.utc)
     primary_a_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -13937,7 +13935,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_close_
 
     controller.process_signals([close_a_signal, deferred_b_signal, open_a_signal])
 
-    assert _request_shadow_keys(execution.requests) == [primary_a_key, primary_a_key, deferred_b_key]
+    assert _request_shadow_keys(execution.requests) == [
+        primary_a_key,
+        primary_a_key,
+        deferred_b_key,
+    ]
     primary_a_order_events = _order_path_events_with_shadow_key(journal, primary_a_key)
     assert (
         sum(1 for event in primary_a_order_events if event.get("event") == "order_submitted") == 2
@@ -13949,8 +13951,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_close_
         for event in primary_a_order_events
     )
     assert not any(
-        event.get("event") == "order_executed"
-        and str(event.get("side") or "").upper() == "SELL"
+        event.get("event") == "order_executed" and str(event.get("side") or "").upper() == "SELL"
         for event in primary_a_order_events
     )
     assert any(
@@ -13988,9 +13989,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_close_
 @pytest.mark.parametrize("open_partial_status", ["partially_filled", "partial"])
 def test_opportunity_autonomy_active_budget_ranked_mode_partial_open_then_non_closing_close_does_not_promote_deferred_loser(
     open_partial_status: str,
-) -> (
-    None
-):
+) -> None:
     decision_timestamp = datetime(2026, 1, 12, 11, 22, 32, tzinfo=timezone.utc)
     primary_a_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -14614,8 +14613,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
         )
 
 
-def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_promoted_open_late_replay_is_duplicate_suppressed_and_proof_aligned(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_promoted_open_late_replay_is_duplicate_suppressed_and_proof_aligned() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 25, tzinfo=timezone.utc)
     key_a = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -14705,7 +14705,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         include_decision_payload=True,
         decision_effective_mode="paper_autonomous",
     )
-    signal_a.metadata = {**dict(signal_a.metadata), "expected_return_bps": 9.0, "expected_probability": 0.66}
+    signal_a.metadata = {
+        **dict(signal_a.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.66,
+    }
     signal_b = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -14715,7 +14719,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_b.symbol = "ETH/USDT"
-    signal_b.metadata = {**dict(signal_b.metadata), "expected_return_bps": 8.0, "expected_probability": 0.64}
+    signal_b.metadata = {
+        **dict(signal_b.metadata),
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.64,
+    }
     signal_c = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -14725,7 +14733,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_c.symbol = "XRP/USDT"
-    signal_c.metadata = {**dict(signal_c.metadata), "expected_return_bps": 6.0, "expected_probability": 0.60}
+    signal_c.metadata = {
+        **dict(signal_c.metadata),
+        "expected_return_bps": 6.0,
+        "expected_probability": 0.60,
+    }
     replay_c_signal = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -14749,7 +14761,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_d.symbol = "SOL/USDT"
-    signal_d.metadata = {**dict(signal_d.metadata), "expected_return_bps": 3.0, "expected_probability": 0.55}
+    signal_d.metadata = {
+        **dict(signal_d.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
 
     signals = [signal_a, signal_b, signal_c, replay_c_signal, signal_d]
     controller.process_signals(signals)
@@ -14783,7 +14799,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         loser_shadow_keys=[key_d],
     )
     ranked_selection_event = _ranked_selection_events(journal)[0]
-    selected_shadow_keys = _ranked_selection_shadow_keys(ranked_selection_event, "selected_shadow_keys")
+    selected_shadow_keys = _ranked_selection_shadow_keys(
+        ranked_selection_event, "selected_shadow_keys"
+    )
     loser_shadow_keys = _ranked_selection_shadow_keys(ranked_selection_event, "loser_shadow_keys")
     assert sorted(selected_shadow_keys) == sorted([key_a, promoted_open_key])
     assert loser_shadow_keys == [key_d]
@@ -14798,8 +14816,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
     assert key_d not in open_outcome_keys
 
 
-def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_promoted_open_real_reverse_has_distinct_ranked_loser_replay_contract(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_promoted_open_real_reverse_has_distinct_ranked_loser_replay_contract() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 25, tzinfo=timezone.utc)
     key_a = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -14889,7 +14908,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         include_decision_payload=True,
         decision_effective_mode="paper_autonomous",
     )
-    signal_a.metadata = {**dict(signal_a.metadata), "expected_return_bps": 9.0, "expected_probability": 0.66}
+    signal_a.metadata = {
+        **dict(signal_a.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.66,
+    }
     signal_b = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -14899,7 +14922,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_b.symbol = "ETH/USDT"
-    signal_b.metadata = {**dict(signal_b.metadata), "expected_return_bps": 8.0, "expected_probability": 0.64}
+    signal_b.metadata = {
+        **dict(signal_b.metadata),
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.64,
+    }
     signal_c = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -14909,7 +14936,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_c.symbol = "XRP/USDT"
-    signal_c.metadata = {**dict(signal_c.metadata), "expected_return_bps": 6.0, "expected_probability": 0.60}
+    signal_c.metadata = {
+        **dict(signal_c.metadata),
+        "expected_return_bps": 6.0,
+        "expected_probability": 0.60,
+    }
     replay_c_signal = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -14933,7 +14964,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_prom
         decision_effective_mode="paper_autonomous",
     )
     signal_d.symbol = "SOL/USDT"
-    signal_d.metadata = {**dict(signal_d.metadata), "expected_return_bps": 3.0, "expected_probability": 0.55}
+    signal_d.metadata = {
+        **dict(signal_d.metadata),
+        "expected_return_bps": 3.0,
+        "expected_probability": 0.55,
+    }
 
     signals = [signal_a, signal_b, signal_c, replay_c_signal, signal_d]
     signals = list(reversed(signals))
@@ -15080,7 +15115,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
         include_decision_payload=True,
         decision_effective_mode="paper_autonomous",
     )
-    signal_a.metadata = {**dict(signal_a.metadata), "expected_return_bps": 9.0, "expected_probability": 0.66}
+    signal_a.metadata = {
+        **dict(signal_a.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.66,
+    }
     signal_b = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -15090,7 +15129,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
         decision_effective_mode="paper_autonomous",
     )
     signal_b.symbol = "ETH/USDT"
-    signal_b.metadata = {**dict(signal_b.metadata), "expected_return_bps": 8.0, "expected_probability": 0.64}
+    signal_b.metadata = {
+        **dict(signal_b.metadata),
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.64,
+    }
     signal_c = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -15100,7 +15143,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
         decision_effective_mode="paper_autonomous",
     )
     signal_c.symbol = "XRP/USDT"
-    signal_c.metadata = {**dict(signal_c.metadata), "expected_return_bps": 6.0, "expected_probability": 0.60}
+    signal_c.metadata = {
+        **dict(signal_c.metadata),
+        "expected_return_bps": 6.0,
+        "expected_probability": 0.60,
+    }
     replay_c_signal = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
         side="BUY",
@@ -15158,8 +15205,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
     assert open_keys == expected_open_keys
 
 
-def test_opportunity_autonomy_active_budget_ranked_proof_duplicate_suppressed_without_deferred_promotion_keeps_counts_and_sets_aligned(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_proof_duplicate_suppressed_without_deferred_promotion_keeps_counts_and_sets_aligned() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 27, tzinfo=timezone.utc)
     winner_a_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -15276,6 +15324,7 @@ def test_opportunity_autonomy_active_budget_ranked_proof_duplicate_suppressed_wi
         selected_shadow_keys=[winner_a_key],
         loser_shadow_keys=[loser_b_key],
     )
+
 
 def test_opportunity_autonomy_active_budget_ranked_proof_includes_replay_when_primary_later_rejected() -> (
     None
@@ -16599,9 +16648,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_preserves_duplicate_guar
 @pytest.mark.parametrize("partial_status", ["partially_filled", "partial"])
 def test_opportunity_autonomy_active_budget_ranked_mode_partial_primary_consumes_slot_and_blocks_ranked_loser(
     partial_status: str,
-) -> (
-    None
-):
+) -> None:
     decision_timestamp = datetime(2026, 1, 12, 12, 11, tzinfo=timezone.utc)
     primary_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -16620,7 +16667,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_primary_consumes
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=primary_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=primary_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=loser_key,
@@ -16702,9 +16751,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_primary_consumes
 @pytest.mark.parametrize("partial_status", ["partially_filled", "partial"])
 def test_opportunity_autonomy_active_budget_ranked_mode_partial_primary_contract_is_stable_for_reversed_input(
     partial_status: str,
-) -> (
-    None
-):
+) -> None:
     decision_timestamp = datetime(2026, 1, 12, 12, 12, tzinfo=timezone.utc)
     primary_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -16723,7 +16770,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_primary_contract
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=primary_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=primary_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=loser_key,
@@ -16803,9 +16852,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_primary_contract
 @pytest.mark.parametrize("partial_status", ["partially_filled", "partial"])
 def test_opportunity_autonomy_active_budget_ranked_mode_partial_primary_suppresses_duplicate_replay_and_keeps_proof_aligned(
     partial_status: str,
-) -> (
-    None
-):
+) -> None:
     decision_timestamp = datetime(2026, 1, 12, 12, 13, tzinfo=timezone.utc)
     primary_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -16830,9 +16877,12 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_primary_suppress
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=primary_key, decision_timestamp=decision_timestamp),
             _shadow_record_for_key(
-                correlation_key=replay_key, decision_timestamp=decision_timestamp + timedelta(minutes=1)
+                correlation_key=primary_key, decision_timestamp=decision_timestamp
+            ),
+            _shadow_record_for_key(
+                correlation_key=replay_key,
+                decision_timestamp=decision_timestamp + timedelta(minutes=1),
             ),
             replace(
                 _shadow_record_for_key(
