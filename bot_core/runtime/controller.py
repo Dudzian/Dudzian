@@ -1599,10 +1599,7 @@ class TradingController:
                 )
                 if (
                     remaining_slots > 0 or has_future_potential_close
-                ) and (
-                    duplicate_primary_key is None
-                    and self._max_active_autonomous_open_positions is not None
-                ):
+                ) and self._max_active_autonomous_open_positions is not None:
                     if (
                         has_future_potential_close
                         and not ranked_selection_proof_pending
@@ -1674,10 +1671,49 @@ class TradingController:
             deferred_shadow_key = str(
                 deferred_signal_metadata.get("opportunity_shadow_record_key") or ""
             ).strip()
+            deferred_request = self._build_order_request(deferred_signal)
+            deferred_duplicate_primary_key = in_batch_ranked_duplicate_replay_pairs.get(
+                deferred_shadow_key
+            )
+            deferred_duplicate_runtime_open_key = (
+                str(deferred_duplicate_primary_key).strip()
+                if deferred_duplicate_primary_key is not None
+                else ""
+            )
+            if (
+                deferred_duplicate_runtime_open_key
+                and deferred_duplicate_runtime_open_key not in self._opportunity_open_outcomes
+            ):
+                remapped_runtime_duplicate = self._find_matching_active_open_tracker_for_autonomous_open(
+                    symbol=str(deferred_request.symbol),
+                    current_side=str(deferred_request.side),
+                    exclude_correlation_key=deferred_shadow_key,
+                )
+                if remapped_runtime_duplicate is not None:
+                    deferred_duplicate_runtime_open_key, _ = remapped_runtime_duplicate
+            if (
+                deferred_duplicate_runtime_open_key
+                and deferred_duplicate_runtime_open_key in self._opportunity_open_outcomes
+            ):
+                self._metric_signals_total.inc(labels={**deferred_labels, "status": "skipped"})
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=deferred_signal,
+                    request=deferred_request,
+                    status="skipped",
+                    metadata={
+                        "reason": "duplicate_autonomous_open_reentry_suppressed",
+                        "proxy_correlation_key": deferred_shadow_key,
+                        "existing_open_side": str(deferred_request.side),
+                        "existing_open_correlation_key": deferred_duplicate_runtime_open_key,
+                    },
+                )
+                if deferred_shadow_key:
+                    in_batch_actual_duplicate_suppressed_shadow_keys.add(deferred_shadow_key)
+                continue
             if self._max_active_autonomous_open_positions is not None:
                 active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
                 if active_autonomous_open_count >= self._max_active_autonomous_open_positions:
-                    deferred_request = self._build_order_request(deferred_signal)
                     self._metric_signals_total.inc(labels={**deferred_labels, "status": "skipped"})
                     self._record_decision_event(
                         "signal_skipped",
