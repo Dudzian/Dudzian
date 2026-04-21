@@ -1686,10 +1686,12 @@ class TradingController:
                 deferred_duplicate_runtime_open_key
                 and deferred_duplicate_runtime_open_key not in self._opportunity_open_outcomes
             ):
-                remapped_runtime_duplicate = self._find_matching_active_open_tracker_for_autonomous_open(
-                    symbol=str(deferred_request.symbol),
-                    current_side=str(deferred_request.side),
-                    exclude_correlation_key=deferred_shadow_key,
+                remapped_runtime_duplicate = (
+                    self._find_matching_active_open_tracker_for_autonomous_open(
+                        symbol=str(deferred_request.symbol),
+                        current_side=str(deferred_request.side),
+                        exclude_correlation_key=deferred_shadow_key,
+                    )
                 )
                 if remapped_runtime_duplicate is not None:
                     deferred_duplicate_runtime_open_key, _ = remapped_runtime_duplicate
