@@ -1597,9 +1597,7 @@ class TradingController:
                     batch_index=batch_index,
                     expanded_batch=expanded_batch,
                 )
-                if (
-                    remaining_slots > 0 or has_future_potential_close
-                ) and (
+                if (remaining_slots > 0 or has_future_potential_close) and (
                     duplicate_primary_key is None
                     and self._max_active_autonomous_open_positions is not None
                 ):
@@ -1609,7 +1607,9 @@ class TradingController:
                         and ranked_selection["loser_count"] > 0
                     ):
                         ranked_selection_proof_pending = True
-                    deferred_ranked_loser_candidates.append((batch_index, expanded_signal, per_leg_labels))
+                    deferred_ranked_loser_candidates.append(
+                        (batch_index, expanded_signal, per_leg_labels)
+                    )
                     continue
                 request = self._build_order_request(expanded_signal)
                 active_autonomous_open_count = self._count_scope_active_autonomous_open_trackers()
@@ -1694,7 +1694,10 @@ class TradingController:
                     )
                     if deferred_shadow_key:
                         ranked_runtime_loser_shadow_keys.add(deferred_shadow_key)
-                    if not ranked_selection_proof_pending and ranked_selection_proof_candidate is not None:
+                    if (
+                        not ranked_selection_proof_pending
+                        and ranked_selection_proof_candidate is not None
+                    ):
                         ranked_selection_proof_pending = bool(
                             ranked_selection_proof_candidate.get("loser_count", 0)
                         )
@@ -1734,7 +1737,10 @@ class TradingController:
                 + list(ranked_selection_proof_candidate["selected_shadow_keys"])
                 if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
             ]
-            if ranked_runtime_promoted_shadow_keys or in_batch_actual_duplicate_suppressed_shadow_keys:
+            if (
+                ranked_runtime_promoted_shadow_keys
+                or in_batch_actual_duplicate_suppressed_shadow_keys
+            ):
                 selected_shadow_keys = [
                     key
                     for key in participant_shadow_keys
@@ -1955,9 +1961,7 @@ class TradingController:
                 break
             previous_request = self._build_order_request(previous_signal)
             previous_metadata = (
-                previous_request.metadata
-                if isinstance(previous_request.metadata, Mapping)
-                else {}
+                previous_request.metadata if isinstance(previous_request.metadata, Mapping) else {}
             )
             previous_key = str(previous_metadata.get("opportunity_shadow_record_key") or "").strip()
             if previous_key != correlation_key:
