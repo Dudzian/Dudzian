@@ -1223,6 +1223,9 @@ class TradingController:
                 continue
             if str(tracker.symbol) != str(symbol):
                 continue
+            remaining_quantity = self._remaining_quantity_for_tracker(tracker)
+            if remaining_quantity is None or remaining_quantity <= 0.0:
+                continue
             if self._is_closing_side(str(tracker.side), current_side):
                 continue
             if not self._matches_current_open_tracker_scope(
@@ -1254,6 +1257,9 @@ class TradingController:
         count = 0
         for tracked_correlation_key, tracker in self._opportunity_open_outcomes.items():
             if not self._is_autonomous_restored_tracker_contract(tracker):
+                continue
+            remaining_quantity = self._remaining_quantity_for_tracker(tracker)
+            if remaining_quantity is None or remaining_quantity <= 0.0:
                 continue
             if not self._matches_current_open_tracker_scope(
                 correlation_key=tracked_correlation_key,
