@@ -1771,33 +1771,37 @@ class TradingController:
             and ranked_selection_proof_candidate is not None
             and (ranked_runtime_promoted_shadow_keys or ranked_runtime_loser_shadow_keys)
         ):
+            def _is_runtime_open_selected_shadow_key(shadow_key: object) -> bool:
+                normalized_shadow_key = str(shadow_key).strip()
+                if not normalized_shadow_key:
+                    return False
+                tracker = self._opportunity_open_outcomes.get(normalized_shadow_key)
+                if not self._is_autonomous_restored_tracker_contract(tracker):
+                    return False
+                remaining_quantity = self._remaining_quantity_for_tracker(tracker)
+                if remaining_quantity is None or remaining_quantity <= 0.0:
+                    return False
+                return self._matches_current_open_tracker_scope(
+                    correlation_key=normalized_shadow_key,
+                    symbol=str(tracker.symbol),
+                    tracker=tracker,
+                )
+
             participant_shadow_keys = [
                 key
                 for key in list(ranked_selection_proof_candidate["loser_shadow_keys"])
                 + list(ranked_selection_proof_candidate["selected_shadow_keys"])
                 if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
             ]
-            if (
-                ranked_runtime_promoted_shadow_keys
-                or in_batch_actual_duplicate_suppressed_shadow_keys
-            ):
-                selected_shadow_keys = [
-                    key
-                    for key in participant_shadow_keys
-                    if str(key).strip() in self._opportunity_open_outcomes
-                ]
-            else:
-                selected_shadow_keys = [
-                    key
-                    for key in list(ranked_selection_proof_candidate["selected_shadow_keys"])
-                    if str(key).strip() not in in_batch_actual_duplicate_suppressed_shadow_keys
-                ]
+            selected_shadow_keys = [
+                key for key in participant_shadow_keys if _is_runtime_open_selected_shadow_key(key)
+            ]
             loser_shadow_keys = [
                 key
                 for key in participant_shadow_keys
                 if (
                     str(key).strip() in ranked_runtime_loser_shadow_keys
-                    and str(key).strip() not in self._opportunity_open_outcomes
+                    and not _is_runtime_open_selected_shadow_key(key)
                 )
             ]
             self._record_decision_event(
