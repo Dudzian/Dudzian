@@ -12922,7 +12922,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_then_close_promo
         signals = list(reversed(signals))
     controller.process_signals(signals)
 
-    assert _request_shadow_keys(execution.requests) == [primary_a_key, primary_a_key, deferred_b_key]
+    assert _request_shadow_keys(execution.requests) == [
+        primary_a_key,
+        primary_a_key,
+        deferred_b_key,
+    ]
     assert _order_path_events_with_shadow_key(journal, deferred_b_key)
     assert _order_path_events_with_shadow_key(journal, deferred_c_replay_key) == []
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_c_replay_key)
@@ -12931,7 +12935,8 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_then_close_promo
         event
         for event in journal.export()
         if event["event"] == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_replay_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == deferred_c_replay_key
     ]
     assert replay_skips
     assert replay_skips[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
@@ -12958,7 +12963,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_partial_then_close_promo
         loser_shadow_keys=[],
     )
     ranked_selection_event = _ranked_selection_events(journal)[0]
-    selected_shadow_keys = _ranked_selection_shadow_keys(ranked_selection_event, "selected_shadow_keys")
+    selected_shadow_keys = _ranked_selection_shadow_keys(
+        ranked_selection_event, "selected_shadow_keys"
+    )
     loser_shadow_keys = _ranked_selection_shadow_keys(ranked_selection_event, "loser_shadow_keys")
     assert deferred_c_replay_key not in selected_shadow_keys
     assert deferred_c_replay_key not in loser_shadow_keys
@@ -13120,7 +13127,13 @@ def test_opportunity_autonomy_active_budget_ranked_mode_deferred_duplicate_chain
     }
     close_a_signal.metadata.pop("opportunity_autonomy_mode", None)
 
-    signals = [open_a_signal, sibling_b1_signal, sibling_b2_signal, sibling_b3_replay_signal, close_a_signal]
+    signals = [
+        open_a_signal,
+        sibling_b1_signal,
+        sibling_b2_signal,
+        sibling_b3_replay_signal,
+        close_a_signal,
+    ]
     if reversed_input_order:
         signals = list(reversed(signals))
     controller.process_signals(signals)
@@ -13140,7 +13153,8 @@ def test_opportunity_autonomy_active_budget_ranked_mode_deferred_duplicate_chain
         event
         for event in journal.export()
         if event["event"] == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == sibling_b3_replay_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == sibling_b3_replay_key
     ]
     assert replay_skips
     assert replay_skips[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
@@ -13160,14 +13174,17 @@ def test_opportunity_autonomy_active_budget_ranked_mode_deferred_duplicate_chain
         loser_shadow_keys=[],
     )
     ranked_selection_event = _ranked_selection_events(journal)[0]
-    selected_shadow_keys = _ranked_selection_shadow_keys(ranked_selection_event, "selected_shadow_keys")
+    selected_shadow_keys = _ranked_selection_shadow_keys(
+        ranked_selection_event, "selected_shadow_keys"
+    )
     loser_shadow_keys = _ranked_selection_shadow_keys(ranked_selection_event, "loser_shadow_keys")
     assert sibling_b3_replay_key not in selected_shadow_keys
     assert sibling_b3_replay_key not in loser_shadow_keys
 
 
-def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_duplicate_rebinds_stale_primary_to_runtime_open_sibling(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_duplicate_rebinds_stale_primary_to_runtime_open_sibling() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 22, 38, tzinfo=timezone.utc)
     sibling_b1_key = OpportunityShadowRecord.build_record_key(
         symbol="ETH/USDT",
@@ -13282,7 +13299,8 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_duplicate_rebi
         event
         for event in journal.export()
         if event["event"] == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == sibling_b3_replay_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == sibling_b3_replay_key
     ]
     assert replay_skips
     assert replay_skips[-1]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
@@ -13293,8 +13311,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_duplicate_rebi
     assert _ranked_selection_events(journal) == []
 
 
-def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_duplicate_rebinds_stale_primary_to_runtime_open_sibling_reverse_specific_contract(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_duplicate_rebinds_stale_primary_to_runtime_open_sibling_reverse_specific_contract() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 22, 38, tzinfo=timezone.utc)
     sibling_b1_key = OpportunityShadowRecord.build_record_key(
         symbol="ETH/USDT",
@@ -13416,11 +13435,14 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_duplicate_rebi
         event
         for event in journal.export()
         if event["event"] == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == sibling_b3_replay_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == sibling_b3_replay_key
     ]
     assert replay_skips == []
     sibling_b3_labels = [
-        row for row in repository.load_outcome_labels() if row.correlation_key == sibling_b3_replay_key
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == sibling_b3_replay_key
     ]
     assert all(
         row.label_quality not in {"final", "partial_exit_unconfirmed"} for row in sibling_b3_labels
@@ -13431,8 +13453,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_duplicate_rebi
     assert _ranked_selection_events(journal) == []
 
 
-def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplicate_metadata_when_runtime_open_missing(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplicate_metadata_when_runtime_open_missing() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 22, 39, tzinfo=timezone.utc)
     sibling_b1_key = OpportunityShadowRecord.build_record_key(
         symbol="ETH/USDT",
@@ -13539,12 +13562,17 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplic
 
     controller.process_signals([sibling_b1_signal, sibling_b2_signal, sibling_b3_replay_signal])
 
-    assert _request_shadow_keys(execution.requests) == [sibling_b1_key, sibling_b2_key, sibling_b3_replay_key]
+    assert _request_shadow_keys(execution.requests) == [
+        sibling_b1_key,
+        sibling_b2_key,
+        sibling_b3_replay_key,
+    ]
     replay_skips = [
         event
         for event in journal.export()
         if event["event"] == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == sibling_b3_replay_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == sibling_b3_replay_key
     ]
     assert replay_skips == []
     assert _order_path_events_with_shadow_key(journal, sibling_b3_replay_key)
@@ -13552,8 +13580,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplic
     assert open_outcome_keys == [sibling_b3_replay_key]
 
 
-def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplicate_metadata_when_runtime_open_missing_reverse_specific_contract(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplicate_metadata_when_runtime_open_missing_reverse_specific_contract() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 11, 22, 39, tzinfo=timezone.utc)
     sibling_b1_key = OpportunityShadowRecord.build_record_key(
         symbol="ETH/USDT",
@@ -13662,12 +13691,17 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplic
         list(reversed([sibling_b1_signal, sibling_b2_signal, sibling_b3_replay_signal]))
     )
 
-    assert _request_shadow_keys(execution.requests) == [sibling_b3_replay_key, sibling_b2_key, sibling_b1_key]
+    assert _request_shadow_keys(execution.requests) == [
+        sibling_b3_replay_key,
+        sibling_b2_key,
+        sibling_b1_key,
+    ]
     replay_skips = [
         event
         for event in journal.export()
         if event["event"] == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == sibling_b3_replay_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == sibling_b3_replay_key
     ]
     assert replay_skips == []
     for rejected_key in (sibling_b3_replay_key, sibling_b2_key):
@@ -13686,17 +13720,15 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplic
         assert not any(
             event.get("event") == "signal_skipped"
             and str(event.get("order_opportunity_shadow_record_key") or "").strip() == rejected_key
-            and (
-                "proxy_correlation_key" in event
-                or "existing_open_correlation_key" in event
-            )
+            and ("proxy_correlation_key" in event or "existing_open_correlation_key" in event)
             for event in journal.export()
         )
         rejected_labels = [
             row for row in repository.load_outcome_labels() if row.correlation_key == rejected_key
         ]
         assert all(
-            row.label_quality not in {"final", "partial_exit_unconfirmed"} for row in rejected_labels
+            row.label_quality not in {"final", "partial_exit_unconfirmed"}
+            for row in rejected_labels
         )
     open_outcome_keys = sorted(row.correlation_key for row in repository.load_open_outcomes())
     assert open_outcome_keys == [sibling_b1_key]
@@ -13704,11 +13736,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_main_pass_no_fake_duplic
     assert not any(
         event.get("event") == "signal_skipped"
         and event.get("reason") == "duplicate_autonomous_open_reentry_suppressed"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == sibling_b3_replay_key
-        and (
-            "proxy_correlation_key" in event
-            or "existing_open_correlation_key" in event
-        )
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == sibling_b3_replay_key
+        and ("proxy_correlation_key" in event or "existing_open_correlation_key" in event)
         for event in journal.export()
     )
 
@@ -15200,7 +15230,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_budget_two_deferred_non_
     else:
         assert replay_skips == []
         assert _order_path_events_with_shadow_key(journal, replay_c_key)
-    expected_open_keys = sorted([key_b, replay_c_key]) if reversed_input_order else sorted([key_a, replay_c_key])
+    expected_open_keys = (
+        sorted([key_b, replay_c_key]) if reversed_input_order else sorted([key_a, replay_c_key])
+    )
     open_keys = sorted(row.correlation_key for row in repository.load_open_outcomes())
     assert open_keys == expected_open_keys
 
@@ -15540,7 +15572,9 @@ def test_opportunity_autonomy_active_budget_ranked_proof_includes_replay_when_pr
         selected_shadow_keys = _ranked_selection_shadow_keys(
             ranked_selection_events[0], "selected_shadow_keys"
         )
-        loser_shadow_keys = _ranked_selection_shadow_keys(ranked_selection_events[0], "loser_shadow_keys")
+        loser_shadow_keys = _ranked_selection_shadow_keys(
+            ranked_selection_events[0], "loser_shadow_keys"
+        )
         assert winner_b_key in selected_shadow_keys
         assert replay_a_key not in selected_shadow_keys
         assert replay_a_key not in loser_shadow_keys
