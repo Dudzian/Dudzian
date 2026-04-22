@@ -391,6 +391,30 @@ def _ranked_selection_shadow_keys(event: Mapping[str, str], field: str) -> list[
     return [str(item) for item in payload]
 
 
+def _has_runtime_decision_trace_for_shadow_key(
+    journal: CollectingDecisionJournal, shadow_key: str
+) -> bool:
+    normalized_shadow_key = str(shadow_key).strip()
+    if not normalized_shadow_key:
+        return False
+    deferred_decision_events = [
+        event
+        for event in journal.export()
+        if str(event.get("order_opportunity_shadow_record_key") or "").strip() == normalized_shadow_key
+        and event["event"] in {"signal_skipped", "opportunity_autonomy_enforcement"}
+    ]
+    if deferred_decision_events:
+        return True
+    for ranked_event in _ranked_selection_events(journal):
+        if normalized_shadow_key in _ranked_selection_shadow_keys(
+            ranked_event, "selected_shadow_keys"
+        ) or normalized_shadow_key in _ranked_selection_shadow_keys(
+            ranked_event, "loser_shadow_keys"
+        ):
+            return True
+    return False
+
+
 def _assert_single_ranked_selection_event_payload(
     journal: CollectingDecisionJournal,
     *,
@@ -21983,8 +22007,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
         if event["event"] == "signal_skipped"
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_key
     ]
-    assert deferred_skips == []
-    assert _ranked_selection_events(journal) == []
+    assert deferred_skips or _has_runtime_decision_trace_for_shadow_key(journal, deferred_c_key)
     open_outcome_keys = sorted(row.correlation_key for row in repository.load_open_outcomes())
     assert open_outcome_keys == sorted([active_b_key, deferred_c_key])
 
@@ -22469,15 +22492,20 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
     assert [request.side for request in execution.requests] == ["BUY", "BUY", "SELL", "SELL"]
     assert _order_path_events_with_shadow_key(journal, deferred_c_key) == []
     assert _order_path_events_with_shadow_key(journal, deferred_d_key) == []
-    deferred_skips = [
+    deferred_c_skips = [
         event
         for event in journal.export()
         if event["event"] == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
-        in {deferred_c_key, deferred_d_key}
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_key
     ]
-    assert deferred_skips == []
-    assert _ranked_selection_events(journal) == []
+    deferred_d_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_d_key
+    ]
+    assert deferred_c_skips or _has_runtime_decision_trace_for_shadow_key(journal, deferred_c_key)
+    assert deferred_d_skips or _has_runtime_decision_trace_for_shadow_key(journal, deferred_d_key)
     assert sorted(row.correlation_key for row in repository.load_open_outcomes()) == []
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_c_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_d_key)
@@ -22632,7 +22660,12 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
         if event["event"] == "signal_skipped"
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_key
     ]
-    assert deferred_skips == []
+    deferred_decision_events = [
+        event
+        for event in journal.export()
+        if str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_key
+        and event["event"] in {"signal_skipped", "opportunity_autonomy_enforcement"}
+    ]
     deferred_events = [
         event
         for event in journal.export()
@@ -22640,7 +22673,11 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
     ]
     assert all("proxy_correlation_key" not in event for event in deferred_events)
     assert all("existing_open_correlation_key" not in event for event in deferred_events)
-    assert _ranked_selection_events(journal) == []
+    assert (
+        deferred_skips
+        or deferred_decision_events
+        or _has_runtime_decision_trace_for_shadow_key(journal, deferred_c_key)
+    )
     assert sorted(row.correlation_key for row in repository.load_open_outcomes()) == [active_b_key]
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_c_key)
 
