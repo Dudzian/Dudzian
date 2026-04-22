@@ -21207,6 +21207,846 @@ def test_opportunity_autonomy_active_budget_ranked_mode_close_then_deferred_open
     assert open_rows_by_key[active_key].closed_quantity >= open_rows_by_key[active_key].entry_quantity
 
 
+def test_opportunity_autonomy_active_budget_ranked_mode_close_then_deferred_open_after_runtime_seed_still_promotes_after_real_slot_release() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 14, 12, tzinfo=timezone.utc)
+    active_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-close-open-runtime-seed-v1",
+        rank=1,
+    )
+    deferred_open_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-close-open-runtime-seed-v1",
+        rank=2,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=active_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_open_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    seed_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    controller.process_signals([seed_open_signal])
+
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    deferred_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_open_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_open_signal.symbol = "ETH/USDT"
+    deferred_open_signal.metadata = {**dict(deferred_open_signal.metadata), "expected_return_bps": 5.0}
+
+    controller.process_signals([close_signal, deferred_open_signal])
+
+    assert _request_shadow_keys(execution.requests) == [active_key, active_key, deferred_open_key]
+    assert [request.side for request in execution.requests] == ["BUY", "SELL", "BUY"]
+    assert _order_path_events_with_shadow_key(journal, active_key)
+    assert _order_path_events_with_shadow_key(journal, deferred_open_key)
+    deferred_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_open_key
+    ]
+    assert deferred_skips == []
+    assert _ranked_selection_events(journal) == []
+    open_rows = repository.load_open_outcomes()
+    open_rows_by_key = {row.correlation_key: row for row in open_rows}
+    assert deferred_open_key in open_rows_by_key
+    assert open_rows_by_key[deferred_open_key].closed_quantity < open_rows_by_key[
+        deferred_open_key
+    ].entry_quantity
+    assert active_key not in open_rows_by_key
+
+
+def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_two_single_close_promotes_single_deferred_open() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 14, 14, tzinfo=timezone.utc)
+    active_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-min-pair-v1",
+        rank=1,
+    )
+    active_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-min-pair-v1",
+        rank=2,
+    )
+    deferred_c_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-min-pair-v1",
+        rank=3,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=active_a_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=active_b_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_c_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="XRP/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 300.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=2,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    seed_open_a = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b.symbol = "ETH/USDT"
+    controller.process_signals([seed_open_a, seed_open_b])
+
+    close_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    deferred_c_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_c_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_c_signal.symbol = "XRP/USDT"
+    deferred_c_signal.metadata = {**dict(deferred_c_signal.metadata), "expected_return_bps": 7.0}
+
+    controller.process_signals([close_a_signal, deferred_c_signal])
+
+    assert _request_shadow_keys(execution.requests) == [
+        active_a_key,
+        active_b_key,
+        active_a_key,
+        deferred_c_key,
+    ]
+    assert [request.side for request in execution.requests] == ["BUY", "BUY", "SELL", "BUY"]
+    assert _order_path_events_with_shadow_key(journal, deferred_c_key)
+    deferred_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_key
+    ]
+    assert deferred_skips == []
+    assert _ranked_selection_events(journal) == []
+    open_outcome_keys = sorted(row.correlation_key for row in repository.load_open_outcomes())
+    assert open_outcome_keys == sorted([active_b_key, deferred_c_key])
+
+
+def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_two_multi_close_minimal_pair_keeps_historical_no_promotion_contract() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 13, 10, 0, tzinfo=timezone.utc)
+    active_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="multi-close-a-v3-no-promotion",
+        rank=1,
+    )
+    active_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="multi-close-a-v3-no-promotion",
+        rank=2,
+    )
+    deferred_c_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="multi-close-a-v3-no-promotion",
+        rank=3,
+    )
+    deferred_d_key = OpportunityShadowRecord.build_record_key(
+        symbol="SOL/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        model_version="multi-close-a-v3-no-promotion",
+        rank=4,
+    )
+    deferred_e_key = OpportunityShadowRecord.build_record_key(
+        symbol="ADA/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=4),
+        model_version="multi-close-a-v3-no-promotion",
+        rank=5,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=active_a_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=active_b_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_c_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="XRP/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_d_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=3),
+                ),
+                symbol="SOL/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_e_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=4),
+                ),
+                symbol="ADA/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 10.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 11.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=2,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    seed_open_a = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b.symbol = "ETH/USDT"
+    controller.process_signals([seed_open_a, seed_open_b])
+
+    close_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    close_b_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_mode=False,
+    )
+    close_b_signal.symbol = "ETH/USDT"
+    deferred_c_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_c_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_c_signal.symbol = "XRP/USDT"
+    deferred_c_signal.metadata = {
+        **dict(deferred_c_signal.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.70,
+    }
+    deferred_d_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_d_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_d_signal.symbol = "SOL/USDT"
+    deferred_d_signal.metadata = {
+        **dict(deferred_d_signal.metadata),
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.62,
+    }
+    deferred_e_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_e_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=4),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_e_signal.symbol = "ADA/USDT"
+    deferred_e_signal.metadata = {
+        **dict(deferred_e_signal.metadata),
+        "expected_return_bps": 2.0,
+        "expected_probability": 0.52,
+    }
+
+    controller.process_signals(
+        [close_a_signal, close_b_signal, deferred_c_signal, deferred_d_signal, deferred_e_signal]
+    )
+
+    assert _request_shadow_keys(execution.requests) == [active_a_key, active_b_key, active_a_key, active_b_key]
+    assert [request.side for request in execution.requests] == ["BUY", "BUY", "SELL", "SELL"]
+    assert _order_path_events_with_shadow_key(journal, deferred_c_key) == []
+    assert _order_path_events_with_shadow_key(journal, deferred_d_key) == []
+    assert _order_path_events_with_shadow_key(journal, deferred_e_key) == []
+    deferred_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        in {deferred_c_key, deferred_d_key, deferred_e_key}
+    ]
+    assert deferred_skips == []
+    assert _ranked_selection_events(journal) == []
+    assert sorted(row.correlation_key for row in repository.load_open_outcomes()) == []
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_c_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_d_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_e_key)
+
+
+def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_two_two_closes_one_deferred_keeps_historical_no_promotion_contract() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 13, 10, 0, tzinfo=timezone.utc)
+    active_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="multi-close-switch-one-deferred-v1",
+        rank=1,
+    )
+    active_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="multi-close-switch-one-deferred-v1",
+        rank=2,
+    )
+    deferred_c_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="multi-close-switch-one-deferred-v1",
+        rank=3,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=active_a_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=active_b_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_c_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="XRP/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 10.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=2,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    seed_open_a = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b.symbol = "ETH/USDT"
+    controller.process_signals([seed_open_a, seed_open_b])
+
+    close_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    close_b_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_mode=False,
+    )
+    close_b_signal.symbol = "ETH/USDT"
+    deferred_c_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_c_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_c_signal.symbol = "XRP/USDT"
+    deferred_c_signal.metadata = {
+        **dict(deferred_c_signal.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.70,
+    }
+
+    controller.process_signals([close_a_signal, close_b_signal, deferred_c_signal])
+
+    assert _request_shadow_keys(execution.requests) == [active_a_key, active_b_key, active_a_key, active_b_key]
+    assert [request.side for request in execution.requests] == ["BUY", "BUY", "SELL", "SELL"]
+    assert _order_path_events_with_shadow_key(journal, deferred_c_key) == []
+    deferred_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_key
+    ]
+    assert deferred_skips == []
+    assert _ranked_selection_events(journal) == []
+    assert sorted(row.correlation_key for row in repository.load_open_outcomes()) == []
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_c_key)
+
+
+def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_two_two_closes_two_deferred_keep_historical_no_promotion_contract() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 13, 10, 0, tzinfo=timezone.utc)
+    active_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="multi-close-switch-two-deferred-v1",
+        rank=1,
+    )
+    active_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="multi-close-switch-two-deferred-v1",
+        rank=2,
+    )
+    deferred_c_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="multi-close-switch-two-deferred-v1",
+        rank=3,
+    )
+    deferred_d_key = OpportunityShadowRecord.build_record_key(
+        symbol="SOL/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        model_version="multi-close-switch-two-deferred-v1",
+        rank=4,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=active_a_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=active_b_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_c_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="XRP/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_d_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=3),
+                ),
+                symbol="SOL/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 10.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 11.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=2,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    seed_open_a = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b.symbol = "ETH/USDT"
+    controller.process_signals([seed_open_a, seed_open_b])
+
+    close_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    close_b_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_mode=False,
+    )
+    close_b_signal.symbol = "ETH/USDT"
+    deferred_c_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_c_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_c_signal.symbol = "XRP/USDT"
+    deferred_c_signal.metadata = {
+        **dict(deferred_c_signal.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.70,
+    }
+    deferred_d_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_d_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_d_signal.symbol = "SOL/USDT"
+    deferred_d_signal.metadata = {
+        **dict(deferred_d_signal.metadata),
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.62,
+    }
+
+    controller.process_signals([close_a_signal, close_b_signal, deferred_c_signal, deferred_d_signal])
+
+    assert _request_shadow_keys(execution.requests) == [active_a_key, active_b_key, active_a_key, active_b_key]
+    assert [request.side for request in execution.requests] == ["BUY", "BUY", "SELL", "SELL"]
+    assert _order_path_events_with_shadow_key(journal, deferred_c_key) == []
+    assert _order_path_events_with_shadow_key(journal, deferred_d_key) == []
+    deferred_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        in {deferred_c_key, deferred_d_key}
+    ]
+    assert deferred_skips == []
+    assert _ranked_selection_events(journal) == []
+    assert sorted(row.correlation_key for row in repository.load_open_outcomes()) == []
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_c_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_d_key)
+
+
+def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_two_two_closes_one_deferred_with_second_close_rejected_also_keeps_historical_no_promotion_contract() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 13, 10, 0, tzinfo=timezone.utc)
+    active_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="multi-close-switch-close-rejected-v1",
+        rank=1,
+    )
+    active_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="multi-close-switch-close-rejected-v1",
+        rank=2,
+    )
+    deferred_c_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="multi-close-switch-close-rejected-v1",
+        rank=3,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=active_a_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=active_b_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=deferred_c_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="XRP/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0},
+            {"status": "rejected", "filled_quantity": 0.0, "avg_price": None},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 10.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=2,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+    )
+    seed_open_a = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    seed_open_b.symbol = "ETH/USDT"
+    controller.process_signals([seed_open_a, seed_open_b])
+
+    close_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    close_b_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_b_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_mode=False,
+    )
+    close_b_signal.symbol = "ETH/USDT"
+    deferred_c_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=deferred_c_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    deferred_c_signal.symbol = "XRP/USDT"
+    deferred_c_signal.metadata = {
+        **dict(deferred_c_signal.metadata),
+        "expected_return_bps": 9.0,
+        "expected_probability": 0.70,
+    }
+
+    controller.process_signals([close_a_signal, close_b_signal, deferred_c_signal])
+
+    assert _request_shadow_keys(execution.requests) == [active_a_key, active_b_key, active_a_key, active_b_key]
+    assert [request.side for request in execution.requests] == ["BUY", "BUY", "SELL", "SELL"]
+    active_a_events = _order_path_events_with_shadow_key(journal, active_a_key)
+    assert active_a_events
+    assert any(
+        event.get("event") == "order_executed"
+        and event.get("status") == "filled"
+        and event.get("side") == "SELL"
+        for event in active_a_events
+    )
+
+    active_b_events = _order_path_events_with_shadow_key(journal, active_b_key)
+    assert active_b_events
+    assert any(
+        event.get("event") == "order_execution_result"
+        and event.get("status") == "rejected"
+        and event.get("side") == "SELL"
+        for event in active_b_events
+    )
+    assert not any(
+        event.get("event") == "order_executed" and event.get("side") == "SELL"
+        for event in active_b_events
+    )
+
+    assert _order_path_events_with_shadow_key(journal, deferred_c_key) == []
+    deferred_skips = [
+        event
+        for event in journal.export()
+        if event["event"] == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_key
+    ]
+    assert deferred_skips == []
+    deferred_events = [
+        event
+        for event in journal.export()
+        if str(event.get("order_opportunity_shadow_record_key") or "").strip() == deferred_c_key
+    ]
+    assert all("proxy_correlation_key" not in event for event in deferred_events)
+    assert all("existing_open_correlation_key" not in event for event in deferred_events)
+    assert _ranked_selection_events(journal) == []
+    assert sorted(row.correlation_key for row in repository.load_open_outcomes()) == [active_b_key]
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=deferred_c_key)
+
+
 def test_opportunity_autonomy_active_budget_ranked_mode_two_filled_closes_release_two_slots_for_two_deferred_opens() -> (
     None
 ):
