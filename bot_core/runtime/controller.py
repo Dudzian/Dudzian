@@ -1777,6 +1777,7 @@ class TradingController:
             and ranked_selection_proof_candidate is not None
             and (ranked_runtime_promoted_shadow_keys or ranked_runtime_loser_shadow_keys)
         ):
+
             def _is_runtime_open_selected_shadow_key(shadow_key: object) -> bool:
                 normalized_shadow_key = str(shadow_key).strip()
                 if not normalized_shadow_key:
