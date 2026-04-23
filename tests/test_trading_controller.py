@@ -400,7 +400,8 @@ def _has_runtime_decision_trace_for_shadow_key(
     deferred_decision_events = [
         event
         for event in journal.export()
-        if str(event.get("order_opportunity_shadow_record_key") or "").strip() == normalized_shadow_key
+        if str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == normalized_shadow_key
         and event["event"] in {"signal_skipped", "opportunity_autonomy_enforcement"}
     ]
     if deferred_decision_events:
@@ -22344,7 +22345,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
     assert len(deferred_enforcement_events) == 1
     deferred_enforcement_event = deferred_enforcement_events[0]
     assert deferred_enforcement_event["status"] == "blocked"
-    assert deferred_enforcement_event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    assert (
+        deferred_enforcement_event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    )
     assert (
         deferred_enforcement_event["blocking_reason"]
         == "autonomy_mode_shadow_only_blocks_order_execution"
@@ -22498,7 +22501,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
     assert len(deferred_enforcement_events) == 1
     deferred_enforcement_event = deferred_enforcement_events[0]
     assert deferred_enforcement_event["status"] == "blocked"
-    assert deferred_enforcement_event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    assert (
+        deferred_enforcement_event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    )
     assert (
         deferred_enforcement_event["blocking_reason"]
         == "autonomy_mode_shadow_only_blocks_order_execution"
@@ -22691,6 +22696,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
         if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == [deferred_c_key]
+
 
 def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_two_single_close_single_deferred_promotes_after_real_slot_release() -> (
     None
@@ -23251,6 +23257,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
     assert skipped_for_deferred == []
     assert _ranked_selection_events(journal) == []
 
+
 def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_two_two_closes_two_deferred_keep_historical_no_promotion_contract() -> (
     None
 ):
@@ -23426,7 +23433,10 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
     assert len(deferred_c_enforcement_events) == 1
     deferred_c_enforcement_event = deferred_c_enforcement_events[0]
     assert deferred_c_enforcement_event["status"] == "blocked"
-    assert deferred_c_enforcement_event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    assert (
+        deferred_c_enforcement_event["autonomy_primary_reason"]
+        == "hard_performance_breach_detected"
+    )
     assert (
         deferred_c_enforcement_event["blocking_reason"]
         == "autonomy_mode_shadow_only_blocks_order_execution"
@@ -23440,7 +23450,10 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
     assert len(deferred_d_enforcement_events) == 1
     deferred_d_enforcement_event = deferred_d_enforcement_events[0]
     assert deferred_d_enforcement_event["status"] == "blocked"
-    assert deferred_d_enforcement_event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    assert (
+        deferred_d_enforcement_event["autonomy_primary_reason"]
+        == "hard_performance_breach_detected"
+    )
     assert (
         deferred_d_enforcement_event["blocking_reason"]
         == "autonomy_mode_shadow_only_blocks_order_execution"
@@ -23623,7 +23636,9 @@ def test_opportunity_autonomy_active_budget_ranked_mode_runtime_seeded_budget_tw
     assert len(deferred_enforcement_events) == 1
     deferred_enforcement_event = deferred_enforcement_events[0]
     assert deferred_enforcement_event["status"] == "blocked"
-    assert deferred_enforcement_event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    assert (
+        deferred_enforcement_event["autonomy_primary_reason"] == "hard_performance_breach_detected"
+    )
     assert (
         deferred_enforcement_event["blocking_reason"]
         == "autonomy_mode_shadow_only_blocks_order_execution"
