@@ -1988,13 +1988,22 @@ class TradingController:
                 candidate_signal.metadata if isinstance(candidate_signal.metadata, Mapping) else {}
             )
             candidate_mode = str(signal_metadata.get("mode") or "").strip().lower()
-            if (
-                candidate_mode != "close_ranked"
-                and not self._is_late_opposite_side_replay_within_batch(
-                    batch_index=candidate_batch_index,
-                    signal=candidate_signal,
-                    expanded_batch=expanded_batch,
-                )
+            if candidate_mode == "close_ranked":
+                if not self._is_autonomous_restored_tracker_contract(tracker):
+                    continue
+                remaining_quantity = self._remaining_quantity_for_tracker(tracker)
+                if remaining_quantity is None or remaining_quantity <= 0.0:
+                    continue
+                if not self._matches_current_open_tracker_scope(
+                    correlation_key=correlation_key,
+                    symbol=str(tracker.symbol),
+                    tracker=tracker,
+                ):
+                    continue
+            elif not self._is_late_opposite_side_replay_within_batch(
+                batch_index=candidate_batch_index,
+                signal=candidate_signal,
+                expanded_batch=expanded_batch,
             ):
                 continue
             if self._is_closing_side(str(tracker.side), str(request.side)):
