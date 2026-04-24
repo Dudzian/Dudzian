@@ -1984,10 +1984,17 @@ class TradingController:
             tracker = self._opportunity_open_outcomes.get(correlation_key)
             if tracker is None:
                 continue
-            if not self._is_late_opposite_side_replay_within_batch(
-                batch_index=candidate_batch_index,
-                signal=candidate_signal,
-                expanded_batch=expanded_batch,
+            signal_metadata = (
+                candidate_signal.metadata if isinstance(candidate_signal.metadata, Mapping) else {}
+            )
+            candidate_mode = str(signal_metadata.get("mode") or "").strip().lower()
+            if (
+                candidate_mode != "close_ranked"
+                and not self._is_late_opposite_side_replay_within_batch(
+                    batch_index=candidate_batch_index,
+                    signal=candidate_signal,
+                    expanded_batch=expanded_batch,
+                )
             ):
                 continue
             if self._is_closing_side(str(tracker.side), str(request.side)):
