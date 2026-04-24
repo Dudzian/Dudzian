@@ -26460,7 +26460,6 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_fu
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=promoted_lower_key)
 
 
-
 def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_environment_foreign_portfolio_future_close_does_not_unlock_deferred_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -26640,7 +26639,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_environment
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
     assert [
         event
@@ -26673,7 +26673,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_environment
     assert _order_path_events_with_shadow_key(journal, blocked_top_key) == []
     assert _order_path_events_with_shadow_key(journal, promoted_lower_key) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == [active_local_key]
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
@@ -26780,8 +26782,7 @@ def test_opportunity_autonomy_close_ranked_execution_path_is_scope_agnostic_for_
     order_path_events = _order_path_events_with_shadow_key(journal, close_target_key)
     assert order_path_events
     assert any(
-        event.get("event") == "order_executed"
-        and str(event.get("side") or "").upper() == "SELL"
+        event.get("event") == "order_executed" and str(event.get("side") or "").upper() == "SELL"
         for event in order_path_events
     )
     assert len(results) == 1
@@ -26818,7 +26819,9 @@ def test_opportunity_autonomy_close_ranked_execution_path_is_scope_agnostic_for_
     assert str(attach_events[0].get("execution_status") or "").strip() == "filled"
     assert _ranked_selection_events(journal) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == []
     close_rows = [
@@ -26827,6 +26830,7 @@ def test_opportunity_autonomy_close_ranked_execution_path_is_scope_agnostic_for_
     assert len(close_rows) == 1
     assert close_rows[0].closed_quantity >= close_rows[0].entry_quantity
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=close_target_key)
+
 
 def test_opportunity_autonomy_active_budget_ranked_mode_reverse_specific_one_filled_one_rejected_close_keeps_deferred_paths_as_ranked_losers() -> (
     None
