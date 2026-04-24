@@ -13646,7 +13646,10 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_exhau
         correlation_key=exhausted_target_key,
         decision_timestamp=decision_timestamp + timedelta(minutes=3),
     )
-    close_exhausted_signal.metadata = {**dict(close_exhausted_signal.metadata), "mode": "close_ranked"}
+    close_exhausted_signal.metadata = {
+        **dict(close_exhausted_signal.metadata),
+        "mode": "close_ranked",
+    }
 
     class _ForcedPermission:
         def __init__(self, *, allowed: bool, denial_reason: str | None = None) -> None:
@@ -13702,7 +13705,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_exhau
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
     assert [
         event
@@ -13726,7 +13730,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_exhau
         for event in events
         if event.get("event") == "opportunity_outcome_attach"
         and (
-            str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+            str(event.get("order_opportunity_shadow_record_key") or "").strip()
+            == promoted_lower_key
             or str(event.get("proxy_correlation_key") or "").strip() == promoted_lower_key
         )
     ]
@@ -13741,7 +13746,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_exhau
         loser_shadow_keys=[blocked_top_key, promoted_lower_key],
     )
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == [active_local_key]
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
@@ -13933,7 +13940,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_non_a
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
     assert [
         event
@@ -13957,7 +13965,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_non_a
         for event in events
         if event.get("event") == "opportunity_outcome_attach"
         and (
-            str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+            str(event.get("order_opportunity_shadow_record_key") or "").strip()
+            == promoted_lower_key
             or str(event.get("proxy_correlation_key") or "").strip() == promoted_lower_key
         )
     ]
@@ -13972,7 +13981,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_non_a
         loser_shadow_keys=[blocked_top_key, promoted_lower_key],
     )
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == [active_local_key]
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
@@ -14149,16 +14160,20 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_activ
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == blocked_top_key
     ]
     assert len(blocked_top_enforcement_events) == 1
-    assert str(blocked_top_enforcement_events[0].get("autonomous_execution_allowed") or "") == "false"
+    assert (
+        str(blocked_top_enforcement_events[0].get("autonomous_execution_allowed") or "") == "false"
+    )
     promoted_lower_enforcement_events = [
         event
         for event in events
         if event.get("event") == "opportunity_autonomy_enforcement"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ]
     assert len(promoted_lower_enforcement_events) == 1
     assert (
-        str(promoted_lower_enforcement_events[0].get("autonomous_execution_allowed") or "") == "true"
+        str(promoted_lower_enforcement_events[0].get("autonomous_execution_allowed") or "")
+        == "true"
     )
     assert [
         event
@@ -14182,7 +14197,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_activ
         for event in events
         if event.get("event") == "opportunity_outcome_attach"
         and (
-            str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+            str(event.get("order_opportunity_shadow_record_key") or "").strip()
+            == promoted_lower_key
             or str(event.get("proxy_correlation_key") or "").strip() == promoted_lower_key
         )
     ]
@@ -14193,11 +14209,15 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_activ
         str(promoted_lower_attach.get("order_opportunity_shadow_record_key") or "").strip()
         == promoted_lower_key
     )
-    assert str(promoted_lower_attach.get("proxy_correlation_key") or "").strip() == promoted_lower_key
+    assert (
+        str(promoted_lower_attach.get("proxy_correlation_key") or "").strip() == promoted_lower_key
+    )
     assert str(promoted_lower_attach.get("existing_open_correlation_key") or "").strip() == ""
     assert _ranked_selection_events(journal) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == sorted([active_local_key, promoted_lower_key])
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
@@ -25017,9 +25037,7 @@ def test_opportunity_autonomy_active_budget_ranked_mode_one_filled_and_one_rejec
 
 def test_opportunity_autonomy_active_budget_ranked_exact_two_deferred_ranked_candidates_promotes_legal_fallback_after_top_enforcement_block(
     monkeypatch: pytest.MonkeyPatch,
-) -> (
-    None
-):
+) -> None:
     decision_timestamp = datetime(2026, 1, 12, 14, 25, tzinfo=timezone.utc)
     active_a_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -25363,7 +25381,9 @@ def _execute_exact_deferred_ranked_seam_case(
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=active_a_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=active_a_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=active_b_key,
@@ -25554,7 +25574,9 @@ def _execute_exact_deferred_ranked_seam_case(
             lambda self, *, batch_index, expanded_batch, initial_open_trackers=None: any(
                 candidate_batch_index > batch_index
                 and candidate_signal.side.upper() == "SELL"
-                and str(candidate_signal.metadata.get("opportunity_shadow_record_key") or "").strip()
+                and str(
+                    candidate_signal.metadata.get("opportunity_shadow_record_key") or ""
+                ).strip()
                 == active_a_key
                 for candidate_batch_index, candidate_signal in expanded_batch
             ),
@@ -25629,7 +25651,8 @@ def test_opportunity_autonomy_active_budget_ranked_repo_seeded_seam_diagnostic(
         str(event.get("status") or "")
         for event in aligned_events
         if event.get("event") == "opportunity_autonomy_enforcement"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ] == ["allowed"]
     blocked_top_attach_events_aligned = [
         event
@@ -25662,7 +25685,9 @@ def test_opportunity_autonomy_active_budget_ranked_repo_seeded_seam_diagnostic(
         str(promoted_lower_attach_aligned.get("proxy_correlation_key") or "").strip()
         == promoted_lower_key
     )
-    assert str(promoted_lower_attach_aligned.get("existing_open_correlation_key") or "").strip() == ""
+    assert (
+        str(promoted_lower_attach_aligned.get("existing_open_correlation_key") or "").strip() == ""
+    )
     assert [
         event
         for event in aligned_events
@@ -25670,9 +25695,7 @@ def test_opportunity_autonomy_active_budget_ranked_repo_seeded_seam_diagnostic(
         and str(event.get("order_opportunity_shadow_record_key") or "").strip()
         in {blocked_top_key, promoted_lower_key}
     ] == []
-    _assert_no_duplicate_residue_metadata_for_shadow_key(
-        aligned_events, shadow_key=blocked_top_key
-    )
+    _assert_no_duplicate_residue_metadata_for_shadow_key(aligned_events, shadow_key=blocked_top_key)
     _assert_no_duplicate_residue_metadata_for_shadow_key(
         aligned_events, shadow_key=promoted_lower_key
     )
@@ -25769,8 +25792,12 @@ def test_opportunity_autonomy_active_budget_ranked_repo_seeded_seam_diagnostic(
         if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys_shifted == [active_b_key_shifted]
-    _assert_no_durable_artifacts_for_shadow_key(repository_shifted, shadow_key=blocked_top_key_shifted)
-    _assert_no_durable_artifacts_for_shadow_key(repository_shifted, shadow_key=promoted_lower_key_shifted)
+    _assert_no_durable_artifacts_for_shadow_key(
+        repository_shifted, shadow_key=blocked_top_key_shifted
+    )
+    _assert_no_durable_artifacts_for_shadow_key(
+        repository_shifted, shadow_key=promoted_lower_key_shifted
+    )
 
 
 def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_diagnostic(
@@ -25814,7 +25841,8 @@ def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_diagnosti
         str(event.get("status") or "")
         for event in aligned_events
         if event.get("event") == "opportunity_autonomy_enforcement"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ] == ["allowed"]
     blocked_top_attach_events_aligned = [
         event
@@ -25847,7 +25875,9 @@ def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_diagnosti
         str(promoted_lower_attach_aligned.get("proxy_correlation_key") or "").strip()
         == promoted_lower_key
     )
-    assert str(promoted_lower_attach_aligned.get("existing_open_correlation_key") or "").strip() == ""
+    assert (
+        str(promoted_lower_attach_aligned.get("existing_open_correlation_key") or "").strip() == ""
+    )
     assert [
         event
         for event in aligned_events
@@ -25855,9 +25885,7 @@ def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_diagnosti
         and str(event.get("order_opportunity_shadow_record_key") or "").strip()
         in {blocked_top_key, promoted_lower_key}
     ] == []
-    _assert_no_duplicate_residue_metadata_for_shadow_key(
-        aligned_events, shadow_key=blocked_top_key
-    )
+    _assert_no_duplicate_residue_metadata_for_shadow_key(aligned_events, shadow_key=blocked_top_key)
     _assert_no_duplicate_residue_metadata_for_shadow_key(
         aligned_events, shadow_key=promoted_lower_key
     )
@@ -25958,21 +25986,32 @@ def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_diagnosti
         if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys_shifted == [active_b_key_shifted]
-    _assert_no_durable_artifacts_for_shadow_key(repository_shifted, shadow_key=blocked_top_key_shifted)
-    _assert_no_durable_artifacts_for_shadow_key(repository_shifted, shadow_key=promoted_lower_key_shifted)
+    _assert_no_durable_artifacts_for_shadow_key(
+        repository_shifted, shadow_key=blocked_top_key_shifted
+    )
+    _assert_no_durable_artifacts_for_shadow_key(
+        repository_shifted, shadow_key=promoted_lower_key_shifted
+    )
 
 
 def test_opportunity_autonomy_active_budget_ranked_repo_seeded_seam_natural_close_then_deferred_enforcement_fallback_promotion_minimal_pair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with monkeypatch.context() as context:
-        execution, repository, _, journal, active_a_key, active_b_key, blocked_top_key, promoted_lower_key = (
-            _execute_exact_deferred_ranked_seam_case(
-                monkeypatch=context,
-                seed_mode="repo_seeded",
-                shift_deferred_signal_timestamps=False,
-                monkeypatch_future_close=False,
-            )
+        (
+            execution,
+            repository,
+            _,
+            journal,
+            active_a_key,
+            active_b_key,
+            blocked_top_key,
+            promoted_lower_key,
+        ) = _execute_exact_deferred_ranked_seam_case(
+            monkeypatch=context,
+            seed_mode="repo_seeded",
+            shift_deferred_signal_timestamps=False,
+            monkeypatch_future_close=False,
         )
 
     assert _request_shadow_keys(execution.requests) == [active_a_key, promoted_lower_key]
@@ -26004,7 +26043,8 @@ def test_opportunity_autonomy_active_budget_ranked_repo_seeded_seam_natural_clos
         str(event.get("status") or "")
         for event in events
         if event.get("event") == "opportunity_autonomy_enforcement"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ]
     assert promoted_lower_enforcement_events == ["allowed"]
     promoted_lower_outcome_attach_events = [
@@ -26045,7 +26085,9 @@ def test_opportunity_autonomy_active_budget_ranked_repo_seeded_seam_natural_clos
         loser_shadow_keys=[],
     )
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == sorted([active_b_key, promoted_lower_key])
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
@@ -26057,13 +26099,20 @@ def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_natural_c
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with monkeypatch.context() as context:
-        execution, repository, _, journal, active_a_key, active_b_key, blocked_top_key, promoted_lower_key = (
-            _execute_exact_deferred_ranked_seam_case(
-                monkeypatch=context,
-                seed_mode="runtime_seeded",
-                shift_deferred_signal_timestamps=False,
-                monkeypatch_future_close=False,
-            )
+        (
+            execution,
+            repository,
+            _,
+            journal,
+            active_a_key,
+            active_b_key,
+            blocked_top_key,
+            promoted_lower_key,
+        ) = _execute_exact_deferred_ranked_seam_case(
+            monkeypatch=context,
+            seed_mode="runtime_seeded",
+            shift_deferred_signal_timestamps=False,
+            monkeypatch_future_close=False,
         )
 
     assert _request_shadow_keys(execution.requests) == [
@@ -26100,7 +26149,8 @@ def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_natural_c
         str(event.get("status") or "")
         for event in events
         if event.get("event") == "opportunity_autonomy_enforcement"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ]
     assert promoted_lower_enforcement_events == ["allowed"]
     promoted_lower_outcome_attach_events = [
@@ -26141,7 +26191,9 @@ def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_natural_c
         loser_shadow_keys=[],
     )
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == sorted([active_b_key, promoted_lower_key])
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
@@ -26345,7 +26397,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_fu
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
     blocked_top_enforcement_events = [
         event
@@ -26358,7 +26411,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_fu
         event
         for event in events
         if event.get("event") == "opportunity_autonomy_enforcement"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
     ]
     assert promoted_lower_enforcement_events == []
     blocked_top_attach_events = [
@@ -26376,7 +26430,8 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_fu
         for event in events
         if event.get("event") == "opportunity_outcome_attach"
         and (
-            str(event.get("order_opportunity_shadow_record_key") or "").strip() == promoted_lower_key
+            str(event.get("order_opportunity_shadow_record_key") or "").strip()
+            == promoted_lower_key
             or str(event.get("proxy_correlation_key") or "").strip() == promoted_lower_key
         )
     ]
@@ -26394,13 +26449,16 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_fu
     assert _order_path_events_with_shadow_key(journal, blocked_top_key) == []
     assert _order_path_events_with_shadow_key(journal, promoted_lower_key) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == [active_local_key]
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=promoted_lower_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_top_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=promoted_lower_key)
+
 
 def test_opportunity_autonomy_active_budget_ranked_mode_reverse_specific_one_filled_one_rejected_close_keeps_deferred_paths_as_ranked_losers() -> (
     None
