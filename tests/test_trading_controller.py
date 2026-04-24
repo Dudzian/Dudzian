@@ -24323,6 +24323,722 @@ def test_opportunity_autonomy_active_budget_ranked_mode_one_filled_and_one_rejec
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_d_key)
 
 
+def test_opportunity_autonomy_active_budget_ranked_exact_two_deferred_ranked_candidates_promotes_legal_fallback_after_top_enforcement_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 14, 25, tzinfo=timezone.utc)
+    active_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-enforcement-fallback-v1",
+        rank=1,
+    )
+    active_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-enforcement-fallback-v1",
+        rank=2,
+    )
+    blocked_top_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-enforcement-fallback-v1",
+        rank=3,
+    )
+    promoted_lower_key = OpportunityShadowRecord.build_record_key(
+        symbol="SOL/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        model_version="opportunity-budget-ranked-enforcement-fallback-v1",
+        rank=4,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=active_a_key, decision_timestamp=decision_timestamp
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=active_b_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=blocked_top_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="XRP/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=promoted_lower_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=3),
+                ),
+                symbol="SOL/USDT",
+            ),
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=active_a_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=4),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=active_b_key,
+            symbol="ETH/USDT",
+            side="BUY",
+            entry_price=200.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=3),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 2.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=2,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+        signal_mode_priorities={"open_ranked": 30, "deferred_ranked": 20, "close_ranked": 10},
+    )
+
+    close_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp,
+    )
+    close_a_signal.metadata = {**dict(close_a_signal.metadata), "mode": "close_ranked"}
+    blocked_top_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=blocked_top_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    blocked_top_signal.symbol = "XRP/USDT"
+    blocked_top_signal.metadata = {
+        **dict(blocked_top_signal.metadata),
+        "mode": "deferred_ranked",
+        "expected_return_bps": 9.0,
+    }
+    promoted_lower_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=promoted_lower_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    promoted_lower_signal.symbol = "SOL/USDT"
+    promoted_lower_signal.metadata = {
+        **dict(promoted_lower_signal.metadata),
+        "mode": "deferred_ranked",
+        "expected_return_bps": 3.0,
+    }
+
+    class _ForcedPermission:
+        def __init__(self, *, allowed: bool, denial_reason: str | None = None) -> None:
+            self.autonomous_execution_allowed = allowed
+            self.primary_reason = "test_forced_permission"
+            self.denial_reason = denial_reason
+
+        def to_dict(self) -> Mapping[str, object]:
+            return {
+                "autonomy_mode": "paper_autonomous",
+                "autonomous_execution_allowed": self.autonomous_execution_allowed,
+                "assisted_override_used": False,
+                "primary_reason": self.primary_reason,
+                "denial_reason": self.denial_reason,
+            }
+
+    def _forced_permission_evaluation(
+        self: TradingController,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ):
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        if shadow_key == blocked_top_key:
+            return _ForcedPermission(
+                allowed=False,
+                denial_reason="autonomous_mode_requires_assisted_execution",
+            ), {"autonomy_mode": "paper_autonomous"}
+        return _ForcedPermission(allowed=True), {"autonomy_mode": "paper_autonomous"}
+
+    monkeypatch.setattr(
+        TradingController,
+        "_evaluate_opportunity_execution_permission",
+        _forced_permission_evaluation,
+    )
+    monkeypatch.setattr(
+        TradingController,
+        "_has_future_potential_slot_releasing_close",
+        lambda self, *, batch_index, expanded_batch: any(
+            candidate_batch_index > batch_index
+            and candidate_signal.side.upper() == "SELL"
+            and str(candidate_signal.metadata.get("opportunity_shadow_record_key") or "").strip()
+            == active_a_key
+            for candidate_batch_index, candidate_signal in expanded_batch
+        ),
+    )
+
+    controller.process_signals([close_a_signal, blocked_top_signal, promoted_lower_signal])
+
+    assert _request_shadow_keys(execution.requests) == [active_a_key, promoted_lower_key]
+    assert [request.side for request in execution.requests] == ["SELL", "BUY"]
+    assert _order_path_events_with_shadow_key(journal, blocked_top_key) == []
+    promoted_order_path_events = _order_path_events_with_shadow_key(journal, promoted_lower_key)
+    assert promoted_order_path_events
+    assert all("proxy_correlation_key" not in event for event in promoted_order_path_events)
+    assert all("existing_open_correlation_key" not in event for event in promoted_order_path_events)
+
+    blocked_enforcement_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == blocked_top_key
+    ]
+    assert len(blocked_enforcement_events) == 1
+    blocked_enforcement = blocked_enforcement_events[0]
+    assert blocked_enforcement["status"] == "blocked"
+    assert blocked_enforcement["execution_permission"] == "blocked"
+    assert blocked_enforcement["blocking_reason"] == "autonomous_mode_requires_assisted_execution"
+
+    promoted_enforcement_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
+    ]
+    assert len(promoted_enforcement_events) == 1
+    assert promoted_enforcement_events[0]["status"] == "allowed"
+    assert promoted_enforcement_events[0]["execution_permission"] == "allowed"
+
+    blocked_skips = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == blocked_top_key
+    ]
+    assert blocked_skips == []
+    promoted_skips = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == promoted_lower_key
+    ]
+    assert all(
+        event.get("reason")
+        not in {
+            "autonomous_open_active_budget_ranked_loser",
+            "autonomous_open_active_budget_exhausted",
+            "duplicate_autonomous_open_reentry_suppressed",
+        }
+        for event in promoted_skips
+    )
+
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="0",
+        candidate_count="1",
+        selected_count="1",
+        loser_count="0",
+        selected_shadow_keys=[promoted_lower_key],
+        loser_shadow_keys=[],
+    )
+
+    open_rows = repository.load_open_outcomes()
+    open_rows_by_key = {row.correlation_key: row for row in open_rows}
+    active_open_keys = sorted(
+        row.correlation_key for row in open_rows if row.closed_quantity < row.entry_quantity
+    )
+    assert active_open_keys == sorted([active_b_key, promoted_lower_key])
+    assert (
+        open_rows_by_key[active_a_key].closed_quantity
+        >= open_rows_by_key[active_a_key].entry_quantity
+    )
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_top_key)
+
+
+def _run_exact_deferred_ranked_diagnostic_case(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    seed_mode: str,
+    apply_permission_patch: bool,
+    apply_future_close_patch: bool,
+) -> dict[str, object]:
+    decision_timestamp = datetime(2026, 1, 12, 15, 0, tzinfo=timezone.utc)
+    active_a_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-budget-ranked-diagnostic-v1",
+        rank=1,
+    )
+    active_b_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-budget-ranked-diagnostic-v1",
+        rank=2,
+    )
+    blocked_top_key = OpportunityShadowRecord.build_record_key(
+        symbol="XRP/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="opportunity-budget-ranked-diagnostic-v1",
+        rank=3,
+    )
+    promoted_lower_key = OpportunityShadowRecord.build_record_key(
+        symbol="SOL/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+        model_version="opportunity-budget-ranked-diagnostic-v1",
+        rank=4,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0, 6.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=active_a_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=active_b_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=blocked_top_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="XRP/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=promoted_lower_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=3),
+                ),
+                symbol="SOL/USDT",
+            ),
+        ]
+    )
+    if seed_mode == "repo_seeded":
+        repository.upsert_open_outcome(
+            repository.OpenOutcomeState(
+                correlation_key=active_a_key,
+                symbol="BTC/USDT",
+                side="BUY",
+                entry_price=100.0,
+                decision_timestamp=decision_timestamp - timedelta(minutes=4),
+                entry_quantity=1.0,
+                closed_quantity=0.0,
+                provenance={
+                    "environment": "paper",
+                    "portfolio": "paper-1",
+                    "autonomy_final_mode": "paper_autonomous",
+                },
+            )
+        )
+        repository.upsert_open_outcome(
+            repository.OpenOutcomeState(
+                correlation_key=active_b_key,
+                symbol="ETH/USDT",
+                side="BUY",
+                entry_price=200.0,
+                decision_timestamp=decision_timestamp - timedelta(minutes=3),
+                entry_quantity=1.0,
+                closed_quantity=0.0,
+                provenance={
+                    "environment": "paper",
+                    "portfolio": "paper-1",
+                    "autonomy_final_mode": "paper_autonomous",
+                },
+            )
+        )
+        execution = SequencedExecutionService(
+            [
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 2.0},
+            ]
+        )
+    else:
+        execution = SequencedExecutionService(
+            [
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 2.0},
+            ]
+        )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=2,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+        signal_mode_priorities={"open_ranked": 30, "deferred_ranked": 20, "close_ranked": 10},
+    )
+
+    if seed_mode == "runtime_seeded":
+        seed_open_a_signal = _autonomy_signal_with_correlation(
+            mode="paper_autonomous",
+            side="BUY",
+            correlation_key=active_a_key,
+            decision_timestamp=decision_timestamp,
+            include_decision_payload=True,
+            decision_effective_mode="paper_autonomous",
+        )
+        seed_open_b_signal = _autonomy_signal_with_correlation(
+            mode="paper_autonomous",
+            side="BUY",
+            correlation_key=active_b_key,
+            decision_timestamp=decision_timestamp + timedelta(minutes=1),
+            include_decision_payload=True,
+            decision_effective_mode="paper_autonomous",
+        )
+        seed_open_b_signal.symbol = "ETH/USDT"
+        controller.process_signals([seed_open_a_signal, seed_open_b_signal])
+
+    close_a_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=active_a_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=4),
+    )
+    close_a_signal.metadata = {**dict(close_a_signal.metadata), "mode": "close_ranked"}
+    blocked_top_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=blocked_top_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=5),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    blocked_top_signal.symbol = "XRP/USDT"
+    blocked_top_signal.metadata = {
+        **dict(blocked_top_signal.metadata),
+        "mode": "deferred_ranked",
+        "expected_return_bps": 9.0,
+    }
+    promoted_lower_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=promoted_lower_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=6),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    promoted_lower_signal.symbol = "SOL/USDT"
+    promoted_lower_signal.metadata = {
+        **dict(promoted_lower_signal.metadata),
+        "mode": "deferred_ranked",
+        "expected_return_bps": 3.0,
+    }
+
+    if apply_permission_patch:
+        class _ForcedPermission:
+            def __init__(self, *, allowed: bool, denial_reason: str | None = None) -> None:
+                self.autonomous_execution_allowed = allowed
+                self.primary_reason = "test_forced_permission"
+                self.denial_reason = denial_reason
+
+            def to_dict(self) -> Mapping[str, object]:
+                return {
+                    "autonomy_mode": "paper_autonomous",
+                    "autonomous_execution_allowed": self.autonomous_execution_allowed,
+                    "assisted_override_used": False,
+                    "primary_reason": self.primary_reason,
+                    "denial_reason": self.denial_reason,
+                }
+
+        def _forced_permission_evaluation(
+            self: TradingController,
+            *,
+            signal: StrategySignal,
+            request: OrderRequest,
+        ):
+            metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+            shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+            if shadow_key == blocked_top_key:
+                return _ForcedPermission(
+                    allowed=False,
+                    denial_reason="autonomous_mode_requires_assisted_execution",
+                ), {"autonomy_mode": "paper_autonomous"}
+            return _ForcedPermission(allowed=True), {"autonomy_mode": "paper_autonomous"}
+
+        monkeypatch.setattr(
+            TradingController,
+            "_evaluate_opportunity_execution_permission",
+            _forced_permission_evaluation,
+        )
+    if apply_future_close_patch:
+        monkeypatch.setattr(
+            TradingController,
+            "_has_future_potential_slot_releasing_close",
+            lambda self, *, batch_index, expanded_batch: any(
+                candidate_batch_index > batch_index
+                and candidate_signal.side.upper() == "SELL"
+                and str(candidate_signal.metadata.get("opportunity_shadow_record_key") or "").strip()
+                == active_a_key
+                for candidate_batch_index, candidate_signal in expanded_batch
+            ),
+        )
+
+    controller.process_signals([close_a_signal, blocked_top_signal, promoted_lower_signal])
+
+    exported = list(journal.export())
+
+    def _skips_for_key(shadow_key: str) -> list[str]:
+        return [
+            str(event.get("reason") or "")
+            for event in exported
+            if event.get("event") == "signal_skipped"
+            and str(event.get("order_opportunity_shadow_record_key") or "").strip() == shadow_key
+        ]
+
+    def _enforcement_for_key(shadow_key: str) -> list[str]:
+        return [
+            str(event.get("status") or "")
+            for event in exported
+            if event.get("event") == "opportunity_autonomy_enforcement"
+            and str(event.get("order_opportunity_shadow_record_key") or "").strip() == shadow_key
+        ]
+
+    ranked_events = _ranked_selection_events(journal)
+    ranked_selected: list[str] = []
+    ranked_loser: list[str] = []
+    if ranked_events:
+        ranked_selected = _ranked_selection_shadow_keys(ranked_events[-1], "selected_shadow_keys")
+        ranked_loser = _ranked_selection_shadow_keys(ranked_events[-1], "loser_shadow_keys")
+
+    open_rows = repository.load_open_outcomes()
+    active_open_keys = sorted(
+        row.correlation_key for row in open_rows if row.closed_quantity < row.entry_quantity
+    )
+    return {
+        "request_keys": _request_shadow_keys(execution.requests),
+        "request_sides": [request.side for request in execution.requests],
+        "active_a_order_path_present": bool(_order_path_events_with_shadow_key(journal, active_a_key)),
+        "blocked_top_order_path_present": bool(
+            _order_path_events_with_shadow_key(journal, blocked_top_key)
+        ),
+        "promoted_lower_order_path_present": bool(
+            _order_path_events_with_shadow_key(journal, promoted_lower_key)
+        ),
+        "blocked_top_skips": _skips_for_key(blocked_top_key),
+        "promoted_lower_skips": _skips_for_key(promoted_lower_key),
+        "blocked_top_enforcement_statuses": _enforcement_for_key(blocked_top_key),
+        "promoted_lower_enforcement_statuses": _enforcement_for_key(promoted_lower_key),
+        "ranked_event_count": len(ranked_events),
+        "ranked_selected_shadow_keys": ranked_selected,
+        "ranked_loser_shadow_keys": ranked_loser,
+        "active_open_keys": active_open_keys,
+        "active_a_key": active_a_key,
+        "active_b_key": active_b_key,
+        "blocked_top_key": blocked_top_key,
+        "promoted_lower_key": promoted_lower_key,
+    }
+
+
+def test_opportunity_autonomy_active_budget_ranked_repo_seeded_seam_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as context:
+        result_no_patch = _run_exact_deferred_ranked_diagnostic_case(
+            monkeypatch=context,
+            seed_mode="repo_seeded",
+            apply_permission_patch=False,
+            apply_future_close_patch=False,
+        )
+    assert result_no_patch["request_keys"] == [str(result_no_patch["active_a_key"])]
+    assert result_no_patch["request_sides"] == ["SELL"]
+    assert result_no_patch["active_a_order_path_present"] is True
+    assert result_no_patch["blocked_top_order_path_present"] is False
+    assert result_no_patch["promoted_lower_order_path_present"] is False
+    assert result_no_patch["blocked_top_enforcement_statuses"] == []
+    assert result_no_patch["promoted_lower_enforcement_statuses"] == []
+    assert result_no_patch["blocked_top_skips"] == ["autonomous_open_active_budget_ranked_loser"]
+    assert result_no_patch["promoted_lower_skips"] == ["autonomous_open_active_budget_ranked_loser"]
+    assert result_no_patch["ranked_event_count"] == 1
+    assert result_no_patch["ranked_selected_shadow_keys"] == []
+    assert result_no_patch["ranked_loser_shadow_keys"] == [
+        str(result_no_patch["blocked_top_key"]),
+        str(result_no_patch["promoted_lower_key"]),
+    ]
+    assert result_no_patch["active_open_keys"] == [str(result_no_patch["active_b_key"])]
+
+    with monkeypatch.context() as context:
+        result_permission_only = _run_exact_deferred_ranked_diagnostic_case(
+            monkeypatch=context,
+            seed_mode="repo_seeded",
+            apply_permission_patch=True,
+            apply_future_close_patch=False,
+        )
+    assert result_permission_only["request_keys"] == [str(result_permission_only["active_a_key"])]
+    assert result_permission_only["request_sides"] == ["SELL"]
+    assert result_permission_only["active_a_order_path_present"] is True
+    assert result_permission_only["blocked_top_order_path_present"] is False
+    assert result_permission_only["promoted_lower_order_path_present"] is False
+    assert result_permission_only["blocked_top_enforcement_statuses"] == []
+    assert result_permission_only["promoted_lower_enforcement_statuses"] == []
+    assert result_permission_only["blocked_top_skips"] == ["autonomous_open_active_budget_ranked_loser"]
+    assert result_permission_only["promoted_lower_skips"] == [
+        "autonomous_open_active_budget_ranked_loser"
+    ]
+    assert result_permission_only["ranked_event_count"] == 1
+    assert result_permission_only["ranked_selected_shadow_keys"] == []
+    assert result_permission_only["ranked_loser_shadow_keys"] == [
+        str(result_permission_only["blocked_top_key"]),
+        str(result_permission_only["promoted_lower_key"]),
+    ]
+    assert result_permission_only["active_open_keys"] == [str(result_permission_only["active_b_key"])]
+
+    with monkeypatch.context() as context:
+        result_permission_plus_future = _run_exact_deferred_ranked_diagnostic_case(
+            monkeypatch=context,
+            seed_mode="repo_seeded",
+            apply_permission_patch=True,
+            apply_future_close_patch=True,
+        )
+    assert result_permission_plus_future["request_keys"] == [str(result_permission_plus_future["active_a_key"])]
+    assert result_permission_plus_future["request_sides"] == ["SELL"]
+    assert result_permission_plus_future["active_a_order_path_present"] is True
+    assert result_permission_plus_future["blocked_top_order_path_present"] is False
+    assert result_permission_plus_future["promoted_lower_order_path_present"] is False
+    assert result_permission_plus_future["blocked_top_enforcement_statuses"] == ["blocked"]
+    assert result_permission_plus_future["promoted_lower_enforcement_statuses"] == ["blocked"]
+    assert result_permission_plus_future["blocked_top_skips"] == []
+    assert result_permission_plus_future["promoted_lower_skips"] == []
+    assert result_permission_plus_future["ranked_event_count"] == 0
+    assert result_permission_plus_future["ranked_selected_shadow_keys"] == []
+    assert result_permission_plus_future["ranked_loser_shadow_keys"] == []
+    assert result_permission_plus_future["active_open_keys"] == [
+        str(result_permission_plus_future["active_b_key"])
+    ]
+
+
+def test_opportunity_autonomy_active_budget_ranked_runtime_seeded_seam_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as context:
+        result_no_patch = _run_exact_deferred_ranked_diagnostic_case(
+            monkeypatch=context,
+            seed_mode="runtime_seeded",
+            apply_permission_patch=False,
+            apply_future_close_patch=False,
+        )
+    assert result_no_patch["request_keys"] == [
+        str(result_no_patch["active_a_key"]),
+        str(result_no_patch["active_b_key"]),
+        str(result_no_patch["active_a_key"]),
+    ]
+    assert result_no_patch["request_sides"] == ["BUY", "BUY", "SELL"]
+    assert result_no_patch["active_a_order_path_present"] is True
+    assert result_no_patch["blocked_top_order_path_present"] is False
+    assert result_no_patch["promoted_lower_order_path_present"] is False
+    assert result_no_patch["blocked_top_enforcement_statuses"] == []
+    assert result_no_patch["promoted_lower_enforcement_statuses"] == []
+    assert result_no_patch["blocked_top_skips"] == ["autonomous_open_active_budget_ranked_loser"]
+    assert result_no_patch["promoted_lower_skips"] == ["autonomous_open_active_budget_ranked_loser"]
+    assert result_no_patch["ranked_event_count"] == 1
+    assert result_no_patch["ranked_selected_shadow_keys"] == []
+    assert result_no_patch["ranked_loser_shadow_keys"] == [
+        str(result_no_patch["blocked_top_key"]),
+        str(result_no_patch["promoted_lower_key"]),
+    ]
+    assert result_no_patch["active_open_keys"] == [str(result_no_patch["active_b_key"])]
+
+    with monkeypatch.context() as context:
+        result_permission_only = _run_exact_deferred_ranked_diagnostic_case(
+            monkeypatch=context,
+            seed_mode="runtime_seeded",
+            apply_permission_patch=True,
+            apply_future_close_patch=False,
+        )
+    assert result_permission_only["request_keys"] == [
+        str(result_permission_only["active_a_key"]),
+        str(result_permission_only["active_b_key"]),
+        str(result_permission_only["active_a_key"]),
+    ]
+    assert result_permission_only["request_sides"] == ["BUY", "BUY", "SELL"]
+    assert result_permission_only["active_a_order_path_present"] is True
+    assert result_permission_only["blocked_top_order_path_present"] is False
+    assert result_permission_only["promoted_lower_order_path_present"] is False
+    assert result_permission_only["blocked_top_enforcement_statuses"] == []
+    assert result_permission_only["promoted_lower_enforcement_statuses"] == []
+    assert result_permission_only["blocked_top_skips"] == ["autonomous_open_active_budget_ranked_loser"]
+    assert result_permission_only["promoted_lower_skips"] == [
+        "autonomous_open_active_budget_ranked_loser"
+    ]
+    assert result_permission_only["ranked_event_count"] == 1
+    assert result_permission_only["ranked_selected_shadow_keys"] == []
+    assert result_permission_only["ranked_loser_shadow_keys"] == [
+        str(result_permission_only["blocked_top_key"]),
+        str(result_permission_only["promoted_lower_key"]),
+    ]
+    assert result_permission_only["active_open_keys"] == [str(result_permission_only["active_b_key"])]
+
+    with monkeypatch.context() as context:
+        result_permission_plus_future = _run_exact_deferred_ranked_diagnostic_case(
+            monkeypatch=context,
+            seed_mode="runtime_seeded",
+            apply_permission_patch=True,
+            apply_future_close_patch=True,
+        )
+    assert result_permission_plus_future["request_keys"] == [
+        str(result_permission_plus_future["active_a_key"]),
+        str(result_permission_plus_future["active_b_key"]),
+        str(result_permission_plus_future["active_a_key"]),
+    ]
+    assert result_permission_plus_future["request_sides"] == ["BUY", "BUY", "SELL"]
+    assert result_permission_plus_future["active_a_order_path_present"] is True
+    assert result_permission_plus_future["blocked_top_order_path_present"] is False
+    assert result_permission_plus_future["promoted_lower_order_path_present"] is False
+    assert result_permission_plus_future["blocked_top_enforcement_statuses"] == ["blocked"]
+    assert result_permission_plus_future["promoted_lower_enforcement_statuses"] == ["blocked"]
+    assert result_permission_plus_future["blocked_top_skips"] == []
+    assert result_permission_plus_future["promoted_lower_skips"] == []
+    assert result_permission_plus_future["ranked_event_count"] == 0
+    assert result_permission_plus_future["ranked_selected_shadow_keys"] == []
+    assert result_permission_plus_future["ranked_loser_shadow_keys"] == []
+    assert result_permission_plus_future["active_open_keys"] == [
+        str(result_permission_plus_future["active_b_key"])
+    ]
+
+
 def test_opportunity_autonomy_active_budget_ranked_mode_reverse_specific_one_filled_one_rejected_close_keeps_deferred_paths_as_ranked_losers() -> (
     None
 ):
