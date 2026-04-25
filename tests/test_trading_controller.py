@@ -28809,10 +28809,34 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_non_filled_close
             "0.00000000",
         ),
         (
+            "partially_filled",
+            {"status": "partially_filled", "filled_quantity": None, "avg_price": 195.0},
+            "order_partially_executed",
+            "null",
+        ),
+        (
+            "partially_filled",
+            {"status": "partially_filled", "avg_price": 195.0},
+            "order_partially_executed",
+            "null",
+        ),
+        (
             "partial",
             {"status": "partial", "filled_quantity": 0.0, "avg_price": 195.0},
             "order_partially_executed",
             "0.00000000",
+        ),
+        (
+            "partial",
+            {"status": "partial", "filled_quantity": None, "avg_price": 195.0},
+            "order_partially_executed",
+            "null",
+        ),
+        (
+            "partial",
+            {"status": "partial", "avg_price": 195.0},
+            "order_partially_executed",
+            "null",
         ),
     ],
 )
@@ -29089,6 +29113,234 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_filled_like_with
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=allowed_lower_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_top_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=allowed_lower_key)
+
+
+@pytest.mark.parametrize(
+    ("close_status", "close_payload"),
+    [
+        ("partially_filled", {"status": "partially_filled", "filled_quantity": None, "avg_price": 195.0}),
+        ("partially_filled", {"status": "partially_filled", "avg_price": 195.0}),
+        ("partial", {"status": "partial", "filled_quantity": None, "avg_price": 195.0}),
+        ("partial", {"status": "partial", "avg_price": 195.0}),
+    ],
+)
+def test_opportunity_autonomy_close_ranked_partial_like_without_quantity_keeps_downstream_alert_and_tco_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    close_status: str,
+    close_payload: dict[str, object],
+) -> None:
+    decision_timestamp = datetime(2026, 1, 12, 18, 0, tzinfo=timezone.utc)
+    close_target_key = f"partial-none-downstream-close-target-{close_status}-{int('filled_quantity' in close_payload)}"
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=close_target_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=close_target_key,
+            symbol="ETH/USDT",
+            side="BUY",
+            entry_price=200.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=1),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+
+    class _ExecutionWithoutFilledQuantityFallback(ExecutionService):
+        def __init__(self, payload: Mapping[str, object]) -> None:
+            self._payload = dict(payload)
+            self.requests: list[OrderRequest] = []
+
+        def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+            self.requests.append(request)
+            return OrderResult(
+                order_id=str(self._payload.get("order_id", "order-seq")),
+                status=str(self._payload.get("status", "partially_filled")),
+                filled_quantity=self._payload.get("filled_quantity"),
+                avg_price=self._payload.get("avg_price", request.price),
+                raw_response={"context": context.metadata},
+            )
+
+        def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+            return None
+
+        def flush(self) -> None:
+            return None
+
+    class _ForcedPermission:
+        def __init__(self, *, allowed: bool) -> None:
+            self.autonomous_execution_allowed = allowed
+            self.primary_reason = "test_forced_permission"
+            self.denial_reason = None
+
+        def to_dict(self) -> Mapping[str, object]:
+            return {
+                "autonomy_mode": "paper_autonomous",
+                "autonomous_execution_allowed": self.autonomous_execution_allowed,
+                "assisted_override_used": False,
+                "primary_reason": self.primary_reason,
+                "denial_reason": self.denial_reason,
+            }
+
+    permission_checks: list[str] = []
+
+    def _forced_permission_evaluation(
+        self: TradingController,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ):
+        del self, signal
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        permission_checks.append(shadow_key)
+        return _ForcedPermission(allowed=True), {"autonomy_mode": "paper_autonomous"}
+
+    monkeypatch.setattr(
+        TradingController,
+        "_evaluate_opportunity_execution_permission",
+        _forced_permission_evaluation,
+    )
+
+    execution = _ExecutionWithoutFilledQuantityFallback(close_payload)
+    reporter = StubTCOReporter()
+    router, channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=repository,
+        tco_reporter=reporter,
+        strategy_name="autonomy_test_strategy",
+        exchange_name="autonomy_test_exchange",
+    )
+
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=close_target_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.symbol = "ETH/USDT"
+    close_signal.metadata = {**dict(close_signal.metadata), "mode": "close_ranked"}
+
+    results = controller.process_signals([close_signal])
+
+    assert len(results) == 1
+    assert str(results[0].status).strip().lower() == close_status
+    assert len(execution.requests) == 1
+    assert execution.requests[0].side == "SELL"
+    assert (
+        str(execution.requests[0].metadata.get("opportunity_shadow_record_key") or "").strip()
+        == close_target_key
+    )
+    assert permission_checks == [close_target_key]
+
+    events = list(journal.export())
+    close_enforcement_events = [
+        event
+        for event in events
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+    ]
+    assert len(close_enforcement_events) == 1
+    assert str(close_enforcement_events[0].get("status") or "").strip() == "allowed"
+    assert str(close_enforcement_events[0].get("execution_permission") or "").strip() == "allowed"
+    assert (
+        str(close_enforcement_events[0].get("autonomous_execution_allowed") or "").strip().lower()
+        == "true"
+    )
+    assert str(close_enforcement_events[0].get("autonomy_mode") or "").strip() == "paper_autonomous"
+    assert str(close_enforcement_events[0].get("proxy_correlation_key") or "").strip() == ""
+    assert str(close_enforcement_events[0].get("existing_open_correlation_key") or "").strip() == ""
+
+    close_order_events = [
+        event
+        for event in events
+        if event.get("event") == "order_partially_executed"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+    ]
+    assert len(close_order_events) == 1
+    order_event = close_order_events[0]
+    assert order_event["side"] == "SELL"
+    assert order_event["status"] == close_status
+    assert order_event["filled_quantity"] == "null"
+    assert order_event["avg_price"] == "195.00000000"
+    assert order_event["filled_quantity"] != "1.00000000"
+
+    close_attach_events = [
+        event
+        for event in events
+        if event.get("event") == "opportunity_outcome_attach"
+        and (
+            str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+            or str(event.get("proxy_correlation_key") or "").strip() == close_target_key
+        )
+    ]
+    assert len(close_attach_events) == 1
+    assert (
+        str(close_attach_events[0].get("order_opportunity_shadow_record_key") or "").strip()
+        == close_target_key
+    )
+    assert str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    assert str(close_attach_events[0].get("existing_open_correlation_key") or "").strip() == ""
+    assert str(close_attach_events[0].get("status") or "").strip() == "conflict_rejected"
+    assert str(close_attach_events[0].get("execution_status") or "").strip().lower() == close_status
+
+    close_enforcement_index = next(
+        index for index, event in enumerate(events) if event is close_enforcement_events[0]
+    )
+    close_execution_index = next(index for index, event in enumerate(events) if event is order_event)
+    assert close_enforcement_index < close_execution_index
+    close_attach_index = next(index for index, event in enumerate(events) if event is close_attach_events[0])
+    assert close_enforcement_index < close_attach_index
+
+    execution_alerts = [
+        message
+        for message in channel.messages
+        if message.category == "execution"
+        and str(message.context.get("symbol") or "").strip() == "ETH/USDT"
+        and str(message.context.get("side") or "").strip() == "SELL"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == close_target_key
+    ]
+    assert len(execution_alerts) == 1
+    alert_context = execution_alerts[0].context
+    assert alert_context.get("status") == close_status
+    assert alert_context.get("symbol") == "ETH/USDT"
+    assert alert_context.get("side") == "SELL"
+    assert alert_context.get("meta_opportunity_shadow_record_key") == close_target_key
+    assert alert_context.get("filled_quantity") == "unknown"
+    assert alert_context.get("filled_quantity") != "1.00000000"
+
+    assert reporter.calls == []
+
+    open_rows = repository.load_open_outcomes()
+    open_rows_by_key = {row.correlation_key: row for row in open_rows}
+    active_open_keys = sorted(
+        row.correlation_key for row in open_rows if row.closed_quantity < row.entry_quantity
+    )
+    assert active_open_keys == [close_target_key]
+    assert open_rows_by_key[close_target_key].closed_quantity == 0.0
 
 
 @pytest.mark.parametrize(
