@@ -28130,7 +28130,9 @@ def test_opportunity_autonomy_close_ranked_exhausted_existing_tracker_permission
         )
         assert active_open_keys == []
         close_rows = [
-            row for row in repository.load_open_outcomes() if row.correlation_key == close_target_key
+            row
+            for row in repository.load_open_outcomes()
+            if row.correlation_key == close_target_key
         ]
         assert len(close_rows) == 1
         assert close_rows[0].closed_quantity == close_rows[0].entry_quantity
@@ -28138,7 +28140,8 @@ def test_opportunity_autonomy_close_ranked_exhausted_existing_tracker_permission
             event
             for event in events
             if (
-                str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+                str(event.get("order_opportunity_shadow_record_key") or "").strip()
+                == close_target_key
                 or str(event.get("proxy_correlation_key") or "").strip() == close_target_key
                 or str(event.get("existing_open_correlation_key") or "").strip() == close_target_key
             )
@@ -28157,7 +28160,9 @@ def test_opportunity_autonomy_close_ranked_exhausted_existing_tracker_permission
         )
         assert active_open_keys == []
         close_rows = [
-            row for row in repository.load_open_outcomes() if row.correlation_key == close_target_key
+            row
+            for row in repository.load_open_outcomes()
+            if row.correlation_key == close_target_key
         ]
         assert len(close_rows) == 1
         assert close_rows[0].closed_quantity >= close_rows[0].entry_quantity
