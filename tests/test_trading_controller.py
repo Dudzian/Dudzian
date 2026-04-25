@@ -28776,6 +28776,547 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_non_filled_close
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=allowed_lower_key)
 
 
+@pytest.mark.parametrize(
+    (
+        "close_status",
+        "close_payload",
+        "expected_order_event",
+        "expected_filled_quantity",
+    ),
+    [
+        (
+            "filled",
+            {"status": "filled", "filled_quantity": 0.0, "avg_price": 195.0},
+            "order_executed",
+            "0.00000000",
+        ),
+        (
+            "filled",
+            {"status": "filled", "filled_quantity": None, "avg_price": 195.0},
+            "order_executed",
+            "null",
+        ),
+        (
+            "filled",
+            {"status": "filled", "avg_price": 195.0},
+            "order_executed",
+            "null",
+        ),
+        (
+            "partially_filled",
+            {"status": "partially_filled", "filled_quantity": 0.0, "avg_price": 195.0},
+            "order_partially_executed",
+            "0.00000000",
+        ),
+        (
+            "partial",
+            {"status": "partial", "filled_quantity": 0.0, "avg_price": 195.0},
+            "order_partially_executed",
+            "0.00000000",
+        ),
+    ],
+)
+def test_opportunity_autonomy_active_budget_ranked_close_ranked_filled_like_without_real_quantity_keeps_deferred_ranked_losers_before_permission(
+    monkeypatch: pytest.MonkeyPatch,
+    close_status: str,
+    close_payload: dict[str, object],
+    expected_order_event: str,
+    expected_filled_quantity: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 12, 16, 8, tzinfo=timezone.utc)
+    active_anchor_key = f"filled-like-zero-close-anchor-open-{close_status}"
+    close_target_key = f"filled-like-zero-close-target-open-{close_status}"
+    blocked_top_key = f"filled-like-zero-close-deferred-blocked-top-{close_status}"
+    allowed_lower_key = f"filled-like-zero-close-deferred-allowed-lower-{close_status}"
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=active_anchor_key,
+                decision_timestamp=decision_timestamp - timedelta(minutes=2),
+            ),
+            _shadow_record_for_key(
+                correlation_key=close_target_key,
+                decision_timestamp=decision_timestamp - timedelta(minutes=1),
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=blocked_top_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="XRP/USDT",
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=allowed_lower_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=2),
+                ),
+                symbol="SOL/USDT",
+            ),
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=active_anchor_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=4),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=close_target_key,
+            symbol="ETH/USDT",
+            side="BUY",
+            entry_price=200.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=3),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+
+    class _SequencedExecutionWithoutFilledQuantityFallback(ExecutionService):
+        def __init__(self, responses: Sequence[dict[str, object]]) -> None:
+            self._responses = list(responses)
+            self.requests: list[OrderRequest] = []
+
+        def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+            self.requests.append(request)
+            payload = dict(self._responses.pop(0)) if self._responses else {}
+            return OrderResult(
+                order_id=str(payload.get("order_id", "order-seq")),
+                status=str(payload.get("status", "filled")),
+                filled_quantity=payload.get("filled_quantity"),
+                avg_price=payload.get("avg_price", request.price),
+                raw_response={"context": context.metadata},
+            )
+
+        def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+            return None
+
+        def flush(self) -> None:
+            return None
+
+    execution = _SequencedExecutionWithoutFilledQuantityFallback([close_payload])
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=2,
+        enable_autonomous_open_ranked_selection_within_batch=True,
+        signal_mode_priorities={"close_ranked": 30, "deferred_ranked": 20},
+    )
+
+    blocked_top_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=blocked_top_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    blocked_top_signal.symbol = "XRP/USDT"
+    blocked_top_signal.metadata = {
+        **dict(blocked_top_signal.metadata),
+        "mode": "deferred_ranked",
+        "expected_return_bps": 9.0,
+    }
+    allowed_lower_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=allowed_lower_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    allowed_lower_signal.symbol = "SOL/USDT"
+    allowed_lower_signal.metadata = {
+        **dict(allowed_lower_signal.metadata),
+        "mode": "deferred_ranked",
+        "expected_return_bps": 3.0,
+    }
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=close_target_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=3),
+    )
+    close_signal.symbol = "ETH/USDT"
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "close_ranked",
+    }
+
+    permission_checks: list[str] = []
+
+    class _ForcedPermission:
+        def __init__(self, *, allowed: bool, denial_reason: str | None = None) -> None:
+            self.autonomous_execution_allowed = allowed
+            self.primary_reason = "test_forced_permission"
+            self.denial_reason = denial_reason
+
+        def to_dict(self) -> Mapping[str, object]:
+            return {
+                "autonomy_mode": "paper_autonomous",
+                "autonomous_execution_allowed": self.autonomous_execution_allowed,
+                "assisted_override_used": False,
+                "primary_reason": self.primary_reason,
+                "denial_reason": self.denial_reason,
+            }
+
+    def _forced_permission_evaluation(
+        self: TradingController,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ):
+        del signal
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        shadow_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        permission_checks.append(shadow_key)
+        if shadow_key == blocked_top_key:
+            return _ForcedPermission(
+                allowed=False,
+                denial_reason="autonomous_mode_requires_assisted_execution",
+            ), {"autonomy_mode": "paper_autonomous"}
+        return _ForcedPermission(allowed=True), {"autonomy_mode": "paper_autonomous"}
+
+    monkeypatch.setattr(
+        TradingController,
+        "_evaluate_opportunity_execution_permission",
+        _forced_permission_evaluation,
+    )
+
+    results = controller.process_signals([blocked_top_signal, allowed_lower_signal, close_signal])
+
+    assert len(results) == 1
+    assert str(results[0].status).strip().lower() == close_status
+    request_keys = _request_shadow_keys(execution.requests)
+    assert request_keys == [close_target_key]
+    assert [request.side for request in execution.requests] == ["SELL"]
+    assert _order_path_events_with_shadow_key(journal, close_target_key)
+    assert _order_path_events_with_shadow_key(journal, blocked_top_key) == []
+    assert _order_path_events_with_shadow_key(journal, allowed_lower_key) == []
+    assert permission_checks == [close_target_key]
+
+    events = list(journal.export())
+    close_order_events = [
+        event
+        for event in events
+        if event.get("event") == expected_order_event
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+    ]
+    assert len(close_order_events) == 1
+    assert str(close_order_events[0].get("side") or "").strip() == "SELL"
+    assert str(close_order_events[0].get("status") or "").strip().lower() == close_status
+    assert str(close_order_events[0].get("filled_quantity") or "").strip() == expected_filled_quantity
+    assert str(close_order_events[0].get("avg_price") or "").strip() == "195.00000000"
+
+    assert [
+        event.get("reason")
+        for event in events
+        if event.get("event") == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == blocked_top_key
+    ] == ["autonomous_open_active_budget_ranked_loser"]
+    assert [
+        event.get("reason")
+        for event in events
+        if event.get("event") == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        == allowed_lower_key
+    ] == ["autonomous_open_active_budget_ranked_loser"]
+    assert [
+        event
+        for event in events
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
+        in {blocked_top_key, allowed_lower_key}
+    ] == []
+
+    close_attach_events = [
+        event
+        for event in events
+        if event.get("event") == "opportunity_outcome_attach"
+        and (
+            str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+            or str(event.get("proxy_correlation_key") or "").strip() == close_target_key
+        )
+    ]
+    assert len(close_attach_events) == 1
+    assert (
+        str(close_attach_events[0].get("order_opportunity_shadow_record_key") or "").strip()
+        == close_target_key
+    )
+    assert str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    assert str(close_attach_events[0].get("existing_open_correlation_key") or "").strip() == ""
+    assert str(close_attach_events[0].get("status") or "").strip() == "conflict_rejected"
+    assert str(close_attach_events[0].get("execution_status") or "").strip().lower() == close_status
+
+    _assert_single_ranked_selection_event_payload(
+        journal,
+        remaining_slots="0",
+        candidate_count="2",
+        selected_count="0",
+        loser_count="2",
+        selected_shadow_keys=[],
+        loser_shadow_keys=[blocked_top_key, allowed_lower_key],
+    )
+    open_rows = repository.load_open_outcomes()
+    open_rows_by_key = {row.correlation_key: row for row in open_rows}
+    active_open_keys = sorted(
+        row.correlation_key for row in open_rows if row.closed_quantity < row.entry_quantity
+    )
+    assert active_open_keys == [active_anchor_key, close_target_key]
+    assert open_rows_by_key[close_target_key].closed_quantity == 0.0
+
+    _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=close_target_key)
+    _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
+    _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=allowed_lower_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_top_key)
+    _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=allowed_lower_key)
+
+
+@pytest.mark.parametrize(
+    "close_payload",
+    [
+        {"status": "filled", "filled_quantity": None, "avg_price": 195.0},
+        {"status": "filled", "avg_price": 195.0},
+    ],
+)
+def test_opportunity_autonomy_close_ranked_filled_without_quantity_keeps_downstream_alert_and_tco_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    close_payload: dict[str, object],
+) -> None:
+    decision_timestamp = datetime(2026, 1, 12, 18, 0, tzinfo=timezone.utc)
+    close_target_key = "filled-none-downstream-close-target"
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=close_target_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=close_target_key,
+            symbol="ETH/USDT",
+            side="BUY",
+            entry_price=200.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=1),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+
+    class _ExecutionWithoutFilledQuantityFallback(ExecutionService):
+        def __init__(self, payload: Mapping[str, object]) -> None:
+            self._payload = dict(payload)
+            self.requests: list[OrderRequest] = []
+
+        def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+            self.requests.append(request)
+            return OrderResult(
+                order_id=str(self._payload.get("order_id", "order-seq")),
+                status=str(self._payload.get("status", "filled")),
+                filled_quantity=self._payload.get("filled_quantity"),
+                avg_price=self._payload.get("avg_price", request.price),
+                raw_response={"context": context.metadata},
+            )
+
+        def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+            return None
+
+        def flush(self) -> None:
+            return None
+
+    class _ForcedPermission:
+        def __init__(self, *, allowed: bool) -> None:
+            self.autonomous_execution_allowed = allowed
+            self.primary_reason = "test_forced_permission"
+            self.denial_reason = None
+
+        def to_dict(self) -> Mapping[str, object]:
+            return {
+                "autonomy_mode": "paper_autonomous",
+                "autonomous_execution_allowed": self.autonomous_execution_allowed,
+                "assisted_override_used": False,
+                "primary_reason": self.primary_reason,
+                "denial_reason": self.denial_reason,
+            }
+
+    def _forced_permission_evaluation(
+        self: TradingController,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ):
+        del self, signal, request
+        return _ForcedPermission(allowed=True), {"autonomy_mode": "paper_autonomous"}
+
+    monkeypatch.setattr(
+        TradingController,
+        "_evaluate_opportunity_execution_permission",
+        _forced_permission_evaluation,
+    )
+
+    execution = _ExecutionWithoutFilledQuantityFallback(close_payload)
+    reporter = StubTCOReporter()
+    router, channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=repository,
+        tco_reporter=reporter,
+        strategy_name="autonomy_test_strategy",
+        exchange_name="autonomy_test_exchange",
+    )
+
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=close_target_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.symbol = "ETH/USDT"
+    close_signal.metadata = {**dict(close_signal.metadata), "mode": "close_ranked"}
+
+    results = controller.process_signals([close_signal])
+
+    assert len(results) == 1
+    assert str(results[0].status).strip().lower() == "filled"
+    assert len(execution.requests) == 1
+    assert execution.requests[0].side == "SELL"
+    assert (
+        str(execution.requests[0].metadata.get("opportunity_shadow_record_key") or "").strip()
+        == close_target_key
+    )
+
+    events = list(journal.export())
+    close_order_events = [
+        event
+        for event in events
+        if event.get("event") == "order_executed"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+    ]
+    assert len(close_order_events) == 1
+    order_event = close_order_events[0]
+    assert order_event["side"] == "SELL"
+    assert order_event["status"] == "filled"
+    assert order_event["filled_quantity"] == "null"
+    assert order_event["avg_price"] == "195.00000000"
+    assert order_event["filled_quantity"] != "1.00000000"
+
+    close_enforcement_events = [
+        event
+        for event in events
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+    ]
+    assert len(close_enforcement_events) == 1
+    assert str(close_enforcement_events[0].get("status") or "").strip() == "allowed"
+    assert str(close_enforcement_events[0].get("execution_permission") or "").strip() == "allowed"
+    assert (
+        str(close_enforcement_events[0].get("autonomous_execution_allowed") or "").strip().lower()
+        == "true"
+    )
+    assert str(close_enforcement_events[0].get("autonomy_mode") or "").strip() == "paper_autonomous"
+    assert str(close_enforcement_events[0].get("proxy_correlation_key") or "").strip() == ""
+    assert str(close_enforcement_events[0].get("existing_open_correlation_key") or "").strip() == ""
+
+    close_attach_events = [
+        event
+        for event in events
+        if event.get("event") == "opportunity_outcome_attach"
+        and (
+            str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+            or str(event.get("proxy_correlation_key") or "").strip() == close_target_key
+        )
+    ]
+    assert len(close_attach_events) == 1
+    assert (
+        str(close_attach_events[0].get("order_opportunity_shadow_record_key") or "").strip()
+        == close_target_key
+    )
+    assert str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    assert str(close_attach_events[0].get("existing_open_correlation_key") or "").strip() == ""
+    assert str(close_attach_events[0].get("status") or "").strip() == "conflict_rejected"
+    assert str(close_attach_events[0].get("execution_status") or "").strip().lower() == "filled"
+
+    close_enforcement_index = next(
+        index for index, event in enumerate(events) if event is close_enforcement_events[0]
+    )
+    close_execution_index = next(index for index, event in enumerate(events) if event is order_event)
+    assert close_enforcement_index < close_execution_index
+    close_attach_index = next(index for index, event in enumerate(events) if event is close_attach_events[0])
+    assert close_enforcement_index < close_attach_index
+
+    execution_alerts = [
+        message
+        for message in channel.messages
+        if message.category == "execution"
+        and str(message.context.get("symbol") or "").strip() == "ETH/USDT"
+        and str(message.context.get("side") or "").strip() == "SELL"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == close_target_key
+    ]
+    assert len(execution_alerts) == 1
+    alert_context = execution_alerts[0].context
+    assert alert_context.get("status") == "filled"
+    assert alert_context.get("symbol") == "ETH/USDT"
+    assert alert_context.get("side") == "SELL"
+    assert alert_context.get("meta_opportunity_shadow_record_key") == close_target_key
+    assert alert_context.get("filled_quantity") == "unknown"
+    assert alert_context.get("filled_quantity") != "1.00000000"
+
+    assert len(reporter.calls) == 1
+    assert reporter.calls[0]["strategy"] == "autonomy_test_strategy"
+    assert reporter.calls[0]["risk_profile"] == "balanced"
+    assert reporter.calls[0]["instrument"] == "ETH/USDT"
+    assert reporter.calls[0]["exchange"] == "autonomy_test_exchange"
+    assert reporter.calls[0]["side"] == "SELL"
+    assert reporter.calls[0]["quantity"] == 0.0
+    assert reporter.calls[0]["quantity"] != pytest.approx(1.0)
+    assert reporter.calls[0]["executed_price"] == pytest.approx(195.0)
+    assert reporter.calls[0]["reference_price"] == pytest.approx(100.0)
+    assert reporter.calls[0]["commission"] == pytest.approx(0.0)
+    assert isinstance(reporter.calls[0]["metadata"], Mapping)
+    assert reporter.calls[0]["metadata"].get("order_opportunity_shadow_record_key") == close_target_key
+
+    open_rows_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
+    assert open_rows_by_key[close_target_key].closed_quantity == 0.0
+
+
 def test_opportunity_autonomy_active_budget_ranked_close_ranked_execution_exception_keeps_deferred_unpromoted_and_active_budget_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

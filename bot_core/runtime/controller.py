@@ -2842,8 +2842,6 @@ class TradingController:
         if is_filled:
             if execution_avg_price is None:
                 execution_avg_price = adjusted_request.price
-            if execution_filled_qty is None:
-                execution_filled_qty = adjusted_request.quantity
         metadata: dict[str, object] = {
             "order_id": order_id,
             "filled_quantity": (
@@ -2880,7 +2878,7 @@ class TradingController:
                 filled_qty=(
                     execution_filled_qty
                     if execution_filled_qty is not None
-                    else adjusted_request.quantity
+                    else 0.0
                 ),
             )
         elif is_partial:
@@ -4265,14 +4263,7 @@ class TradingController:
                     0,
                     int((timestamp_utc - tracked.decision_timestamp).total_seconds() / 60),
                 )
-                close_quantity = self._safe_float(
-                    metadata.get(
-                        "filled_quantity",
-                        result.filled_quantity
-                        if result.filled_quantity is not None
-                        else request.quantity,
-                    )
-                )
+                close_quantity = self._safe_float(result.filled_quantity)
                 cumulative_closed_quantity = max(
                     0.0, tracked.closed_quantity + max(close_quantity, 0.0)
                 )
@@ -5581,9 +5572,7 @@ class TradingController:
             filled_qty = result.filled_quantity
         else:
             avg_price = result.avg_price if result.avg_price is not None else (request.price or 0.0)
-            filled_qty = (
-                result.filled_quantity if result.filled_quantity is not None else request.quantity
-            )
+            filled_qty = result.filled_quantity
 
         context = {
             "symbol": request.symbol,
