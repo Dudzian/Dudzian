@@ -26956,7 +26956,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_ex
     foreign_portfolio: str,
 ) -> None:
     decision_timestamp = datetime(2026, 1, 12, 16, 10, tzinfo=timezone.utc)
-    active_local_key = f"foreign-exhausted-non-auton-anchor-{foreign_environment}-{foreign_portfolio}"
+    active_local_key = (
+        f"foreign-exhausted-non-auton-anchor-{foreign_environment}-{foreign_portfolio}"
+    )
     blocked_top_key = (
         f"foreign-exhausted-non-auton-blocked-{foreign_environment}-{foreign_portfolio}"
     )
@@ -27215,7 +27217,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_ex
     ]
     assert len(close_rows) == 1
     assert close_rows[0].closed_quantity >= close_rows[0].entry_quantity
-    _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=foreign_exhausted_open_key)
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        events, shadow_key=foreign_exhausted_open_key
+    )
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=blocked_top_key)
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=promoted_lower_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_top_key)
@@ -27235,15 +27239,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_ex
     foreign_portfolio: str,
 ) -> None:
     decision_timestamp = datetime(2026, 1, 12, 16, 15, tzinfo=timezone.utc)
-    active_local_key = (
-        f"foreign-exhausted-auton-anchor-{foreign_environment}-{foreign_portfolio}"
-    )
-    blocked_top_key = (
-        f"foreign-exhausted-auton-blocked-{foreign_environment}-{foreign_portfolio}"
-    )
-    promoted_lower_key = (
-        f"foreign-exhausted-auton-lower-{foreign_environment}-{foreign_portfolio}"
-    )
+    active_local_key = f"foreign-exhausted-auton-anchor-{foreign_environment}-{foreign_portfolio}"
+    blocked_top_key = f"foreign-exhausted-auton-blocked-{foreign_environment}-{foreign_portfolio}"
+    promoted_lower_key = f"foreign-exhausted-auton-lower-{foreign_environment}-{foreign_portfolio}"
     foreign_exhausted_open_key = (
         f"foreign-exhausted-auton-close-{foreign_environment}-{foreign_portfolio}"
     )
@@ -27503,10 +27501,11 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_ex
         )
     ]
     assert foreign_key_events
-    assert {
-        str(event.get("event") or "").strip()
-        for event in foreign_key_events
-    } <= {"signal_received", "opportunity_autonomy_enforcement", "signal_skipped"}
+    assert {str(event.get("event") or "").strip() for event in foreign_key_events} <= {
+        "signal_received",
+        "opportunity_autonomy_enforcement",
+        "signal_skipped",
+    }
     suppression_events = [
         event
         for event in foreign_key_events
@@ -27526,6 +27525,7 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_ex
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=promoted_lower_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_top_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=promoted_lower_key)
+
 
 @pytest.mark.parametrize(
     ("runtime_environment", "tracker_environment", "tracker_portfolio"),
@@ -27675,8 +27675,6 @@ def test_opportunity_autonomy_close_ranked_execution_path_is_scope_agnostic_for_
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=close_target_key)
 
 
-
-
 def test_opportunity_autonomy_close_ranked_execution_path_same_scope_non_autonomous_existing_tracker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -27763,8 +27761,7 @@ def test_opportunity_autonomy_close_ranked_execution_path_same_scope_non_autonom
     order_path_events = _order_path_events_with_shadow_key(journal, close_target_key)
     assert order_path_events
     assert any(
-        event.get("event") == "order_executed"
-        and str(event.get("side") or "").upper() == "SELL"
+        event.get("event") == "order_executed" and str(event.get("side") or "").upper() == "SELL"
         for event in order_path_events
     )
     assert len(results) == 1
@@ -27801,7 +27798,9 @@ def test_opportunity_autonomy_close_ranked_execution_path_same_scope_non_autonom
     assert str(attach_events[0].get("execution_status") or "").strip() == "filled"
     assert _ranked_selection_events(journal) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == []
     close_rows = [
@@ -27925,7 +27924,9 @@ def test_opportunity_autonomy_close_ranked_execution_path_same_scope_exhausted_e
     ] == []
     assert _ranked_selection_events(journal) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == []
     close_rows = [
@@ -28035,8 +28036,7 @@ def test_opportunity_autonomy_close_ranked_execution_path_same_scope_exhausted_n
     order_path_events = _order_path_events_with_shadow_key(journal, close_target_key)
     assert order_path_events
     assert any(
-        event.get("event") == "order_executed"
-        and str(event.get("side") or "").upper() == "SELL"
+        event.get("event") == "order_executed" and str(event.get("side") or "").upper() == "SELL"
         for event in order_path_events
     )
     assert len(results) == 1
@@ -28073,7 +28073,9 @@ def test_opportunity_autonomy_close_ranked_execution_path_same_scope_exhausted_n
     assert str(attach_events[0].get("execution_status") or "").strip() == "filled"
     assert _ranked_selection_events(journal) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == []
     close_rows = [
@@ -28378,7 +28380,9 @@ def test_opportunity_autonomy_close_ranked_execution_path_foreign_scope_exhauste
     ] == []
     assert _ranked_selection_events(journal) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == []
     close_rows = [
@@ -28497,8 +28501,7 @@ def test_opportunity_autonomy_close_ranked_execution_path_foreign_scope_exhauste
     order_path_events = _order_path_events_with_shadow_key(journal, close_target_key)
     assert order_path_events
     assert any(
-        event.get("event") == "order_executed"
-        and str(event.get("side") or "").upper() == "SELL"
+        event.get("event") == "order_executed" and str(event.get("side") or "").upper() == "SELL"
         for event in order_path_events
     )
     assert len(results) == 1
@@ -28535,7 +28538,9 @@ def test_opportunity_autonomy_close_ranked_execution_path_foreign_scope_exhauste
     assert str(attach_events[0].get("execution_status") or "").strip() == "filled"
     assert _ranked_selection_events(journal) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == []
     close_rows = [
@@ -28641,8 +28646,7 @@ def test_opportunity_autonomy_close_ranked_execution_path_foreign_scope_active_n
     order_path_events = _order_path_events_with_shadow_key(journal, close_target_key)
     assert order_path_events
     assert any(
-        event.get("event") == "order_executed"
-        and str(event.get("side") or "").upper() == "SELL"
+        event.get("event") == "order_executed" and str(event.get("side") or "").upper() == "SELL"
         for event in order_path_events
     )
     assert len(results) == 1
@@ -28679,7 +28683,9 @@ def test_opportunity_autonomy_close_ranked_execution_path_foreign_scope_active_n
     assert str(attach_events[0].get("execution_status") or "").strip() == "filled"
     assert _ranked_selection_events(journal) == []
     active_open_keys = sorted(
-        row.correlation_key for row in repository.load_open_outcomes() if row.closed_quantity < row.entry_quantity
+        row.correlation_key
+        for row in repository.load_open_outcomes()
+        if row.closed_quantity < row.entry_quantity
     )
     assert active_open_keys == []
     close_rows = [
@@ -28688,6 +28694,7 @@ def test_opportunity_autonomy_close_ranked_execution_path_foreign_scope_active_n
     assert len(close_rows) == 1
     assert close_rows[0].closed_quantity >= close_rows[0].entry_quantity
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=close_target_key)
+
 
 def test_opportunity_autonomy_active_budget_ranked_mode_reverse_specific_one_filled_one_rejected_close_keeps_deferred_paths_as_ranked_losers() -> (
     None
