@@ -4843,7 +4843,7 @@ class TradingController:
             return telemetry_filled_quantity
         tracked = self._opportunity_open_outcomes.get(correlation_key)
         if tracked is None:
-            return telemetry_filled_quantity
+            return None
         if not self._is_closing_side(tracked.side, str(request.side).upper()):
             return telemetry_filled_quantity
         remaining_quantity = max(0.0, tracked.entry_quantity - tracked.closed_quantity)
