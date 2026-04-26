@@ -2827,8 +2827,28 @@ class TradingController:
         normalized_status = _normalize_execution_status(result.status)
         is_partial = normalized_status in _PARTIAL_EXECUTION_STATUSES
         is_filled = normalized_status in _FILLED_EXECUTION_STATUSES
+        is_close_ranked = (
+            str((adjusted_request.metadata or {}).get("mode", "")).strip().lower() == "close_ranked"
+        )
+        telemetry_filled_quantity = result.filled_quantity
+        if is_close_ranked:
+            telemetry_filled_quantity = self._sanitize_close_ranked_filled_quantity_for_telemetry(
+                telemetry_filled_quantity
+            )
+            telemetry_filled_quantity = self._clamp_close_ranked_filled_quantity_to_remaining(
+                request=adjusted_request,
+                telemetry_filled_quantity=telemetry_filled_quantity,
+            )
+        telemetry_result = result
+        if telemetry_filled_quantity is not result.filled_quantity:
+            telemetry_result = replace(result, filled_quantity=telemetry_filled_quantity)
         if is_filled or is_partial:
-            self._emit_order_filled_alert(signal, adjusted_request, result, partial=is_partial)
+            self._emit_order_filled_alert(
+                signal,
+                adjusted_request,
+                telemetry_result,
+                partial=is_partial,
+            )
         else:
             self._emit_order_not_filled_alert(
                 signal,
@@ -2838,7 +2858,7 @@ class TradingController:
             )
         order_id = result.order_id or ""
         execution_avg_price = result.avg_price
-        execution_filled_qty = result.filled_quantity
+        execution_filled_qty = telemetry_filled_quantity
         if is_filled:
             if execution_avg_price is None:
                 execution_avg_price = adjusted_request.price
@@ -4264,8 +4284,13 @@ class TradingController:
                     int((timestamp_utc - tracked.decision_timestamp).total_seconds() / 60),
                 )
                 close_quantity = self._safe_float(result.filled_quantity)
+                if not math.isfinite(close_quantity) or close_quantity <= 0.0:
+                    effective_close_quantity = 0.0
+                else:
+                    remaining_quantity = max(0.0, tracked.entry_quantity - tracked.closed_quantity)
+                    effective_close_quantity = min(close_quantity, remaining_quantity)
                 cumulative_closed_quantity = max(
-                    0.0, tracked.closed_quantity + max(close_quantity, 0.0)
+                    0.0, tracked.closed_quantity + effective_close_quantity
                 )
                 tracked.closed_quantity = cumulative_closed_quantity
                 self._persist_open_outcome_tracker(tracked)
@@ -4793,6 +4818,40 @@ class TradingController:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _sanitize_close_ranked_filled_quantity_for_telemetry(
+        value: object | None,
+    ) -> float | None:
+        if value is None:
+            return None
+        try:
+            candidate = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(candidate) or candidate < 0.0:
+            return None
+        return candidate
+
+    def _clamp_close_ranked_filled_quantity_to_remaining(
+        self,
+        *,
+        request: OrderRequest,
+        telemetry_filled_quantity: float | None,
+    ) -> float | None:
+        if telemetry_filled_quantity is None:
+            return None
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        correlation_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        if not correlation_key:
+            return telemetry_filled_quantity
+        tracked = self._opportunity_open_outcomes.get(correlation_key)
+        if tracked is None:
+            return telemetry_filled_quantity
+        if not self._is_closing_side(tracked.side, str(request.side).upper()):
+            return telemetry_filled_quantity
+        remaining_quantity = max(0.0, tracked.entry_quantity - tracked.closed_quantity)
+        return min(telemetry_filled_quantity, remaining_quantity)
 
     def _maybe_reverse_position(
         self,
