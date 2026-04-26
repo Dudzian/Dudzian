@@ -31030,6 +31030,7 @@ def test_opportunity_autonomy_close_ranked_resolved_invalid_or_missing_quantity_
     assert str(close_attach_event.get("status") or "").strip() == "conflict_rejected"
     assert str(close_attach_event.get("final_correlation_key") or "").strip() == ""
     assert str(close_attach_event.get("partial_correlation_key") or "").strip() == ""
+    assert str(close_attach_event.get("execution_filled_quantity") or "").strip() == "0.00000000"
     assert "realized_return_bps" not in close_attach_event
     assert "horizon_minutes" not in close_attach_event
     close_labels = [
@@ -31111,6 +31112,7 @@ def test_opportunity_autonomy_close_ranked_resolved_overfill_final_label_uses_ac
     assert str(close_attach_event.get("execution_status") or "").strip() == "filled"
     assert str(close_attach_event.get("quantity") or "").strip() == "0.8"
     assert str(close_attach_event.get("quantity") or "").strip() != "2.0"
+    assert str(close_attach_event.get("execution_filled_quantity") or "").strip() == "0.80000000"
     assert str(close_attach_event.get("final_correlation_key") or "").strip() == close_target_key
     assert str(close_attach_event.get("partial_correlation_key") or "").strip() == ""
     assert "realized_return_bps" not in close_attach_event
@@ -31131,6 +31133,197 @@ def test_opportunity_autonomy_close_ranked_resolved_overfill_final_label_uses_ac
     ):
         assert field not in close_attach_event
     # conflict_rejected may expose candidate correlation keys for audit, but must not persist outcome labels.
+    close_labels = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == close_target_key
+    ]
+    assert close_labels == []
+
+
+def test_opportunity_autonomy_close_ranked_resolved_final_with_positive_quantity_preserves_final_semantics() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 19, 5, tzinfo=timezone.utc)
+    close_target_key = "resolved-positive-final-close-target"
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=close_target_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 0.8, "avg_price": 195.0}]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=close_target_key,
+            symbol="ETH/USDT",
+            side="BUY",
+            entry_price=200.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=2),
+            entry_quantity=1.0,
+            closed_quantity=0.2,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=close_target_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.symbol = "ETH/USDT"
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "close_ranked",
+        "quantity": "3.0",
+    }
+
+    results = controller.process_signals([close_signal])
+
+    assert len(results) == 1
+    assert str(results[0].status).strip().lower() == "filled"
+    assert results[0].filled_quantity == pytest.approx(0.8)
+    close_rows = [
+        row for row in repository.load_open_outcomes() if row.correlation_key == close_target_key
+    ]
+    assert len(close_rows) == 1
+    assert close_rows[0].closed_quantity == pytest.approx(1.0)
+    assert close_rows[0].closed_quantity <= close_rows[0].entry_quantity
+
+    close_attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+    ]
+    assert len(close_attach_events) == 1
+    close_attach_event = close_attach_events[0]
+    assert str(close_attach_event.get("proxy_correlation_key") or "").strip() == close_target_key
+    assert (
+        str(close_attach_event.get("final_correlation_key") or "").strip() == close_target_key
+    )
+    assert str(close_attach_event.get("partial_correlation_key") or "").strip() == ""
+    assert str(close_attach_event.get("execution_status") or "").strip() == "filled"
+    assert str(close_attach_event.get("status") or "").strip() == "conflict_rejected"
+    assert str(close_attach_event.get("close_correlation_resolution") or "").strip() == (
+        "resolved_by_correlation_key"
+    )
+    # Here clamped request quantity equals effective close proof (remaining=0.8, filled=0.8).
+    assert str(close_attach_event.get("quantity") or "").strip() == "0.8"
+    assert str(close_attach_event.get("quantity") or "").strip() != "3.0"
+    assert str(close_attach_event.get("execution_filled_quantity") or "").strip() == "0.80000000"
+    assert "realized_return_bps" not in close_attach_event
+    assert "horizon_minutes" not in close_attach_event
+    close_labels = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == close_target_key
+    ]
+    assert close_labels == []
+
+
+@pytest.mark.parametrize("close_status", ["partially_filled", "partial"])
+def test_opportunity_autonomy_close_ranked_resolved_partial_with_positive_quantity_preserves_partial_semantics(
+    close_status: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 12, 19, 15, tzinfo=timezone.utc)
+    close_target_key = f"resolved-positive-partial-close-target-{close_status}"
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=close_target_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [{"status": close_status, "filled_quantity": 0.4, "avg_price": 195.0}]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=close_target_key,
+            symbol="ETH/USDT",
+            side="BUY",
+            entry_price=200.0,
+            decision_timestamp=decision_timestamp - timedelta(minutes=2),
+            entry_quantity=1.0,
+            closed_quantity=0.2,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=close_target_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.symbol = "ETH/USDT"
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "close_ranked",
+        "quantity": "3.0",
+    }
+
+    results = controller.process_signals([close_signal])
+
+    assert len(results) == 1
+    assert str(results[0].status).strip().lower() == close_status
+    assert results[0].filled_quantity == pytest.approx(0.4)
+    close_rows = [
+        row for row in repository.load_open_outcomes() if row.correlation_key == close_target_key
+    ]
+    assert len(close_rows) == 1
+    assert close_rows[0].closed_quantity == pytest.approx(0.6)
+
+    close_attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
+    ]
+    assert len(close_attach_events) == 1
+    close_attach_event = close_attach_events[0]
+    assert str(close_attach_event.get("proxy_correlation_key") or "").strip() == close_target_key
+    assert str(close_attach_event.get("partial_correlation_key") or "").strip() == close_target_key
+    assert str(close_attach_event.get("final_correlation_key") or "").strip() == ""
+    assert str(close_attach_event.get("status") or "").strip() == "conflict_rejected"
+    assert str(close_attach_event.get("execution_status") or "").strip() == close_status
+    assert str(close_attach_event.get("close_correlation_resolution") or "").strip() == (
+        "resolved_by_correlation_key"
+    )
+    # `quantity` in decision journal event is TradingDecisionEvent.quantity (request quantity after clamp),
+    # not execution filled proof. For partial close proof use `results[0].filled_quantity` and accounting.
+    assert str(close_attach_event.get("quantity") or "").strip() == "0.8"
+    assert str(close_attach_event.get("quantity") or "").strip() != "3.0"
+    assert str(close_attach_event.get("execution_filled_quantity") or "").strip() == "0.40000000"
+    assert "realized_return_bps" not in close_attach_event
+    assert "horizon_minutes" not in close_attach_event
     close_labels = [
         row for row in repository.load_outcome_labels() if row.correlation_key == close_target_key
     ]
@@ -31211,6 +31404,7 @@ def test_opportunity_autonomy_close_ranked_resolved_partial_like_overfill_label_
     assert str(close_attach_event.get("execution_status") or "").strip() == close_status
     assert str(close_attach_event.get("quantity") or "").strip() == "0.8"
     assert str(close_attach_event.get("quantity") or "").strip() != "2.0"
+    assert str(close_attach_event.get("execution_filled_quantity") or "").strip() == "0.80000000"
     assert str(close_attach_event.get("partial_correlation_key") or "").strip() == close_target_key
     assert str(close_attach_event.get("final_correlation_key") or "").strip() == ""
     assert "realized_return_bps" not in close_attach_event
