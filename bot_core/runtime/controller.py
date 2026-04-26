@@ -4290,11 +4290,13 @@ class TradingController:
                 )
                 tracked.closed_quantity = cumulative_closed_quantity
                 self._persist_open_outcome_tracker(tracked)
+                has_effective_close_proof = effective_close_quantity > 0.0
                 has_quantity_proof = (
                     tracked.entry_quantity > 0.0 and cumulative_closed_quantity > 0.0
                 )
                 is_confirmed_final_close = (
                     normalized_status in _FILLED_EXECUTION_STATUSES
+                    and has_effective_close_proof
                     and has_quantity_proof
                     and cumulative_closed_quantity + 1e-9 >= tracked.entry_quantity
                 )
@@ -4447,7 +4449,7 @@ class TradingController:
                     existing_label = existing_labels_by_key.get(tracked.correlation_key)
                     if existing_label is not None:
                         existing_quality = str(existing_label.label_quality)
-                    if OpportunityShadowRepository._quality_rank(
+                    if has_effective_close_proof and OpportunityShadowRepository._quality_rank(
                         existing_quality
                     ) < OpportunityShadowRepository._quality_rank("partial_exit_unconfirmed"):
                         preserve_tracker_model_version = (
