@@ -2859,13 +2859,18 @@ class TradingController:
         order_id = result.order_id or ""
         execution_avg_price = result.avg_price
         execution_filled_qty = telemetry_filled_quantity
+        execution_filled_qty_numeric = self._sanitize_close_ranked_filled_quantity_for_telemetry(
+            execution_filled_qty
+        )
         if is_filled:
             if execution_avg_price is None:
                 execution_avg_price = adjusted_request.price
         metadata: dict[str, object] = {
             "order_id": order_id,
             "filled_quantity": (
-                "null" if execution_filled_qty is None else f"{execution_filled_qty:.8f}"
+                "null"
+                if execution_filled_qty_numeric is None
+                else f"{execution_filled_qty_numeric:.8f}"
             ),
             "avg_price": "null" if execution_avg_price is None else f"{execution_avg_price:.8f}",
             "status": normalized_status,
@@ -2895,7 +2900,9 @@ class TradingController:
                     if execution_avg_price is not None
                     else (adjusted_request.price or 0.0)
                 ),
-                filled_qty=(execution_filled_qty if execution_filled_qty is not None else 0.0),
+                filled_qty=(
+                    execution_filled_qty_numeric if execution_filled_qty_numeric is not None else 0.0
+                ),
             )
         elif is_partial:
             self._record_decision_event(
@@ -2905,14 +2912,14 @@ class TradingController:
                 status=normalized_status,
                 metadata=metadata,
             )
-            if execution_avg_price is not None and execution_filled_qty is not None:
+            if execution_avg_price is not None and execution_filled_qty_numeric is not None:
                 self._record_tco_execution(
                     signal=signal,
                     request=adjusted_request,
                     result=result,
                     order_id=order_id,
                     avg_price=execution_avg_price,
-                    filled_qty=execution_filled_qty,
+                    filled_qty=execution_filled_qty_numeric,
                 )
         else:
             self._record_decision_event(
@@ -4198,6 +4205,7 @@ class TradingController:
         final_resolution = ""
         close_execution_quantity: float | None = None
         unresolved_close_with_correlation_key = False
+        suppress_proxy_label_for_invalid_autonomous_open = False
         open_intent_candidate = False
         replay_open_candidate = False
         if (
@@ -4579,61 +4587,63 @@ class TradingController:
                             label_quality="partial_exit_unconfirmed",
                         )
             elif correlation_key and open_intent_candidate and side in _BUY_SIDES | _SELL_SIDES:
-                tracker = _OpportunityOpenOutcomeTracker(
-                    correlation_key=correlation_key,
-                    symbol=str(request.symbol),
-                    side=side,
-                    entry_price=avg_price,
-                    decision_timestamp=timestamp_utc,
-                    entry_quantity=max(
-                        0.0,
-                        self._safe_float(
-                            metadata.get(
-                                "filled_quantity",
-                                result.filled_quantity
-                                if result.filled_quantity is not None
-                                else request.quantity,
-                            )
+                entry_quantity = self._sanitize_autonomous_open_filled_quantity_proof(
+                    request=request,
+                    result=result,
+                    attach_metadata=metadata,
+                )
+                if entry_quantity is None:
+                    # Autonomous OPEN without positive finite quantity-proof cannot emit
+                    # proxy/durable lifecycle artifacts, because no real open execution was proven.
+                    suppress_proxy_label_for_invalid_autonomous_open = True
+                else:
+                    tracker = _OpportunityOpenOutcomeTracker(
+                        correlation_key=correlation_key,
+                        symbol=str(request.symbol),
+                        side=side,
+                        entry_price=avg_price,
+                        decision_timestamp=timestamp_utc,
+                        entry_quantity=entry_quantity,
+                        model_version=None,
+                        decision_source=None,
+                        autonomy_requested_mode=autonomy_chain.get("autonomy_requested_mode"),
+                        autonomy_upstream_effective_mode=autonomy_chain.get(
+                            "autonomy_upstream_effective_mode"
                         ),
-                    ),
-                    model_version=None,
-                    decision_source=None,
-                    autonomy_requested_mode=autonomy_chain.get("autonomy_requested_mode"),
-                    autonomy_upstream_effective_mode=autonomy_chain.get(
-                        "autonomy_upstream_effective_mode"
-                    ),
-                    autonomy_local_guard_effective_mode=autonomy_chain.get(
-                        "autonomy_local_guard_effective_mode"
-                    ),
-                    autonomy_final_mode=autonomy_chain.get("autonomy_final_mode"),
-                    autonomous_execution_allowed=autonomy_chain.get("autonomous_execution_allowed"),
-                    assisted_override_used=autonomy_chain.get("assisted_override_used"),
-                    blocking_reason=autonomy_chain.get("blocking_reason"),
-                    autonomy_decisive_stage=autonomy_chain.get("autonomy_decisive_stage"),
-                    autonomy_decisive_reason=autonomy_chain.get("autonomy_decisive_reason"),
-                    autonomy_primary_reason=autonomy_chain.get("autonomy_primary_reason"),
-                    upstream_autonomy_decision_source=autonomy_chain.get(
-                        "upstream_autonomy_decision_source"
-                    ),
-                    upstream_autonomy_inference_model=autonomy_chain.get(
-                        "upstream_autonomy_inference_model"
-                    ),
-                    upstream_autonomy_inference_model_version=autonomy_chain.get(
-                        "upstream_autonomy_inference_model_version"
-                    ),
-                    runtime_lineage_snapshot=dict(runtime_lineage_snapshot),
-                    environment_scope=str(self.environment).strip() or None,
-                    portfolio_scope=str(self.portfolio_id).strip() or None,
-                    restored_from_repository=False,
-                )
-                tracker_model_version, tracker_decision_source = _resolve_runtime_lineage(
-                    correlation_key,
-                    tracker_hint=tracker,
-                )
-                tracker.model_version = tracker_model_version
-                tracker.decision_source = tracker_decision_source
-                self._opportunity_open_outcomes[correlation_key] = tracker
-                self._persist_open_outcome_tracker(tracker)
+                        autonomy_local_guard_effective_mode=autonomy_chain.get(
+                            "autonomy_local_guard_effective_mode"
+                        ),
+                        autonomy_final_mode=autonomy_chain.get("autonomy_final_mode"),
+                        autonomous_execution_allowed=autonomy_chain.get(
+                            "autonomous_execution_allowed"
+                        ),
+                        assisted_override_used=autonomy_chain.get("assisted_override_used"),
+                        blocking_reason=autonomy_chain.get("blocking_reason"),
+                        autonomy_decisive_stage=autonomy_chain.get("autonomy_decisive_stage"),
+                        autonomy_decisive_reason=autonomy_chain.get("autonomy_decisive_reason"),
+                        autonomy_primary_reason=autonomy_chain.get("autonomy_primary_reason"),
+                        upstream_autonomy_decision_source=autonomy_chain.get(
+                            "upstream_autonomy_decision_source"
+                        ),
+                        upstream_autonomy_inference_model=autonomy_chain.get(
+                            "upstream_autonomy_inference_model"
+                        ),
+                        upstream_autonomy_inference_model_version=autonomy_chain.get(
+                            "upstream_autonomy_inference_model_version"
+                        ),
+                        runtime_lineage_snapshot=dict(runtime_lineage_snapshot),
+                        environment_scope=str(self.environment).strip() or None,
+                        portfolio_scope=str(self.portfolio_id).strip() or None,
+                        restored_from_repository=False,
+                    )
+                    tracker_model_version, tracker_decision_source = _resolve_runtime_lineage(
+                        correlation_key,
+                        tracker_hint=tracker,
+                    )
+                    tracker.model_version = tracker_model_version
+                    tracker.decision_source = tracker_decision_source
+                    self._opportunity_open_outcomes[correlation_key] = tracker
+                    self._persist_open_outcome_tracker(tracker)
             elif (
                 correlation_key
                 and correlation_key in known_shadow_keys
@@ -4656,7 +4666,12 @@ class TradingController:
                 },
             )
             return
-        if correlation_key and final_label is None and partial_label is None:
+        if (
+            correlation_key
+            and final_label is None
+            and partial_label is None
+            and not suppress_proxy_label_for_invalid_autonomous_open
+        ):
             proxy_tracker = self._opportunity_open_outcomes.get(correlation_key)
             proxy_runtime_lineage_snapshot = _resolve_artifact_runtime_lineage_snapshot(
                 proxy_tracker
@@ -4838,6 +4853,30 @@ class TradingController:
         if not math.isfinite(candidate) or candidate < 0.0:
             return None
         return candidate
+
+    @staticmethod
+    def _sanitize_autonomous_open_filled_quantity_proof(
+        *,
+        request: OrderRequest,
+        result: OrderResult,
+        attach_metadata: Mapping[str, object],
+    ) -> float | None:
+        raw_filled_quantity = attach_metadata.get("filled_quantity", result.filled_quantity)
+        if raw_filled_quantity in (None, "", "null"):
+            return None
+        try:
+            filled_quantity = float(raw_filled_quantity)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(filled_quantity) or filled_quantity <= 0.0:
+            return None
+        try:
+            request_quantity = float(request.quantity)
+        except (TypeError, ValueError):
+            return filled_quantity
+        if not math.isfinite(request_quantity) or request_quantity <= 0.0:
+            return filled_quantity
+        return min(filled_quantity, request_quantity)
 
     def _clamp_close_ranked_filled_quantity_to_remaining(
         self,
@@ -5638,6 +5677,7 @@ class TradingController:
         else:
             avg_price = result.avg_price if result.avg_price is not None else (request.price or 0.0)
             filled_qty = result.filled_quantity
+        filled_qty_numeric = self._sanitize_close_ranked_filled_quantity_for_telemetry(filled_qty)
 
         context = {
             "symbol": request.symbol,
@@ -5645,7 +5685,9 @@ class TradingController:
             "order_id": order_id,
             "client_order_id": request.client_order_id or "",
             "avg_price": "unknown" if avg_price is None else f"{avg_price:.8f}",
-            "filled_quantity": "unknown" if filled_qty is None else f"{filled_qty:.8f}",
+            "filled_quantity": (
+                "unknown" if filled_qty_numeric is None else f"{filled_qty_numeric:.8f}"
+            ),
             "status": result.status or "unknown",
             "environment": self.environment,
             "risk_profile": self.risk_profile,
