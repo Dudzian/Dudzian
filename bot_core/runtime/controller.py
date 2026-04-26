@@ -2895,11 +2895,7 @@ class TradingController:
                     if execution_avg_price is not None
                     else (adjusted_request.price or 0.0)
                 ),
-                filled_qty=(
-                    execution_filled_qty
-                    if execution_filled_qty is not None
-                    else 0.0
-                ),
+                filled_qty=(execution_filled_qty if execution_filled_qty is not None else 0.0),
             )
         elif is_partial:
             self._record_decision_event(
