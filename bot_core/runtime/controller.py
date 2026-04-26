@@ -4196,6 +4196,7 @@ class TradingController:
         partial_label: OpportunityOutcomeLabel | None = None
         final_tracker: _OpportunityOpenOutcomeTracker | None = None
         final_resolution = ""
+        close_execution_quantity: float | None = None
         unresolved_close_with_correlation_key = False
         open_intent_candidate = False
         replay_open_candidate = False
@@ -4288,6 +4289,7 @@ class TradingController:
                 cumulative_closed_quantity = max(
                     0.0, tracked.closed_quantity + effective_close_quantity
                 )
+                close_execution_quantity = effective_close_quantity
                 tracked.closed_quantity = cumulative_closed_quantity
                 self._persist_open_outcome_tracker(tracked)
                 has_effective_close_proof = effective_close_quantity > 0.0
@@ -4745,6 +4747,12 @@ class TradingController:
                 else "",
                 "close_correlation_resolution": final_resolution,
             }
+            if (
+                str((request.metadata or {}).get("mode", "")).strip().lower() == "close_ranked"
+                and final_resolution.startswith("resolved_by_")
+                and close_execution_quantity is not None
+            ):
+                attach_metadata["execution_filled_quantity"] = f"{close_execution_quantity:.8f}"
             if attach_result.upgraded_correlation_keys:
                 attach_status = "final_upgraded" if final_label is not None else "quality_upgraded"
                 attach_metadata["upgraded"] = ";".join(attach_result.upgraded_correlation_keys)
