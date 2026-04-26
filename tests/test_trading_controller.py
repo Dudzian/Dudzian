@@ -14659,18 +14659,14 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_activ
     assert len(close_enforcement_events) == 1
     assert str(close_enforcement_events[0].get("status") or "").strip() == "blocked"
     assert (
-        str(close_enforcement_events[0].get("autonomous_execution_allowed") or "")
-        .strip()
-        .lower()
+        str(close_enforcement_events[0].get("autonomous_execution_allowed") or "").strip().lower()
         == "false"
     )
     assert (
         str(close_enforcement_events[0].get("blocking_reason") or "").strip()
         == "test_forced_close_permission_blocked"
     )
-    assert (
-        str(close_enforcement_events[0].get("execution_permission") or "").strip() == "blocked"
-    )
+    assert str(close_enforcement_events[0].get("execution_permission") or "").strip() == "blocked"
     assert (
         str(close_enforcement_events[0].get("denial_reason") or "").strip()
         == "test_forced_close_permission_blocked"
@@ -14703,7 +14699,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_same_scope_activ
         )
     ]
     assert close_key_events
-    assert str(close_key_events[-1].get("event") or "").strip() == "opportunity_autonomy_enforcement"
+    assert (
+        str(close_key_events[-1].get("event") or "").strip() == "opportunity_autonomy_enforcement"
+    )
     assert {str(event.get("event") or "").strip() for event in close_key_events} <= {
         "signal_received",
         "opportunity_autonomy_enforcement",
@@ -14952,7 +14950,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_earlier_permissi
     close_enforcement = close_enforcement_events[0]
     assert str(close_enforcement.get("status") or "").strip() == "blocked"
     assert str(close_enforcement.get("execution_permission") or "").strip() == "blocked"
-    assert str(close_enforcement.get("autonomous_execution_allowed") or "").strip().lower() == "false"
+    assert (
+        str(close_enforcement.get("autonomous_execution_allowed") or "").strip().lower() == "false"
+    )
     assert (
         str(close_enforcement.get("blocking_reason") or "").strip()
         == "test_forced_earlier_close_permission_blocked"
@@ -14993,7 +14993,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_earlier_permissi
         "signal_received",
         "opportunity_autonomy_enforcement",
     }
-    assert str(close_key_events[-1].get("event") or "").strip() == "opportunity_autonomy_enforcement"
+    assert (
+        str(close_key_events[-1].get("event") or "").strip() == "opportunity_autonomy_enforcement"
+    )
     assert [
         event
         for event in events
@@ -15244,7 +15246,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_permission_block
     close_enforcement = close_enforcement_events[0]
     assert str(close_enforcement.get("status") or "").strip() == "blocked"
     assert str(close_enforcement.get("execution_permission") or "").strip() == "blocked"
-    assert str(close_enforcement.get("autonomous_execution_allowed") or "").strip().lower() == "false"
+    assert (
+        str(close_enforcement.get("autonomous_execution_allowed") or "").strip().lower() == "false"
+    )
     assert (
         str(close_enforcement.get("blocking_reason") or "").strip()
         == "test_forced_close_permission_blocked_non_autonomous"
@@ -15294,7 +15298,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_permission_block
         )
     ]
     assert close_key_events
-    assert str(close_key_events[-1].get("event") or "").strip() == "opportunity_autonomy_enforcement"
+    assert (
+        str(close_key_events[-1].get("event") or "").strip() == "opportunity_autonomy_enforcement"
+    )
     assert {str(event.get("event") or "").strip() for event in close_key_events} <= {
         "signal_received",
         "opportunity_autonomy_enforcement",
@@ -15402,7 +15408,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_pe
     close_target_key = (
         f"{scope_variant}-permission-blocked-close-target-{target_autonomy_mode}-{state_suffix}"
     )
-    blocked_top_key = f"{scope_variant}-permission-blocked-top-{target_autonomy_mode}-{state_suffix}"
+    blocked_top_key = (
+        f"{scope_variant}-permission-blocked-top-{target_autonomy_mode}-{state_suffix}"
+    )
     promoted_lower_key = (
         f"{scope_variant}-permission-blocked-lower-{target_autonomy_mode}-{state_suffix}"
     )
@@ -15562,7 +15570,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_pe
         _forced_permission_evaluation,
     )
 
-    results = controller.process_signals([blocked_top_signal, promoted_lower_signal, close_target_signal])
+    results = controller.process_signals(
+        [blocked_top_signal, promoted_lower_signal, close_target_signal]
+    )
 
     assert results == []
     assert _request_shadow_keys(execution.requests) == []
@@ -15583,7 +15593,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_pe
     close_enforcement = close_enforcement_events[0]
     assert str(close_enforcement.get("status") or "").strip() == "blocked"
     assert str(close_enforcement.get("execution_permission") or "").strip() == "blocked"
-    assert str(close_enforcement.get("autonomous_execution_allowed") or "").strip().lower() == "false"
+    assert (
+        str(close_enforcement.get("autonomous_execution_allowed") or "").strip().lower() == "false"
+    )
     assert (
         str(close_enforcement.get("blocking_reason") or "").strip()
         == "test_forced_foreign_close_permission_blocked"
@@ -15624,7 +15636,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_foreign_scope_pe
         )
     ]
     assert close_key_events
-    assert str(close_key_events[-1].get("event") or "").strip() == "opportunity_autonomy_enforcement"
+    assert (
+        str(close_key_events[-1].get("event") or "").strip() == "opportunity_autonomy_enforcement"
+    )
     assert {str(event.get("event") or "").strip() for event in close_key_events} <= {
         "signal_received",
         "opportunity_autonomy_enforcement",
@@ -28384,8 +28398,7 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_partial_close_ke
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
-        == allowed_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == allowed_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
     assert [
         event
@@ -28408,26 +28421,22 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_partial_close_ke
         str(close_attach_events[0].get("order_opportunity_shadow_record_key") or "").strip()
         == close_target_key
     )
-    assert str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    assert (
+        str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    )
     assert str(close_attach_events[0].get("existing_open_correlation_key") or "").strip() == ""
     assert str(close_attach_events[0].get("status") or "").strip() == "conflict_rejected"
     assert str(close_attach_events[0].get("execution_status") or "").strip().lower() == (
         "partially_filled"
     )
     close_enforcement_index = next(
-        index
-        for index, event in enumerate(events)
-        if event is close_enforcement_events[0]
+        index for index, event in enumerate(events) if event is close_enforcement_events[0]
     )
     close_partial_execution_index = next(
-        index
-        for index, event in enumerate(events)
-        if event is close_order_events[0]
+        index for index, event in enumerate(events) if event is close_order_events[0]
     )
     close_attach_index = next(
-        index
-        for index, event in enumerate(events)
-        if event is close_attach_events[0]
+        index for index, event in enumerate(events) if event is close_attach_events[0]
     )
     assert close_enforcement_index < close_partial_execution_index
     assert close_enforcement_index < close_attach_index
@@ -28698,8 +28707,7 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_non_filled_close
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
-        == allowed_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == allowed_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
     assert [
         event
@@ -28723,7 +28731,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_non_filled_close
         str(close_attach_events[0].get("order_opportunity_shadow_record_key") or "").strip()
         == close_target_key
     )
-    assert str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    assert (
+        str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    )
     assert str(close_attach_events[0].get("existing_open_correlation_key") or "").strip() == ""
     assert str(close_attach_events[0].get("status") or "").strip() == "conflict_rejected"
     assert str(close_attach_events[0].get("execution_status") or "").strip().lower() == close_status
@@ -29048,7 +29058,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_filled_like_with
     assert len(close_order_events) == 1
     assert str(close_order_events[0].get("side") or "").strip() == "SELL"
     assert str(close_order_events[0].get("status") or "").strip().lower() == close_status
-    assert str(close_order_events[0].get("filled_quantity") or "").strip() == expected_filled_quantity
+    assert (
+        str(close_order_events[0].get("filled_quantity") or "").strip() == expected_filled_quantity
+    )
     assert str(close_order_events[0].get("avg_price") or "").strip() == "195.00000000"
 
     assert [
@@ -29061,8 +29073,7 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_filled_like_with
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
-        == allowed_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == allowed_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
     assert [
         event
@@ -29086,7 +29097,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_filled_like_with
         str(close_attach_events[0].get("order_opportunity_shadow_record_key") or "").strip()
         == close_target_key
     )
-    assert str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    assert (
+        str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    )
     assert str(close_attach_events[0].get("existing_open_correlation_key") or "").strip() == ""
     assert str(close_attach_events[0].get("status") or "").strip() == "conflict_rejected"
     assert str(close_attach_events[0].get("execution_status") or "").strip().lower() == close_status
@@ -29336,8 +29349,7 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_invalid_numeric_
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
-        == allowed_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == allowed_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
 
     _assert_single_ranked_selection_event_payload(
@@ -29616,8 +29628,7 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_overfill_is_clam
         event
         for event in events
         if event.get("event") == "opportunity_autonomy_enforcement"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
-        == allowed_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == allowed_lower_key
     ]
     assert len(lower_enforcement_events) == 1
     assert lower_enforcement_events[0]["status"] == "allowed"
@@ -29689,7 +29700,12 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_overfill_is_clam
 
 
 @pytest.mark.parametrize(
-    ("filled_quantity_payload", "expected_order_filled_qty", "expected_tco_quantity", "expect_unlock"),
+    (
+        "filled_quantity_payload",
+        "expected_order_filled_qty",
+        "expected_tco_quantity",
+        "expect_unlock",
+    ),
     [
         ("0.8", "0.80000000", 0.8, True),
         ("nan", "null", 0.0, False),
@@ -29870,7 +29886,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_string_filled_qu
 
     controller.process_signals([blocked_top_signal, allowed_lower_signal, close_signal])
 
-    expected_request_keys = [close_target_key, allowed_lower_key] if expect_unlock else [close_target_key]
+    expected_request_keys = (
+        [close_target_key, allowed_lower_key] if expect_unlock else [close_target_key]
+    )
     assert _request_shadow_keys(execution.requests) == expected_request_keys
     assert [request.side for request in execution.requests] == (
         ["SELL", "BUY"] if expect_unlock else ["SELL"]
@@ -29889,7 +29907,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_string_filled_qu
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
     ]
     assert len(close_order_events) == 1
-    assert str(close_order_events[0].get("filled_quantity") or "").strip() == expected_order_filled_qty
+    assert (
+        str(close_order_events[0].get("filled_quantity") or "").strip() == expected_order_filled_qty
+    )
     assert str(close_order_events[0].get("filled_quantity") or "").strip() != "1.00000000"
     assert str(close_order_events[0].get("filled_quantity") or "").strip() != "2.00000000"
 
@@ -29943,7 +29963,12 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_string_filled_qu
 
 @pytest.mark.parametrize("close_status", ["partially_filled", "partial"])
 @pytest.mark.parametrize(
-    ("filled_quantity_payload", "expected_order_filled_qty", "expected_tco_call_count", "expect_unlock"),
+    (
+        "filled_quantity_payload",
+        "expected_order_filled_qty",
+        "expected_tco_call_count",
+        "expect_unlock",
+    ),
     [
         (-0.4, "null", 0, False),
         (float("nan"), "null", 0, False),
@@ -30028,7 +30053,11 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_partial_like_inv
     )
     execution = SequencedExecutionService(
         [
-            {"status": close_status, "filled_quantity": filled_quantity_payload, "avg_price": 195.0},
+            {
+                "status": close_status,
+                "filled_quantity": filled_quantity_payload,
+                "avg_price": 195.0,
+            },
             {"status": "filled", "filled_quantity": 1.0, "avg_price": 30.0},
         ]
     )
@@ -30127,7 +30156,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_partial_like_inv
 
     controller.process_signals([blocked_top_signal, allowed_lower_signal, close_signal])
 
-    expected_request_keys = [close_target_key, allowed_lower_key] if expect_unlock else [close_target_key]
+    expected_request_keys = (
+        [close_target_key, allowed_lower_key] if expect_unlock else [close_target_key]
+    )
     assert _request_shadow_keys(execution.requests) == expected_request_keys
     assert [request.side for request in execution.requests] == (
         ["SELL", "BUY"] if expect_unlock else ["SELL"]
@@ -30141,7 +30172,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_partial_like_inv
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
     ]
     assert len(close_order_events) == 1
-    assert str(close_order_events[0].get("filled_quantity") or "").strip() == expected_order_filled_qty
+    assert (
+        str(close_order_events[0].get("filled_quantity") or "").strip() == expected_order_filled_qty
+    )
     assert str(close_order_events[0].get("filled_quantity") or "").strip() != "2.00000000"
     assert str(close_order_events[0].get("filled_quantity") or "").strip() != "1.00000000"
 
@@ -30171,7 +30204,10 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_partial_like_inv
         assert close_tco_call["quantity"] == 0.8
 
     open_rows_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
-    assert open_rows_by_key[close_target_key].closed_quantity <= open_rows_by_key[close_target_key].entry_quantity
+    assert (
+        open_rows_by_key[close_target_key].closed_quantity
+        <= open_rows_by_key[close_target_key].entry_quantity
+    )
     active_open_keys = sorted(
         row.correlation_key
         for row in repository.load_open_outcomes()
@@ -30200,7 +30236,10 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_partial_like_inv
 @pytest.mark.parametrize(
     ("close_status", "close_payload"),
     [
-        ("partially_filled", {"status": "partially_filled", "filled_quantity": None, "avg_price": 195.0}),
+        (
+            "partially_filled",
+            {"status": "partially_filled", "filled_quantity": None, "avg_price": 195.0},
+        ),
         ("partially_filled", {"status": "partially_filled", "avg_price": 195.0}),
         ("partial", {"status": "partial", "filled_quantity": None, "avg_price": 195.0}),
         ("partial", {"status": "partial", "avg_price": 195.0}),
@@ -30383,7 +30422,9 @@ def test_opportunity_autonomy_close_ranked_partial_like_without_quantity_keeps_d
         str(close_attach_events[0].get("order_opportunity_shadow_record_key") or "").strip()
         == close_target_key
     )
-    assert str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    assert (
+        str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    )
     assert str(close_attach_events[0].get("existing_open_correlation_key") or "").strip() == ""
     assert str(close_attach_events[0].get("status") or "").strip() == "conflict_rejected"
     assert str(close_attach_events[0].get("execution_status") or "").strip().lower() == close_status
@@ -30391,9 +30432,13 @@ def test_opportunity_autonomy_close_ranked_partial_like_without_quantity_keeps_d
     close_enforcement_index = next(
         index for index, event in enumerate(events) if event is close_enforcement_events[0]
     )
-    close_execution_index = next(index for index, event in enumerate(events) if event is order_event)
+    close_execution_index = next(
+        index for index, event in enumerate(events) if event is order_event
+    )
     assert close_enforcement_index < close_execution_index
-    close_attach_index = next(index for index, event in enumerate(events) if event is close_attach_events[0])
+    close_attach_index = next(
+        index for index, event in enumerate(events) if event is close_attach_events[0]
+    )
     assert close_enforcement_index < close_attach_index
 
     execution_alerts = [
@@ -30602,7 +30647,9 @@ def test_opportunity_autonomy_close_ranked_filled_without_quantity_keeps_downstr
         str(close_attach_events[0].get("order_opportunity_shadow_record_key") or "").strip()
         == close_target_key
     )
-    assert str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    assert (
+        str(close_attach_events[0].get("proxy_correlation_key") or "").strip() == close_target_key
+    )
     assert str(close_attach_events[0].get("existing_open_correlation_key") or "").strip() == ""
     assert str(close_attach_events[0].get("status") or "").strip() == "conflict_rejected"
     assert str(close_attach_events[0].get("execution_status") or "").strip().lower() == "filled"
@@ -30610,9 +30657,13 @@ def test_opportunity_autonomy_close_ranked_filled_without_quantity_keeps_downstr
     close_enforcement_index = next(
         index for index, event in enumerate(events) if event is close_enforcement_events[0]
     )
-    close_execution_index = next(index for index, event in enumerate(events) if event is order_event)
+    close_execution_index = next(
+        index for index, event in enumerate(events) if event is order_event
+    )
     assert close_enforcement_index < close_execution_index
-    close_attach_index = next(index for index, event in enumerate(events) if event is close_attach_events[0])
+    close_attach_index = next(
+        index for index, event in enumerate(events) if event is close_attach_events[0]
+    )
     assert close_enforcement_index < close_attach_index
 
     execution_alerts = [
@@ -30645,7 +30696,9 @@ def test_opportunity_autonomy_close_ranked_filled_without_quantity_keeps_downstr
     assert reporter.calls[0]["reference_price"] == pytest.approx(100.0)
     assert reporter.calls[0]["commission"] == pytest.approx(0.0)
     assert isinstance(reporter.calls[0]["metadata"], Mapping)
-    assert reporter.calls[0]["metadata"].get("order_opportunity_shadow_record_key") == close_target_key
+    assert (
+        reporter.calls[0]["metadata"].get("order_opportunity_shadow_record_key") == close_target_key
+    )
 
     open_rows_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
     assert open_rows_by_key[close_target_key].closed_quantity == 0.0
@@ -30791,7 +30844,10 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_execution_except
         decision_timestamp=decision_timestamp + timedelta(minutes=3),
     )
     close_exception_signal.symbol = "ETH/USDT"
-    close_exception_signal.metadata = {**dict(close_exception_signal.metadata), "mode": "close_ranked"}
+    close_exception_signal.metadata = {
+        **dict(close_exception_signal.metadata),
+        "mode": "close_ranked",
+    }
 
     permission_checks: list[str] = []
 
@@ -30834,7 +30890,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_execution_except
     )
 
     with pytest.raises(RuntimeError, match="close-execution-exception"):
-        controller.process_signals([blocked_top_signal, allowed_lower_signal, close_exception_signal])
+        controller.process_signals(
+            [blocked_top_signal, allowed_lower_signal, close_exception_signal]
+        )
 
     request_keys = _request_shadow_keys(execution.requests)
     assert request_keys == [close_target_key]
@@ -30920,7 +30978,6 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_execution_except
     _assert_no_duplicate_residue_metadata_for_shadow_key(events, shadow_key=allowed_lower_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_top_key)
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=allowed_lower_key)
-
 
 
 @pytest.mark.parametrize(
@@ -32260,8 +32317,7 @@ def test_opportunity_autonomy_close_ranked_existing_tracker_permission_blocked_i
     assert str(enforcement_event.get("status") or "").strip() == "blocked"
     assert str(enforcement_event.get("execution_permission") or "").strip() == "blocked"
     assert (
-        str(enforcement_event.get("autonomous_execution_allowed") or "").strip().lower()
-        == "false"
+        str(enforcement_event.get("autonomous_execution_allowed") or "").strip().lower() == "false"
     )
     assert str(enforcement_event.get("blocking_reason") or "").strip() == "test_forced_denial"
     assert str(enforcement_event.get("denial_reason") or "").strip() == "test_forced_denial"
