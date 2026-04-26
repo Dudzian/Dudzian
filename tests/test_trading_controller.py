@@ -198,6 +198,32 @@ class SequencedExecutionService(ExecutionService):
         return None
 
 
+class MissingFilledQuantityExecutionService(ExecutionService):
+    def __init__(self, responses: Sequence[dict[str, object]]) -> None:
+        self._responses = list(responses)
+        self.requests: list[OrderRequest] = []
+
+    def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+        self.requests.append(request)
+        payload = dict(self._responses.pop(0)) if self._responses else {}
+        raw_response: dict[str, object] = {"context": context.metadata}
+        if "filled_quantity" in payload:
+            raw_response["filled_quantity"] = payload["filled_quantity"]
+        return OrderResult(
+            order_id=str(payload.get("order_id", "order-missing-filled")),
+            status=str(payload.get("status", "filled")),
+            filled_quantity=payload["filled_quantity"] if "filled_quantity" in payload else None,
+            avg_price=payload.get("avg_price", request.price),
+            raw_response=raw_response,
+        )
+
+    def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+        return None
+
+    def flush(self) -> None:
+        return None
+
+
 def _account_snapshot() -> AccountSnapshot:
     return AccountSnapshot(
         balances={},
@@ -44394,6 +44420,391 @@ def test_opportunity_autonomous_open_partial_fill_creates_partial_tracker_withou
     assert open_outcomes[0].entry_quantity == pytest.approx(0.4, rel=1e-6)
     assert open_outcomes[0].closed_quantity == 0.0
 
+
+@pytest.mark.parametrize("execution_status", ["filled", "partially_filled", "partial"])
+@pytest.mark.parametrize("filled_quantity", [None, -0.4, float("nan"), float("inf"), float("-inf")])
+def test_opportunity_autonomous_open_without_positive_finite_quantity_proof_does_not_create_tracker(
+    tmp_path: Path,
+    execution_status: str,
+    filled_quantity: float | None,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    second_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=2,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=first_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            ),
+            OpportunityShadowRecord(
+                record_key=second_key,
+                symbol="ETH/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": execution_status, "filled_quantity": filled_quantity, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 111.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+        max_active_autonomous_open_positions=1,
+    )
+    first_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+    )
+    second_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=second_key,
+        decision_timestamp=decision_timestamp,
+    )
+    second_open_signal.symbol = "ETH/USDT"
+
+    results = controller.process_signals([first_open_signal, second_open_signal])
+
+    assert [result.status for result in results] == [execution_status, "filled"]
+    assert _request_shadow_keys(execution.requests) == [first_key, second_key]
+    open_outcomes = shadow_repo.load_open_outcomes()
+    assert {row.correlation_key for row in open_outcomes} == {second_key}
+    assert open_outcomes[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    first_labels = [row for row in shadow_repo.load_outcome_labels() if row.correlation_key == first_key]
+    assert first_labels == []
+
+    all_events = journal.export()
+    first_execution_events = [
+        event for event in all_events if event.get("order_opportunity_shadow_record_key") == first_key
+    ]
+    expected_event = "order_executed" if execution_status == "filled" else "order_partially_executed"
+    assert expected_event in [event["event"] for event in first_execution_events]
+    execution_event = next(event for event in first_execution_events if event["event"] == expected_event)
+    assert execution_event["filled_quantity"] != "1.00000000"
+    if filled_quantity is None:
+        assert execution_event["filled_quantity"] == "null"
+    skipped_events = [
+        event
+        for event in all_events
+        if event.get("event") == "signal_skipped"
+        and (
+            event.get("decision_reason") == "autonomous_open_active_budget_exhausted"
+            or event.get("reason") == "autonomous_open_active_budget_exhausted"
+        )
+        and event.get("order_opportunity_shadow_record_key") == second_key
+    ]
+    assert skipped_events == []
+
+
+def test_opportunity_autonomous_open_missing_filled_quantity_field_does_not_create_tracker(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    second_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=2,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=first_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            ),
+            OpportunityShadowRecord(
+                record_key=second_key,
+                symbol="ETH/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            ),
+        ]
+    )
+    execution = MissingFilledQuantityExecutionService(
+        [
+            {"status": "filled", "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 111.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+        max_active_autonomous_open_positions=1,
+    )
+    first_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+    )
+    second_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=second_key,
+        decision_timestamp=decision_timestamp,
+    )
+    second_open_signal.symbol = "ETH/USDT"
+
+    results = controller.process_signals([first_open_signal, second_open_signal])
+
+    assert [result.status for result in results] == ["filled", "filled"]
+    assert _request_shadow_keys(execution.requests) == [first_key, second_key]
+    assert all(row.correlation_key != first_key for row in shadow_repo.load_open_outcomes())
+    assert all(
+        row.entry_quantity != pytest.approx(1.0, rel=1e-6)
+        for row in shadow_repo.load_open_outcomes()
+        if row.correlation_key == first_key
+    )
+    assert all(
+        event.get("decision_reason") != "autonomous_open_active_budget_exhausted"
+        and event.get("reason") != "autonomous_open_active_budget_exhausted"
+        for event in journal.export()
+        if event.get("order_opportunity_shadow_record_key") == second_key
+    )
+    assert all(label.correlation_key != first_key for label in shadow_repo.load_outcome_labels())
+
+
+@pytest.mark.parametrize("execution_status", ["filled", "partially_filled", "partial"])
+@pytest.mark.parametrize(
+    ("filled_quantity", "expected_entry"),
+    [("0.8", 0.8), ("nan", None), ("bad-value", None), ("", None), ("null", None)],
+)
+def test_opportunity_autonomous_open_string_filled_quantity_boundary_contract(
+    tmp_path: Path,
+    execution_status: str,
+    filled_quantity: str,
+    expected_entry: float | None,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    execution = StatusExecutionService(
+        status=execution_status, filled_quantity=filled_quantity, avg_price=101.0
+    )
+    controller, _journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=key,
+        decision_timestamp=decision_timestamp,
+    )
+
+    controller.process_signals([open_signal])
+
+    open_outcomes = shadow_repo.load_open_outcomes()
+    labels_for_key = [row for row in shadow_repo.load_outcome_labels() if row.correlation_key == key]
+    if expected_entry is None:
+        assert open_outcomes == []
+        assert labels_for_key == []
+    else:
+        assert len(open_outcomes) == 1
+        assert open_outcomes[0].correlation_key == key
+        assert open_outcomes[0].entry_quantity == pytest.approx(expected_entry, rel=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("filled_quantity", "expected_entry_quantity"),
+    [
+        (0.4, 0.4),
+        (1.0, 1.0),
+        (1.7, 1.0),
+    ],
+)
+def test_opportunity_autonomous_open_positive_quantity_creates_tracker_and_consumes_budget(
+    tmp_path: Path,
+    filled_quantity: float,
+    expected_entry_quantity: float,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    second_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=2,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=first_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            ),
+            OpportunityShadowRecord(
+                record_key=second_key,
+                symbol="ETH/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper"),
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": filled_quantity, "avg_price": 101.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 111.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+        max_active_autonomous_open_positions=1,
+    )
+    first_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+    )
+    second_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=second_key,
+        decision_timestamp=decision_timestamp,
+    )
+    second_open_signal.symbol = "ETH/USDT"
+
+    results = controller.process_signals([first_open_signal, second_open_signal])
+
+    assert [result.status for result in results] == ["filled"]
+    assert _request_shadow_keys(execution.requests) == [first_key]
+    open_outcomes = shadow_repo.load_open_outcomes()
+    assert {row.correlation_key for row in open_outcomes} == {first_key}
+    assert open_outcomes[0].entry_quantity == pytest.approx(expected_entry_quantity, rel=1e-6)
+
+    skipped_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and (
+            event.get("decision_reason") == "autonomous_open_active_budget_exhausted"
+            or event.get("reason") == "autonomous_open_active_budget_exhausted"
+        )
+    ]
+    assert len(skipped_events) == 1
+    assert skipped_events[0].get("order_opportunity_shadow_record_key") == second_key
+    skip_reason = skipped_events[0].get("decision_reason") or skipped_events[0].get("reason")
+    assert skip_reason == "autonomous_open_active_budget_exhausted"
 
 def test_opportunity_autonomous_open_unrecognized_non_fill_zero_fill_does_not_create_tracker_or_label_drift(
     tmp_path: Path,
