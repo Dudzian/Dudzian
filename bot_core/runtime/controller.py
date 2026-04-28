@@ -4692,6 +4692,13 @@ class TradingController:
             correlation_key
             and final_label is None
             and partial_label is None
+            # Autonomous OPEN non-filled without an active tracker must not emit
+            # proxy/durable lifecycle artifacts, because no real open execution was proven.
+            and not (
+                self._is_autonomous_open_handoff_path(request)
+                and not is_filled_or_partial
+                and self._opportunity_open_outcomes.get(correlation_key) is None
+            )
             and not suppress_proxy_label_for_invalid_autonomous_open
         ):
             proxy_tracker = self._opportunity_open_outcomes.get(correlation_key)
