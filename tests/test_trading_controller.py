@@ -9932,6 +9932,325 @@ def test_opportunity_autonomy_duplicate_open_reentry_same_runtime_is_suppressed(
     assert skipped_events[-1]["proxy_correlation_key"] == correlation_key
 
 
+def test_opportunity_autonomy_duplicate_open_same_correlation_does_not_drift_runtime_tracker_or_artifacts(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 9, 12, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=first_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    first_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+    )
+
+    first_results = controller.process_signals([first_open_signal])
+    open_outcomes_before_duplicate = repository.load_open_outcomes()
+    labels_before_duplicate = repository.load_outcome_labels()
+    order_events_before_duplicate = _order_path_events_with_shadow_key(journal, first_key)
+    duplicate_results = controller.process_signals([first_open_signal])
+
+    assert [result.status for result in first_results] == ["filled"]
+    assert duplicate_results == []
+    assert _request_shadow_keys(execution.requests) == [first_key]
+    assert [request.side for request in execution.requests] == ["BUY"]
+    assert [request.symbol for request in execution.requests] == ["BTC/USDT"]
+    assert _order_path_events_with_shadow_key(journal, first_key) == order_events_before_duplicate
+    assert len(open_outcomes_before_duplicate) == 1
+    assert len(repository.load_open_outcomes()) == 1
+    state = repository.load_open_outcomes()[0]
+    assert state.correlation_key == first_key
+    assert state.symbol == "BTC/USDT"
+    assert state.side == "BUY"
+    assert state.entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert state.closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert repository.load_outcome_labels() == labels_before_duplicate
+    skipped_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and event.get("reason") == "duplicate_autonomous_open_reentry_suppressed"
+        and event.get("proxy_correlation_key") == first_key
+    ]
+    assert len(skipped_events) == 1
+    assert skipped_events[0]["status"] == "skipped"
+    assert skipped_events[0]["proxy_correlation_key"] == first_key
+    assert skipped_events[0]["order_opportunity_shadow_record_key"] == first_key
+    assert skipped_events[0]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+    # Filtrujemy eventy skip duplicate guard, bo helper sprawdza brak residue
+    # w downstream order/attach ścieżce, a nie w diagnostycznym signal_skipped.
+    non_skip_events = [
+        event for event in journal.export() if str(event.get("event") or "") != "signal_skipped"
+    ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=first_key)
+
+
+def test_opportunity_autonomy_restored_tracker_duplicate_open_same_correlation_is_suppressed_without_budget_drift(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 9, 13, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    second_key = OpportunityShadowRecord.build_record_key(
+        symbol="ETH/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="opportunity-v1",
+        rank=2,
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.upsert_open_outcome(
+        OpportunityShadowRepository.OpenOutcomeState(
+            correlation_key=first_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=first_key,
+                decision_timestamp=decision_timestamp,
+            ),
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=second_key,
+                    decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                ),
+                symbol="ETH/USDT",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 111.0},
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+    )
+    duplicate_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+    )
+    second_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=second_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    second_signal.symbol = "ETH/USDT"
+
+    duplicate_results = controller.process_signals([duplicate_signal])
+    second_results = controller.process_signals([second_signal])
+
+    runtime_tracker = controller._opportunity_open_outcomes[first_key]
+    assert runtime_tracker.restored_from_repository is True
+    assert runtime_tracker.entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert runtime_tracker.closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert duplicate_results == []
+    assert second_results == []
+    assert _request_shadow_keys(execution.requests) == []
+    assert _order_path_events_with_shadow_key(journal, first_key) == []
+    assert _order_path_events_with_shadow_key(journal, second_key) == []
+    states = repository.load_open_outcomes()
+    assert len(states) == 1
+    assert states[0].correlation_key == first_key
+    assert states[0].symbol == "BTC/USDT"
+    assert states[0].side == "BUY"
+    assert states[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert states[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert repository.load_outcome_labels() == []
+    duplicate_skips = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and event.get("reason") == "duplicate_autonomous_open_reentry_suppressed"
+        and event.get("proxy_correlation_key") == first_key
+    ]
+    assert len(duplicate_skips) == 1
+    assert duplicate_skips[0]["status"] == "skipped"
+    assert duplicate_skips[0]["proxy_correlation_key"] == first_key
+    assert duplicate_skips[0]["order_opportunity_shadow_record_key"] == first_key
+    assert duplicate_skips[0]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+    budget_skips = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and (
+            event.get("reason") == "autonomous_open_active_budget_exhausted"
+            or event.get("decision_reason") == "autonomous_open_active_budget_exhausted"
+        )
+        and event.get("order_opportunity_shadow_record_key") == second_key
+    ]
+    assert len(budget_skips) == 1
+    assert budget_skips[0]["status"] == "skipped"
+    assert budget_skips[0]["order_opportunity_shadow_record_key"] == second_key
+    assert (
+        budget_skips[0].get("reason") == "autonomous_open_active_budget_exhausted"
+        or budget_skips[0].get("decision_reason") == "autonomous_open_active_budget_exhausted"
+    )
+    assert budget_skips[0]["active_autonomous_open_positions"] == "1"
+    assert budget_skips[0]["max_active_autonomous_open_positions"] == "1"
+    # Filtrujemy diagnostyczny signal_skipped duplicate guard, bo może legalnie
+    # zawierać proxy key; helper ma walidować downstream order/attach residue.
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        [
+            event
+            for event in journal.export()
+            if event.get("reason") != "duplicate_autonomous_open_reentry_suppressed"
+        ],
+        shadow_key=first_key,
+    )
+    # Filtrujemy diagnostyczny signal_skipped duplicate guard, bo może legalnie
+    # zawierać proxy key; helper ma walidować downstream order/attach residue.
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        [
+            event
+            for event in journal.export()
+            if event.get("reason") != "duplicate_autonomous_open_reentry_suppressed"
+        ],
+        shadow_key=second_key,
+    )
+
+
+@pytest.mark.parametrize("execution_status", ["filled", "partially_filled", "partial"])
+@pytest.mark.parametrize("filled_quantity", [None, "bad-value", float("nan"), float("inf"), -0.4])
+def test_opportunity_autonomy_duplicate_open_same_correlation_would_be_execution_payload_is_unused_before_guard(
+    tmp_path: Path,
+    execution_status: str,
+    filled_quantity: object,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 9, 14, 0, tzinfo=timezone.utc)
+    first_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=first_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    # Load-bearing: drugi payload jest celowo "would-be" i pozostaje niewykorzystany,
+    # bo duplicate guard ma zatrzymać replay przed drugim execution.
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {
+                "status": execution_status,
+                "filled_quantity": filled_quantity,
+                "avg_price": 100.0,
+            },
+        ]
+    )
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+        max_active_autonomous_open_positions=1,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=first_key,
+        decision_timestamp=decision_timestamp,
+    )
+
+    first_results = controller.process_signals([open_signal])
+    duplicate_results = controller.process_signals([open_signal])
+
+    assert [result.status for result in first_results] == ["filled"]
+    assert duplicate_results == []
+    assert _request_shadow_keys(execution.requests) == [first_key]
+    assert [request.side for request in execution.requests] == ["BUY"]
+    assert [request.symbol for request in execution.requests] == ["BTC/USDT"]
+    key_order_events = _order_path_events_with_shadow_key(journal, first_key)
+    key_order_event_types = [event["event"] for event in key_order_events]
+    assert key_order_event_types.count("order_submitted") == 1
+    assert key_order_event_types.count("order_executed") == 1
+    assert "order_partially_executed" not in key_order_event_types
+    assert "order_execution_result" not in key_order_event_types
+    executed_events = [event for event in key_order_events if event.get("event") == "order_executed"]
+    assert executed_events
+    assert executed_events[-1]["filled_quantity"] == "1.00000000"
+    states = repository.load_open_outcomes()
+    assert len(states) == 1
+    assert states[0].correlation_key == first_key
+    assert states[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert states[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    labels = repository.load_outcome_labels()
+    assert len(labels) == 1
+    assert labels[0].correlation_key == first_key
+    assert labels[0].label_quality == "execution_proxy_pending_exit"
+    duplicate_skips = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and event.get("reason") == "duplicate_autonomous_open_reentry_suppressed"
+        and event.get("proxy_correlation_key") == first_key
+    ]
+    assert len(duplicate_skips) == 1
+    assert duplicate_skips[0]["status"] == "skipped"
+    assert duplicate_skips[0]["proxy_correlation_key"] == first_key
+    assert duplicate_skips[0]["order_opportunity_shadow_record_key"] == first_key
+    assert duplicate_skips[0]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
+    filtered_events = [
+        event for event in journal.export() if event.get("reason") != "duplicate_autonomous_open_reentry_suppressed"
+    ]
+    # Filtrujemy diagnostyczny event duplicate skip, aby helper weryfikował brak
+    # residue tylko w downstream ścieżkach order/attach.
+    _assert_no_duplicate_residue_metadata_for_shadow_key(filtered_events, shadow_key=first_key)
+
+
 def test_opportunity_autonomy_opposite_side_cross_correlation_is_not_suppressed_as_duplicate_open_reentry() -> (
     None
 ):
