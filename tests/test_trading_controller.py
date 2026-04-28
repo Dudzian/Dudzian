@@ -44806,6 +44806,277 @@ def test_opportunity_autonomous_open_positive_quantity_creates_tracker_and_consu
     skip_reason = skipped_events[0].get("decision_reason") or skipped_events[0].get("reason")
     assert skip_reason == "autonomous_open_active_budget_exhausted"
 
+
+@pytest.mark.parametrize(
+    ("execution_status", "expected_event"),
+    [
+        ("filled", "order_executed"),
+        ("partially_filled", "order_partially_executed"),
+        ("partial", "order_partially_executed"),
+    ],
+)
+def test_opportunity_autonomous_open_overfill_quantity_proof_clamps_downstream_telemetry(
+    tmp_path: Path,
+    execution_status: str,
+    expected_event: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)]
+    )
+    execution = StatusExecutionService(
+        status=execution_status,
+        filled_quantity=1.7,
+        avg_price=101.0,
+    )
+    router, channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    tco_reporter = StubTCOReporter()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+        tco_reporter=tco_reporter,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=key,
+        decision_timestamp=decision_timestamp,
+    )
+
+    controller.process_signals([signal])
+
+    open_outcomes = shadow_repo.load_open_outcomes()
+    assert len(open_outcomes) == 1
+    assert open_outcomes[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
+
+    execution_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == expected_event
+        and event.get("order_opportunity_shadow_record_key") == key
+    ]
+    assert len(execution_events) == 1
+    execution_event = execution_events[0]
+    assert execution_event["side"] == "BUY"
+    assert execution_event["status"] == execution_status
+    assert execution_event["filled_quantity"] == "1.00000000"
+
+    execution_alert = channel.messages[-1]
+    assert execution_alert.category == "execution"
+    assert execution_alert.context["side"] == "BUY"
+    assert execution_alert.context["status"] == execution_status
+    assert execution_alert.context["filled_quantity"] == "1.00000000"
+
+    assert len(tco_reporter.calls) == 1
+    assert tco_reporter.calls[0]["quantity"] == pytest.approx(1.0, rel=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("execution_status", "expected_event", "execution_filled_quantity", "expected_tco_quantity"),
+    [
+        ("filled", "order_executed", None, 0.0),
+        ("filled", "order_executed", "bad-value", 0.0),
+        ("partially_filled", "order_partially_executed", None, None),
+        ("partially_filled", "order_partially_executed", "bad-value", None),
+        ("partial", "order_partially_executed", None, None),
+        ("partial", "order_partially_executed", "bad-value", None),
+    ],
+)
+def test_opportunity_autonomous_open_metadata_filled_quantity_does_not_spoof_missing_result_proof(
+    tmp_path: Path,
+    execution_status: str,
+    expected_event: str,
+    execution_filled_quantity: object | None,
+    expected_tco_quantity: float | None,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)]
+    )
+    execution = StatusExecutionService(
+        status=execution_status,
+        filled_quantity=execution_filled_quantity,
+        avg_price=101.0,
+    )
+    router, channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    tco_reporter = StubTCOReporter()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+        tco_reporter=tco_reporter,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=key,
+        decision_timestamp=decision_timestamp,
+    )
+    signal.metadata["filled_quantity"] = "1.0"
+
+    controller.process_signals([signal])
+
+    open_outcomes = [row for row in shadow_repo.load_open_outcomes() if row.correlation_key == key]
+    assert open_outcomes == []
+    labels = [row for row in shadow_repo.load_outcome_labels() if row.correlation_key == key]
+    assert labels == []
+
+    execution_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == expected_event
+        and event.get("order_opportunity_shadow_record_key") == key
+    ]
+    assert len(execution_events) == 1
+    execution_event = execution_events[0]
+    assert execution_event["side"] == "BUY"
+    assert execution_event["status"] == execution_status
+    assert execution_event["filled_quantity"] == "null"
+    assert execution_event["filled_quantity"] != "1.00000000"
+
+    execution_alerts = [
+        message
+        for message in channel.messages
+        if message.category == "execution"
+        and str(message.context.get("symbol") or "").strip() == "BTC/USDT"
+        and str(message.context.get("side") or "").strip() == "BUY"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip() == key
+    ]
+    assert len(execution_alerts) == 1
+    execution_alert = execution_alerts[0]
+    assert execution_alert.context["status"] == execution_status
+    assert execution_alert.context["filled_quantity"] == "unknown"
+    assert execution_alert.context["filled_quantity"] != "1.00000000"
+
+    if expected_tco_quantity is None:
+        assert tco_reporter.calls == []
+    else:
+        assert len(tco_reporter.calls) == 1
+        assert tco_reporter.calls[0]["quantity"] == pytest.approx(expected_tco_quantity, rel=1e-6)
+        assert tco_reporter.calls[0]["quantity"] != pytest.approx(1.0, rel=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("execution_status", "expected_event"),
+    [
+        ("filled", "order_executed"),
+        ("partially_filled", "order_partially_executed"),
+        ("partial", "order_partially_executed"),
+    ],
+)
+def test_opportunity_autonomous_open_metadata_filled_quantity_result_proof_wins_in_downstream_telemetry(
+    tmp_path: Path,
+    execution_status: str,
+    expected_event: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)]
+    )
+    execution = StatusExecutionService(
+        status=execution_status,
+        filled_quantity=0.4,
+        avg_price=101.0,
+    )
+    router, channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    tco_reporter = StubTCOReporter()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+        tco_reporter=tco_reporter,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=key,
+        decision_timestamp=decision_timestamp,
+    )
+    signal.metadata["filled_quantity"] = "1.0"
+
+    controller.process_signals([signal])
+
+    open_outcomes = [row for row in shadow_repo.load_open_outcomes() if row.correlation_key == key]
+    assert len(open_outcomes) == 1
+    assert open_outcomes[0].entry_quantity == pytest.approx(0.4, rel=1e-6)
+
+    execution_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == expected_event
+        and event.get("order_opportunity_shadow_record_key") == key
+    ]
+    assert len(execution_events) == 1
+    execution_event = execution_events[0]
+    assert execution_event["side"] == "BUY"
+    assert execution_event["status"] == execution_status
+    assert execution_event["filled_quantity"] == "0.40000000"
+    assert execution_event["filled_quantity"] != "1.00000000"
+
+    execution_alerts = [
+        message
+        for message in channel.messages
+        if message.category == "execution"
+        and str(message.context.get("symbol") or "").strip() == "BTC/USDT"
+        and str(message.context.get("side") or "").strip() == "BUY"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip() == key
+    ]
+    assert len(execution_alerts) == 1
+    execution_alert = execution_alerts[0]
+    assert execution_alert.context["status"] == execution_status
+    assert execution_alert.context["filled_quantity"] == "0.40000000"
+    assert execution_alert.context["filled_quantity"] != "1.00000000"
+
+    assert len(tco_reporter.calls) == 1
+    assert tco_reporter.calls[0]["instrument"] == "BTC/USDT"
+    assert tco_reporter.calls[0]["side"] == "BUY"
+    assert tco_reporter.calls[0]["quantity"] == pytest.approx(0.4, rel=1e-6)
+    assert tco_reporter.calls[0]["quantity"] != pytest.approx(1.0, rel=1e-6)
+
+
 def test_opportunity_autonomous_open_unrecognized_non_fill_zero_fill_does_not_create_tracker_or_label_drift(
     tmp_path: Path,
 ) -> None:

@@ -2839,6 +2839,28 @@ class TradingController:
                 request=adjusted_request,
                 telemetry_filled_quantity=telemetry_filled_quantity,
             )
+        elif is_filled or is_partial:
+            request_metadata = (
+                adjusted_request.metadata if isinstance(adjusted_request.metadata, Mapping) else {}
+            )
+            correlation_key = str(request_metadata.get("opportunity_shadow_record_key", "")).strip()
+            is_autonomous_opportunity_signal = self._is_opportunity_autonomy_enforced(
+                signal,
+                adjusted_request,
+            )
+            has_existing_tracker = bool(
+                correlation_key and self._opportunity_open_outcomes.get(correlation_key) is not None
+            )
+            if correlation_key and is_autonomous_opportunity_signal and not has_existing_tracker:
+                # Request/signal metadata is intentionally excluded from autonomous OPEN
+                # quantity-proof; only execution result can prove filled quantity.
+                autonomous_open_quantity_proof = self._sanitize_autonomous_open_filled_quantity_proof(
+                    request=adjusted_request,
+                    result=result,
+                    attach_metadata={},
+                )
+                if autonomous_open_quantity_proof is not None:
+                    telemetry_filled_quantity = autonomous_open_quantity_proof
         telemetry_result = result
         if telemetry_filled_quantity is not result.filled_quantity:
             telemetry_result = replace(result, filled_quantity=telemetry_filled_quantity)
