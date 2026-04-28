@@ -2854,10 +2854,12 @@ class TradingController:
             if correlation_key and is_autonomous_opportunity_signal and not has_existing_tracker:
                 # Request/signal metadata is intentionally excluded from autonomous OPEN
                 # quantity-proof; only execution result can prove filled quantity.
-                autonomous_open_quantity_proof = self._sanitize_autonomous_open_filled_quantity_proof(
-                    request=adjusted_request,
-                    result=result,
-                    attach_metadata={},
+                autonomous_open_quantity_proof = (
+                    self._sanitize_autonomous_open_filled_quantity_proof(
+                        request=adjusted_request,
+                        result=result,
+                        attach_metadata={},
+                    )
                 )
                 if autonomous_open_quantity_proof is not None:
                     telemetry_filled_quantity = autonomous_open_quantity_proof
@@ -2923,7 +2925,9 @@ class TradingController:
                     else (adjusted_request.price or 0.0)
                 ),
                 filled_qty=(
-                    execution_filled_qty_numeric if execution_filled_qty_numeric is not None else 0.0
+                    execution_filled_qty_numeric
+                    if execution_filled_qty_numeric is not None
+                    else 0.0
                 ),
             )
         elif is_partial:

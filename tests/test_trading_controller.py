@@ -29696,7 +29696,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_overfill_is_clam
     assert open_rows_by_key[allowed_lower_key].closed_quantity == 0.0
 
     close_labels = [
-        label for label in repository.load_outcome_labels() if label.correlation_key == close_target_key
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == close_target_key
     ]
     assert close_labels == []
     close_tco_calls = [
@@ -29730,8 +29732,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_overfill_is_clam
     _assert_no_durable_artifacts_for_shadow_key(repository, shadow_key=blocked_top_key)
 
 
-def test_opportunity_autonomy_active_budget_ranked_close_ranked_runtime_map_missing_does_not_emit_unverified_filled_quantity_or_unlock(
-) -> None:
+def test_opportunity_autonomy_active_budget_ranked_close_ranked_runtime_map_missing_does_not_emit_unverified_filled_quantity_or_unlock() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 12, 17, 10, tzinfo=timezone.utc)
     active_anchor_key = "runtime-map-missing-close-anchor-open"
     close_target_key = "runtime-map-missing-close-target-open"
@@ -29886,7 +29889,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_runtime_map_miss
     assert close_tco_calls[0]["quantity"] == 0.0
 
     close_attach_events = [
-        event for event in events if str(event.get("event") or "").strip() == "opportunity_outcome_attach"
+        event
+        for event in events
+        if str(event.get("event") or "").strip() == "opportunity_outcome_attach"
         and (
             str(event.get("order_opportunity_shadow_record_key") or "").strip() == close_target_key
             or str(event.get("proxy_correlation_key") or "").strip() == close_target_key
@@ -29902,7 +29907,9 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_runtime_map_miss
     )
 
     close_labels = [
-        label for label in repository.load_outcome_labels() if label.correlation_key == close_target_key
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == close_target_key
     ]
     assert close_labels == []
 
@@ -29916,8 +29923,7 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_runtime_map_miss
         event.get("reason")
         for event in events
         if event.get("event") == "signal_skipped"
-        and str(event.get("order_opportunity_shadow_record_key") or "").strip()
-        == allowed_lower_key
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == allowed_lower_key
     ] == ["autonomous_open_active_budget_ranked_loser"]
 
     deferred_enforcement_events = [
@@ -31240,9 +31246,7 @@ def test_opportunity_autonomy_close_ranked_resolved_final_with_positive_quantity
     assert len(close_attach_events) == 1
     close_attach_event = close_attach_events[0]
     assert str(close_attach_event.get("proxy_correlation_key") or "").strip() == close_target_key
-    assert (
-        str(close_attach_event.get("final_correlation_key") or "").strip() == close_target_key
-    )
+    assert str(close_attach_event.get("final_correlation_key") or "").strip() == close_target_key
     assert str(close_attach_event.get("partial_correlation_key") or "").strip() == ""
     assert str(close_attach_event.get("execution_status") or "").strip() == "filled"
     assert str(close_attach_event.get("status") or "").strip() == "conflict_rejected"
@@ -44333,7 +44337,9 @@ def test_controller_partial_close_does_not_create_final_or_drop_tracker(tmp_path
     assert attach_events[-1]["status"] == "quality_upgraded"
 
 
-@pytest.mark.parametrize("open_status", ["rejected", "canceled", "cancelled", "pending", "failed", "error"])
+@pytest.mark.parametrize(
+    "open_status", ["rejected", "canceled", "cancelled", "pending", "failed", "error"]
+)
 def test_opportunity_autonomous_open_non_filled_status_does_not_create_open_tracker(
     tmp_path: Path, open_status: str
 ) -> None:
@@ -44570,16 +44576,24 @@ def test_opportunity_autonomous_open_without_positive_finite_quantity_proof_does
     open_outcomes = shadow_repo.load_open_outcomes()
     assert {row.correlation_key for row in open_outcomes} == {second_key}
     assert open_outcomes[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
-    first_labels = [row for row in shadow_repo.load_outcome_labels() if row.correlation_key == first_key]
+    first_labels = [
+        row for row in shadow_repo.load_outcome_labels() if row.correlation_key == first_key
+    ]
     assert first_labels == []
 
     all_events = journal.export()
     first_execution_events = [
-        event for event in all_events if event.get("order_opportunity_shadow_record_key") == first_key
+        event
+        for event in all_events
+        if event.get("order_opportunity_shadow_record_key") == first_key
     ]
-    expected_event = "order_executed" if execution_status == "filled" else "order_partially_executed"
+    expected_event = (
+        "order_executed" if execution_status == "filled" else "order_partially_executed"
+    )
     assert expected_event in [event["event"] for event in first_execution_events]
-    execution_event = next(event for event in first_execution_events if event["event"] == expected_event)
+    execution_event = next(
+        event for event in first_execution_events if event["event"] == expected_event
+    )
     assert execution_event["filled_quantity"] != "1.00000000"
     if filled_quantity is None:
         assert execution_event["filled_quantity"] == "null"
@@ -44717,9 +44731,13 @@ def test_opportunity_autonomous_open_non_filled_status_ignores_metadata_filled_q
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
-                _shadow_record_for_key(correlation_key=second_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=second_key, decision_timestamp=decision_timestamp
+                ),
                 symbol="ETH/USDT",
             ),
         ]
@@ -44765,9 +44783,16 @@ def test_opportunity_autonomous_open_non_filled_status_ignores_metadata_filled_q
 
     assert [result.status for result in results] == ["rejected", "filled"]
     assert _request_shadow_keys(execution.requests) == [first_key, second_key]
-    assert [row for row in shadow_repo.load_open_outcomes() if row.correlation_key == first_key] == []
-    assert [row for row in shadow_repo.load_outcome_labels() if row.correlation_key == first_key] == []
-    assert len([row for row in shadow_repo.load_open_outcomes() if row.correlation_key == second_key]) == 1
+    assert [
+        row for row in shadow_repo.load_open_outcomes() if row.correlation_key == first_key
+    ] == []
+    assert [
+        row for row in shadow_repo.load_outcome_labels() if row.correlation_key == first_key
+    ] == []
+    assert (
+        len([row for row in shadow_repo.load_open_outcomes() if row.correlation_key == second_key])
+        == 1
+    )
     events = list(journal.export())
     first_execution_result_events = [
         event
@@ -44785,7 +44810,8 @@ def test_opportunity_autonomous_open_non_filled_status_ignores_metadata_filled_q
         message
         for message in channel.messages
         if message.category == "execution"
-        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip() == first_key
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == first_key
     ]
     assert len(first_execution_alerts) == 1
     assert first_execution_alerts[0].context.get("filled_quantity") is None
@@ -44826,7 +44852,9 @@ def test_opportunity_autonomous_open_string_filled_quantity_boundary_contract(
         rank=1,
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
-    shadow_repo.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    shadow_repo.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)]
+    )
     execution = StatusExecutionService(
         status=execution_status, filled_quantity=filled_quantity, avg_price=101.0
     )
@@ -44845,7 +44873,9 @@ def test_opportunity_autonomous_open_string_filled_quantity_boundary_contract(
     controller.process_signals([open_signal])
 
     open_outcomes = shadow_repo.load_open_outcomes()
-    labels_for_key = [row for row in shadow_repo.load_outcome_labels() if row.correlation_key == key]
+    labels_for_key = [
+        row for row in shadow_repo.load_outcome_labels() if row.correlation_key == key
+    ]
     if expected_entry is None:
         assert open_outcomes == []
         assert labels_for_key == []
@@ -45300,8 +45330,12 @@ def test_opportunity_autonomous_open_exception_does_not_create_lifecycle_artifac
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
-            _shadow_record_for_key(correlation_key=second_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
+            _shadow_record_for_key(
+                correlation_key=second_key, decision_timestamp=decision_timestamp
+            ),
         ]
     )
 
