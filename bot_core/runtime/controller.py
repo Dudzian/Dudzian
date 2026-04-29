@@ -2428,6 +2428,21 @@ class TradingController:
                 return None
 
         request = self._build_order_request(signal, extra_metadata=decision_metadata)
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        request_decision_payload = request_metadata.get("opportunity_autonomy_decision")
+        if isinstance(request_decision_payload, Mapping):
+            request_payload_effective_mode = request_decision_payload.get("effective_mode")
+            if (
+                self.environment == "paper"
+                and str(request.side).upper() in _SELL_SIDES
+                and
+                request_payload_effective_mode is not None
+                and not str(request_payload_effective_mode).strip()
+                and isinstance(request_metadata, MutableMapping)
+            ):
+                sanitized_request_metadata = dict(request_metadata)
+                sanitized_request_metadata["opportunity_autonomy_decision"] = {}
+                request = replace(request, metadata=sanitized_request_metadata)
         if self._is_opportunity_autonomy_enforced(signal, request):
             if self._is_autonomous_open_handoff_path(request):
                 contract_valid, missing_fields, mode, blocking_reason = (
@@ -2574,10 +2589,23 @@ class TradingController:
                     },
                 )
                 return None
+            request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+            decision_payload_raw = request_metadata.get("opportunity_autonomy_decision")
+            has_explicit_autonomy_decision_payload = False
+            if isinstance(decision_payload_raw, Mapping):
+                payload_effective_mode_raw = decision_payload_raw.get("effective_mode")
+                # Mapping alone is not an explicit close/open contract for bypassing this ambiguity guard.
+                if payload_effective_mode_raw is not None and str(payload_effective_mode_raw).strip():
+                    has_explicit_autonomy_decision_payload = True
+                elif payload_effective_mode_raw is not None and isinstance(request_metadata, MutableMapping):
+                    sanitized_request_metadata = dict(request_metadata)
+                    sanitized_request_metadata.pop("opportunity_autonomy_decision", None)
+                    request = replace(request, metadata=sanitized_request_metadata)
+                    request_metadata = sanitized_request_metadata
             if (
                 duplicate_open_guard_enabled
                 and existing_open_tracker is None
-                and not isinstance((request.metadata or {}).get("opportunity_autonomy_decision"), Mapping)
+                and not has_explicit_autonomy_decision_payload
             ):
                 opposite_side_tracker: tuple[str, _OpportunityOpenOutcomeTracker] | None = None
                 for tracked_correlation_key, tracker in self._opportunity_open_outcomes.items():
