@@ -10668,8 +10668,18 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
+@pytest.mark.parametrize(
+    ("restored_environment", "restored_portfolio"),
+    [
+        pytest.param("live", "paper-1", id="environment-mismatch-only"),
+        pytest.param("paper", "foreign-1", id="portfolio-mismatch-only"),
+        pytest.param("live", "foreign-1", id="environment-and-portfolio-mismatch"),
+    ],
+)
 def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_restored_tracker_does_not_trigger_ambiguity_guard(
     tmp_path: Path,
+    restored_environment: str,
+    restored_portfolio: str,
 ) -> None:
     decision_timestamp = datetime(2026, 1, 11, 12, 15, tzinfo=timezone.utc)
     foreign_buy_key = OpportunityShadowRecord.build_record_key(
@@ -10704,8 +10714,8 @@ def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_res
             closed_quantity=0.0,
             provenance={
                 "source": "foreign_scope_tracker",
-                "environment": "live",
-                "portfolio": "foreign-1",
+                "environment": restored_environment,
+                "portfolio": restored_portfolio,
                 "autonomy_final_mode": "paper_autonomous",
             },
         )
