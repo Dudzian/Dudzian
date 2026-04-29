@@ -10942,19 +10942,21 @@ def test_same_symbol_opposite_side_plain_different_correlation_exhausted_restore
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
-@pytest.mark.parametrize(
-    ("restored_environment", "restored_portfolio"),
-    [
-        pytest.param("live", "paper-1", id="environment-mismatch-only"),
-        pytest.param("paper", "foreign-1", id="portfolio-mismatch-only"),
-        pytest.param("live", "foreign-1", id="environment-and-portfolio-mismatch"),
-    ],
-)
-def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_restored_tracker_does_not_trigger_ambiguity_guard(
+def _run_foreign_scope_restored_tracker_case(
+    *,
     tmp_path: Path,
+    runtime_environment: str,
     restored_environment: str,
     restored_portfolio: str,
-) -> None:
+) -> tuple[
+    TradingController,
+    CollectingDecisionJournal,
+    OpportunityShadowRepository,
+    StatusExecutionService,
+    list[OrderResult],
+    str,
+    str,
+]:
     decision_timestamp = datetime(2026, 1, 11, 12, 15, tzinfo=timezone.utc)
     foreign_buy_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -10998,26 +11000,51 @@ def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_res
     )
     execution = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=99.0)
     controller, journal = _build_autonomy_controller_with_execution(
-        environment="paper",
+        environment=runtime_environment,
         execution_service=execution,
         opportunity_shadow_repository=repository,
     )
     opposite_sell = _autonomy_signal_with_correlation(
-        mode="paper_autonomous",
+        mode="paper_autonomous" if runtime_environment == "paper" else "live_autonomous",
         side="SELL",
         correlation_key=sell_key,
         decision_timestamp=decision_timestamp,
         include_decision_payload=False,
         include_mode=True,
     )
-
     results = controller.process_signals([opposite_sell])
+    return controller, journal, repository, execution, results, foreign_buy_key, sell_key
+
+
+@pytest.mark.parametrize(
+    ("restored_environment", "restored_portfolio"),
+    [
+        pytest.param("live", "paper-1", id="paper-runtime-vs-live-restored-environment-mismatch"),
+        pytest.param("paper", "foreign-1", id="portfolio-mismatch-only"),
+        pytest.param("live", "foreign-1", id="environment-and-portfolio-mismatch"),
+    ],
+)
+def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_restored_tracker_paper_runtime_opens_proxy_without_foreign_close(
+    tmp_path: Path,
+    restored_environment: str,
+    restored_portfolio: str,
+) -> None:
+    controller, journal, repository, execution, results, foreign_buy_key, sell_key = (
+        _run_foreign_scope_restored_tracker_case(
+            tmp_path=tmp_path,
+            runtime_environment="paper",
+            restored_environment=restored_environment,
+            restored_portfolio=restored_portfolio,
+        )
+    )
 
     assert [result.status for result in results] == ["filled"]
     assert _request_shadow_keys(execution.requests) == [sell_key]
     assert len(execution.requests) == 1
     assert [request.side for request in execution.requests] == ["SELL"]
-    assert _order_path_events_with_shadow_key(journal, sell_key)
+    sell_events = _order_path_events_with_shadow_key(journal, sell_key)
+    assert sell_events
+    assert _order_path_events_with_shadow_key(journal, foreign_buy_key) == []
     ambiguous_skips = [
         event
         for event in journal.export()
@@ -11033,6 +11060,14 @@ def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_res
         and event.get("order_opportunity_shadow_record_key") == sell_key
     ]
     assert skipped_for_sell == []
+    blocked_for_sell = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert blocked_for_sell == []
     open_outcomes_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
     assert set(open_outcomes_by_key) == {foreign_buy_key, sell_key}
     assert open_outcomes_by_key[foreign_buy_key].side == "BUY"
@@ -11066,24 +11101,93 @@ def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_res
     assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
     assert sell_attach_event["execution_status"] == "filled"
     assert sell_attach_event["close_correlation_resolution"] == "missing"
-    assert all(
-        event.get("existing_open_correlation_key") != foreign_buy_key
-        for event in sell_attach_events
-    )
-    assert all(
-        event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events
-    )
-    assert all(
-        event.get("final_correlation_key") != foreign_buy_key for event in sell_attach_events
-    )
-    assert all(
-        event.get("partial_correlation_key") != foreign_buy_key for event in sell_attach_events
-    )
-    assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
-    assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
+    assert sell_attach_event.get("existing_open_correlation_key") not in {
+        foreign_buy_key,
+        sell_key,
+    }
+    assert sell_attach_event.get("final_correlation_key") not in {foreign_buy_key, sell_key}
+    assert sell_attach_event.get("partial_correlation_key") not in {foreign_buy_key, sell_key}
+    assert all(event.get("existing_open_correlation_key") != foreign_buy_key for event in sell_events)
+    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_events)
+    assert all(event.get("final_correlation_key") != foreign_buy_key for event in sell_events)
+    assert all(event.get("partial_correlation_key") != foreign_buy_key for event in sell_events)
+    assert all(event.get("final_correlation_key") != sell_key for event in sell_events)
+    assert all(event.get("partial_correlation_key") != sell_key for event in sell_events)
+    # Pomijamy signal_skipped, bo bywa diagnostyczny i nie jest częścią ścieżki order-path.
     non_skip_events = [
         event for event in journal.export() if event.get("event") != "signal_skipped"
     ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        non_skip_events, shadow_key=foreign_buy_key
+    )
+    _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
+
+
+def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_restored_tracker_live_runtime_blocks_without_foreign_close(
+    tmp_path: Path,
+) -> None:
+    (
+        controller,
+        journal,
+        repository,
+        execution,
+        results,
+        foreign_buy_key,
+        sell_key,
+    ) = _run_foreign_scope_restored_tracker_case(
+        tmp_path=tmp_path,
+        runtime_environment="live",
+        restored_environment="paper",
+        restored_portfolio="live-1",
+    )
+
+    assert results == []
+    assert execution.requests == []
+    assert _order_path_events_with_shadow_key(journal, foreign_buy_key) == []
+    assert _order_path_events_with_shadow_key(journal, sell_key) == []
+    blocked = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert len(blocked) == 1
+    assert blocked[0]["blocking_reason"] == "live_assisted_requires_explicit_approval"
+    assert blocked[0]["execution_permission"] == "blocked"
+    assert [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ] == []
+    assert [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+        and event.get("reason") == "same_symbol_opposite_side_close_correlation_ambiguous"
+    ] == []
+    open_outcomes_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
+    assert set(open_outcomes_by_key) == {foreign_buy_key}
+    assert open_outcomes_by_key[foreign_buy_key].side == "BUY"
+    assert open_outcomes_by_key[foreign_buy_key].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_outcomes_by_key[foreign_buy_key].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert not any(
+        row.correlation_key == foreign_buy_key and row.label_quality in {"final", "partial"}
+        for row in repository.load_outcome_labels()
+    )
+    assert not any(
+        row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
+        for row in repository.load_outcome_labels()
+    )
+    # Pomijamy signal_skipped, bo bywa diagnostyczny i nie jest częścią ścieżki order-path.
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        non_skip_events, shadow_key=foreign_buy_key
+    )
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
