@@ -2594,8 +2594,21 @@ class TradingController:
             has_explicit_autonomy_decision_payload = False
             if isinstance(decision_payload_raw, Mapping):
                 payload_effective_mode_raw = decision_payload_raw.get("effective_mode")
-                # Mapping alone is not an explicit close/open contract for bypassing this ambiguity guard.
+                payload_effective_mode: OpportunityAutonomyMode | None = None
                 if payload_effective_mode_raw is not None and str(payload_effective_mode_raw).strip():
+                    try:
+                        payload_effective_mode = OpportunityAutonomyMode(
+                            str(payload_effective_mode_raw).strip().lower()
+                        )
+                    except ValueError:
+                        payload_effective_mode = None
+                # Mapping alone and non-blank effective_mode are not enough; bypass requires an effective
+                # mode matching the requested autonomous mode.
+                requested_autonomy_mode = str(mode_raw or "").strip().lower()
+                if (
+                    payload_effective_mode is not None
+                    and payload_effective_mode.value == requested_autonomy_mode
+                ):
                     has_explicit_autonomy_decision_payload = True
                 elif payload_effective_mode_raw is not None and isinstance(request_metadata, MutableMapping):
                     sanitized_request_metadata = dict(request_metadata)
