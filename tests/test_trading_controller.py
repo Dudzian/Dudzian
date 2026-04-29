@@ -10219,7 +10219,9 @@ def test_opportunity_autonomy_duplicate_open_same_correlation_would_be_execution
     assert key_order_event_types.count("order_executed") == 1
     assert "order_partially_executed" not in key_order_event_types
     assert "order_execution_result" not in key_order_event_types
-    executed_events = [event for event in key_order_events if event.get("event") == "order_executed"]
+    executed_events = [
+        event for event in key_order_events if event.get("event") == "order_executed"
+    ]
     assert executed_events
     assert executed_events[-1]["filled_quantity"] == "1.00000000"
     states = repository.load_open_outcomes()
@@ -10244,7 +10246,9 @@ def test_opportunity_autonomy_duplicate_open_same_correlation_would_be_execution
     assert duplicate_skips[0]["order_opportunity_shadow_record_key"] == first_key
     assert duplicate_skips[0]["reason"] == "duplicate_autonomous_open_reentry_suppressed"
     filtered_events = [
-        event for event in journal.export() if event.get("reason") != "duplicate_autonomous_open_reentry_suppressed"
+        event
+        for event in journal.export()
+        if event.get("reason") != "duplicate_autonomous_open_reentry_suppressed"
     ]
     # Filtrujemy diagnostyczny event duplicate skip, aby helper weryfikował brak
     # residue tylko w downstream ścieżkach order/attach.
@@ -10597,7 +10601,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
@@ -10667,12 +10673,16 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
     assert runtime_tracker.restored_from_repository is True
     assert runtime_tracker.entry_quantity == pytest.approx(1.0, rel=1e-6)
     assert runtime_tracker.closed_quantity == pytest.approx(0.0, rel=1e-6)
-    assert [row for row in repository.load_outcome_labels() if row.correlation_key == sell_key] == []
+    assert [
+        row for row in repository.load_outcome_labels() if row.correlation_key == sell_key
+    ] == []
     assert not any(
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in repository.load_outcome_labels()
     )
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -10705,7 +10715,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
@@ -10794,7 +10806,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         and event.get("order_opportunity_shadow_record_key") == sell_key
     ]
     assert sell_attach_events == []
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -10818,7 +10832,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_exhausted_restore
     repository.append_shadow_records(
         [
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             )
         ]
@@ -10910,14 +10926,22 @@ def test_same_symbol_opposite_side_plain_different_correlation_exhausted_restore
     assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
     assert sell_attach_event["execution_status"] == "filled"
     assert sell_attach_event["close_correlation_resolution"] == "missing"
-    assert all(event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events)
-    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(
+        event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events
+    )
+    assert all(
+        event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events
+    )
     assert all(event.get("final_correlation_key") != buy_key for event in sell_attach_events)
     assert all(event.get("partial_correlation_key") != buy_key for event in sell_attach_events)
     assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
     assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
+
+
 @pytest.mark.parametrize(
     ("restored_environment", "restored_portfolio"),
     [
@@ -10948,7 +10972,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_res
     repository.append_shadow_records(
         [
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             )
         ]
@@ -11040,15 +11066,25 @@ def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_res
     assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
     assert sell_attach_event["execution_status"] == "filled"
     assert sell_attach_event["close_correlation_resolution"] == "missing"
-    assert all(event.get("existing_open_correlation_key") != foreign_buy_key for event in sell_attach_events)
-    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events)
-    assert all(event.get("final_correlation_key") != foreign_buy_key for event in sell_attach_events)
-    assert all(event.get("partial_correlation_key") != foreign_buy_key for event in sell_attach_events)
+    assert all(
+        event.get("existing_open_correlation_key") != foreign_buy_key
+        for event in sell_attach_events
+    )
+    assert all(
+        event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events
+    )
+    assert all(
+        event.get("final_correlation_key") != foreign_buy_key for event in sell_attach_events
+    )
+    assert all(
+        event.get("partial_correlation_key") != foreign_buy_key for event in sell_attach_events
+    )
     assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
     assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
-
 
 
 def test_same_symbol_opposite_side_plain_different_correlation_restored_same_scope_invalid_nonblank_effective_mode_does_not_bypass_ambiguity_guard(
@@ -11088,12 +11124,16 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="paper",
         execution_service=execution,
@@ -11154,7 +11194,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
     )
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -11195,12 +11237,16 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="paper",
         execution_service=execution,
@@ -11262,8 +11308,12 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
     )
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
+
+
 @pytest.mark.parametrize(
     "decision_payload",
     [
@@ -11293,7 +11343,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
@@ -11372,7 +11424,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         and event.get("order_opportunity_shadow_record_key") == sell_key
     ]
     assert sell_attach_events == []
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -11397,7 +11451,9 @@ def test_same_symbol_opposite_side_different_correlation_restored_same_scope_wit
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
@@ -11490,13 +11546,19 @@ def test_same_symbol_opposite_side_different_correlation_restored_same_scope_wit
     assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
     assert sell_attach_event["execution_status"] == "filled"
     assert sell_attach_event["close_correlation_resolution"] == "missing"
-    assert all(event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events)
-    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(
+        event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events
+    )
+    assert all(
+        event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events
+    )
     assert all(event.get("final_correlation_key") != buy_key for event in sell_attach_events)
     assert all(event.get("partial_correlation_key") != buy_key for event in sell_attach_events)
     assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
     assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -37109,7 +37171,9 @@ def test_opportunity_autonomy_corrupt_restored_open_outcome_does_not_consume_act
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=second_key,
@@ -37281,12 +37345,20 @@ def test_opportunity_autonomy_corrupt_restored_tracker_is_not_legal_close_ranked
         decision_timestamp=decision_timestamp,
         include_mode=False,
     )
-    close_signal.metadata = {**dict(close_signal.metadata), "mode": "close_ranked", "quantity": "0.8"}
-    before = next(row for row in repository.load_open_outcomes() if row.correlation_key == correlation_key)
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "close_ranked",
+        "quantity": "0.8",
+    }
+    before = next(
+        row for row in repository.load_open_outcomes() if row.correlation_key == correlation_key
+    )
 
     results = controller.process_signals([close_signal])
 
-    after = next(row for row in repository.load_open_outcomes() if row.correlation_key == correlation_key)
+    after = next(
+        row for row in repository.load_open_outcomes() if row.correlation_key == correlation_key
+    )
     assert results == []
     assert execution.requests == []
     assert _order_path_events_with_shadow_key(journal, correlation_key) == []
@@ -37296,7 +37368,9 @@ def test_opportunity_autonomy_corrupt_restored_tracker_is_not_legal_close_ranked
     else:
         assert after.entry_quantity == entry_quantity
     assert after.closed_quantity == before.closed_quantity
-    labels = [row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key]
+    labels = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
     assert not any(row.label_quality in {"partial_exit_unconfirmed", "final"} for row in labels)
     attach_events = [
         event
@@ -37304,7 +37378,8 @@ def test_opportunity_autonomy_corrupt_restored_tracker_is_not_legal_close_ranked
         if event.get("event") == "opportunity_outcome_attach"
         and (
             str(event.get("proxy_correlation_key") or "").strip() == correlation_key
-            or str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+            or str(event.get("order_opportunity_shadow_record_key") or "").strip()
+            == correlation_key
         )
     ]
     if attach_events:
@@ -37358,7 +37433,9 @@ def test_opportunity_autonomy_valid_restored_tracker_keeps_budget_and_close_rank
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=second_key,
@@ -37410,7 +37487,11 @@ def test_opportunity_autonomy_valid_restored_tracker_keeps_budget_and_close_rank
         decision_timestamp=decision_timestamp + timedelta(minutes=2),
         include_mode=False,
     )
-    close_signal.metadata = {**dict(close_signal.metadata), "mode": "close_ranked", "quantity": "0.8"}
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "close_ranked",
+        "quantity": "0.8",
+    }
 
     results = controller.process_signals([second_open_signal, close_signal])
 
@@ -37472,7 +37553,9 @@ def test_opportunity_autonomy_restored_open_outcome_null_entry_quantity_is_norma
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=first_key, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=first_key, decision_timestamp=decision_timestamp
+            ),
             replace(
                 _shadow_record_for_key(
                     correlation_key=second_key,
@@ -58472,7 +58555,11 @@ def test_same_symbol_opposite_side_same_correlation_key_executes_legal_close_wit
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
@@ -58505,7 +58592,9 @@ def test_same_symbol_opposite_side_same_correlation_key_executes_legal_close_wit
     assert [request.side for request in execution.requests] == ["BUY", "SELL"]
     assert _order_path_events_with_shadow_key(journal, correlation_key)
     assert shadow_repo.load_open_outcomes() == []
-    labels = [row for row in shadow_repo.load_outcome_labels() if row.correlation_key == correlation_key]
+    labels = [
+        row for row in shadow_repo.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
     assert len(labels) == 1
     assert labels[0].label_quality == "final"
     enforcement_blocked = [
@@ -58516,8 +58605,12 @@ def test_same_symbol_opposite_side_same_correlation_key_executes_legal_close_wit
         and event.get("order_opportunity_shadow_record_key") == correlation_key
     ]
     assert enforcement_blocked == []
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
-    _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=correlation_key)
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        non_skip_events, shadow_key=correlation_key
+    )
 
 
 def test_same_symbol_opposite_side_different_correlation_key_is_blocked_without_explicit_close_binding(
@@ -58543,7 +58636,9 @@ def test_same_symbol_opposite_side_different_correlation_key_is_blocked_without_
             _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
         ]
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="paper",
         execution_service=execution,
@@ -58586,13 +58681,17 @@ def test_same_symbol_opposite_side_different_correlation_key_is_blocked_without_
     assert [row.correlation_key for row in open_rows] == [buy_key]
     assert open_rows[0].side == "BUY"
     assert open_rows[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
-    assert [row for row in shadow_repo.load_outcome_labels() if row.correlation_key == sell_key] == []
+    assert [
+        row for row in shadow_repo.load_outcome_labels() if row.correlation_key == sell_key
+    ] == []
     assert not any(
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
     )
     # Filtrujemy diagnostyczny signal_skipped i sprawdzamy residue wyłącznie na artefaktach ścieżki order.
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -58617,7 +58716,9 @@ def test_same_symbol_opposite_side_different_correlation_key_with_decision_paylo
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
@@ -58664,7 +58765,9 @@ def test_same_symbol_opposite_side_different_correlation_key_with_decision_paylo
         and event.get("reason") == "same_symbol_opposite_side_close_correlation_ambiguous"
     ]
     assert ambiguous_skips == []
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -58705,12 +58808,16 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="paper",
         execution_service=execution,
@@ -58764,7 +58871,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
     )
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -58814,12 +58923,16 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="paper",
         execution_service=execution,
@@ -58873,7 +58986,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         and event.get("order_opportunity_shadow_record_key") == sell_key
     ]
     assert sell_attach_events == []
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -58914,12 +59029,16 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="live",
         execution_service=execution,
@@ -58978,8 +59097,12 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
     assert open_rows[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
     assert open_rows[0].side == "BUY"
     assert controller._opportunity_open_outcomes[buy_key].side == "BUY"
-    assert controller._opportunity_open_outcomes[buy_key].entry_quantity == pytest.approx(1.0, rel=1e-6)
-    assert controller._opportunity_open_outcomes[buy_key].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert controller._opportunity_open_outcomes[buy_key].entry_quantity == pytest.approx(
+        1.0, rel=1e-6
+    )
+    assert controller._opportunity_open_outcomes[buy_key].closed_quantity == pytest.approx(
+        0.0, rel=1e-6
+    )
     assert not any(
         row.correlation_key == buy_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
@@ -58999,9 +59122,19 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
     ),
     [
         ({}, "live_assisted_requires_explicit_approval", "live_assisted", None),
-        ({"unexpected": "value"}, "live_assisted_requires_explicit_approval", "live_assisted", None),
+        (
+            {"unexpected": "value"},
+            "live_assisted_requires_explicit_approval",
+            "live_assisted",
+            None,
+        ),
         ({"effective_mode": ""}, "autonomy_permission_evaluation_failed", "unavailable", None),
-        ({"effective_mode": None}, "live_assisted_requires_explicit_approval", "live_assisted", None),
+        (
+            {"effective_mode": None},
+            "live_assisted_requires_explicit_approval",
+            "live_assisted",
+            None,
+        ),
     ],
 )
 def test_same_symbol_opposite_side_plain_different_correlation_live_restored_same_scope_incomplete_decision_payload_does_not_bypass_ambiguity_guard(
@@ -59045,12 +59178,16 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="live",
         execution_service=execution,
@@ -59114,8 +59251,12 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
     assert open_rows[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
     assert open_rows[0].side == "BUY"
     assert controller._opportunity_open_outcomes[buy_key].side == "BUY"
-    assert controller._opportunity_open_outcomes[buy_key].entry_quantity == pytest.approx(1.0, rel=1e-6)
-    assert controller._opportunity_open_outcomes[buy_key].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert controller._opportunity_open_outcomes[buy_key].entry_quantity == pytest.approx(
+        1.0, rel=1e-6
+    )
+    assert controller._opportunity_open_outcomes[buy_key].closed_quantity == pytest.approx(
+        0.0, rel=1e-6
+    )
     assert not any(
         row.correlation_key == buy_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
@@ -59124,7 +59265,9 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
     )
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
@@ -59165,12 +59308,16 @@ def test_same_symbol_opposite_side_different_correlation_live_restored_same_scop
         [
             _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
     )
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
     controller, journal = _build_autonomy_controller_with_execution(
         environment="live",
         execution_service=execution,
@@ -59230,8 +59377,12 @@ def test_same_symbol_opposite_side_different_correlation_live_restored_same_scop
     assert open_rows[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
     assert open_rows[0].side == "BUY"
     assert controller._opportunity_open_outcomes[buy_key].side == "BUY"
-    assert controller._opportunity_open_outcomes[buy_key].entry_quantity == pytest.approx(1.0, rel=1e-6)
-    assert controller._opportunity_open_outcomes[buy_key].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert controller._opportunity_open_outcomes[buy_key].entry_quantity == pytest.approx(
+        1.0, rel=1e-6
+    )
+    assert controller._opportunity_open_outcomes[buy_key].closed_quantity == pytest.approx(
+        0.0, rel=1e-6
+    )
     assert not any(
         row.correlation_key == buy_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
@@ -59262,9 +59413,13 @@ def test_same_symbol_opposite_side_different_correlation_key_plain_timestamp_mis
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records(
         [
-            _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=buy_decision_timestamp),
+            _shadow_record_for_key(
+                correlation_key=buy_key, decision_timestamp=buy_decision_timestamp
+            ),
             replace(
-                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=sell_decision_timestamp),
+                _shadow_record_for_key(
+                    correlation_key=sell_key, decision_timestamp=sell_decision_timestamp
+                ),
                 proposed_direction="short",
             ),
         ]
@@ -59339,11 +59494,17 @@ def test_same_symbol_opposite_side_different_correlation_key_plain_timestamp_mis
     assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
     assert sell_attach_event["execution_status"] == "filled"
     assert sell_attach_event["close_correlation_resolution"] == "missing"
-    assert all(event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events)
-    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(
+        event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events
+    )
+    assert all(
+        event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events
+    )
     assert all(event.get("final_correlation_key") != buy_key for event in sell_attach_events)
     assert all(event.get("partial_correlation_key") != buy_key for event in sell_attach_events)
     assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
     assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
-    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    non_skip_events = [
+        event for event in journal.export() if event.get("event") != "signal_skipped"
+    ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)

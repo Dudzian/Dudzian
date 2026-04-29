@@ -2435,8 +2435,7 @@ class TradingController:
             if (
                 self.environment == "paper"
                 and str(request.side).upper() in _SELL_SIDES
-                and
-                request_payload_effective_mode is not None
+                and request_payload_effective_mode is not None
                 and not str(request_payload_effective_mode).strip()
                 and isinstance(request_metadata, MutableMapping)
             ):
@@ -2595,7 +2594,10 @@ class TradingController:
             if isinstance(decision_payload_raw, Mapping):
                 payload_effective_mode_raw = decision_payload_raw.get("effective_mode")
                 payload_effective_mode: OpportunityAutonomyMode | None = None
-                if payload_effective_mode_raw is not None and str(payload_effective_mode_raw).strip():
+                if (
+                    payload_effective_mode_raw is not None
+                    and str(payload_effective_mode_raw).strip()
+                ):
                     try:
                         payload_effective_mode = OpportunityAutonomyMode(
                             str(payload_effective_mode_raw).strip().lower()
@@ -2610,7 +2612,9 @@ class TradingController:
                     and payload_effective_mode.value == requested_autonomy_mode
                 ):
                     has_explicit_autonomy_decision_payload = True
-                elif payload_effective_mode_raw is not None and isinstance(request_metadata, MutableMapping):
+                elif payload_effective_mode_raw is not None and isinstance(
+                    request_metadata, MutableMapping
+                ):
                     sanitized_request_metadata = dict(request_metadata)
                     sanitized_request_metadata.pop("opportunity_autonomy_decision", None)
                     request = replace(request, metadata=sanitized_request_metadata)
