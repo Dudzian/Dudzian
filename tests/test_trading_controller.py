@@ -10645,6 +10645,13 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
         if event.get("event") == "signal_skipped"
         and event.get("order_opportunity_shadow_record_key") == sell_key
     ]
+    enforcement_blocked = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
     assert len(skipped) == 1
     assert skipped[0]["status"] == "skipped"
     assert skipped[0]["reason"] == "same_symbol_opposite_side_close_correlation_ambiguous"
@@ -10652,6 +10659,7 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
     assert skipped[0]["order_opportunity_shadow_record_key"] == sell_key
     assert skipped[0]["existing_open_correlation_key"] == buy_key
     assert skipped[0]["existing_open_side"] == "BUY"
+    assert enforcement_blocked == []
     open_rows = repository.load_open_outcomes()
     assert [row.correlation_key for row in open_rows] == [buy_key]
     assert open_rows[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
@@ -11042,6 +11050,220 @@ def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_res
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
+
+def test_same_symbol_opposite_side_plain_different_correlation_restored_same_scope_invalid_nonblank_effective_mode_does_not_bypass_ambiguity_guard(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 3, 13, 17, tzinfo=timezone.utc)
+    buy_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    sell_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=2,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.upsert_open_outcome(
+        OpportunityShadowRepository.OpenOutcomeState(
+            correlation_key=buy_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                proposed_direction="short",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    opposite_sell = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=sell_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=False,
+        include_mode=True,
+    )
+    opposite_sell.metadata["opportunity_autonomy_decision"] = {"effective_mode": "not-a-real-mode"}
+
+    results = controller.process_signals([opposite_sell])
+
+    assert results == []
+    assert execution.requests == []
+    assert _order_path_events_with_shadow_key(journal, sell_key) == []
+    skipped = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    enforcement_blocked = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert skipped == []
+    assert len(enforcement_blocked) == 1
+    blocked_event = enforcement_blocked[0]
+    assert blocked_event["status"] == "blocked"
+    assert blocked_event["order_opportunity_shadow_record_key"] == sell_key
+    assert blocked_event["autonomy_requested_mode"] == "paper_autonomous"
+    assert blocked_event["execution_permission"] == "blocked"
+    open_rows = shadow_repo.load_open_outcomes()
+    assert [row.correlation_key for row in open_rows] == [buy_key]
+    assert open_rows[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_rows[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert open_rows[0].side == "BUY"
+    sell_attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert sell_attach_events == []
+    assert not any(
+        row.correlation_key == buy_key and row.label_quality in {"final", "partial"}
+        for row in shadow_repo.load_outcome_labels()
+    )
+    assert not any(
+        row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
+        for row in shadow_repo.load_outcome_labels()
+    )
+    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
+
+
+def test_same_symbol_opposite_side_plain_different_correlation_restored_same_scope_mismatched_effective_mode_does_not_bypass_ambiguity_guard(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 3, 13, 18, tzinfo=timezone.utc)
+    buy_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    sell_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=2,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.upsert_open_outcome(
+        OpportunityShadowRepository.OpenOutcomeState(
+            correlation_key=buy_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            provenance={
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=buy_key, decision_timestamp=decision_timestamp),
+            replace(
+                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                proposed_direction="short",
+            ),
+        ]
+    )
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    opposite_sell = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=sell_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=False,
+        include_mode=True,
+    )
+    opposite_sell.metadata["opportunity_autonomy_decision"] = {"effective_mode": "live_autonomous"}
+
+    results = controller.process_signals([opposite_sell])
+
+    assert results == []
+    assert execution.requests == []
+    assert _order_path_events_with_shadow_key(journal, sell_key) == []
+    skipped = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert len(skipped) == 1
+    assert skipped[0]["status"] == "skipped"
+    assert skipped[0]["reason"] == "same_symbol_opposite_side_close_correlation_ambiguous"
+    assert skipped[0]["proxy_correlation_key"] == sell_key
+    assert skipped[0]["order_opportunity_shadow_record_key"] == sell_key
+    assert skipped[0]["existing_open_correlation_key"] == buy_key
+    assert skipped[0]["existing_open_side"] == "BUY"
+    enforcement_blocked = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert enforcement_blocked == []
+    open_rows = shadow_repo.load_open_outcomes()
+    assert [row.correlation_key for row in open_rows] == [buy_key]
+    assert open_rows[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_rows[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert open_rows[0].side == "BUY"
+    sell_attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert sell_attach_events == []
+    assert not any(
+        row.correlation_key == buy_key and row.label_quality in {"final", "partial"}
+        for row in shadow_repo.load_outcome_labels()
+    )
+    assert not any(
+        row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
+        for row in shadow_repo.load_outcome_labels()
+    )
+    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 @pytest.mark.parametrize(
     "decision_payload",
     [
