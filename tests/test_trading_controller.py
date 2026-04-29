@@ -10767,6 +10767,25 @@ def test_same_symbol_opposite_side_plain_different_correlation_foreign_scope_res
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in repository.load_outcome_labels()
     )
+    sell_attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert len(sell_attach_events) == 1
+    sell_attach_event = sell_attach_events[0]
+    assert sell_attach_event["status"] == "proxy_attached"
+    assert sell_attach_event["proxy_correlation_key"] == sell_key
+    assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
+    assert sell_attach_event["execution_status"] == "filled"
+    assert sell_attach_event["close_correlation_resolution"] == "missing"
+    assert all(event.get("existing_open_correlation_key") != foreign_buy_key for event in sell_attach_events)
+    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(event.get("final_correlation_key") != foreign_buy_key for event in sell_attach_events)
+    assert all(event.get("partial_correlation_key") != foreign_buy_key for event in sell_attach_events)
+    assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
     non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
@@ -10867,6 +10886,29 @@ def test_same_symbol_opposite_side_different_correlation_restored_same_scope_wit
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in repository.load_outcome_labels()
     )
+    assert not any(
+        row.correlation_key == buy_key and row.label_quality in {"final", "partial"}
+        for row in repository.load_outcome_labels()
+    )
+    sell_attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert len(sell_attach_events) == 1
+    sell_attach_event = sell_attach_events[0]
+    assert sell_attach_event["status"] == "proxy_attached"
+    assert sell_attach_event["proxy_correlation_key"] == sell_key
+    assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
+    assert sell_attach_event["execution_status"] == "filled"
+    assert sell_attach_event["close_correlation_resolution"] == "missing"
+    assert all(event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(event.get("final_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("partial_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
     non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
@@ -58096,6 +58138,7 @@ def test_same_symbol_opposite_side_different_correlation_key_plain_timestamp_mis
 
     assert [result.status for result in results] == ["filled", "filled"]
     assert _request_shadow_keys(execution.requests) == [buy_key, sell_key]
+    assert [request.side for request in execution.requests] == ["BUY", "SELL"]
     ambiguous_skips = [
         event
         for event in journal.export()
@@ -58104,5 +58147,40 @@ def test_same_symbol_opposite_side_different_correlation_key_plain_timestamp_mis
         and event.get("reason") == "same_symbol_opposite_side_close_correlation_ambiguous"
     ]
     assert ambiguous_skips == []
+    open_outcomes_by_key = {row.correlation_key: row for row in shadow_repo.load_open_outcomes()}
+    assert set(open_outcomes_by_key) == {buy_key, sell_key}
+    assert open_outcomes_by_key[buy_key].side == "BUY"
+    assert open_outcomes_by_key[buy_key].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_outcomes_by_key[buy_key].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert open_outcomes_by_key[sell_key].side == "SELL"
+    assert open_outcomes_by_key[sell_key].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_outcomes_by_key[sell_key].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    assert not any(
+        row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
+        for row in shadow_repo.load_outcome_labels()
+    )
+    assert not any(
+        row.correlation_key == buy_key and row.label_quality in {"final", "partial"}
+        for row in shadow_repo.load_outcome_labels()
+    )
+    sell_attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert len(sell_attach_events) == 1
+    sell_attach_event = sell_attach_events[0]
+    assert sell_attach_event["status"] == "proxy_attached"
+    assert sell_attach_event["proxy_correlation_key"] == sell_key
+    assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
+    assert sell_attach_event["execution_status"] == "filled"
+    assert sell_attach_event["close_correlation_resolution"] == "missing"
+    assert all(event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(event.get("final_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("partial_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
     non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
