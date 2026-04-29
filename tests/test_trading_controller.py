@@ -58734,12 +58734,15 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
     ]
     assert len(enforcement_blocked) == 1
     blocked_event = enforcement_blocked[0]
-    assert blocked_event["blocking_reason"] in {
-        "live_assisted_requires_explicit_approval",
-        "autonomy_permission_evaluation_failed",
-    }
+    assert blocked_event["blocking_reason"] == "live_assisted_requires_explicit_approval"
     assert blocked_event["execution_permission"] == "blocked"
+    assert blocked_event["autonomy_final_mode"] == "live_assisted"
     assert blocked_event["autonomy_requested_mode"] == "live_autonomous"
+    assert blocked_event["autonomous_execution_allowed"] == "false"
+    assert blocked_event["assisted_override_required"] == "true"
+    assert blocked_event["assisted_override_used"] == "false"
+    assert blocked_event.get("upstream_autonomy_payload_source") is None
+    assert blocked_event.get("upstream_autonomy_effective_mode") is None
     sell_attach_events = [
         event
         for event in journal.export()
@@ -58766,17 +58769,25 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
 
 
 @pytest.mark.parametrize(
-    "decision_payload",
+    (
+        "decision_payload",
+        "expected_blocking_reason",
+        "expected_autonomy_final_mode",
+        "expected_upstream_effective_mode",
+    ),
     [
-        {},
-        {"unexpected": "value"},
-        {"effective_mode": ""},
-        {"effective_mode": None},
+        ({}, "live_assisted_requires_explicit_approval", "live_assisted", None),
+        ({"unexpected": "value"}, "live_assisted_requires_explicit_approval", "live_assisted", None),
+        ({"effective_mode": ""}, "autonomy_permission_evaluation_failed", "unavailable", None),
+        ({"effective_mode": None}, "live_assisted_requires_explicit_approval", "live_assisted", None),
     ],
 )
 def test_same_symbol_opposite_side_plain_different_correlation_live_restored_same_scope_incomplete_decision_payload_does_not_bypass_ambiguity_guard(
     tmp_path: Path,
     decision_payload: dict[str, object],
+    expected_blocking_reason: str,
+    expected_autonomy_final_mode: str,
+    expected_upstream_effective_mode: str | None,
 ) -> None:
     decision_timestamp = datetime(2026, 1, 3, 13, 25, tzinfo=timezone.utc)
     buy_key = OpportunityShadowRecord.build_record_key(
@@ -58855,12 +58866,19 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
     ]
     assert len(enforcement_blocked) == 1
     blocked_event = enforcement_blocked[0]
-    assert blocked_event["blocking_reason"] in {
-        "live_assisted_requires_explicit_approval",
-        "autonomy_permission_evaluation_failed",
-    }
+    assert blocked_event["blocking_reason"] == expected_blocking_reason
     assert blocked_event["execution_permission"] == "blocked"
+    assert blocked_event["autonomy_final_mode"] == expected_autonomy_final_mode
     assert blocked_event["autonomy_requested_mode"] == "live_autonomous"
+    assert blocked_event["autonomous_execution_allowed"] == "false"
+    if expected_blocking_reason == "autonomy_permission_evaluation_failed":
+        assert blocked_event.get("assisted_override_required") is None
+        assert blocked_event.get("assisted_override_used") is None
+    else:
+        assert blocked_event["assisted_override_required"] == "true"
+        assert blocked_event["assisted_override_used"] == "false"
+    assert blocked_event.get("upstream_autonomy_payload_source") is None
+    assert blocked_event.get("upstream_autonomy_effective_mode") == expected_upstream_effective_mode
     sell_attach_events = [
         event
         for event in journal.export()
@@ -58884,6 +58902,8 @@ def test_same_symbol_opposite_side_plain_different_correlation_live_restored_sam
         row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
         for row in shadow_repo.load_outcome_labels()
     )
+    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
 def test_same_symbol_opposite_side_different_correlation_live_restored_same_scope_with_valid_decision_payload_bypass_contract(
