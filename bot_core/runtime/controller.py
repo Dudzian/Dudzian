@@ -2576,6 +2576,76 @@ class TradingController:
                 return None
             if (
                 duplicate_open_guard_enabled
+                and existing_open_tracker is None
+                and not isinstance((request.metadata or {}).get("opportunity_autonomy_decision"), Mapping)
+            ):
+                opposite_side_tracker: tuple[str, _OpportunityOpenOutcomeTracker] | None = None
+                for tracked_correlation_key, tracker in self._opportunity_open_outcomes.items():
+                    if correlation_key and tracked_correlation_key == correlation_key:
+                        continue
+                    if str(tracker.symbol) != str(request.symbol):
+                        continue
+                    remaining_quantity = self._remaining_quantity_for_tracker(tracker)
+                    if remaining_quantity is None or remaining_quantity <= 0.0:
+                        continue
+                    if not self._matches_current_open_tracker_scope(
+                        correlation_key=tracked_correlation_key,
+                        symbol=str(request.symbol),
+                        tracker=tracker,
+                    ):
+                        continue
+                    if not self._is_closing_side(str(tracker.side), str(request.side)):
+                        continue
+                    request_decision_timestamp_raw = str(
+                        (request.metadata or {}).get("opportunity_decision_timestamp") or ""
+                    ).strip()
+                    request_decision_timestamp: datetime | None = None
+                    if request_decision_timestamp_raw:
+                        try:
+                            request_decision_timestamp = datetime.fromisoformat(
+                                request_decision_timestamp_raw.replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            request_decision_timestamp = None
+                    if request_decision_timestamp is None:
+                        continue
+                    tracker_decision_timestamp = tracker.decision_timestamp
+                    if not isinstance(tracker_decision_timestamp, datetime):
+                        continue
+                    if tracker_decision_timestamp.tzinfo is None:
+                        tracker_decision_timestamp = tracker_decision_timestamp.replace(
+                            tzinfo=timezone.utc
+                        )
+                    if request_decision_timestamp.tzinfo is None:
+                        request_decision_timestamp = request_decision_timestamp.replace(
+                            tzinfo=timezone.utc
+                        )
+                    if tracker_decision_timestamp != request_decision_timestamp:
+                        continue
+                    opposite_side_tracker = (tracked_correlation_key, tracker)
+                    break
+                if opposite_side_tracker is not None:
+                    opposite_key, opposite_tracker = opposite_side_tracker
+                    request = self._apply_restored_runtime_lineage_to_request_metadata(
+                        request=request,
+                        tracker=opposite_tracker,
+                    )
+                    self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                    self._record_decision_event(
+                        "signal_skipped",
+                        signal=signal,
+                        request=request,
+                        status="skipped",
+                        metadata={
+                            "reason": "same_symbol_opposite_side_close_correlation_ambiguous",
+                            "proxy_correlation_key": correlation_key,
+                            "existing_open_side": str(opposite_tracker.side),
+                            "existing_open_correlation_key": opposite_key,
+                        },
+                    )
+                    return None
+            if (
+                duplicate_open_guard_enabled
                 and (
                     existing_open_tracker is None
                     or not self._is_closing_side(str(existing_open_tracker.side), str(request.side))
