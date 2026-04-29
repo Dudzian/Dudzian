@@ -10668,6 +10668,126 @@ def test_same_symbol_opposite_side_plain_different_correlation_restored_same_sco
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
+def test_same_symbol_opposite_side_plain_different_correlation_exhausted_restored_same_scope_tracker_does_not_trigger_ambiguity_guard(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 11, 12, 20, tzinfo=timezone.utc)
+    buy_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v5",
+        rank=1,
+    )
+    sell_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v5",
+        rank=2,
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.append_shadow_records(
+        [
+            replace(
+                _shadow_record_for_key(correlation_key=sell_key, decision_timestamp=decision_timestamp),
+                proposed_direction="short",
+            )
+        ]
+    )
+    repository.upsert_open_outcome(
+        repository.OpenOutcomeState(
+            correlation_key=buy_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=decision_timestamp,
+            entry_quantity=1.0,
+            closed_quantity=1.0,
+            provenance={
+                "source": "restored_tracker",
+                "environment": "paper",
+                "portfolio": "paper-1",
+                "autonomy_final_mode": "paper_autonomous",
+            },
+        )
+    )
+    execution = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=99.0)
+    controller, journal = _build_autonomy_controller_with_execution(
+        environment="paper",
+        execution_service=execution,
+        opportunity_shadow_repository=repository,
+    )
+    opposite_sell = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=sell_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=False,
+        include_mode=True,
+    )
+
+    results = controller.process_signals([opposite_sell])
+
+    assert [result.status for result in results] == ["filled"]
+    assert _request_shadow_keys(execution.requests) == [sell_key]
+    assert len(execution.requests) == 1
+    assert [request.side for request in execution.requests] == ["SELL"]
+    assert _order_path_events_with_shadow_key(journal, sell_key)
+    ambiguous_skips = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+        and event.get("reason") == "same_symbol_opposite_side_close_correlation_ambiguous"
+    ]
+    assert ambiguous_skips == []
+    skipped_for_sell = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert skipped_for_sell == []
+    open_outcomes_by_key = {row.correlation_key: row for row in repository.load_open_outcomes()}
+    assert set(open_outcomes_by_key) == {buy_key, sell_key}
+    assert open_outcomes_by_key[buy_key].side == "BUY"
+    assert open_outcomes_by_key[buy_key].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_outcomes_by_key[buy_key].closed_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_outcomes_by_key[sell_key].side == "SELL"
+    assert open_outcomes_by_key[sell_key].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_outcomes_by_key[sell_key].closed_quantity == pytest.approx(0.0, rel=1e-6)
+    runtime_buy_tracker = controller._opportunity_open_outcomes[buy_key]
+    assert runtime_buy_tracker.restored_from_repository is True
+    assert runtime_buy_tracker.entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert runtime_buy_tracker.closed_quantity == pytest.approx(1.0, rel=1e-6)
+    assert not any(
+        row.correlation_key == buy_key and row.label_quality in {"final", "partial"}
+        for row in repository.load_outcome_labels()
+    )
+    assert not any(
+        row.correlation_key == sell_key and row.label_quality in {"final", "partial"}
+        for row in repository.load_outcome_labels()
+    )
+    sell_attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == sell_key
+    ]
+    assert len(sell_attach_events) == 1
+    sell_attach_event = sell_attach_events[0]
+    assert sell_attach_event["status"] == "proxy_attached"
+    assert sell_attach_event["proxy_correlation_key"] == sell_key
+    assert sell_attach_event["order_opportunity_shadow_record_key"] == sell_key
+    assert sell_attach_event["execution_status"] == "filled"
+    assert sell_attach_event["close_correlation_resolution"] == "missing"
+    assert all(event.get("existing_open_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("existing_open_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(event.get("final_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("partial_correlation_key") != buy_key for event in sell_attach_events)
+    assert all(event.get("final_correlation_key") != sell_key for event in sell_attach_events)
+    assert all(event.get("partial_correlation_key") != sell_key for event in sell_attach_events)
+    non_skip_events = [event for event in journal.export() if event.get("event") != "signal_skipped"]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 @pytest.mark.parametrize(
     ("restored_environment", "restored_portfolio"),
     [
