@@ -32871,6 +32871,206 @@ def test_opportunity_autonomy_close_ranked_resolved_partial_like_overfill_label_
     assert close_labels == []
 
 
+def test_opportunity_autonomy_open_partial_then_close_ranked_overfill_keeps_quantity_proof_consistent_e2e() -> (
+    None
+):
+    decision_timestamp = datetime(2026, 1, 12, 19, 5, tzinfo=timezone.utc)
+    correlation_key = "open-partial-then-close-overfill-proof"
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 200.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 210.0},
+        ]
+    )
+    tco_reporter = StubTCOReporter()
+    router, channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=repository,
+        tco_reporter=tco_reporter,
+    )
+
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "quantity": "1.0"}
+    open_results = controller.process_signals([open_signal])
+    assert len(open_results) == 1
+    assert str(open_results[0].status).strip().lower() == "partially_filled"
+    assert open_results[0].filled_quantity == pytest.approx(0.4)
+    tracked_after_open = controller._opportunity_open_outcomes[correlation_key]
+    assert tracked_after_open.entry_quantity == pytest.approx(0.4)
+    persisted_open_rows = [
+        row for row in repository.load_open_outcomes() if row.correlation_key == correlation_key
+    ]
+    assert len(persisted_open_rows) == 1
+    assert persisted_open_rows[0].entry_quantity == pytest.approx(0.4)
+    journal_events = journal.export()
+    open_order_events = [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "order_partially_executed"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert len(open_order_events) == 1
+    open_order_event = open_order_events[0]
+    assert str(open_order_event.get("side") or "").strip() == "BUY"
+    assert str(open_order_event.get("status") or "").strip() == "partially_filled"
+    assert str(open_order_event.get("filled_quantity") or "").strip() == "0.40000000"
+    assert str(open_order_event.get("filled_quantity") or "").strip() != "1.00000000"
+
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.metadata = {**dict(close_signal.metadata), "mode": "close_ranked", "quantity": "1.0"}
+    close_results = controller.process_signals([close_signal])
+    assert len(close_results) == 1
+    assert str(close_results[0].status).strip().lower() == "filled"
+    assert correlation_key not in controller._opportunity_open_outcomes
+    assert [row for row in repository.load_open_outcomes() if row.correlation_key == correlation_key] == []
+    journal_events = journal.export()
+    close_order_events = [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "order_executed"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        and str(event.get("side") or "").strip() == "SELL"
+    ]
+    assert len(close_order_events) == 1
+    close_order_event = close_order_events[0]
+    assert str(close_order_event.get("status") or "").strip() == "filled"
+    assert str(close_order_event.get("filled_quantity") or "").strip() == "0.40000000"
+    assert str(close_order_event.get("filled_quantity") or "").strip() != "1.00000000"
+
+    execution_alert_messages = [
+        message
+        for message in channel.messages
+        if message.category == "execution"
+        and str(message.context.get("symbol") or "").strip() == "BTC/USDT"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    ]
+    assert len(execution_alert_messages) == 2
+    buy_execution_alerts = [
+        message
+        for message in execution_alert_messages
+        if str(message.context.get("side") or "").strip() == "BUY"
+    ]
+    assert len(buy_execution_alerts) == 1
+    buy_execution_alert = buy_execution_alerts[0]
+    assert str(buy_execution_alert.context.get("status") or "").strip() == "partially_filled"
+    assert str(buy_execution_alert.context.get("filled_quantity") or "").strip() == "0.40000000"
+    assert str(buy_execution_alert.context.get("filled_quantity") or "").strip() != "1.00000000"
+    sell_execution_alerts = [
+        message
+        for message in execution_alert_messages
+        if str(message.context.get("side") or "").strip() == "SELL"
+    ]
+    assert len(sell_execution_alerts) == 1
+    sell_execution_alert = sell_execution_alerts[0]
+    assert str(sell_execution_alert.context.get("status") or "").strip() == "filled"
+    assert str(sell_execution_alert.context.get("filled_quantity") or "").strip() == "0.40000000"
+    assert str(sell_execution_alert.context.get("filled_quantity") or "").strip() != "1.00000000"
+
+    attach_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert len(attach_events) == 2
+    open_attach_events = [
+        event for event in attach_events if str(event.get("execution_status") or "").strip() != "filled"
+    ]
+    close_attach_events = [
+        event for event in attach_events if str(event.get("execution_status") or "").strip() == "filled"
+    ]
+    assert len(open_attach_events) == 1
+    assert len(close_attach_events) == 1
+    close_attach_event = close_attach_events[0]
+    assert str(close_attach_event.get("execution_status") or "").strip() == "filled"
+    assert str(close_attach_event.get("execution_filled_quantity") or "").strip() == "0.40000000"
+    assert str(close_attach_event.get("execution_filled_quantity") or "").strip() != "1.00000000"
+    assert str(close_attach_event.get("final_correlation_key") or "").strip() == correlation_key
+    assert str(close_attach_event.get("partial_correlation_key") or "").strip() == ""
+    if "quantity" in close_attach_event:
+        normalized_attach_quantity = str(close_attach_event.get("quantity") or "").strip()
+        assert normalized_attach_quantity not in {"1.0", "1.00000000"}
+        assert normalized_attach_quantity in {"0.4", "0.40000000"}
+
+    labels_for_key = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
+    final_labels = [row for row in labels_for_key if row.label_quality == "final"]
+    assert len(final_labels) == 1
+    assert final_labels[0].correlation_key == correlation_key
+    assert [row for row in labels_for_key if row.label_quality == "partial_exit_unconfirmed"] == []
+    final_provenance = (
+        final_labels[0].provenance if isinstance(final_labels[0].provenance, Mapping) else {}
+    )
+    for quantity_key in (
+        "quantity",
+        "filled_quantity",
+        "execution_filled_quantity",
+        "entry_quantity",
+        "exit_quantity",
+    ):
+        if quantity_key not in final_provenance:
+            continue
+        normalized_provenance_quantity = str(final_provenance.get(quantity_key) or "").strip()
+        assert normalized_provenance_quantity not in {"1.0", "1.00000000"}
+
+    tco_buy_calls = [
+        call
+        for call in tco_reporter.calls
+        if str(call.get("instrument") or "").strip() == "BTC/USDT"
+        and str(call.get("side") or "").strip() == "BUY"
+    ]
+    tco_sell_calls = [
+        call
+        for call in tco_reporter.calls
+        if str(call.get("instrument") or "").strip() == "BTC/USDT"
+        and str(call.get("side") or "").strip() == "SELL"
+    ]
+    assert len(tco_buy_calls) == 1
+    assert len(tco_sell_calls) == 1
+    assert tco_buy_calls[0].get("quantity") == pytest.approx(0.4)
+    assert tco_sell_calls[0].get("quantity") == pytest.approx(0.4)
+    leaked_tco_calls = [
+        call
+        for call in tco_reporter.calls
+        if str(call.get("instrument") or "").strip() == "BTC/USDT"
+        and call.get("quantity") == pytest.approx(1.0)
+    ]
+    assert leaked_tco_calls == []
+
+    # signal_skipped może pochodzić z niezwiązanych mechanizmów batch/ranking; filtrujemy je dla czystego residue check.
+    non_skip_events = [event for event in journal_events if event.get("event") != "signal_skipped"]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        non_skip_events, shadow_key=correlation_key
+    )
+
+
 def test_opportunity_autonomy_active_budget_ranked_close_ranked_execution_exception_keeps_deferred_unpromoted_and_active_budget_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
