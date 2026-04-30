@@ -59186,7 +59186,8 @@ def test_opportunity_autonomy_open_replay_after_final_close_is_idempotent_withou
         for row in labels_after_replay
     ]
     assert labels_after_replay_snapshot == labels_after_close_snapshot
-    assert tco_reporter.calls == tco_calls_after_close
+    tco_calls_after_replay = [dict(call) for call in tco_reporter.calls]
+    assert tco_calls_after_replay == tco_calls_after_close
     execution_alert_contexts_after_replay = [
         dict(message.context)
         for message in channel.messages
@@ -59211,6 +59212,244 @@ def test_opportunity_autonomy_open_replay_after_final_close_is_idempotent_withou
     _assert_no_duplicate_residue_metadata_for_shadow_key(
         non_skip_events, shadow_key=correlation_key
     )
+
+
+def test_opportunity_autonomy_open_replay_after_final_close_and_controller_restart_is_idempotent_without_artifact_drift(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 3, 12, 50, tzinfo=timezone.utc)
+    replay_timestamp = decision_timestamp + timedelta(minutes=1)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution_1 = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 210.0},
+        ]
+    )
+    journal_1 = CollectingDecisionJournal()
+    tco_reporter_1 = StubTCOReporter()
+    router_1, channel_1, _audit_1 = _router_with_channel()
+    controller_1 = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_1,
+        alert_router=router_1,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal_1,
+        opportunity_shadow_repository=repository,
+        tco_reporter=tco_reporter_1,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    close_signal.metadata = {**dict(close_signal.metadata), "mode": "close_ranked"}
+    replay_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=replay_timestamp,
+    )
+    assert replay_open_signal.side == "BUY"
+    assert str(replay_open_signal.metadata.get("mode") or "").strip().lower() != "close_ranked"
+
+    open_results = controller_1.process_signals([open_signal])
+    assert [result.status for result in open_results] == ["filled"]
+    close_results = controller_1.process_signals([close_signal])
+    assert [result.status for result in close_results] == ["filled"]
+    assert correlation_key not in controller_1._opportunity_open_outcomes
+    assert correlation_key not in [row.correlation_key for row in repository.load_open_outcomes()]
+    labels_after_close = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
+    assert len([row for row in labels_after_close if row.label_quality == "final"]) == 1
+    assert [
+        row for row in labels_after_close if row.label_quality == "partial_exit_unconfirmed"
+    ] == []
+    assert [request.side for request in execution_1.requests] == ["BUY", "SELL"]
+    assert [call["side"] for call in tco_reporter_1.calls] == ["BUY", "SELL"]
+    assert [call["quantity"] for call in tco_reporter_1.calls] == [1.0, 1.0]
+    execution_alert_contexts_after_close = [
+        dict(message.context)
+        for message in channel_1.messages
+        if getattr(message, "category", "") == "execution"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    ]
+    assert len(execution_alert_contexts_after_close) == 2
+    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
+    labels_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    order_events_snapshot = [dict(event) for event in _order_path_events_with_shadow_key(journal_1, correlation_key)]
+    attach_events_snapshot = [
+        dict(event)
+        for event in journal_1.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == correlation_key
+    ]
+    tco_calls_snapshot = [dict(call) for call in tco_reporter_1.calls]
+    alert_contexts_snapshot = [dict(ctx) for ctx in execution_alert_contexts_after_close]
+
+    execution_2 = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 333.0}]
+    )
+    journal_2 = CollectingDecisionJournal()
+    tco_reporter_2 = StubTCOReporter()
+    router_2, channel_2, _audit_2 = _router_with_channel()
+    controller_2 = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_2,
+        alert_router=router_2,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal_2,
+        opportunity_shadow_repository=repository,
+        tco_reporter=tco_reporter_2,
+    )
+    assert correlation_key not in controller_2._opportunity_open_outcomes
+
+    replay_results = controller_2.process_signals([replay_open_signal])
+
+    assert replay_results == []
+    assert execution_2.requests == []
+    assert correlation_key not in [row.correlation_key for row in repository.load_open_outcomes()]
+    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    labels_after_replay = repository.load_outcome_labels()
+    labels_after_replay_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance)) for row in labels_after_replay
+    ]
+    assert labels_after_replay_snapshot == labels_snapshot
+    assert len(
+        [
+            row
+            for row in labels_after_replay
+            if row.correlation_key == correlation_key and row.label_quality == "final"
+        ]
+    ) == 1
+    assert [
+        row
+        for row in labels_after_replay
+        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+    ] == []
+    order_path_events_after_replay = _order_path_events_with_shadow_key(journal_2, correlation_key)
+    assert order_path_events_after_replay == []
+    attach_events_after_replay = [
+        dict(event)
+        for event in journal_2.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == correlation_key
+    ]
+    assert attach_events_after_replay == []
+    assert all(event.get("status") != "proxy_attached" for event in attach_events_after_replay)
+    assert tco_reporter_2.calls == []
+    execution_alert_contexts_after_replay = [
+        dict(message.context)
+        for message in channel_2.messages
+        if getattr(message, "category", "") == "execution"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    ]
+    assert execution_alert_contexts_after_replay == []
+    journal_2_events = [dict(event) for event in journal_2.export()]
+    replay_skip_events = [
+        event
+        for event in journal_2_events
+        if str(event.get("event") or "").strip() == "signal_skipped"
+        and (
+            str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+            or str(event.get("proxy_correlation_key") or "").strip() == correlation_key
+        )
+    ]
+    if replay_skip_events:
+        assert len(replay_skip_events) == 1
+        replay_skip = replay_skip_events[0]
+        assert replay_skip.get("event") == "signal_skipped"
+        if "status" in replay_skip:
+            assert replay_skip["status"] == "skipped"
+        assert str(replay_skip.get("reason") or replay_skip.get("decision_reason") or "").strip() != ""
+        assert (
+            str(replay_skip.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+            or str(replay_skip.get("proxy_correlation_key") or "").strip() == correlation_key
+        )
+    else:
+        # W obecnym kontrakcie replay po final labelu nie emituje signal_skipped;
+        # audytowalny no-op jest reprezentowany przez blocked
+        # opportunity_autonomy_enforcement walidowany poniżej,
+        # a brak driftu artefaktów sprawdzają osobne asercje.
+        assert [
+            event
+            for event in journal_2_events
+            if str(event.get("event") or "").strip() == "signal_skipped"
+        ] == []
+    replay_enforcement_events = [
+        event
+        for event in journal_2_events
+        if str(event.get("event") or "").strip() == "opportunity_autonomy_enforcement"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert len(replay_enforcement_events) == 1
+    assert replay_enforcement_events[0].get("status") == "blocked"
+    assert (
+        str(
+            replay_enforcement_events[0].get("reason")
+            or replay_enforcement_events[0].get("decision_reason")
+            or replay_enforcement_events[0].get("autonomy_decisive_reason")
+            or ""
+        ).strip()
+        == "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
+    )
+    assert [
+        event
+        for event in journal_2_events
+        if str(event.get("event") or "").strip() == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ] == []
+    assert [
+        event
+        for event in journal_2_events
+        if str(event.get("event") or "").startswith("order_")
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ] == []
+    non_skip_events = [
+        event for event in journal_2_events if str(event.get("event") or "").strip() != "signal_skipped"
+    ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        non_skip_events, shadow_key=correlation_key
+    )
+    assert order_events_snapshot
+    assert attach_events_snapshot
+    assert tco_calls_snapshot
+    assert alert_contexts_snapshot
 
 
 def test_same_symbol_opposite_side_different_correlation_key_with_decision_payload_bypasses_plain_ambiguity_guard(
