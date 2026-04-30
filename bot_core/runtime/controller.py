@@ -1162,11 +1162,10 @@ class TradingController:
         payload_effective_mode = ""
         if isinstance(decision_payload, Mapping):
             payload_effective_mode = str(decision_payload.get("effective_mode") or "").strip().lower()
-        if autonomy_mode not in {"paper_autonomous", "live_autonomous"} and payload_effective_mode not in {
+        has_autonomy_metadata = autonomy_mode in {"paper_autonomous", "live_autonomous"} or payload_effective_mode in {
             "paper_autonomous",
             "live_autonomous",
-        }:
-            return False
+        }
         side = str(request.side or "").upper()
         if side not in (_BUY_SIDES | _SELL_SIDES):
             return False
@@ -1228,6 +1227,12 @@ class TradingController:
                     and shadow_environment != scope_environment
                     and not legacy_shadow_scope_missing
                 ):
+                    continue
+                if has_autonomy_metadata:
+                    shadow_accepted = True
+                else:
+                    shadow_accepted = bool(getattr(shadow_record, "accepted", False))
+                if not shadow_accepted:
                     continue
                 proposed_direction = (
                     str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
