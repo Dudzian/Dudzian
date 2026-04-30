@@ -59842,6 +59842,16 @@ def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_con
         opportunity_shadow_repository=repository,
         tco_reporter=tco_reporter_2,
     )
+    assert controller_2._is_autonomous_open_handoff_path(
+        OrderRequest(
+            symbol=replay_open_signal.symbol,
+            side=replay_open_signal.side,
+            quantity=1.0,
+            order_type="market",
+            price=333.0,
+            metadata=dict(replay_open_signal.metadata),
+        )
+    ) is True
 
     replay_results = controller_2.process_signals([replay_open_signal])
 
@@ -59932,6 +59942,131 @@ def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_con
     assert attach_events_snapshot
     assert tco_calls_snapshot
     assert alert_contexts_snapshot
+
+
+def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_does_not_use_foreign_scope_final_label_for_suppression(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 3, 12, 56, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    foreign_final_label = OpportunityOutcomeLabel(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp + timedelta(minutes=5),
+        horizon_minutes=60,
+        realized_return_bps=110.0,
+        max_favorable_excursion_bps=110.0,
+        max_adverse_excursion_bps=-40.0,
+        label_quality="final",
+        provenance={
+            "environment": "live",
+            "portfolio": "live-1",
+            "autonomy_final_mode": "live_autonomous",
+        },
+    )
+    repository.append_outcome_labels([foreign_final_label])
+
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 333.0}]
+    )
+    journal = CollectingDecisionJournal()
+    router, _channel, _audit = _router_with_channel()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=repository,
+    )
+    replay_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    replay_metadata = dict(replay_open_signal.metadata)
+    replay_metadata.pop("opportunity_autonomy_mode", None)
+    replay_decision = replay_metadata.get("opportunity_autonomy_decision")
+    if isinstance(replay_decision, dict):
+        replay_decision = dict(replay_decision)
+        replay_decision.pop("effective_mode", None)
+        replay_metadata["opportunity_autonomy_decision"] = replay_decision
+    else:
+        replay_metadata.pop("opportunity_autonomy_decision", None)
+    replay_open_signal.metadata = replay_metadata
+
+    labels_before = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    _ = controller.process_signals([replay_open_signal])
+
+    journal_events = [dict(event) for event in journal.export()]
+    replay_skip_events = [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "signal_skipped"
+        and str(event.get("reason") or "").strip() == "final_outcome_replay_open_suppressed"
+        and (
+            str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+            or str(event.get("proxy_correlation_key") or "").strip() == correlation_key
+        )
+    ]
+    assert replay_skip_events == []
+    attach_events = [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert [
+        event
+        for event in attach_events
+        if str(event.get("outcome_environment") or "").strip() == "live"
+        or str(event.get("outcome_portfolio_id") or event.get("outcome_portfolio") or "").strip()
+        == "live-1"
+    ] == []
+    labels_after_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    assert labels_after_snapshot == labels_before
+    labels_after = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
+    foreign_finals_after = [
+        row
+        for row in labels_after
+        if row.label_quality == "final"
+        and str((row.provenance or {}).get("environment") or "").strip() == "live"
+        and str(
+            (row.provenance or {}).get("portfolio")
+            or (row.provenance or {}).get("portfolio_id")
+            or ""
+        ).strip()
+        == "live-1"
+    ]
+    assert len(foreign_finals_after) == 1
 
 
 def test_same_symbol_opposite_side_different_correlation_key_with_decision_payload_bypasses_plain_ambiguity_guard(
