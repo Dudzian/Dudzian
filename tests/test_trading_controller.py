@@ -59700,7 +59700,7 @@ def test_opportunity_autonomy_exact_open_replay_after_final_close_and_controller
     assert alert_contexts_snapshot
 
 
-def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_controller_restart_is_blocked_by_final_label_without_autonomy_metadata(
+def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_controller_restart_is_blocked_by_final_label_even_when_shadow_record_is_not_accepted(
     tmp_path: Path,
 ) -> None:
     decision_timestamp = datetime(2026, 1, 3, 12, 55, tzinfo=timezone.utc)
@@ -59715,9 +59715,12 @@ def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_con
     )
     repository.append_shadow_records(
         [
-            _shadow_record_for_key(
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=correlation_key,
+                    decision_timestamp=decision_timestamp,
+                ),
+                accepted=False,
             )
         ]
     )
@@ -59780,6 +59783,10 @@ def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_con
         assert not str(replay_decision_payload.get("effective_mode") or "").strip()
     else:
         assert replay_decision_payload in (None, "", {})
+    shadow_record_after_setup = next(
+        row for row in repository.load_shadow_records() if row.record_key == correlation_key
+    )
+    assert getattr(shadow_record_after_setup, "accepted", None) is not True
 
     open_results = controller_1.process_signals([open_signal])
     assert [result.status for result in open_results] == ["filled"]
