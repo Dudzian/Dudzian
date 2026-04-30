@@ -1157,6 +1157,8 @@ class TradingController:
         local_mode = str(request_metadata.get("mode") or "").strip().lower()
         if local_mode == "close_ranked":
             return False
+        if not self._is_autonomous_open_handoff_path(request):
+            return False
         autonomy_mode = str(request_metadata.get("opportunity_autonomy_mode") or "").strip().lower()
         decision_payload = request_metadata.get("opportunity_autonomy_decision")
         payload_effective_mode = ""
