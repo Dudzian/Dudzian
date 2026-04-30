@@ -58999,7 +58999,7 @@ def test_same_symbol_opposite_side_different_correlation_key_is_blocked_without_
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
-def test_opportunity_autonomy_close_ranked_replay_after_final_close_is_idempotent_without_artifact_drift(
+def test_opportunity_autonomy_open_replay_after_final_close_is_idempotent_without_artifact_drift(
     tmp_path: Path,
 ) -> None:
     decision_timestamp = datetime(2026, 1, 3, 12, 45, tzinfo=timezone.utc)
@@ -59055,13 +59055,14 @@ def test_opportunity_autonomy_close_ranked_replay_after_final_close_is_idempoten
         decision_timestamp=decision_timestamp,
     )
     close_signal.metadata = {**dict(close_signal.metadata), "mode": "close_ranked"}
-    replay_close_signal = _autonomy_signal_with_correlation(
+    replay_open_signal = _autonomy_signal_with_correlation(
         mode="paper_autonomous",
-        side="SELL",
+        side="BUY",
         correlation_key=correlation_key,
         decision_timestamp=replay_timestamp,
     )
-    replay_close_signal.metadata = {**dict(replay_close_signal.metadata), "mode": "close_ranked"}
+    assert replay_open_signal.side == "BUY"
+    assert str(replay_open_signal.metadata.get("mode") or "").strip().lower() != "close_ranked"
 
     open_results = controller.process_signals([open_signal])
 
@@ -59156,7 +59157,7 @@ def test_opportunity_autonomy_close_ranked_replay_after_final_close_is_idempoten
         for row in labels_after_close
     ]
 
-    replay_results = controller.process_signals([replay_close_signal])
+    replay_results = controller.process_signals([replay_open_signal])
 
     assert replay_results == []
     assert _request_shadow_keys(execution.requests) == [correlation_key, correlation_key]
@@ -59203,7 +59204,7 @@ def test_opportunity_autonomy_close_ranked_replay_after_final_close_is_idempoten
         == correlation_key
     ]
     assert len(execution_alerts) == 2
-    # Filtrujemy diagnostyczny signal_skipped i sprawdzamy brak driftu artefaktów dla replay close.
+    # Filtrujemy diagnostyczny signal_skipped i sprawdzamy brak driftu artefaktów dla replay open.
     non_skip_events = [
         event for event in journal.export() if str(event.get("event") or "").strip() != "signal_skipped"
     ]
