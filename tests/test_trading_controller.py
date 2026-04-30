@@ -58999,6 +58999,219 @@ def test_same_symbol_opposite_side_different_correlation_key_is_blocked_without_
     _assert_no_duplicate_residue_metadata_for_shadow_key(non_skip_events, shadow_key=sell_key)
 
 
+def test_opportunity_autonomy_close_ranked_replay_after_final_close_is_idempotent_without_artifact_drift(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 3, 12, 45, tzinfo=timezone.utc)
+    replay_timestamp = decision_timestamp + timedelta(minutes=1)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    execution = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 200.0},
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 210.0},
+        ]
+    )
+    journal = CollectingDecisionJournal()
+    tco_reporter = StubTCOReporter()
+    router, channel, _audit = _router_with_channel()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=repository,
+        tco_reporter=tco_reporter,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    close_signal.metadata = {**dict(close_signal.metadata), "mode": "close_ranked"}
+    replay_close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=replay_timestamp,
+    )
+    replay_close_signal.metadata = {**dict(replay_close_signal.metadata), "mode": "close_ranked"}
+
+    open_results = controller.process_signals([open_signal])
+
+    assert [result.status for result in open_results] == ["filled"]
+    assert correlation_key in controller._opportunity_open_outcomes
+    open_outcomes = repository.load_open_outcomes()
+    assert [row.correlation_key for row in open_outcomes] == [correlation_key]
+    assert open_outcomes[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
+    assert open_outcomes[0].closed_quantity == pytest.approx(0.0, rel=1e-6)
+
+    close_results = controller.process_signals([close_signal])
+
+    assert [result.status for result in close_results] == ["filled"]
+    assert correlation_key not in controller._opportunity_open_outcomes
+    assert correlation_key not in [row.correlation_key for row in repository.load_open_outcomes()]
+    labels_after_close = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
+    assert [row for row in labels_after_close if row.label_quality == "final"]
+    assert len([row for row in labels_after_close if row.label_quality == "final"]) == 1
+    assert [
+        row for row in labels_after_close if row.label_quality == "partial_exit_unconfirmed"
+    ] == []
+    assert [call["side"] for call in tco_reporter.calls] == ["BUY", "SELL"]
+    assert [call["quantity"] for call in tco_reporter.calls] == [1.0, 1.0]
+    assert _request_shadow_keys(execution.requests) == [correlation_key, correlation_key]
+    assert [request.side for request in execution.requests] == ["BUY", "SELL"]
+    order_events_after_close = [
+        dict(event) for event in _order_path_events_with_shadow_key(journal, correlation_key)
+    ]
+    assert any(
+        event.get("event") == "order_submitted" and event.get("side") == "BUY"
+        for event in order_events_after_close
+    )
+    assert any(
+        event.get("event") == "order_submitted" and event.get("side") == "SELL"
+        for event in order_events_after_close
+    )
+    close_attach_events_after_close = [
+        dict(event)
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == correlation_key
+        and event.get("side") == "SELL"
+    ]
+    assert len(close_attach_events_after_close) == 1
+    close_attach = close_attach_events_after_close[0]
+    assert close_attach.get("status") == "final_upgraded"
+    assert close_attach.get("execution_status") == "filled"
+    assert close_attach.get("proxy_correlation_key") == correlation_key
+    assert close_attach.get("final_correlation_key") == correlation_key
+    partial_correlation_key = close_attach.get("partial_correlation_key")
+    assert partial_correlation_key in {"", None}
+    if "execution_filled_quantity" in close_attach:
+        assert close_attach["execution_filled_quantity"] == "1.00000000"
+    tco_calls_after_close = [dict(call) for call in tco_reporter.calls]
+    assert len(tco_calls_after_close) == 2
+    buy_tco_calls = [call for call in tco_calls_after_close if call["side"] == "BUY"]
+    sell_tco_calls = [call for call in tco_calls_after_close if call["side"] == "SELL"]
+    assert len(buy_tco_calls) == 1
+    assert len(sell_tco_calls) == 1
+    assert buy_tco_calls[0]["instrument"] == "BTC/USDT"
+    assert sell_tco_calls[0]["instrument"] == "BTC/USDT"
+    assert buy_tco_calls[0]["quantity"] == pytest.approx(1.0, rel=1e-6)
+    assert sell_tco_calls[0]["quantity"] == pytest.approx(1.0, rel=1e-6)
+    execution_alert_contexts_after_close = [
+        dict(message.context)
+        for message in channel.messages
+        if getattr(message, "category", "") == "execution"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    ]
+    assert len(execution_alert_contexts_after_close) == 2
+    buy_execution_alerts = [
+        ctx
+        for ctx in execution_alert_contexts_after_close
+        if str(ctx.get("side") or "").strip() == "BUY"
+    ]
+    sell_execution_alerts = [
+        ctx
+        for ctx in execution_alert_contexts_after_close
+        if str(ctx.get("side") or "").strip() == "SELL"
+    ]
+    assert len(buy_execution_alerts) == 1
+    assert len(sell_execution_alerts) == 1
+    assert str(buy_execution_alerts[0].get("status") or "").strip() == "filled"
+    assert str(sell_execution_alerts[0].get("status") or "").strip() == "filled"
+    assert str(buy_execution_alerts[0].get("filled_quantity") or "").strip() == "1.00000000"
+    assert str(sell_execution_alerts[0].get("filled_quantity") or "").strip() == "1.00000000"
+    labels_after_close_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in labels_after_close
+    ]
+
+    replay_results = controller.process_signals([replay_close_signal])
+
+    assert replay_results == []
+    assert _request_shadow_keys(execution.requests) == [correlation_key, correlation_key]
+    assert [request.side for request in execution.requests] == ["BUY", "SELL"]
+    order_events_after_replay = [
+        dict(event) for event in _order_path_events_with_shadow_key(journal, correlation_key)
+    ]
+    assert order_events_after_replay == order_events_after_close
+    assert correlation_key not in [row.correlation_key for row in repository.load_open_outcomes()]
+    labels_after_replay = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
+    assert len([row for row in labels_after_replay if row.label_quality == "final"]) == 1
+    assert [row for row in labels_after_replay if row.label_quality == "partial_exit_unconfirmed"] == []
+    close_attach_events_after_replay = [
+        dict(event)
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and event.get("order_opportunity_shadow_record_key") == correlation_key
+        and event.get("side") == "SELL"
+    ]
+    assert close_attach_events_after_replay == close_attach_events_after_close
+    assert all(event.get("status") != "proxy_attached" for event in close_attach_events_after_replay)
+    labels_after_replay_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in labels_after_replay
+    ]
+    assert labels_after_replay_snapshot == labels_after_close_snapshot
+    assert tco_reporter.calls == tco_calls_after_close
+    execution_alert_contexts_after_replay = [
+        dict(message.context)
+        for message in channel.messages
+        if getattr(message, "category", "") == "execution"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    ]
+    assert execution_alert_contexts_after_replay == execution_alert_contexts_after_close
+    assert len(tco_reporter.calls) == 2
+    execution_alerts = [
+        message.context
+        for message in channel.messages
+        if getattr(message, "category", "") == "execution"
+        and str(message.context.get("meta_opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    ]
+    assert len(execution_alerts) == 2
+    # Filtrujemy diagnostyczny signal_skipped i sprawdzamy brak driftu artefaktów dla replay close.
+    non_skip_events = [
+        event for event in journal.export() if str(event.get("event") or "").strip() != "signal_skipped"
+    ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        non_skip_events, shadow_key=correlation_key
+    )
+
+
 def test_same_symbol_opposite_side_different_correlation_key_with_decision_payload_bypasses_plain_ambiguity_guard(
     tmp_path: Path,
 ) -> None:
