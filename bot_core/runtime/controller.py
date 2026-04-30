@@ -1144,6 +1144,105 @@ class TradingController:
             return False
         return False
 
+    def _is_duplicate_autonomous_open_replay_after_final_close(
+        self,
+        *,
+        request: OrderRequest,
+        correlation_key: str,
+        existing_open_tracker: _OpportunityOpenOutcomeTracker | None,
+    ) -> bool:
+        if not correlation_key or existing_open_tracker is not None:
+            return False
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        local_mode = str(request_metadata.get("mode") or "").strip().lower()
+        if local_mode == "close_ranked":
+            return False
+        autonomy_mode = str(request_metadata.get("opportunity_autonomy_mode") or "").strip().lower()
+        decision_payload = request_metadata.get("opportunity_autonomy_decision")
+        payload_effective_mode = ""
+        if isinstance(decision_payload, Mapping):
+            payload_effective_mode = str(decision_payload.get("effective_mode") or "").strip().lower()
+        if autonomy_mode not in {"paper_autonomous", "live_autonomous"} and payload_effective_mode not in {
+            "paper_autonomous",
+            "live_autonomous",
+        }:
+            return False
+        side = str(request.side or "").upper()
+        if side not in (_BUY_SIDES | _SELL_SIDES):
+            return False
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return False
+        try:
+            labels = repository.load_outcome_labels()
+            shadow_records = repository.load_shadow_records()
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug(
+                "Nie udało się zweryfikować replay open po final close przed egzekucją",
+                exc_info=True,
+            )
+            return False
+        scope_environment = str(self.environment or "").strip()
+        scope_portfolio = str(self.portfolio_id or "").strip()
+        for row in labels:
+            if (
+                row.correlation_key != correlation_key
+                or str(row.symbol) != str(request.symbol)
+                or not str(row.label_quality).startswith("final")
+            ):
+                continue
+            final_provenance = row.provenance if isinstance(row.provenance, Mapping) else {}
+            final_mode = str(final_provenance.get("autonomy_final_mode") or "").strip().lower()
+            if final_mode not in {"paper_autonomous", "live_autonomous"}:
+                continue
+            final_environment = str(final_provenance.get("environment") or "").strip()
+            final_portfolio = str(
+                final_provenance.get("portfolio") or final_provenance.get("portfolio_id") or ""
+            ).strip()
+            if scope_environment and not final_environment:
+                continue
+            if scope_portfolio and not final_portfolio:
+                continue
+            if final_environment and scope_environment and final_environment != scope_environment:
+                continue
+            if final_portfolio and scope_portfolio and final_portfolio != scope_portfolio:
+                continue
+            for shadow_record in shadow_records:
+                if shadow_record.record_key != correlation_key:
+                    continue
+                if str(getattr(shadow_record, "symbol", "")) != str(request.symbol):
+                    continue
+                shadow_context = getattr(shadow_record, "context", None)
+                if isinstance(shadow_context, Mapping):
+                    shadow_environment_raw = shadow_context.get("environment")
+                else:
+                    shadow_environment_raw = getattr(shadow_context, "environment", None)
+                shadow_environment = (
+                    str(shadow_environment_raw).strip() if shadow_environment_raw is not None else ""
+                )
+                shadow_environment_normalized = shadow_environment.lower()
+                legacy_shadow_scope_missing = shadow_environment_normalized in {"", "shadow"}
+                if (
+                    scope_environment
+                    and shadow_environment
+                    and shadow_environment != scope_environment
+                    and not legacy_shadow_scope_missing
+                ):
+                    continue
+                proposed_direction = (
+                    str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                )
+                expected_open_side = (
+                    "BUY"
+                    if proposed_direction in {"long", "buy"}
+                    else ("SELL" if proposed_direction in {"short", "sell"} else "")
+                )
+                if not expected_open_side:
+                    continue
+                if expected_open_side == side:
+                    return True
+        return False
+
     def _matches_current_open_tracker_scope(
         self,
         *,
@@ -2822,6 +2921,23 @@ class TradingController:
                 status="skipped",
                 metadata={
                     "reason": "duplicate_autonomous_close_replay_suppressed",
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            return None
+        if self._is_duplicate_autonomous_open_replay_after_final_close(
+            request=request,
+            correlation_key=correlation_key,
+            existing_open_tracker=existing_open_tracker,
+        ):
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": "final_outcome_replay_open_suppressed",
                     "proxy_correlation_key": correlation_key,
                 },
             )
