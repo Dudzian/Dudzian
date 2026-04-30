@@ -1230,6 +1230,8 @@ class TradingController:
                     continue
                 if has_autonomy_metadata:
                     shadow_accepted = True
+                elif final_mode in {"paper_autonomous", "live_autonomous"}:
+                    shadow_accepted = True
                 else:
                     shadow_accepted = bool(getattr(shadow_record, "accepted", False))
                 if not shadow_accepted:
