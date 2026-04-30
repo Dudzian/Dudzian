@@ -1163,8 +1163,13 @@ class TradingController:
         decision_payload = request_metadata.get("opportunity_autonomy_decision")
         payload_effective_mode = ""
         if isinstance(decision_payload, Mapping):
-            payload_effective_mode = str(decision_payload.get("effective_mode") or "").strip().lower()
-        has_autonomy_metadata = autonomy_mode in {"paper_autonomous", "live_autonomous"} or payload_effective_mode in {
+            payload_effective_mode = (
+                str(decision_payload.get("effective_mode") or "").strip().lower()
+            )
+        has_autonomy_metadata = autonomy_mode in {
+            "paper_autonomous",
+            "live_autonomous",
+        } or payload_effective_mode in {
             "paper_autonomous",
             "live_autonomous",
         }
@@ -1219,7 +1224,9 @@ class TradingController:
                 else:
                     shadow_environment_raw = getattr(shadow_context, "environment", None)
                 shadow_environment = (
-                    str(shadow_environment_raw).strip() if shadow_environment_raw is not None else ""
+                    str(shadow_environment_raw).strip()
+                    if shadow_environment_raw is not None
+                    else ""
                 )
                 shadow_environment_normalized = shadow_environment.lower()
                 legacy_shadow_scope_missing = shadow_environment_normalized in {"", "shadow"}
