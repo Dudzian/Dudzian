@@ -1207,7 +1207,7 @@ class TradingController:
             if (
                 row.correlation_key != correlation_key
                 or str(row.symbol) != str(request.symbol)
-                or not str(row.label_quality).startswith("final")
+                or str(row.label_quality).strip().lower() != "final"
             ):
                 continue
             final_provenance = row.provenance if isinstance(row.provenance, Mapping) else {}
