@@ -1226,6 +1226,8 @@ class TradingController:
                 continue
             if final_portfolio and scope_portfolio and final_portfolio != scope_portfolio:
                 continue
+            matching_shadow_scope_candidate_exists = False
+            matching_shadow_with_usable_direction_exists = False
             for shadow_record in shadow_records:
                 if shadow_record.record_key != correlation_key:
                     continue
@@ -1250,6 +1252,7 @@ class TradingController:
                     and not legacy_shadow_scope_missing
                 ):
                     continue
+                matching_shadow_scope_candidate_exists = True
                 if has_autonomy_metadata:
                     shadow_accepted = True
                 elif final_mode in {"paper_autonomous", "live_autonomous"}:
@@ -1268,8 +1271,16 @@ class TradingController:
                 )
                 if not expected_open_side:
                     continue
+                matching_shadow_with_usable_direction_exists = True
                 if expected_open_side == side:
                     return True
+            if (
+                matching_shadow_scope_candidate_exists
+                and not matching_shadow_with_usable_direction_exists
+            ):
+                # Fallback tylko po dowodzie final-label autonomous w tym samym scope:
+                # chroni przed replay OPEN przy legacy/corrupt shadow bez direction.
+                return True
         return False
 
     def _matches_current_open_tracker_scope(
