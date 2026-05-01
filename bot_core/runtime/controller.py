@@ -1155,15 +1155,33 @@ class TradingController:
             return False
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
         local_mode = str(request_metadata.get("mode") or "").strip().lower()
+        local_signal_mode = str(request_metadata.get("signal_mode") or "").strip().lower()
+        local_decision_source = str(request_metadata.get("decision_source") or "").strip().lower()
         if local_mode == "close_ranked":
-            return False
-        if not self._is_autonomous_open_handoff_path(request):
             return False
         autonomy_mode = str(request_metadata.get("opportunity_autonomy_mode") or "").strip().lower()
         decision_payload = request_metadata.get("opportunity_autonomy_decision")
         payload_effective_mode = ""
+        payload_decision_source = ""
         if isinstance(decision_payload, Mapping):
             payload_effective_mode = str(decision_payload.get("effective_mode") or "").strip().lower()
+            payload_decision_source = str(decision_payload.get("decision_source") or "").strip().lower()
+        request_decision_source = str(request_metadata.get("opportunity_decision_source") or "").strip().lower()
+        has_explicit_manual_or_rules_marker = (
+            local_mode in {"manual", "rules"}
+            or local_signal_mode in {"manual", "rules"}
+            or local_decision_source in {"manual", "rules"}
+            or request_decision_source in {"manual", "rules"}
+            or payload_decision_source in {"manual", "rules"}
+        )
+        has_explicit_autonomous_marker = autonomy_mode in {"paper_autonomous", "live_autonomous"} or payload_effective_mode in {
+            "paper_autonomous",
+            "live_autonomous",
+        }
+        if has_explicit_manual_or_rules_marker and not has_explicit_autonomous_marker:
+            return False
+        if not self._is_autonomous_open_handoff_path(request):
+            return False
         has_autonomy_metadata = autonomy_mode in {"paper_autonomous", "live_autonomous"} or payload_effective_mode in {
             "paper_autonomous",
             "live_autonomous",
