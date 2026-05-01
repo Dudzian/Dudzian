@@ -1228,11 +1228,13 @@ class TradingController:
                 continue
             matching_shadow_scope_candidate_exists = False
             matching_shadow_with_usable_direction_exists = False
+            matching_shadow_for_key_symbol_exists = False
             for shadow_record in shadow_records:
                 if shadow_record.record_key != correlation_key:
                     continue
                 if str(getattr(shadow_record, "symbol", "")) != str(request.symbol):
                     continue
+                matching_shadow_for_key_symbol_exists = True
                 shadow_context = getattr(shadow_record, "context", None)
                 if isinstance(shadow_context, Mapping):
                     shadow_environment_raw = shadow_context.get("environment")
@@ -1280,6 +1282,14 @@ class TradingController:
             ):
                 # Fallback tylko po dowodzie final-label autonomous w tym samym scope:
                 # chroni przed replay OPEN przy legacy/corrupt shadow bez direction.
+                return True
+            if (
+                not matching_shadow_scope_candidate_exists
+                and not matching_shadow_for_key_symbol_exists
+            ):
+                # Brak shadow recordu po restarcie/restore nie obala dowodu final-label
+                # w tym samym scope: dla autonomous replay OPEN traktujemy final label
+                # jako durable proof finalnego zamknięcia lifecycle.
                 return True
         return False
 
