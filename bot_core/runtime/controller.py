@@ -1237,7 +1237,9 @@ class TradingController:
                 else:
                     shadow_environment_raw = getattr(shadow_context, "environment", None)
                 shadow_environment = (
-                    str(shadow_environment_raw).strip() if shadow_environment_raw is not None else ""
+                    str(shadow_environment_raw).strip()
+                    if shadow_environment_raw is not None
+                    else ""
                 )
                 shadow_environment_normalized = shadow_environment.lower()
                 legacy_shadow_scope_missing = shadow_environment_normalized in {"", "shadow"}

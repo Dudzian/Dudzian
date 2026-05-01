@@ -59324,12 +59324,16 @@ def test_opportunity_autonomy_open_replay_after_final_close_and_controller_resta
         == correlation_key
     ]
     assert len(execution_alert_contexts_after_close) == 2
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
     labels_snapshot = [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
     ]
-    order_events_snapshot = [dict(event) for event in _order_path_events_with_shadow_key(journal_1, correlation_key)]
+    order_events_snapshot = [
+        dict(event) for event in _order_path_events_with_shadow_key(journal_1, correlation_key)
+    ]
     attach_events_snapshot = [
         dict(event)
         for event in journal_1.export()
@@ -59364,23 +59368,30 @@ def test_opportunity_autonomy_open_replay_after_final_close_and_controller_resta
     assert replay_results == []
     assert execution_2.requests == []
     assert correlation_key not in [row.correlation_key for row in repository.load_open_outcomes()]
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     labels_after_replay = repository.load_outcome_labels()
     labels_after_replay_snapshot = [
-        (row.correlation_key, row.label_quality, dict(row.provenance)) for row in labels_after_replay
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in labels_after_replay
     ]
     assert labels_after_replay_snapshot == labels_snapshot
-    assert len(
-        [
-            row
-            for row in labels_after_replay
-            if row.correlation_key == correlation_key and row.label_quality == "final"
-        ]
-    ) == 1
+    assert (
+        len(
+            [
+                row
+                for row in labels_after_replay
+                if row.correlation_key == correlation_key and row.label_quality == "final"
+            ]
+        )
+        == 1
+    )
     assert [
         row
         for row in labels_after_replay
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
     order_path_events_after_replay = _order_path_events_with_shadow_key(journal_2, correlation_key)
     assert order_path_events_after_replay == []
@@ -59417,9 +59428,12 @@ def test_opportunity_autonomy_open_replay_after_final_close_and_controller_resta
         assert replay_skip.get("event") == "signal_skipped"
         if "status" in replay_skip:
             assert replay_skip["status"] == "skipped"
-        assert str(replay_skip.get("reason") or replay_skip.get("decision_reason") or "").strip() != ""
         assert (
-            str(replay_skip.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+            str(replay_skip.get("reason") or replay_skip.get("decision_reason") or "").strip() != ""
+        )
+        assert (
+            str(replay_skip.get("order_opportunity_shadow_record_key") or "").strip()
+            == correlation_key
             or str(replay_skip.get("proxy_correlation_key") or "").strip() == correlation_key
         )
     else:
@@ -59462,7 +59476,9 @@ def test_opportunity_autonomy_open_replay_after_final_close_and_controller_resta
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
     ] == []
     non_skip_events = [
-        event for event in journal_2_events if str(event.get("event") or "").strip() != "signal_skipped"
+        event
+        for event in journal_2_events
+        if str(event.get("event") or "").strip() != "signal_skipped"
     ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(
         non_skip_events, shadow_key=correlation_key
@@ -59561,7 +59577,9 @@ def test_opportunity_autonomy_exact_open_replay_after_final_close_and_controller
         == correlation_key
     ]
     assert len(execution_alert_contexts_after_close) == 2
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
     labels_snapshot = [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
@@ -59604,23 +59622,30 @@ def test_opportunity_autonomy_exact_open_replay_after_final_close_and_controller
     assert execution_2.requests == []
     assert correlation_key not in controller_2._opportunity_open_outcomes
     assert correlation_key not in [row.correlation_key for row in repository.load_open_outcomes()]
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     labels_after_replay = repository.load_outcome_labels()
     labels_after_replay_snapshot = [
-        (row.correlation_key, row.label_quality, dict(row.provenance)) for row in labels_after_replay
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in labels_after_replay
     ]
     assert labels_after_replay_snapshot == labels_snapshot
-    assert len(
-        [
-            row
-            for row in labels_after_replay
-            if row.correlation_key == correlation_key and row.label_quality == "final"
-        ]
-    ) == 1
+    assert (
+        len(
+            [
+                row
+                for row in labels_after_replay
+                if row.correlation_key == correlation_key and row.label_quality == "final"
+            ]
+        )
+        == 1
+    )
     assert [
         row
         for row in labels_after_replay
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
     order_path_events_after_replay = _order_path_events_with_shadow_key(journal_2, correlation_key)
     assert order_path_events_after_replay == []
@@ -59659,7 +59684,10 @@ def test_opportunity_autonomy_exact_open_replay_after_final_close_and_controller
     )
     assert str(replay_skip.get("proxy_correlation_key") or "").strip() == correlation_key
     if "order_opportunity_shadow_record_key" in replay_skip:
-        assert str(replay_skip.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        assert (
+            str(replay_skip.get("order_opportunity_shadow_record_key") or "").strip()
+            == correlation_key
+        )
 
     replay_enforcement_events = [
         event
@@ -59689,7 +59717,9 @@ def test_opportunity_autonomy_exact_open_replay_after_final_close_and_controller
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
     ] == []
     non_skip_events = [
-        event for event in journal_2_events if str(event.get("event") or "").strip() != "signal_skipped"
+        event
+        for event in journal_2_events
+        if str(event.get("event") or "").strip() != "signal_skipped"
     ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(
         non_skip_events, shadow_key=correlation_key
@@ -59801,7 +59831,9 @@ def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_con
     assert [
         row for row in labels_after_close if row.label_quality == "partial_exit_unconfirmed"
     ] == []
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
     labels_snapshot = [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
@@ -59842,38 +59874,48 @@ def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_con
         opportunity_shadow_repository=repository,
         tco_reporter=tco_reporter_2,
     )
-    assert controller_2._is_autonomous_open_handoff_path(
-        OrderRequest(
-            symbol=replay_open_signal.symbol,
-            side=replay_open_signal.side,
-            quantity=1.0,
-            order_type="market",
-            price=333.0,
-            metadata=dict(replay_open_signal.metadata),
+    assert (
+        controller_2._is_autonomous_open_handoff_path(
+            OrderRequest(
+                symbol=replay_open_signal.symbol,
+                side=replay_open_signal.side,
+                quantity=1.0,
+                order_type="market",
+                price=333.0,
+                metadata=dict(replay_open_signal.metadata),
+            )
         )
-    ) is True
+        is True
+    )
 
     replay_results = controller_2.process_signals([replay_open_signal])
 
     assert replay_results == []
     assert execution_2.requests == []
     assert correlation_key not in controller_2._opportunity_open_outcomes
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     labels_after_replay = repository.load_outcome_labels()
     assert [
-        (row.correlation_key, row.label_quality, dict(row.provenance)) for row in labels_after_replay
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in labels_after_replay
     ] == labels_snapshot
-    assert len(
-        [
-            row
-            for row in labels_after_replay
-            if row.correlation_key == correlation_key and row.label_quality == "final"
-        ]
-    ) == 1
+    assert (
+        len(
+            [
+                row
+                for row in labels_after_replay
+                if row.correlation_key == correlation_key and row.label_quality == "final"
+            ]
+        )
+        == 1
+    )
     assert [
         row
         for row in labels_after_replay
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
     journal_2_events = [dict(event) for event in journal_2.export()]
     assert [
@@ -59914,7 +59956,10 @@ def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_con
     )
     assert str(replay_skip.get("proxy_correlation_key") or "").strip() == correlation_key
     if "order_opportunity_shadow_record_key" in replay_skip:
-        assert str(replay_skip.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        assert (
+            str(replay_skip.get("order_opportunity_shadow_record_key") or "").strip()
+            == correlation_key
+        )
 
     replay_enforcement_events = [
         event
@@ -59933,7 +59978,9 @@ def test_opportunity_autonomy_exact_legacy_open_replay_after_final_close_and_con
         assert replay_reason != "accepted_autonomous_handoff_shadow_reference_timestamp_mismatch"
 
     non_skip_events = [
-        event for event in journal_2_events if str(event.get("event") or "").strip() != "signal_skipped"
+        event
+        for event in journal_2_events
+        if str(event.get("event") or "").strip() != "signal_skipped"
     ]
     _assert_no_duplicate_residue_metadata_for_shadow_key(
         non_skip_events, shadow_key=correlation_key
