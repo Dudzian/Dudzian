@@ -61672,6 +61672,191 @@ def test_opportunity_autonomy_exact_open_replay_after_final_label_with_incomplet
     _assert_no_duplicate_residue_metadata_for_shadow_key(
         replay_non_skip_events, shadow_key=correlation_key
     )
+
+
+@pytest.mark.parametrize(
+    ("conflict_variant", "portfolio_value", "portfolio_id_value"),
+    [
+        ("portfolio_matches_but_portfolio_id_conflicts", "paper-1", "live-1"),
+        ("portfolio_conflicts_but_portfolio_id_matches", "live-1", "paper-1"),
+    ],
+)
+def test_opportunity_autonomy_exact_open_replay_after_final_label_with_conflicting_scope_provenance_and_missing_shadow_record_is_not_suppressed(
+    tmp_path: Path,
+    conflict_variant: str,
+    portfolio_value: str,
+    portfolio_id_value: str,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 3, 13, 4, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.shadow_records_path.write_text("", encoding="utf-8")
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                correlation_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp + timedelta(minutes=5),
+                horizon_minutes=60,
+                realized_return_bps=110.0,
+                max_favorable_excursion_bps=110.0,
+                max_adverse_excursion_bps=-40.0,
+                label_quality="final",
+                provenance={
+                    "autonomy_final_mode": "paper_autonomous",
+                    "environment": "paper",
+                    "portfolio": portfolio_value,
+                    "portfolio_id": portfolio_id_value,
+                },
+            )
+        ]
+    )
+
+    matching_shadow_records = [
+        row
+        for row in repository.load_shadow_records()
+        if row.record_key == correlation_key and row.symbol == "BTC/USDT"
+    ]
+    assert matching_shadow_records == []
+
+    labels = [row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key]
+    assert len(labels) == 1
+    final_label = labels[0]
+    assert str(final_label.label_quality).strip().lower() == "final"
+    assert str((final_label.provenance or {}).get("autonomy_final_mode") or "").strip().lower() == (
+        "paper_autonomous"
+    )
+    assert str((final_label.provenance or {}).get("environment") or "").strip() == "paper"
+    assert str((final_label.provenance or {}).get("portfolio") or "").strip()
+    assert str((final_label.provenance or {}).get("portfolio_id") or "").strip()
+    assert str((final_label.provenance or {}).get("portfolio") or "").strip() != str(
+        (final_label.provenance or {}).get("portfolio_id") or ""
+    ).strip()
+    runtime_scope_portfolio = "paper-1"
+    final_portfolio = str((final_label.provenance or {}).get("portfolio") or "").strip()
+    final_portfolio_id = str((final_label.provenance or {}).get("portfolio_id") or "").strip()
+    assert (final_portfolio == runtime_scope_portfolio) ^ (final_portfolio_id == runtime_scope_portfolio)
+    if conflict_variant == "portfolio_matches_but_portfolio_id_conflicts":
+        assert final_portfolio == runtime_scope_portfolio
+        assert final_portfolio_id != runtime_scope_portfolio
+    elif conflict_variant == "portfolio_conflicts_but_portfolio_id_matches":
+        assert final_portfolio != runtime_scope_portfolio
+        assert final_portfolio_id == runtime_scope_portfolio
+    else:
+        raise AssertionError(f"Unexpected conflict_variant: {conflict_variant}")
+
+    labels_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
+
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 333.0}]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id=runtime_scope_portfolio,
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=repository,
+    )
+    replay_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    replay_metadata = dict(replay_open_signal.metadata)
+    replay_metadata.pop("opportunity_autonomy_mode", None)
+    replay_decision = replay_metadata.get("opportunity_autonomy_decision")
+    if isinstance(replay_decision, dict):
+        replay_decision = dict(replay_decision)
+        replay_decision.pop("effective_mode", None)
+        replay_metadata["opportunity_autonomy_decision"] = replay_decision
+    else:
+        replay_metadata.pop("opportunity_autonomy_decision", None)
+    replay_open_signal.metadata = replay_metadata
+
+    replay_results = controller.process_signals([replay_open_signal])
+    assert [result.status for result in replay_results] == ["filled"]
+    assert len(execution.requests) == 1
+    replay_request = execution.requests[0]
+    assert replay_request.side == "BUY"
+    assert str(replay_request.metadata.get("opportunity_shadow_record_key") or "").strip() == correlation_key
+
+    journal_events = [dict(event) for event in journal.export()]
+    assert [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "signal_skipped"
+        and str(event.get("reason") or event.get("decision_reason") or "").strip()
+        == "final_outcome_replay_open_suppressed"
+        and (
+            str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+            or str(event.get("proxy_correlation_key") or "").strip() == correlation_key
+        )
+    ] == []
+    replay_order_events = [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").startswith("order_")
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert replay_order_events
+
+    labels_after = repository.load_outcome_labels()
+    assert [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in labels_after
+    ] == labels_snapshot
+    assert (
+        len(
+            [
+                row
+                for row in labels_after
+                if row.correlation_key == correlation_key and row.label_quality == "final"
+            ]
+        )
+        == 1
+    )
+    assert [
+        row
+        for row in labels_after
+        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+    ] == []
+    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+
+    attach_events = [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert [
+        event
+        for event in attach_events
+        if str(event.get("status") or "").strip() in {"final_upgraded", "quality_upgraded"}
+        and str(event.get("final_correlation_key") or "").strip() == correlation_key
+    ] == []
+    replay_non_skip_events = [
+        event for event in journal_events if str(event.get("event") or "").strip() != "signal_skipped"
+    ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        replay_non_skip_events, shadow_key=correlation_key
+    )
 @pytest.mark.parametrize("autonomy_final_mode", [None, "rules"])
 def test_opportunity_autonomy_exact_open_replay_after_same_scope_non_autonomous_final_label_with_missing_shadow_record_is_not_suppressed(
     tmp_path: Path,
