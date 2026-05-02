@@ -1089,9 +1089,15 @@ class TradingController:
             if final_mode not in {"paper_autonomous", "live_autonomous"}:
                 continue
             final_environment = str(final_provenance.get("environment") or "").strip()
-            final_portfolio = str(
-                final_provenance.get("portfolio") or final_provenance.get("portfolio_id") or ""
-            ).strip()
+            final_portfolio_raw = str(final_provenance.get("portfolio") or "").strip()
+            final_portfolio_id_raw = str(final_provenance.get("portfolio_id") or "").strip()
+            if (
+                final_portfolio_raw
+                and final_portfolio_id_raw
+                and final_portfolio_raw != final_portfolio_id_raw
+            ):
+                continue
+            final_portfolio = final_portfolio_raw or final_portfolio_id_raw
             if scope_environment and not final_environment:
                 continue
             if scope_portfolio and not final_portfolio:
@@ -1215,9 +1221,15 @@ class TradingController:
             if final_mode not in {"paper_autonomous", "live_autonomous"}:
                 continue
             final_environment = str(final_provenance.get("environment") or "").strip()
-            final_portfolio = str(
-                final_provenance.get("portfolio") or final_provenance.get("portfolio_id") or ""
-            ).strip()
+            final_portfolio_raw = str(final_provenance.get("portfolio") or "").strip()
+            final_portfolio_id_raw = str(final_provenance.get("portfolio_id") or "").strip()
+            if (
+                final_portfolio_raw
+                and final_portfolio_id_raw
+                and final_portfolio_raw != final_portfolio_id_raw
+            ):
+                continue
+            final_portfolio = final_portfolio_raw or final_portfolio_id_raw
             if scope_environment and not final_environment:
                 continue
             if scope_portfolio and not final_portfolio:
