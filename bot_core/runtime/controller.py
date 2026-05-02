@@ -1283,13 +1283,13 @@ class TradingController:
                 # Fallback tylko po dowodzie final-label autonomous w tym samym scope:
                 # chroni przed replay OPEN przy legacy/corrupt shadow bez direction.
                 return True
-            if (
-                not matching_shadow_scope_candidate_exists
-                and not matching_shadow_for_key_symbol_exists
-            ):
-                # Brak shadow recordu po restarcie/restore nie obala dowodu final-label
-                # w tym samym scope: dla autonomous replay OPEN traktujemy final label
-                # jako durable proof finalnego zamknięcia lifecycle.
+            if not matching_shadow_scope_candidate_exists:
+                # Brak same-scope shadow (w tym: tylko foreign-scope shadow) nie obala
+                # dowodu final-label w tym samym scope dla replay OPEN.
+                if side == "BUY":
+                    return True
+                if matching_shadow_for_key_symbol_exists:
+                    return False
                 return True
         return False
 
