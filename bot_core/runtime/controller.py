@@ -1184,9 +1184,15 @@ class TradingController:
         payload_effective_mode = ""
         payload_decision_source = ""
         if isinstance(decision_payload, Mapping):
-            payload_effective_mode = str(decision_payload.get("effective_mode") or "").strip().lower()
-            payload_decision_source = str(decision_payload.get("decision_source") or "").strip().lower()
-        request_decision_source = str(request_metadata.get("opportunity_decision_source") or "").strip().lower()
+            payload_effective_mode = (
+                str(decision_payload.get("effective_mode") or "").strip().lower()
+            )
+            payload_decision_source = (
+                str(decision_payload.get("decision_source") or "").strip().lower()
+            )
+        request_decision_source = (
+            str(request_metadata.get("opportunity_decision_source") or "").strip().lower()
+        )
         has_explicit_manual_or_rules_marker = (
             local_mode in {"manual", "rules"}
             or local_signal_mode in {"manual", "rules"}
@@ -1194,7 +1200,10 @@ class TradingController:
             or request_decision_source in {"manual", "rules"}
             or payload_decision_source in {"manual", "rules"}
         )
-        has_explicit_autonomous_marker = autonomy_mode in {"paper_autonomous", "live_autonomous"} or payload_effective_mode in {
+        has_explicit_autonomous_marker = autonomy_mode in {
+            "paper_autonomous",
+            "live_autonomous",
+        } or payload_effective_mode in {
             "paper_autonomous",
             "live_autonomous",
         }
@@ -1202,7 +1211,10 @@ class TradingController:
             return False
         if not self._is_autonomous_open_handoff_path(request):
             return False
-        has_autonomy_metadata = autonomy_mode in {"paper_autonomous", "live_autonomous"} or payload_effective_mode in {
+        has_autonomy_metadata = autonomy_mode in {
+            "paper_autonomous",
+            "live_autonomous",
+        } or payload_effective_mode in {
             "paper_autonomous",
             "live_autonomous",
         }
@@ -1276,7 +1288,9 @@ class TradingController:
                 )
                 shadow_notes_mapping = shadow_notes if isinstance(shadow_notes, Mapping) else {}
                 shadow_portfolio_raw = str(shadow_notes_mapping.get("portfolio") or "").strip()
-                shadow_portfolio_id_raw = str(shadow_notes_mapping.get("portfolio_id") or "").strip()
+                shadow_portfolio_id_raw = str(
+                    shadow_notes_mapping.get("portfolio_id") or ""
+                ).strip()
                 if (
                     shadow_portfolio_raw
                     and shadow_portfolio_id_raw
