@@ -1241,6 +1241,7 @@ class TradingController:
             matching_shadow_scope_candidate_exists = False
             matching_shadow_with_usable_direction_exists = False
             matching_shadow_for_key_symbol_exists = False
+            conflicting_shadow_scope_context_exists = False
             for shadow_record in shadow_records:
                 if shadow_record.record_key != correlation_key:
                     continue
@@ -1250,13 +1251,26 @@ class TradingController:
                 shadow_context = getattr(shadow_record, "context", None)
                 if isinstance(shadow_context, Mapping):
                     shadow_environment_raw = shadow_context.get("environment")
+                    shadow_notes = shadow_context.get("notes")
                 else:
                     shadow_environment_raw = getattr(shadow_context, "environment", None)
+                    shadow_notes = getattr(shadow_context, "notes", None)
                 shadow_environment = (
                     str(shadow_environment_raw).strip()
                     if shadow_environment_raw is not None
                     else ""
                 )
+                shadow_notes_mapping = shadow_notes if isinstance(shadow_notes, Mapping) else {}
+                shadow_portfolio_raw = str(shadow_notes_mapping.get("portfolio") or "").strip()
+                shadow_portfolio_id_raw = str(shadow_notes_mapping.get("portfolio_id") or "").strip()
+                if (
+                    shadow_portfolio_raw
+                    and shadow_portfolio_id_raw
+                    and shadow_portfolio_raw != shadow_portfolio_id_raw
+                ):
+                    conflicting_shadow_scope_context_exists = True
+                    continue
+                shadow_portfolio = shadow_portfolio_raw or shadow_portfolio_id_raw
                 shadow_environment_normalized = shadow_environment.lower()
                 legacy_shadow_scope_missing = shadow_environment_normalized in {"", "shadow"}
                 if (
@@ -1265,6 +1279,10 @@ class TradingController:
                     and shadow_environment != scope_environment
                     and not legacy_shadow_scope_missing
                 ):
+                    continue
+                if scope_portfolio and not shadow_portfolio:
+                    continue
+                if shadow_portfolio and scope_portfolio and shadow_portfolio != scope_portfolio:
                     continue
                 matching_shadow_scope_candidate_exists = True
                 if has_autonomy_metadata:
@@ -1296,6 +1314,8 @@ class TradingController:
                 # chroni przed replay OPEN przy legacy/corrupt shadow bez direction.
                 return True
             if not matching_shadow_scope_candidate_exists:
+                if conflicting_shadow_scope_context_exists:
+                    return False
                 # Brak same-scope shadow (w tym: tylko foreign-scope shadow) nie obala
                 # dowodu final-label w tym samym scope dla replay OPEN.
                 if side == "BUY":

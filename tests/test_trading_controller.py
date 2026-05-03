@@ -44044,6 +44044,193 @@ def test_opportunity_autonomy_exact_open_replay_after_final_label_with_mixed_sco
     _assert_no_duplicate_residue_metadata_for_shadow_key(
         replay_non_skip_events, shadow_key=correlation_key
     )
+
+
+@pytest.mark.parametrize(
+    ("shadow_notes",),
+    [
+        pytest.param(
+            {"portfolio": "paper-1", "portfolio_id": "live-1"},
+            id="portfolio_matches_but_portfolio_id_conflicts",
+        ),
+        pytest.param(
+            {"portfolio": "live-1", "portfolio_id": "paper-1"},
+            id="portfolio_conflicts_but_portfolio_id_matches",
+        ),
+    ],
+)
+def test_opportunity_autonomy_exact_open_replay_after_final_label_with_conflicting_shadow_scope_context_is_not_suppressed_by_shadow_candidate(
+    shadow_notes: dict[str, str],
+) -> None:
+    decision_timestamp = datetime(2026, 1, 3, 13, 12, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [9.0, 8.0, 7.0], environment="paper", portfolio_id="paper-1"
+    )
+    repository.shadow_records_path.write_text("", encoding="utf-8")
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                correlation_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp + timedelta(minutes=5),
+                horizon_minutes=60,
+                realized_return_bps=110.0,
+                max_favorable_excursion_bps=110.0,
+                max_adverse_excursion_bps=-40.0,
+                label_quality="final",
+                provenance={
+                    "autonomy_final_mode": "paper_autonomous",
+                    "environment": "paper",
+                    "portfolio": "paper-1",
+                },
+            )
+        ]
+    )
+    repository.shadow_records_path.write_text(
+        json.dumps(
+            replace(
+                _shadow_record_for_key(
+                    correlation_key=correlation_key, decision_timestamp=decision_timestamp
+                ),
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                proposed_direction="long",
+                accepted=True,
+                context=OpportunityShadowContext(environment="paper", notes=dict(shadow_notes)),
+            ).to_dict()
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    shadow_records_for_key_symbol = [
+        row
+        for row in repository.load_shadow_records()
+        if row.record_key == correlation_key and row.symbol == "BTC/USDT"
+    ]
+    assert len(shadow_records_for_key_symbol) == 1
+    shadow_record = shadow_records_for_key_symbol[0]
+    shadow_context = getattr(shadow_record, "context", None)
+    shadow_context_notes = getattr(shadow_context, "notes", {}) or {}
+    shadow_environment = str(getattr(shadow_context, "environment", "") or "").strip()
+    shadow_portfolio = str(shadow_context_notes.get("portfolio") or "").strip()
+    shadow_portfolio_id = str(shadow_context_notes.get("portfolio_id") or "").strip()
+    assert shadow_environment == "paper"
+    assert shadow_portfolio
+    assert shadow_portfolio_id
+    assert shadow_portfolio != shadow_portfolio_id
+    assert len([value for value in (shadow_portfolio, shadow_portfolio_id) if value == "paper-1"]) == 1
+    assert str(shadow_record.proposed_direction or "").strip().lower() == "long"
+
+    final_labels = [
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == correlation_key
+        and str(row.symbol) == "BTC/USDT"
+        and str(row.label_quality).strip().lower() == "final"
+    ]
+    assert len(final_labels) == 1
+    final_provenance = dict(final_labels[0].provenance or {})
+    assert str(final_provenance.get("autonomy_final_mode") or "").strip().lower() == "paper_autonomous"
+    assert str(final_provenance.get("environment") or "").strip() == "paper"
+    assert str(final_provenance.get("portfolio") or "").strip() == "paper-1"
+
+    labels_snapshot = [
+        (row.correlation_key, row.symbol, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 333.0}]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=repository,
+    )
+    replay_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    replay_metadata = dict(replay_open_signal.metadata)
+    replay_metadata.pop("opportunity_autonomy_mode", None)
+    replay_decision = replay_metadata.get("opportunity_autonomy_decision")
+    if isinstance(replay_decision, dict):
+        replay_decision = dict(replay_decision)
+        replay_decision.pop("effective_mode", None)
+        replay_metadata["opportunity_autonomy_decision"] = replay_decision
+    else:
+        replay_metadata.pop("opportunity_autonomy_decision", None)
+    replay_open_signal.metadata = replay_metadata
+
+    replay_results = controller.process_signals([replay_open_signal])
+
+    assert [result.status for result in replay_results] == ["filled"]
+    assert len(execution.requests) == 1
+    assert str(execution.requests[0].side).upper() == "BUY"
+    assert str(execution.requests[0].symbol) == "BTC/USDT"
+    assert (
+        str((execution.requests[0].metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    )
+
+    journal_events = [dict(event) for event in journal.export()]
+    assert [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "signal_skipped"
+        and str(event.get("reason") or event.get("decision_reason") or "").strip()
+        == "final_outcome_replay_open_suppressed"
+    ] == []
+    assert [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").startswith("order_")
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ] != []
+    assert [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        and (
+            str(event.get("opportunity_outcome_attach_quality_upgraded") or "").strip().lower() == "true"
+            or str(event.get("opportunity_outcome_attach_final_upgraded") or "").strip().lower() == "true"
+        )
+    ] == []
+    assert [
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+    ] == []
+    assert [
+        (row.correlation_key, row.symbol, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ] == labels_snapshot
+    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    replay_non_skip_events = [
+        event for event in journal_events if str(event.get("event") or "").strip() != "signal_skipped"
+    ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        replay_non_skip_events, shadow_key=correlation_key
+    )
+
+
 @pytest.mark.parametrize("shadow_order_variant", ["invalid_symbol_first", "valid_symbol_first"])
 def test_opportunity_autonomy_duplicate_close_guard_mixed_symbol_shadow_records_uses_valid_same_symbol_shadow_for_suppression(
     shadow_order_variant: str,
