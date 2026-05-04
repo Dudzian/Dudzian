@@ -45040,6 +45040,190 @@ def test_opportunity_autonomy_duplicate_close_guard_conflicting_shadow_scope_con
     )
 
 
+def test_opportunity_autonomy_duplicate_close_guard_incomplete_shadow_portfolio_scope_does_not_suppress_replay_close() -> None:
+    decision_timestamp = datetime(2026, 1, 13, 9, 30, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    repository = OpportunityShadowRepository(
+        Path(tempfile.mkdtemp(prefix="duplicate-close-incomplete-shadow-scope-"))
+    )
+    repository.append_outcome_labels(
+        [
+            OpportunityOutcomeLabel(
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp + timedelta(minutes=5),
+                correlation_key=correlation_key,
+                horizon_minutes=15,
+                realized_return_bps=6.0,
+                max_favorable_excursion_bps=8.0,
+                max_adverse_excursion_bps=-2.0,
+                provenance={
+                    "autonomy_final_mode": "paper_autonomous",
+                    "environment": "paper",
+                    "portfolio": "paper-1",
+                },
+                label_quality="final",
+            )
+        ]
+    )
+    repository.shadow_records_path.write_text(
+        json.dumps(
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=6.0,
+                success_probability=0.7,
+                confidence=0.4,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper", notes={}),
+            ).to_dict()
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    shadow_records_for_key_symbol = [
+        row
+        for row in repository.load_shadow_records()
+        if row.record_key == correlation_key and row.symbol == "BTC/USDT"
+    ]
+    assert len(shadow_records_for_key_symbol) == 1
+    shadow_record = shadow_records_for_key_symbol[0]
+    shadow_context = getattr(shadow_record, "context", None)
+    shadow_notes_loaded = getattr(shadow_context, "notes", {}) or {}
+    assert str(getattr(shadow_context, "environment", "") or "").strip() == "paper"
+    assert str(shadow_notes_loaded.get("portfolio") or "").strip() == ""
+    assert str(shadow_notes_loaded.get("portfolio_id") or "").strip() == ""
+    assert str(shadow_record.proposed_direction or "").strip().lower() == "long"
+
+    final_labels = [
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == correlation_key
+        and str(row.symbol) == "BTC/USDT"
+        and str(row.label_quality).strip().lower() == "final"
+    ]
+    assert len(final_labels) == 1
+    final_provenance = dict(final_labels[0].provenance or {})
+    assert (
+        str(final_provenance.get("autonomy_final_mode") or "").strip().lower() == "paper_autonomous"
+    )
+    assert str(final_provenance.get("environment") or "").strip() == "paper"
+    assert str(final_provenance.get("portfolio") or "").strip() == "paper-1"
+
+    labels_snapshot = [
+        (row.correlation_key, row.symbol, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 222.0}]
+    )
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=repository,
+    )
+    replay_close = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_mode=False,
+    )
+    replay_close.metadata = {**dict(replay_close.metadata), "mode": "close_ranked"}
+    replay_results = controller.process_signals([replay_close])
+
+    assert [result.status for result in replay_results] == ["filled"]
+    assert len(execution.requests) == 1
+    execution_request = execution.requests[0]
+    assert str(execution_request.side).upper() == "SELL"
+    assert str(execution_request.symbol) == "BTC/USDT"
+    assert (
+        str((execution_request.metadata or {}).get("mode") or "").strip().lower() == "close_ranked"
+    )
+    assert (
+        str((execution_request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    )
+
+    journal_events = [dict(event) for event in journal.export()]
+    assert [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "signal_skipped"
+        and str(event.get("reason") or event.get("decision_reason") or "").strip()
+        == "duplicate_autonomous_close_replay_suppressed"
+    ] == []
+    assert [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "signal_skipped"
+        and str(event.get("reason") or event.get("decision_reason") or "").strip()
+        == "final_outcome_replay_open_suppressed"
+    ] == []
+    assert [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").startswith("order_")
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ] != []
+    assert [
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
+    ] == []
+    assert [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        and (
+            str(event.get("opportunity_outcome_attach_quality_upgraded") or "").strip().lower()
+            == "true"
+            or str(event.get("opportunity_outcome_attach_final_upgraded") or "").strip().lower()
+            == "true"
+        )
+    ] == []
+    assert [
+        (row.correlation_key, row.symbol, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ] == labels_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
+    replay_non_skip_events = [
+        event
+        for event in journal_events
+        if str(event.get("event") or "").strip() != "signal_skipped"
+    ]
+    _assert_no_duplicate_residue_metadata_for_shadow_key(
+        replay_non_skip_events, shadow_key=correlation_key
+    )
+
+
 @pytest.mark.parametrize("shadow_order_variant", ["invalid_symbol_first", "valid_symbol_first"])
 def test_opportunity_autonomy_duplicate_close_guard_mixed_symbol_shadow_records_uses_valid_same_symbol_shadow_for_suppression(
     shadow_order_variant: str,
@@ -46419,7 +46603,7 @@ def _shadow_record_for_key(
         provenance={"probability_method": "test"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
 
 
@@ -59427,7 +59611,7 @@ def test_upstream_handoff_classifier_allows_legal_close_with_same_scope_semantic
         provenance={"probability_method": "scoped-primary", "signal_family": "trend"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={"window": "15m", "regime": "continuation"},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     scoped_long_b = replace(
         scoped_long_a,
@@ -59558,7 +59742,7 @@ def test_upstream_handoff_payload_only_effective_mode_classifier_uses_aligned_sa
         provenance={"probability_method": "scoped-primary", "signal_family": "trend"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={"window": "15m", "regime": "continuation"},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     scoped_long_b = replace(
         scoped_long_a,
@@ -59679,7 +59863,7 @@ def test_upstream_handoff_classifier_allows_legal_close_with_same_scope_semantic
         provenance={"probability_method": "aligned-a"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     scoped_long_b = OpportunityShadowRecord(
         record_key=correlation_key,
@@ -59697,7 +59881,7 @@ def test_upstream_handoff_classifier_allows_legal_close_with_same_scope_semantic
         provenance={"probability_method": "aligned-b"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     first_scoped_record, second_scoped_record = (
         (scoped_long_b, scoped_long_a) if reversed_order else (scoped_long_a, scoped_long_b)
@@ -59745,6 +59929,21 @@ def test_upstream_handoff_classifier_allows_legal_close_with_same_scope_semantic
 
     open_results = controller.process_signals([open_signal])
     shadow_repo.append_shadow_records([second_scoped_record])
+
+    shadow_rows = [
+        row
+        for row in shadow_repo.load_shadow_records()
+        if str(row.record_key) == correlation_key and str(getattr(row, "symbol", "")) == "BTC/USDT"
+    ]
+    assert len(shadow_rows) == 2
+    same_scope_rows = [
+        row
+        for row in shadow_rows
+        if str(getattr(row.context, "environment", "") or "").strip() == "paper"
+        and str((getattr(row.context, "notes", {}) or {}).get("portfolio") or "").strip()
+        == "paper-1"
+    ]
+    assert len(same_scope_rows) == 2
 
     # Helper-level proof: classifier can resolve CLOSE via repository fallback
     # when aligned same-scope duplicates exist and tracker shortcut is absent.
@@ -59888,7 +60087,7 @@ def test_upstream_handoff_payload_only_effective_mode_classifier_uses_aligned_sa
         provenance={"probability_method": "aligned-a"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     scoped_long_b = OpportunityShadowRecord(
         record_key=correlation_key,
@@ -59906,7 +60105,7 @@ def test_upstream_handoff_payload_only_effective_mode_classifier_uses_aligned_sa
         provenance={"probability_method": "aligned-b"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     first_scoped_record, second_scoped_record = (
         (scoped_long_b, scoped_long_a) if reversed_order else (scoped_long_a, scoped_long_b)
@@ -59958,6 +60157,21 @@ def test_upstream_handoff_payload_only_effective_mode_classifier_uses_aligned_sa
 
     open_results = controller.process_signals([open_signal])
     shadow_repo.append_shadow_records([second_scoped_record])
+
+    shadow_rows = [
+        row
+        for row in shadow_repo.load_shadow_records()
+        if str(row.record_key) == correlation_key and str(getattr(row, "symbol", "")) == "BTC/USDT"
+    ]
+    assert len(shadow_rows) == 2
+    same_scope_rows = [
+        row
+        for row in shadow_rows
+        if str(getattr(row.context, "environment", "") or "").strip() == "paper"
+        and str((getattr(row.context, "notes", {}) or {}).get("portfolio") or "").strip()
+        == "paper-1"
+    ]
+    assert len(same_scope_rows) == 2
 
     # Helper-level proof: classifier can resolve CLOSE via repository fallback
     # when aligned same-scope duplicates exist and tracker shortcut is absent.

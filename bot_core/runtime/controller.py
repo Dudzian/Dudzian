@@ -1145,6 +1145,8 @@ class TradingController:
                 and not legacy_shadow_scope_missing
             ):
                 continue
+            if scope_portfolio and not shadow_portfolio and not legacy_shadow_scope_missing:
+                continue
             if scope_portfolio and shadow_portfolio and shadow_portfolio != scope_portfolio:
                 continue
             matching_shadow_scope_candidate_exists = True
