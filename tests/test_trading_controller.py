@@ -68538,7 +68538,9 @@ def test_opportunity_autonomy_exact_open_replay_after_final_label_with_incomplet
     )
 
 
-def test_opportunity_autonomy_duplicate_close_guard_incomplete_final_scope_does_not_suppress_with_valid_shadow_scope() -> None:
+def test_opportunity_autonomy_duplicate_close_guard_incomplete_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 14, 11, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -68577,10 +68579,17 @@ def test_opportunity_autonomy_duplicate_close_guard_incomplete_final_scope_does_
             )
         ]
     )
-    labels_snapshot = [(row.correlation_key, row.label_quality, dict(row.provenance)) for row in repository.load_outcome_labels()]
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
+    labels_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
 
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+    )
     journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=DummyRiskEngine(),
@@ -68616,21 +68625,30 @@ def test_opportunity_autonomy_duplicate_close_guard_incomplete_final_scope_does_
         and event.get("reason") == "final_outcome_replay_open_suppressed"
         for event in journal_events
     )
-    attach_events = [event for event in journal_events if event.get("event") == "opportunity_outcome_attach"]
-    assert not any(str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events)
+    attach_events = [
+        event for event in journal_events if event.get("event") == "opportunity_outcome_attach"
+    ]
+    assert not any(
+        str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events
+    )
     assert [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
     ] == labels_snapshot
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     assert [
         row
         for row in repository.load_outcome_labels()
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
 
 
-def test_opportunity_autonomy_exact_open_replay_after_incomplete_final_scope_does_not_suppress_with_valid_shadow_scope() -> None:
+def test_opportunity_autonomy_exact_open_replay_after_incomplete_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 14, 11, 30, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -68669,10 +68687,17 @@ def test_opportunity_autonomy_exact_open_replay_after_incomplete_final_scope_doe
             )
         ]
     )
-    labels_snapshot = [(row.correlation_key, row.label_quality, dict(row.provenance)) for row in repository.load_outcome_labels()]
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
+    labels_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
 
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 222.0}])
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 222.0}]
+    )
     journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=DummyRiskEngine(),
@@ -68706,21 +68731,30 @@ def test_opportunity_autonomy_exact_open_replay_after_incomplete_final_scope_doe
         and event.get("reason") == "duplicate_autonomous_close_replay_suppressed"
         for event in journal_events
     )
-    attach_events = [event for event in journal_events if event.get("event") == "opportunity_outcome_attach"]
-    assert not any(str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events)
+    attach_events = [
+        event for event in journal_events if event.get("event") == "opportunity_outcome_attach"
+    ]
+    assert not any(
+        str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events
+    )
     assert [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
     ] == labels_snapshot
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     assert [
         row
         for row in repository.load_outcome_labels()
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
 
 
-def test_opportunity_autonomy_duplicate_close_guard_foreign_final_scope_does_not_suppress_with_valid_shadow_scope() -> None:
+def test_opportunity_autonomy_duplicate_close_guard_foreign_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -68764,9 +68798,16 @@ def test_opportunity_autonomy_duplicate_close_guard_foreign_final_scope_does_not
             )
         ]
     )
-    labels_snapshot = [(row.correlation_key, row.label_quality, dict(row.provenance)) for row in repository.load_outcome_labels()]
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    labels_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
     journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=DummyRiskEngine(),
@@ -68802,21 +68843,30 @@ def test_opportunity_autonomy_duplicate_close_guard_foreign_final_scope_does_not
         and event.get("reason") == "final_outcome_replay_open_suppressed"
         for event in journal_events
     )
-    attach_events = [event for event in journal_events if event.get("event") == "opportunity_outcome_attach"]
-    assert not any(str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events)
+    attach_events = [
+        event for event in journal_events if event.get("event") == "opportunity_outcome_attach"
+    ]
+    assert not any(
+        str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events
+    )
     assert [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
     ] == labels_snapshot
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     assert [
         row
         for row in repository.load_outcome_labels()
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
 
 
-def test_opportunity_autonomy_exact_open_replay_after_foreign_final_scope_does_not_suppress_with_valid_shadow_scope() -> None:
+def test_opportunity_autonomy_exact_open_replay_after_foreign_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 14, 12, 30, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -68860,9 +68910,16 @@ def test_opportunity_autonomy_exact_open_replay_after_foreign_final_scope_does_n
             )
         ]
     )
-    labels_snapshot = [(row.correlation_key, row.label_quality, dict(row.provenance)) for row in repository.load_outcome_labels()]
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 223.0}])
+    labels_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 223.0}]
+    )
     journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=DummyRiskEngine(),
@@ -68896,21 +68953,30 @@ def test_opportunity_autonomy_exact_open_replay_after_foreign_final_scope_does_n
         and event.get("reason") == "duplicate_autonomous_close_replay_suppressed"
         for event in journal_events
     )
-    attach_events = [event for event in journal_events if event.get("event") == "opportunity_outcome_attach"]
-    assert not any(str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events)
+    attach_events = [
+        event for event in journal_events if event.get("event") == "opportunity_outcome_attach"
+    ]
+    assert not any(
+        str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events
+    )
     assert [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
     ] == labels_snapshot
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     assert [
         row
         for row in repository.load_outcome_labels()
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
 
 
-def test_opportunity_autonomy_duplicate_close_guard_conflicting_final_scope_does_not_suppress_with_valid_shadow_scope() -> None:
+def test_opportunity_autonomy_duplicate_close_guard_conflicting_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 14, 13, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -68955,9 +69021,16 @@ def test_opportunity_autonomy_duplicate_close_guard_conflicting_final_scope_does
             )
         ]
     )
-    labels_snapshot = [(row.correlation_key, row.label_quality, dict(row.provenance)) for row in repository.load_outcome_labels()]
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}])
+    labels_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+    )
     journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=DummyRiskEngine(),
@@ -68993,21 +69066,30 @@ def test_opportunity_autonomy_duplicate_close_guard_conflicting_final_scope_does
         and event.get("reason") == "final_outcome_replay_open_suppressed"
         for event in journal_events
     )
-    attach_events = [event for event in journal_events if event.get("event") == "opportunity_outcome_attach"]
-    assert not any(str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events)
+    attach_events = [
+        event for event in journal_events if event.get("event") == "opportunity_outcome_attach"
+    ]
+    assert not any(
+        str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events
+    )
     assert [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
     ] == labels_snapshot
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     assert [
         row
         for row in repository.load_outcome_labels()
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
 
 
-def test_opportunity_autonomy_exact_open_replay_after_conflicting_final_scope_does_not_suppress_with_valid_shadow_scope() -> None:
+def test_opportunity_autonomy_exact_open_replay_after_conflicting_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
+    None
+):
     decision_timestamp = datetime(2026, 1, 14, 13, 30, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
         symbol="BTC/USDT",
@@ -69052,9 +69134,16 @@ def test_opportunity_autonomy_exact_open_replay_after_conflicting_final_scope_do
             )
         ]
     )
-    labels_snapshot = [(row.correlation_key, row.label_quality, dict(row.provenance)) for row in repository.load_outcome_labels()]
-    open_outcomes_snapshot = [row.model_dump(mode="json") for row in repository.load_open_outcomes()]
-    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 224.0}])
+    labels_snapshot = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+    ]
+    open_outcomes_snapshot = [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ]
+    execution = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 224.0}]
+    )
     journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=DummyRiskEngine(),
@@ -69088,15 +69177,22 @@ def test_opportunity_autonomy_exact_open_replay_after_conflicting_final_scope_do
         and event.get("reason") == "duplicate_autonomous_close_replay_suppressed"
         for event in journal_events
     )
-    attach_events = [event for event in journal_events if event.get("event") == "opportunity_outcome_attach"]
-    assert not any(str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events)
+    attach_events = [
+        event for event in journal_events if event.get("event") == "opportunity_outcome_attach"
+    ]
+    assert not any(
+        str(event.get("status") or "").strip() == "upgrade_attached" for event in attach_events
+    )
     assert [
         (row.correlation_key, row.label_quality, dict(row.provenance))
         for row in repository.load_outcome_labels()
     ] == labels_snapshot
-    assert [row.model_dump(mode="json") for row in repository.load_open_outcomes()] == open_outcomes_snapshot
+    assert [
+        row.model_dump(mode="json") for row in repository.load_open_outcomes()
+    ] == open_outcomes_snapshot
     assert [
         row
         for row in repository.load_outcome_labels()
-        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+        if row.correlation_key == correlation_key
+        and row.label_quality == "partial_exit_unconfirmed"
     ] == []
