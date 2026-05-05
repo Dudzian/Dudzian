@@ -3348,6 +3348,9 @@ class TradingController:
         if mode not in {"paper_autonomous", "live_autonomous"}:
             return True, (), None, ""
         missing_fields: list[str] = []
+        request_symbol = str(request.symbol or "").strip()
+        if not request_symbol:
+            missing_fields.append("symbol")
         correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
         if not correlation_key:
             missing_fields.append("opportunity_shadow_record_key")
@@ -3392,7 +3395,6 @@ class TradingController:
                 mode,
                 "accepted_autonomous_handoff_shadow_reference_unresolved",
             )
-        request_symbol = str(request.symbol).strip()
         symbol_candidates = [
             row
             for row in key_candidates
