@@ -36388,7 +36388,9 @@ def test_opportunity_autonomy_duplicate_open_guard_foreign_scope_restored_tracke
                 _shadow_record_for_key(
                     correlation_key=correlation_key, decision_timestamp=decision_timestamp
                 ),
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             ),
         ]
     )
@@ -36528,7 +36530,9 @@ def test_opportunity_autonomy_duplicate_open_guard_legacy_missing_scope_with_sam
                 _shadow_record_for_key(
                     correlation_key=correlation_key, decision_timestamp=decision_timestamp
                 ),
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -36593,7 +36597,9 @@ def test_opportunity_autonomy_duplicate_open_guard_same_environment_foreign_port
                 _shadow_record_for_key(
                     correlation_key=correlation_key, decision_timestamp=decision_timestamp
                 ),
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -36658,7 +36664,9 @@ def test_opportunity_autonomy_duplicate_open_guard_legacy_missing_portfolio_same
                 _shadow_record_for_key(
                     correlation_key=correlation_key, decision_timestamp=decision_timestamp
                 ),
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -36722,7 +36730,9 @@ def test_opportunity_autonomy_duplicate_open_guard_explicit_foreign_tracker_scop
                 _shadow_record_for_key(
                     correlation_key=correlation_key, decision_timestamp=decision_timestamp
                 ),
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -36793,7 +36803,9 @@ def test_opportunity_autonomy_duplicate_open_guard_explicit_same_scope_tracker_w
                 _shadow_record_for_key(
                     correlation_key=correlation_key, decision_timestamp=decision_timestamp
                 ),
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             ),
         ]
     )
@@ -38673,7 +38685,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_positive_position_si
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -38857,7 +38869,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_positive_position_si
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -38968,7 +38980,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_negative_position_ke
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -39063,7 +39075,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_conflictin
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -39174,7 +39186,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_first_inva
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -39269,7 +39281,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_first_vali
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -39364,7 +39376,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_zero_position_withou
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -39472,7 +39484,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_zero_then_
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -39580,7 +39592,7 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_positive_t
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             )
         ]
     )
@@ -45958,7 +45970,7 @@ def test_opportunity_autonomy_duplicate_close_guard_shadow_record_direction_orde
         provenance={"probability_method": "test"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     same_scope_matching = _shadow_record_for_key(
         correlation_key=correlation_key, decision_timestamp=decision_timestamp
@@ -50013,7 +50025,7 @@ def test_opportunity_autonomous_open_without_positive_finite_quantity_proof_does
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             ),
             OpportunityShadowRecord(
                 record_key=second_key,
@@ -50031,7 +50043,7 @@ def test_opportunity_autonomous_open_without_positive_finite_quantity_proof_does
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             ),
         ]
     )
@@ -50137,7 +50149,7 @@ def test_opportunity_autonomous_open_missing_filled_quantity_field_does_not_crea
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             ),
             OpportunityShadowRecord(
                 record_key=second_key,
@@ -50155,7 +50167,7 @@ def test_opportunity_autonomous_open_missing_filled_quantity_field_does_not_crea
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             ),
         ]
     )
@@ -50422,7 +50434,7 @@ def test_opportunity_autonomous_open_positive_quantity_creates_tracker_and_consu
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             ),
             OpportunityShadowRecord(
                 record_key=second_key,
@@ -50440,7 +50452,7 @@ def test_opportunity_autonomous_open_positive_quantity_creates_tracker_and_consu
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper"),
+                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
             ),
         ]
     )
@@ -59696,6 +59708,146 @@ def test_upstream_handoff_guard_payload_without_effective_mode_in_paper_autonomo
     assert event["blocking_reason"] == "accepted_autonomous_handoff_contract_incomplete"
 
 
+@pytest.mark.parametrize(
+    "portfolio_notes",
+    [
+        {},
+        {"portfolio": "paper-foreign"},
+        {"portfolio": "paper-1", "portfolio_id": "paper-foreign"},
+    ],
+    ids=["missing_portfolio", "foreign_portfolio", "conflicting_portfolio_id"],
+)
+def test_upstream_handoff_scope_aware_resolution_blocks_same_environment_invalid_portfolio_scope(
+    tmp_path: Path,
+    portfolio_notes: dict[str, str],
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(environment="paper", notes=portfolio_notes),
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_scope_mismatch"
+
+
+@pytest.mark.parametrize("invalid_first", (True, False))
+@pytest.mark.parametrize(
+    "invalid_notes",
+    [
+        {},
+        {"portfolio": "paper-foreign"},
+        {"portfolio": "paper-1", "portfolio_id": "paper-foreign"},
+    ],
+    ids=["missing_portfolio", "foreign_portfolio", "conflicting_portfolio_id"],
+)
+def test_upstream_handoff_scope_aware_resolution_prefers_valid_same_scope_candidate_over_invalid_portfolio_scope(
+    tmp_path: Path,
+    invalid_first: bool,
+    invalid_notes: dict[str, str],
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    invalid_candidate = OpportunityShadowRecord(
+        record_key=correlation_key,
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"probability_method": "invalid"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper", notes=invalid_notes),
+    )
+    valid_candidate = replace(
+        invalid_candidate,
+        provenance={"probability_method": "valid"},
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+    )
+    first, second = (invalid_candidate, valid_candidate) if invalid_first else (valid_candidate, invalid_candidate)
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records([first, second])
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 1
+    assert len(shadow_repo.load_open_outcomes()) == 1
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "allowed"
+    assert "scope_ambiguous" not in event.get("blocking_reason", "")
+    assert "scope_mismatch" not in event.get("blocking_reason", "")
+
+
 @pytest.mark.parametrize("foreign_first", (True, False))
 def test_upstream_handoff_scope_aware_resolution_is_order_independent_when_scope_match_exists(
     tmp_path: Path,
@@ -59742,7 +59894,7 @@ def test_upstream_handoff_scope_aware_resolution_is_order_independent_when_scope
         provenance={"probability_method": "test"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     first, second = (
         (foreign_record, scoped_record) if foreign_first else (scoped_record, foreign_record)
@@ -59858,7 +60010,7 @@ def test_upstream_handoff_scope_aware_resolution_blocks_ambiguous_same_scope_sha
         provenance={"probability_method": "test-a"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     record_b = OpportunityShadowRecord(
         record_key=correlation_key,
@@ -59876,7 +60028,7 @@ def test_upstream_handoff_scope_aware_resolution_blocks_ambiguous_same_scope_sha
         provenance={"probability_method": "test-b"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records([record_a, record_b])
@@ -59953,7 +60105,7 @@ def test_upstream_handoff_open_close_classifier_is_order_independent_for_actual_
         provenance={"probability_method": "scoped"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     first, second = (foreign_short, scoped_long) if foreign_first else (scoped_long, foreign_short)
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
@@ -60428,7 +60580,7 @@ def test_upstream_handoff_classifier_keeps_actual_open_on_open_path_with_same_sc
         provenance={"probability_method": "aligned-a"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     scoped_long_b = OpportunityShadowRecord(
         record_key=correlation_key,
@@ -60446,7 +60598,7 @@ def test_upstream_handoff_classifier_keeps_actual_open_on_open_path_with_same_sc
         provenance={"probability_method": "aligned-b"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     records = [scoped_long_a, scoped_long_b]
     if reversed_order:
@@ -60656,7 +60808,7 @@ def test_upstream_handoff_classifier_repo_fallback_for_aligned_same_scope_duplic
         provenance={"probability_method": "aligned-a"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     scoped_long_b = OpportunityShadowRecord(
         record_key=correlation_key,
@@ -60674,7 +60826,7 @@ def test_upstream_handoff_classifier_repo_fallback_for_aligned_same_scope_duplic
         provenance={"probability_method": "aligned-b"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     records = [scoped_long_b, scoped_long_a] if reversed_order else [scoped_long_a, scoped_long_b]
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
@@ -60724,7 +60876,7 @@ def test_upstream_handoff_classifier_keeps_conflicting_same_scope_implied_sides_
         provenance={"probability_method": "aligned-a"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     scoped_short = OpportunityShadowRecord(
         record_key=correlation_key,
@@ -60742,7 +60894,7 @@ def test_upstream_handoff_classifier_keeps_conflicting_same_scope_implied_sides_
         provenance={"probability_method": "aligned-b"},
         threshold_config=OpportunityThresholdConfig(),
         snapshot={},
-        context=OpportunityShadowContext(environment="paper"),
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
     records = [scoped_long, scoped_short]
     if reversed_order:
@@ -61021,7 +61173,7 @@ def test_opportunity_autonomy_batch_cap_e2e_winner_only_downstream_without_loser
             provenance={"probability_method": "test"},
             threshold_config=OpportunityThresholdConfig(),
             snapshot={},
-            context=OpportunityShadowContext(environment="paper"),
+            context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
         )
 
     sink_journal = CollectingDecisionJournal()
@@ -61158,7 +61310,7 @@ def test_opportunity_autonomy_batch_cap_e2e_is_order_independent() -> None:
             provenance={"probability_method": "test"},
             threshold_config=OpportunityThresholdConfig(),
             snapshot={},
-            context=OpportunityShadowContext(environment="paper"),
+            context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
         )
 
     def _run(
@@ -61317,7 +61469,7 @@ def test_opportunity_autonomy_batch_cap_e2e_applies_arbitration_then_cap_without
             provenance={"probability_method": "test"},
             threshold_config=OpportunityThresholdConfig(),
             snapshot={},
-            context=OpportunityShadowContext(environment="paper"),
+            context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
         )
 
     sink_journal = CollectingDecisionJournal()
@@ -61465,7 +61617,7 @@ def test_opportunity_autonomy_batch_cap_none_preserves_previous_behavior_e2e() -
             provenance={"probability_method": "test"},
             threshold_config=OpportunityThresholdConfig(),
             snapshot={},
-            context=OpportunityShadowContext(environment="paper"),
+            context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
         )
 
     sink = DecisionAwareSignalSink(
@@ -61590,7 +61742,7 @@ def test_opportunity_autonomy_batch_cap_duplicate_group_wins_as_single_slot_with
             provenance={"probability_method": "test"},
             threshold_config=OpportunityThresholdConfig(),
             snapshot={},
-            context=OpportunityShadowContext(environment="paper"),
+            context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
         )
 
     sink = DecisionAwareSignalSink(
@@ -61736,7 +61888,7 @@ def test_opportunity_autonomy_batch_cap_duplicate_group_loses_without_any_downst
             provenance={"probability_method": "test"},
             threshold_config=OpportunityThresholdConfig(),
             snapshot={},
-            context=OpportunityShadowContext(environment="paper"),
+            context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
         )
 
     sink = DecisionAwareSignalSink(
