@@ -180,6 +180,7 @@ class OpportunityRuntimeShadowAdapter:
             schedule_name=schedule_name,
             risk_profile=risk_profile,
             environment=environment,
+            portfolio=portfolio,
         )
         provenance = dict(decision.provenance)
         provenance.update(
@@ -247,6 +248,7 @@ class OpportunityRuntimeShadowAdapter:
         schedule_name: str,
         risk_profile: str,
         environment: str,
+        portfolio: str,
     ) -> tuple[str | None, str, str | None]:
         if self.shadow_repository is None:
             return None, "disabled", None
@@ -262,7 +264,7 @@ class OpportunityRuntimeShadowAdapter:
                 },
                 context=OpportunityShadowContext(
                     environment=environment,
-                    notes={"adapter_mode": self.mode},
+                    notes={"adapter_mode": self.mode, "portfolio": str(portfolio)},
                 ),
             )
             self.shadow_repository.append_shadow_records(records)
