@@ -253,6 +253,10 @@ class OpportunityRuntimeShadowAdapter:
         if self.shadow_repository is None:
             return None, "disabled", None
         try:
+            normalized_portfolio = self._normalize_portfolio_note(portfolio)
+            notes = {"adapter_mode": self.mode}
+            if normalized_portfolio is not None:
+                notes["portfolio"] = normalized_portfolio
             records = self.engine.build_shadow_records(
                 [decision],
                 decision_timestamp=decision_timestamp,
@@ -264,7 +268,7 @@ class OpportunityRuntimeShadowAdapter:
                 },
                 context=OpportunityShadowContext(
                     environment=environment,
-                    notes={"adapter_mode": self.mode, "portfolio": str(portfolio)},
+                    notes=notes,
                 ),
             )
             self.shadow_repository.append_shadow_records(records)
@@ -284,6 +288,15 @@ class OpportunityRuntimeShadowAdapter:
             )
             _LOGGER.warning("Opportunity shadow persistence failed", exc_info=True)
             return None, "error", str(exc)
+
+    @staticmethod
+    def _normalize_portfolio_note(portfolio: object) -> str | None:
+        normalized = str(portfolio or "").strip()
+        if not normalized:
+            return None
+        if normalized.lower() in {"none", "null"}:
+            return None
+        return normalized
 
     @classmethod
     def _json_safe_payload(cls, payload: Mapping[str, object]) -> dict[str, object]:
