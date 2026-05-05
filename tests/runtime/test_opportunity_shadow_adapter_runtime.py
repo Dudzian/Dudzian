@@ -403,6 +403,7 @@ def test_shadow_adapter_skips_empty_and_nullish_portfolio_proof_in_notes(tmp_pat
     notes_list = [record.context.notes for record in shadow_repository.load_shadow_records()]
     assert len(notes_list) == 3
     for notes in notes_list:
+        assert "portfolio" not in notes
         assert notes.get("portfolio") != "paper"
         assert notes.get("portfolio") != "None"
         assert notes.get("portfolio") != ""
