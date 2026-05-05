@@ -170,6 +170,8 @@ def test_shadow_adapter_persists_shadow_record_when_repository_is_configured(
     records = shadow_repository.load_shadow_records()
     assert len(records) == 1
     assert records[0].model_version
+    assert records[0].context.environment == "paper"
+    assert records[0].context.notes["portfolio"] == "paper-main"
     assert journal.events[-1].metadata["shadow_persistence_status"] == "persisted"
     assert journal.events[-1].metadata["shadow_record_key"] == records[0].record_key
 
