@@ -50845,6 +50845,141 @@ def test_opportunity_autonomous_open_unrecognized_non_fill_zero_fill_does_not_cr
     assert shadow_repo.load_open_outcomes() == []
 
 
+@pytest.mark.parametrize("invalid_symbol", ["", "   ", None])
+def test_opportunity_autonomous_open_invalid_symbol_blocks_before_risk_and_execution(
+    tmp_path: Path,
+    invalid_symbol: str | None,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    open_signal.symbol = invalid_symbol
+
+    controller.process_signals([open_signal])
+    controller.process_signals([open_signal])
+
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert shadow_repo.load_open_outcomes() == []
+    assert shadow_repo.load_outcome_labels() == []
+
+    events = list(journal.export())
+    assert any(
+        event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
+        and event.get("blocking_reason") == "accepted_autonomous_handoff_contract_incomplete"
+        and "symbol" in str(event.get("missing_contract_fields") or "")
+        for event in events
+    )
+    assert not any(
+        event.get("event") in {"order_executed", "order_partially_executed"} for event in events
+    )
+    assert not any(event.get("event") == "opportunity_outcome_attach" for event in events)
+
+
+def test_opportunity_autonomous_open_invalid_symbol_retry_with_valid_symbol_has_no_residue_block(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key,
+                decision_timestamp=decision_timestamp,
+            )
+        ]
+    )
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        opportunity_shadow_repository=shadow_repo,
+    )
+    invalid_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    invalid_open_signal.symbol = None
+    valid_open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    valid_open_signal.symbol = "BTC/USDT"
+
+    controller.process_signals([invalid_open_signal])
+    controller.process_signals([valid_open_signal])
+
+    assert len(risk_engine.last_checks) == 1
+    assert len(execution.requests) == 1
+    assert execution.requests[0].symbol == "BTC/USDT"
+    assert len(shadow_repo.load_open_outcomes()) == 1
+    assert len(shadow_repo.load_outcome_labels()) == 1
+
+    events = list(journal.export())
+    blocked_events = [
+        event
+        for event in events
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
+        and event.get("blocking_reason") == "accepted_autonomous_handoff_contract_incomplete"
+        and "symbol" in str(event.get("missing_contract_fields") or "")
+    ]
+    assert blocked_events
+    assert any(event.get("event") == "order_submitted" for event in events)
+
+
 def test_opportunity_autonomous_open_exception_does_not_create_lifecycle_artifacts_and_interrupts_batch(
     tmp_path: Path,
 ) -> None:
