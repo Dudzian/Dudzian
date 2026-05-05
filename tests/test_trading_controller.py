@@ -69082,6 +69082,248 @@ def test_ai_failover_blocked_open_replay_idempotent_without_risk_execution_or_tr
     )
 
 
+def test_runtime_controls_manual_kill_switch_blocks_new_autonomous_open_before_risk_and_execution() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "true",
+        "final_decision_accepted": "false",
+        "decision_authority": "decision_orchestrator",
+        "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+        "mode": "ai",
+    }
+
+    results = controller.process_signals([open_signal])
+    assert results == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert controller._opportunity_open_outcomes == {}
+    events = [dict(event) for event in journal.export()]
+    assert not any(
+        event.get("event") in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+        for event in events
+    )
+    blocked = [event for event in events if event.get("event") == "opportunity_autonomy_enforcement"]
+    assert blocked
+    assert blocked[-1]["status"] == "blocked"
+    assert blocked[-1]["blocking_reason"] == "autonomy_mode_denied"
+
+
+def test_runtime_controls_manual_kill_switch_allows_legal_autonomous_close_for_existing_tracker() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    correlation_key = "runtime-controls-legal-close"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="paper",
+        portfolio_scope="paper-1",
+    )
+    close_signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        side="SELL",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "true",
+        "final_decision_accepted": "false",
+        "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+        "opportunity_shadow_record_key": correlation_key,
+        "mode": "ai",
+    }
+
+    results = controller.process_signals([close_signal])
+    assert [result.status for result in results] == ["filled"]
+    assert len(risk_engine.last_checks) >= 1
+    assert execution.requests[-1].side == "SELL"
+    assert execution.requests[-1].symbol == "BTC/USDT"
+    assert execution.requests[-1].quantity == pytest.approx(1.0)
+    assert (
+        str((execution.requests[-1].metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    )
+    close_events = [
+        dict(event)
+        for event in journal.export()
+        if str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert not any(
+        event.get("event") == "opportunity_autonomy_enforcement"
+        and str(event.get("blocking_reason") or "").strip() == "autonomy_mode_denied"
+        for event in close_events
+    )
+    assert not any(
+        event.get("event") == "signal_skipped"
+        and str(event.get("reason") or "").strip() in {"ai_failover_active", "autonomy_mode_denied"}
+        for event in close_events
+    )
+
+
+def test_runtime_controls_invalid_same_side_close_preserves_close_contract_blocking_reason() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    correlation_key = "runtime-controls-invalid-close"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="paper",
+        portfolio_scope="paper-1",
+    )
+    invalid_close = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    invalid_close.metadata = {
+        **dict(invalid_close.metadata),
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "true",
+        "final_decision_accepted": "false",
+        "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+        "mode": "ai",
+    }
+
+    results = controller.process_signals([invalid_close])
+    assert results == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    events = [dict(event) for event in journal.export()]
+    blocked = [event for event in events if event.get("event") == "opportunity_autonomy_enforcement"]
+    assert blocked
+    assert blocked[-1]["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_unresolved"
+    assert not any(
+        event.get("event") in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+        for event in events
+    )
+
+
+def test_runtime_controls_manual_kill_switch_blocked_open_replay_is_idempotent() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "true",
+        "final_decision_accepted": "false",
+        "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+        "mode": "ai",
+    }
+
+    assert controller.process_signals([open_signal]) == []
+    assert controller.process_signals([open_signal]) == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert controller._opportunity_open_outcomes == {}
+    blocked = [
+        dict(event)
+        for event in journal.export()
+        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+    ]
+    assert len(blocked) == 2
+
+
+def test_runtime_controls_manual_kill_switch_disable_then_reenable_retry_open_reaches_execution() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    blocked_open = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+    blocked_open.metadata = {
+        **dict(blocked_open.metadata),
+        "opportunity_ai_enabled": "false",
+        "opportunity_ai_manual_kill_switch_active": "true",
+        "ai_required_for_execution": "true",
+        "final_decision_accepted": "false",
+        "opportunity_ai_disabled_reason": "manual_kill_switch:runtime_control_plane",
+        "mode": "ai",
+    }
+    allowed_open = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        side="BUY",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    allowed_open.metadata = {**dict(allowed_open.metadata), "mode": "ai"}
+
+    assert controller.process_signals([blocked_open]) == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+
+    retried = controller.process_signals([allowed_open])
+    assert [result.status for result in retried] == ["filled"]
+    assert len(risk_engine.last_checks) == 1
+    assert len(execution.requests) == 1
+
 def test_opportunity_autonomy_duplicate_close_guard_incomplete_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
     None
 ):
