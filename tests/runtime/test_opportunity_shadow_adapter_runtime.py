@@ -330,6 +330,84 @@ def test_decision_sink_execution_path_unchanged_with_shadow_adapter(tmp_path: Pa
     assert any(event.event_type == "opportunity_shadow_proposal" for event in journal.events)
 
 
+def test_decision_sink_missing_portfolio_does_not_persist_environment_as_portfolio_proof(
+    tmp_path: Path,
+) -> None:
+    journal = _CollectingJournal()
+    shadow_repository = OpportunityShadowRepository(tmp_path / "shadow-runtime-no-portfolio")
+    adapter = OpportunityRuntimeShadowAdapter(
+        journal=journal,
+        engine=_train_model(tmp_path / "repo-no-portfolio"),
+        shadow_repository=shadow_repository,
+    )
+    sink = DecisionAwareSignalSink(
+        base_sink=InMemoryStrategySignalSink(),
+        orchestrator=_AcceptingOrchestrator(),
+        risk_engine=_RiskEngine(),
+        default_notional=1000.0,
+        environment="paper",
+        exchange="BINANCE",
+        min_probability=0.6,
+        journal=journal,
+        opportunity_shadow_adapter=adapter,
+        portfolio=None,
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0, **_candidate_metadata()},
+    )
+
+    sink.submit(
+        strategy_name="trend-d1",
+        schedule_name="trend-d1",
+        risk_profile="balanced",
+        timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+        signals=(signal,),
+    )
+
+    records = shadow_repository.load_shadow_records()
+    assert len(records) == 1
+    context = records[0].context
+    assert context.environment == "paper"
+    assert "portfolio" not in context.notes
+
+
+def test_shadow_adapter_skips_empty_and_nullish_portfolio_proof_in_notes(tmp_path: Path) -> None:
+    shadow_repository = OpportunityShadowRepository(tmp_path / "shadow-nullish")
+    engine = _train_model(tmp_path / "repo-nullish")
+    adapter = OpportunityRuntimeShadowAdapter(
+        journal=_CollectingJournal(),
+        engine=engine,
+        shadow_repository=shadow_repository,
+    )
+
+    for value in ("", "None", "null"):
+        adapter.emit_shadow_proposal(
+            candidate=SimpleNamespace(
+                symbol="BTCUSDT",
+                action="enter",
+                metadata=_candidate_metadata(),
+            ),
+            signal=SimpleNamespace(side="BUY"),
+            evaluation=SimpleNamespace(accepted=True),
+            timestamp=datetime(2024, 1, 1, 12, 5, tzinfo=timezone.utc),
+            strategy_name="trend-d1",
+            schedule_name="trend-d1",
+            risk_profile="balanced",
+            environment="paper",
+            portfolio=value,
+        )
+
+    notes_list = [record.context.notes for record in shadow_repository.load_shadow_records()]
+    assert len(notes_list) == 3
+    for notes in notes_list:
+        assert notes.get("portfolio") != "paper"
+        assert notes.get("portfolio") != "None"
+        assert notes.get("portfolio") != ""
+
+
 def test_decision_sink_without_shadow_adapter_still_works() -> None:
     sink = DecisionAwareSignalSink(
         base_sink=InMemoryStrategySignalSink(),

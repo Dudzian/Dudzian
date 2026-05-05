@@ -4024,7 +4024,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 ai_shadow_persistence_status="disabled",
                 ai_shadow_persistence_error=None,
             )
-        portfolio = self._portfolio or self._environment
+        portfolio = self._portfolio.strip()
         probe = adapter.emit_shadow_proposal(
             evaluation=evaluation,
             candidate=candidate,
@@ -4034,7 +4034,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
             risk_profile=risk_profile,
             timestamp=timestamp,
             environment=self._environment,
-            portfolio=str(portfolio),
+            portfolio=portfolio,
         )
         ai_accepted = probe.accepted if probe.decision_available else None
         final_accepted = base_accepted
