@@ -38685,7 +38685,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_positive_position_si
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -38869,7 +38871,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_positive_position_si
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -38980,7 +38984,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_negative_position_ke
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -39075,7 +39081,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_conflictin
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -39186,7 +39194,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_first_inva
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -39281,7 +39291,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_first_vali
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -39376,7 +39388,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_zero_position_withou
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -39484,7 +39498,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_zero_then_
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -39592,7 +39608,9 @@ def test_opportunity_autonomy_restored_sell_tracker_runtime_both_keys_positive_t
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             )
         ]
     )
@@ -50025,7 +50043,9 @@ def test_opportunity_autonomous_open_without_positive_finite_quantity_proof_does
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             ),
             OpportunityShadowRecord(
                 record_key=second_key,
@@ -50043,7 +50063,9 @@ def test_opportunity_autonomous_open_without_positive_finite_quantity_proof_does
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             ),
         ]
     )
@@ -50149,7 +50171,9 @@ def test_opportunity_autonomous_open_missing_filled_quantity_field_does_not_crea
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             ),
             OpportunityShadowRecord(
                 record_key=second_key,
@@ -50167,7 +50191,9 @@ def test_opportunity_autonomous_open_missing_filled_quantity_field_does_not_crea
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             ),
         ]
     )
@@ -50434,7 +50460,9 @@ def test_opportunity_autonomous_open_positive_quantity_creates_tracker_and_consu
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             ),
             OpportunityShadowRecord(
                 record_key=second_key,
@@ -50452,7 +50480,9 @@ def test_opportunity_autonomous_open_positive_quantity_creates_tracker_and_consu
                 provenance={"probability_method": "test"},
                 threshold_config=OpportunityThresholdConfig(),
                 snapshot={},
-                context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
             ),
         ]
     )
@@ -59820,7 +59850,11 @@ def test_upstream_handoff_scope_aware_resolution_prefers_valid_same_scope_candid
         provenance={"probability_method": "valid"},
         context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
     )
-    first, second = (invalid_candidate, valid_candidate) if invalid_first else (valid_candidate, invalid_candidate)
+    first, second = (
+        (invalid_candidate, valid_candidate)
+        if invalid_first
+        else (valid_candidate, invalid_candidate)
+    )
     shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
     shadow_repo.append_shadow_records([first, second])
     controller, execution, journal = _build_autonomy_controller(
