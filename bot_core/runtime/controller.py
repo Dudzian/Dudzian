@@ -1719,13 +1719,14 @@ class TradingController:
                 },
             )
             if ai_blocked and mode in self._ai_signal_modes:
-                self._record_decision_event(
-                    "signal_skipped",
-                    signal=signal,
-                    status="skipped",
-                    metadata={"reason": "ai_failover_active", "mode": mode},
-                )
-                continue
+                if not self._has_same_scope_open_tracker_reference_during_ai_failover(signal):
+                    self._record_decision_event(
+                        "signal_skipped",
+                        signal=signal,
+                        status="skipped",
+                        metadata={"reason": "ai_failover_active", "mode": mode},
+                    )
+                    continue
             if self._is_autonomous_open_arbitration_conflict_signal(
                 signal=signal,
                 conflict_groups=autonomous_open_conflicts,
@@ -2390,6 +2391,24 @@ class TradingController:
             normalized_side,
         )
         return group_key, correlation_key
+
+    def _has_same_scope_open_tracker_reference_during_ai_failover(
+        self,
+        signal: StrategySignal,
+    ) -> bool:
+        request = self._build_order_request(signal)
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        correlation_key = str(metadata.get("opportunity_shadow_record_key") or "").strip()
+        if not correlation_key:
+            return False
+        tracker = self._opportunity_open_outcomes.get(correlation_key)
+        if tracker is None:
+            return False
+        return self._matches_current_open_tracker_scope(
+            correlation_key=correlation_key,
+            symbol=str(tracker.symbol),
+            tracker=tracker,
+        )
 
     def maybe_report_health(self, *, force: bool = False) -> None:
         """Publikuje raport health-check, gdy minął interwał lub wymusimy wysyłkę."""

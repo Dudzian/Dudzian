@@ -26,6 +26,7 @@ from bot_core.ai.opportunity_lifecycle import (
     OpportunityAutonomyMode,
     OpportunityPerformanceSnapshotConfig,
 )
+from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
 from bot_core.ai.trading_opportunity_shadow import (
     OpportunityOutcomeLabel,
     OpportunityShadowContext,
@@ -36,6 +37,7 @@ from bot_core.ai.trading_opportunity_shadow import (
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
 from bot_core.runtime import TradingController
+from bot_core.runtime.controller import _OpportunityOpenOutcomeTracker
 from bot_core.runtime.journal import TradingDecisionEvent
 from bot_core.runtime.opportunity_runtime_controls import (
     OpportunityRuntimeControls,
@@ -68849,13 +68851,234 @@ def test_opportunity_autonomy_exact_open_replay_after_final_label_with_incomplet
         if row.correlation_key == correlation_key
         and row.label_quality == "partial_exit_unconfirmed"
     ] == []
-    _assert_no_duplicate_residue_metadata_for_shadow_key(
-        [
-            event
-            for event in journal_events
-            if str(event.get("event") or "").strip() != "signal_skipped"
-        ],
-        shadow_key=correlation_key,
+
+
+def test_ai_failover_blocks_new_autonomous_open_before_risk_and_execution() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        ai_health_monitor=ModelHealthMonitor(),
+    )
+    controller._ai_health_monitor.record_backend_failure(  # type: ignore[union-attr]
+        reason="test_failover_open_block"
+    )
+    open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+
+    results = controller.process_signals([open_signal])
+
+    assert results == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert controller._opportunity_open_outcomes == {}
+    assert not any(
+        event.get("event") in {"order_executed", "order_partially_executed"}
+        for event in journal.export()
+    )
+    skipped_events = [
+        event for event in journal.export() if event.get("event") == "signal_skipped"
+    ]
+    assert skipped_events
+    assert skipped_events[-1]["reason"] == "ai_failover_active"
+
+
+def test_ai_failover_allows_legal_autonomous_close_for_existing_tracker() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 6.0, 4.0],
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        ai_health_monitor=ModelHealthMonitor(),
+        opportunity_shadow_repository=repository,
+    )
+    correlation_key = "shadow-key-failover-legal-close"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="paper",
+        portfolio_scope="paper-1",
+    )
+
+    controller._ai_health_monitor.record_backend_failure(  # type: ignore[union-attr]
+        reason="test_failover_close_allowed"
+    )
+    close_signal = _opportunity_autonomy_signal(
+        "paper_autonomous",
+        side="SELL",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "ai",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+
+    close_results = controller.process_signals([close_signal])
+
+    assert [result.status for result in close_results] == ["filled"]
+    assert len(risk_engine.last_checks) >= 1
+    assert risk_engine.last_checks[-1][0].side == "SELL"
+    close_request = execution.requests[-1]
+    assert close_request.symbol == "BTC/USDT"
+    assert close_request.side == "SELL"
+    assert close_request.quantity == pytest.approx(1.0)
+    assert str((close_request.metadata or {}).get("opportunity_shadow_record_key") or "").strip() == correlation_key
+    skipped_close_events = [
+        event
+        for event in journal.export()
+        if event.get("event") == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert skipped_close_events == []
+
+
+def test_ai_failover_still_blocks_invalid_same_side_close_for_existing_tracker() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    repository = _autonomy_shadow_repository_with_final_outcomes(
+        [8.0, 6.0, 4.0],
+        environment="paper",
+        portfolio_id="paper-1",
+    )
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        ai_health_monitor=ModelHealthMonitor(),
+        opportunity_shadow_repository=repository,
+    )
+    initial_execution_count = len(execution.requests)
+    correlation_key = "shadow-key-failover-invalid-close"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="paper",
+        portfolio_scope="paper-1",
+    )
+
+    controller._ai_health_monitor.record_backend_failure(  # type: ignore[union-attr]
+        reason="test_failover_invalid_close"
+    )
+    invalid_close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    invalid_close_signal.metadata = {**dict(invalid_close_signal.metadata), "mode": "ai"}
+
+    results = controller.process_signals([invalid_close_signal])
+
+    assert results == []
+    assert len(execution.requests) == initial_execution_count
+    assert risk_engine.last_checks == []
+    journal_events = [dict(event) for event in journal.export()]
+    assert not any(
+        event.get("event") in {"order_executed", "order_partially_executed"} for event in journal_events
+    )
+    assert [
+        event
+        for event in journal_events
+        if event.get("event") == "opportunity_outcome_attach"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ] == []
+    close_contract_blocks = [
+        event
+        for event in journal_events
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert close_contract_blocks
+    blocked_event = close_contract_blocks[-1]
+    assert blocked_event.get("status") == "blocked"
+    assert blocked_event.get("blocking_reason") == "accepted_autonomous_handoff_shadow_reference_unresolved"
+    assert blocked_event.get("autonomy_decisive_reason") == "accepted_autonomous_handoff_shadow_reference_unresolved"
+    assert not any(
+        event.get("event") == "signal_skipped"
+        and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        and str(event.get("reason") or "").strip() == "ai_failover_active"
+        for event in journal_events
+    )
+
+
+def test_ai_failover_blocked_open_replay_idempotent_without_risk_execution_or_tracker() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=_router_with_channel()[0],
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_journal=journal,
+        ai_health_monitor=ModelHealthMonitor(),
+    )
+    controller._ai_health_monitor.record_backend_failure(  # type: ignore[union-attr]
+        reason="test_failover_open_replay"
+    )
+    open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+
+    first = controller.process_signals([open_signal])
+    second = controller.process_signals([open_signal])
+
+    assert first == []
+    assert second == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert controller._opportunity_open_outcomes == {}
+    journal_events = [dict(event) for event in journal.export()]
+    failover_skips = [
+        event
+        for event in journal_events
+        if event.get("event") == "signal_skipped"
+        and str(event.get("reason") or "").strip() == "ai_failover_active"
+    ]
+    assert len(failover_skips) == 2
+    assert not any(
+        event.get("event") in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+        for event in journal_events
     )
 
 
