@@ -3445,9 +3445,15 @@ class TradingController:
                 str(getattr(candidate_context, "environment", "")).strip().lower()
             )
             candidate_notes = getattr(candidate_context, "notes", None)
-            candidate_notes_mapping = candidate_notes if isinstance(candidate_notes, Mapping) else {}
-            candidate_portfolio_raw = str(candidate_notes_mapping.get("portfolio") or "").strip().lower()
-            candidate_portfolio_id_raw = str(candidate_notes_mapping.get("portfolio_id") or "").strip().lower()
+            candidate_notes_mapping = (
+                candidate_notes if isinstance(candidate_notes, Mapping) else {}
+            )
+            candidate_portfolio_raw = (
+                str(candidate_notes_mapping.get("portfolio") or "").strip().lower()
+            )
+            candidate_portfolio_id_raw = (
+                str(candidate_notes_mapping.get("portfolio_id") or "").strip().lower()
+            )
             if (
                 candidate_portfolio_raw
                 and candidate_portfolio_id_raw
@@ -3466,7 +3472,11 @@ class TradingController:
                 continue
             if runtime_portfolio and not legacy_scope_missing and not candidate_portfolio:
                 continue
-            if runtime_portfolio and candidate_portfolio and candidate_portfolio != runtime_portfolio:
+            if (
+                runtime_portfolio
+                and candidate_portfolio
+                and candidate_portfolio != runtime_portfolio
+            ):
                 continue
             scoped_candidates.append(candidate)
         if not scoped_candidates:
