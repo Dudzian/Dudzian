@@ -2774,6 +2774,31 @@ class TradingController:
             existing_open_tracker = (
                 self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
             )
+            runtime_lineage = self._extract_opportunity_runtime_lineage_snapshot(request.metadata)
+            runtime_controls_disable_new_open = (
+                runtime_lineage.get("opportunity_ai_enabled") == "false"
+                and runtime_lineage.get("opportunity_ai_manual_kill_switch_active") == "true"
+                and runtime_lineage.get("ai_required_for_execution") == "true"
+            )
+            if runtime_controls_disable_new_open and existing_open_tracker is None:
+                blocked_metadata: dict[str, object] = {
+                    **metadata,
+                    "execution_permission": "blocked",
+                    "autonomous_execution_allowed": False,
+                    "autonomy_primary_reason": "autonomy_mode_denied",
+                    "blocking_reason": "autonomy_mode_denied",
+                    "autonomy_decisive_stage": "runtime_controls",
+                    "autonomy_decisive_reason": "autonomy_mode_denied",
+                }
+                self._record_decision_event(
+                    "opportunity_autonomy_enforcement",
+                    signal=signal,
+                    request=request,
+                    status="blocked",
+                    metadata=blocked_metadata,
+                )
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return None
             mode_raw = (request.metadata or {}).get("opportunity_autonomy_mode")
             duplicate_open_guard_enabled = str(mode_raw or "").strip().lower() in {
                 "paper_autonomous",
