@@ -3230,6 +3230,26 @@ class TradingController:
                         },
                     )
                     return None
+                remaining_quantity = self._remaining_quantity_for_tracker(existing_open_tracker)
+                if (
+                    remaining_quantity is not None
+                    and remaining_quantity > 1e-12
+                    and abs(runtime_position_notional) + 1e-12 < remaining_quantity
+                ):
+                    self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                    self._record_decision_event(
+                        "signal_skipped",
+                        signal=signal,
+                        request=request,
+                        status="skipped",
+                        metadata={
+                            "reason": "restored_tracker_account_quantity_mismatch_suppressed",
+                            "proxy_correlation_key": correlation_key,
+                            "restored_tracker_remaining_quantity": remaining_quantity,
+                            "runtime_position_notional": runtime_position_notional,
+                        },
+                    )
+                    return None
         if (
             existing_open_tracker is not None
             and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
