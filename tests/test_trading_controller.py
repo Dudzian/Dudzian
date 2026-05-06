@@ -69324,6 +69324,163 @@ def test_runtime_controls_manual_kill_switch_disable_then_reenable_retry_open_re
     assert len(risk_engine.last_checks) == 1
     assert len(execution.requests) == 1
 
+
+
+def test_runtime_controls_hard_stop_blocks_new_autonomous_open_before_risk_and_execution() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+    open_signal.metadata = {
+        **dict(open_signal.metadata),
+        "opportunity_execution_disabled": "true",
+        "opportunity_runtime_controls_revision": "17",
+        "mode": "ai",
+    }
+
+    assert controller.process_signals([open_signal]) == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert controller._opportunity_open_outcomes == {}
+    events = [dict(event) for event in journal.export()]
+    assert not any(event.get("event") in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"} for event in events)
+    blocked = [event for event in events if event.get("event") == "opportunity_autonomy_enforcement"]
+    assert blocked
+    assert blocked[-1]["status"] == "blocked"
+    assert blocked[-1]["blocking_reason"] == "emergency_stop_active"
+    assert blocked[-1]["opportunity_runtime_controls_revision"] == "17"
+
+
+def test_runtime_controls_hard_stop_blocks_legal_autonomous_close_for_existing_tracker() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    correlation_key = "runtime-controls-hard-stop-close"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="paper",
+        portfolio_scope="paper-1",
+    )
+    close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL")
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_execution_disabled": "true",
+        "mode": "ai",
+    }
+
+    assert controller.process_signals([close_signal]) == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    tracker = controller._opportunity_open_outcomes[correlation_key]
+    assert tracker.closed_quantity == pytest.approx(0.0)
+    events = [dict(event) for event in journal.export()]
+    blocked = [event for event in events if event.get("event") == "opportunity_autonomy_enforcement"]
+    assert blocked
+    assert blocked[-1]["blocking_reason"] == "emergency_stop_active"
+    assert not any(event.get("event") in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"} for event in events)
+
+
+def test_runtime_controls_hard_stop_replay_idempotency() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    blocked_open = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+    blocked_open.metadata = {**dict(blocked_open.metadata), "opportunity_execution_disabled": "true", "mode": "ai"}
+
+    assert controller.process_signals([blocked_open]) == []
+    assert controller.process_signals([blocked_open]) == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    blocked = [dict(event) for event in journal.export() if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"]
+    assert len(blocked) == 2
+    assert all(event.get("blocking_reason") == "emergency_stop_active" for event in blocked)
+
+
+def test_runtime_controls_hard_stop_clear_then_retry_open_reaches_execution() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    journal = CollectingDecisionJournal()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    blocked_open = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+    blocked_open.metadata = {**dict(blocked_open.metadata), "opportunity_execution_disabled": "true", "mode": "ai"}
+    allowed_open = _opportunity_autonomy_signal("paper_autonomous", side="BUY", include_decision_payload=True, decision_effective_mode="paper_autonomous")
+    allowed_open.metadata = {**dict(allowed_open.metadata), "opportunity_execution_disabled": "false", "mode": "ai"}
+
+    assert controller.process_signals([blocked_open]) == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+
+    retried = controller.process_signals([allowed_open])
+    assert [result.status for result in retried] == ["filled"]
+    assert len(risk_engine.last_checks) == 1
+    assert len(execution.requests) == 1
+
+
+def test_opportunity_runtime_controls_execution_disabled_contract_minimal() -> None:
+    runtime_controls = OpportunityRuntimeControls(
+        policy_mode="live",
+        opportunity_ai_enabled=True,
+        manual_kill_switch=False,
+    )
+
+    initial = runtime_controls.snapshot()
+    assert initial.execution_disabled is False
+    initial_revision = initial.revision
+
+    enabled = runtime_controls.update(execution_disabled=True)
+    assert enabled.execution_disabled is True
+    assert enabled.revision == initial_revision + 1
+
+    unchanged = runtime_controls.update(execution_disabled=True)
+    assert unchanged.execution_disabled is True
+    assert unchanged.revision == enabled.revision
+
+    disabled = runtime_controls.update(execution_disabled=False)
+    assert disabled.execution_disabled is False
+    assert disabled.revision == enabled.revision + 1
+
 def test_opportunity_autonomy_duplicate_close_guard_incomplete_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
     None
 ):
