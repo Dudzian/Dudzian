@@ -68,6 +68,7 @@ class DummyRiskEngine(RiskEngine):
         self._liquidate = False
         self.last_checks: list[tuple[OrderRequest, AccountSnapshot, str]] = []
         self._result_queue: list[RiskCheckResult] = []
+        self.after_check_callback: Callable[[], None] | None = None
 
     def register_profile(self, profile: RiskProfile) -> None:  # pragma: no cover - nieużywane
         return None
@@ -82,6 +83,8 @@ class DummyRiskEngine(RiskEngine):
         self.last_checks.append((request, account, profile_name))
         if self._result_queue:
             self._result = self._result_queue.pop(0)
+        if self.after_check_callback is not None:
+            self.after_check_callback()
         return self._result
 
     def snapshot_state(self, profile_name: str) -> Mapping[str, object]:
@@ -69487,8 +69490,214 @@ def test_runtime_controls_hard_stop_clear_then_retry_open_reaches_execution() ->
     assert len(risk_engine.last_checks) == 1
     assert len(execution.requests) == 1
 
+def test_runtime_controls_hard_stop_activated_after_risk_blocks_before_execution_open() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    try:
+        runtime_controls.update(execution_disabled=False, opportunity_ai_enabled=True, manual_kill_switch=False)
+        risk_engine = DummyRiskEngine()
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=risk_engine,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes([8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"),
+        )
+        risk_engine.after_check_callback = lambda: runtime_controls.update(execution_disabled=True)
+        open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+        open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+        assert controller.process_signals([open_signal]) == []
+        assert len(risk_engine.last_checks) == 1
+        assert execution.requests == []
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
 
 
+def test_runtime_controls_hard_stop_activated_after_risk_blocks_legal_close_before_execution() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    try:
+        runtime_controls.update(execution_disabled=False, opportunity_ai_enabled=True, manual_kill_switch=False)
+        risk_engine = DummyRiskEngine()
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=risk_engine,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes([8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"),
+        )
+        correlation_key = "runtime-controls-hard-stop-after-risk-close"
+        controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            environment_scope="paper",
+            portfolio_scope="paper-1",
+        )
+        risk_engine.after_check_callback = lambda: runtime_controls.update(execution_disabled=True)
+        close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL")
+        close_signal.metadata = {**dict(close_signal.metadata), "opportunity_shadow_record_key": correlation_key, "mode": "ai"}
+        assert controller.process_signals([close_signal]) == []
+        assert execution.requests == []
+        assert controller._opportunity_open_outcomes[correlation_key].closed_quantity == pytest.approx(0.0)
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
+
+
+def test_runtime_controls_soft_kill_switch_activated_after_risk_blocks_open_before_execution() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    try:
+        runtime_controls.update(execution_disabled=False, opportunity_ai_enabled=True, manual_kill_switch=False, policy_mode="live")
+        risk_engine = DummyRiskEngine()
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=risk_engine,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes([8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"),
+        )
+        risk_engine.after_check_callback = lambda: runtime_controls.update(opportunity_ai_enabled=False, manual_kill_switch=True)
+        open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+        open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+        assert controller.process_signals([open_signal]) == []
+        assert len(risk_engine.last_checks) == 1
+        assert execution.requests == []
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
+
+
+def test_runtime_controls_soft_kill_switch_activated_after_risk_allows_legal_close() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    try:
+        runtime_controls.update(
+            execution_disabled=False,
+            opportunity_ai_enabled=True,
+            manual_kill_switch=False,
+            policy_mode="live",
+        )
+        risk_engine = DummyRiskEngine()
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=risk_engine,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+                [8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"
+            ),
+        )
+        correlation_key = "runtime-controls-soft-after-risk-close"
+        controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            environment_scope="paper",
+            portfolio_scope="paper-1",
+        )
+        risk_engine.after_check_callback = lambda: runtime_controls.update(
+            opportunity_ai_enabled=False,
+            manual_kill_switch=True,
+            execution_disabled=False,
+        )
+        close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL")
+        close_signal.metadata = {
+            **dict(close_signal.metadata),
+            "opportunity_shadow_record_key": correlation_key,
+            "mode": "ai",
+        }
+        results = controller.process_signals([close_signal])
+        assert [result.status for result in results] == ["filled"]
+        assert len(risk_engine.last_checks) >= 1
+        assert execution.requests
+        request = execution.requests[-1]
+        assert request.symbol == "BTC/USDT"
+        assert request.side == "SELL"
+        assert request.quantity == pytest.approx(1.0)
+        close_events = [
+            dict(event)
+            for event in journal.export()
+            if str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        ]
+        assert not any(
+            event.get("event") == "opportunity_autonomy_enforcement"
+            and str(event.get("blocking_reason") or "").strip() == "autonomy_mode_denied"
+            for event in close_events
+        )
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
+
+
+def test_runtime_controls_snapshot_unavailable_after_risk_blocks_open_before_execution() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    original_snapshot = runtime_controls.snapshot
+    try:
+        runtime_controls.update(
+            execution_disabled=False,
+            opportunity_ai_enabled=True,
+            manual_kill_switch=False,
+            policy_mode="paper",
+        )
+        risk_engine = DummyRiskEngine()
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=risk_engine,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+                [8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"
+            ),
+        )
+        risk_engine.after_check_callback = lambda: setattr(
+            runtime_controls,
+            "snapshot",
+            lambda: (_ for _ in ()).throw(RuntimeError("snapshot unavailable after risk")),
+        )
+        open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+        open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+        assert controller.process_signals([open_signal]) == []
+        assert len(risk_engine.last_checks) == 1
+        assert execution.requests == []
+        assert controller._opportunity_open_outcomes == {}
+        events = [dict(event) for event in journal.export()]
+        blocked = [event for event in events if event.get("event") == "opportunity_autonomy_enforcement"]
+        assert blocked
+        blocked_event = blocked[-1]
+        assert blocked_event["blocking_reason"] == "runtime_controls_unavailable"
+        assert blocked_event["opportunity_runtime_controls_source"] == "snapshot_unavailable"
+        assert blocked_event["opportunity_runtime_controls_unavailable"] == "true"
+        assert not any(
+            event.get("event") in {"order_executed", "order_partially_executed"}
+            for event in events
+        )
+        assert not any(event.get("event") == "opportunity_outcome_attach" for event in events)
+    finally:
+        runtime_controls.snapshot = original_snapshot
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
 
 
 def test_runtime_controls_hard_stop_metadata_true_remains_fail_closed() -> None:
