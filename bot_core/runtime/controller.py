@@ -3010,10 +3010,25 @@ class TradingController:
                     request_metadata = sanitized_request_metadata
             if duplicate_open_guard_enabled and existing_open_tracker is None:
                 account_for_untracked_exposure: AccountSnapshot | None
+                account_snapshot_unavailable = False
                 try:
                     account_for_untracked_exposure = self.account_snapshot_provider()
                 except Exception:  # pragma: no cover - diagnostics only
                     account_for_untracked_exposure = None
+                    account_snapshot_unavailable = True
+                if account_snapshot_unavailable:
+                    self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                    self._record_decision_event(
+                        "signal_skipped",
+                        signal=signal,
+                        request=request,
+                        status="skipped",
+                        metadata={
+                            "reason": "autonomous_open_account_snapshot_unavailable_suppressed",
+                            "proxy_correlation_key": correlation_key,
+                        },
+                    )
+                    return None
                 runtime_position_notional = self._runtime_position_notional_for_symbol(
                     account=account_for_untracked_exposure,
                     symbol=str(request.symbol),

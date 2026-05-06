@@ -71342,6 +71342,92 @@ def test_fresh_autonomous_open_with_explicit_decision_payload_blocks_when_accoun
     assert reconciliation_blocks
 
 
+def test_fresh_autonomous_open_blocks_when_account_snapshot_provider_raises(tmp_path: Path) -> None:
+    correlation_key = "fresh-open-account-snapshot-provider-raises"
+    decision_timestamp = datetime(2026, 1, 6, 12, 36, tzinfo=timezone.utc)
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    controller.account_snapshot_provider = lambda: (_ for _ in ()).throw(RuntimeError("account unavailable"))
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    signal.metadata = {**dict(signal.metadata), "mode": "ai"}
+
+    assert controller.process_signals([signal]) == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert correlation_key not in controller._opportunity_open_outcomes
+    assert _order_path_events_with_shadow_key(journal, correlation_key) == []
+    assert _opportunity_attach_events_referencing_key(journal, correlation_key) == []
+    reconciliation_blocks = [
+        event
+        for event in journal.export()
+        if event.get("event") in {"signal_skipped", "opportunity_autonomy_enforcement"}
+        and event.get("reason") == "autonomous_open_account_snapshot_unavailable_suppressed"
+        and str(event.get("proxy_correlation_key") or "").strip() == correlation_key
+    ]
+    assert reconciliation_blocks
+
+
+def test_fresh_autonomous_open_with_explicit_payload_blocks_when_account_snapshot_provider_raises(
+    tmp_path: Path,
+) -> None:
+    correlation_key = "fresh-open-explicit-payload-account-snapshot-provider-raises"
+    decision_timestamp = datetime(2026, 1, 6, 12, 37, tzinfo=timezone.utc)
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    controller.account_snapshot_provider = lambda: (_ for _ in ()).throw(RuntimeError("account unavailable"))
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    signal.metadata = {**dict(signal.metadata), "mode": "ai"}
+
+    assert controller.process_signals([signal]) == []
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert correlation_key not in controller._opportunity_open_outcomes
+    assert _order_path_events_with_shadow_key(journal, correlation_key) == []
+    assert _opportunity_attach_events_referencing_key(journal, correlation_key) == []
+    reconciliation_blocks = [
+        event
+        for event in journal.export()
+        if event.get("event") in {"signal_skipped", "opportunity_autonomy_enforcement"}
+        and event.get("reason") == "autonomous_open_account_snapshot_unavailable_suppressed"
+        and str(event.get("proxy_correlation_key") or "").strip() == correlation_key
+    ]
+    assert reconciliation_blocks
+
+
 def test_fresh_autonomous_open_without_account_exposure_still_reaches_execution(tmp_path: Path) -> None:
     correlation_key = "fresh-open-no-account-exposure-allowed"
     decision_timestamp = datetime(2026, 1, 6, 12, 40, tzinfo=timezone.utc)
