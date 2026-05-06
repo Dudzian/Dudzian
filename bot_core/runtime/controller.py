@@ -901,6 +901,18 @@ class TradingController:
         self, metadata: Mapping[str, object] | None
     ) -> dict[str, str]:
         lineage = self._extract_opportunity_runtime_lineage_snapshot(metadata)
+        if "opportunity_ai_enabled" not in lineage:
+            lineage["opportunity_ai_enabled"] = "true"
+        if "opportunity_ai_manual_kill_switch_active" not in lineage:
+            lineage["opportunity_ai_manual_kill_switch_active"] = "false"
+        if "ai_required_for_execution" not in lineage:
+            lineage["ai_required_for_execution"] = "true"
+        if "opportunity_policy_mode" not in lineage:
+            lineage["opportunity_policy_mode"] = str(self.environment)
+        if "opportunity_execution_disabled" not in lineage:
+            lineage["opportunity_execution_disabled"] = "false"
+        if "opportunity_runtime_controls_unavailable" not in lineage:
+            lineage["opportunity_runtime_controls_unavailable"] = "false"
         runtime_controls_unavailable = False
         try:
             runtime_snapshot = get_opportunity_runtime_controls().snapshot()
@@ -2841,6 +2853,7 @@ class TradingController:
             )
             metadata: dict[str, object] = {
                 "environment": self.environment,
+                **runtime_lineage,
                 **dict(diagnostics),
             }
             metadata.update(
