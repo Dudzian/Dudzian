@@ -69529,6 +69529,9 @@ def test_runtime_controls_hard_stop_metadata_true_remains_fail_closed() -> None:
         assert blocked_event["autonomous_execution_allowed"] == "false"
         assert blocked_event["opportunity_execution_disabled"] == "true"
         assert blocked_event["opportunity_runtime_controls_unavailable"] == "false"
+        assert blocked_event["opportunity_runtime_controls_source"] == "metadata"
+        assert blocked_event["opportunity_runtime_controls_metadata_override"] == "true"
+        assert blocked_event["opportunity_runtime_controls_metadata_stale"] == "false"
         assert blocked_event["opportunity_ai_enabled"] == "true"
         assert blocked_event["opportunity_ai_manual_kill_switch_active"] == "false"
         assert blocked_event["ai_required_for_execution"] == "true"
@@ -69634,6 +69637,9 @@ def test_runtime_controls_hard_stop_snapshot_blocks_open_without_signal_metadata
         assert blocked_event["autonomous_execution_allowed"] == "false"
         assert blocked_event["opportunity_execution_disabled"] == "true"
         assert blocked_event["opportunity_runtime_controls_unavailable"] == "false"
+        assert blocked_event["opportunity_runtime_controls_source"] == "snapshot"
+        assert blocked_event["opportunity_runtime_controls_metadata_override"] == "false"
+        assert blocked_event["opportunity_runtime_controls_metadata_stale"] == "false"
         assert blocked_event["opportunity_ai_enabled"] == "true"
         assert blocked_event["opportunity_ai_manual_kill_switch_active"] == "false"
         assert blocked_event["ai_required_for_execution"] == "true"
@@ -69667,6 +69673,9 @@ def test_runtime_controls_hard_stop_snapshot_overrides_stale_false_metadata() ->
         assert execution.requests == []
         blocked = [dict(e) for e in journal.export() if e.get("event") == "opportunity_autonomy_enforcement"]
         assert blocked[-1]["blocking_reason"] == "emergency_stop_active"
+        assert blocked[-1]["opportunity_runtime_controls_source"] == "snapshot"
+        assert blocked[-1]["opportunity_runtime_controls_metadata_stale"] == "true"
+        assert blocked[-1]["opportunity_runtime_controls_metadata_override"] == "false"
     finally:
         runtime_controls.update(
             opportunity_ai_enabled=initial.opportunity_ai_enabled,
@@ -69701,6 +69710,9 @@ def test_runtime_controls_soft_snapshot_blocks_new_open_without_signal_metadata(
         assert blocked_event["autonomous_execution_allowed"] == "false"
         assert blocked_event["opportunity_execution_disabled"] == "false"
         assert blocked_event["opportunity_runtime_controls_unavailable"] == "false"
+        assert blocked_event["opportunity_runtime_controls_source"] == "snapshot"
+        assert blocked_event["opportunity_runtime_controls_metadata_override"] == "false"
+        assert blocked_event["opportunity_runtime_controls_metadata_stale"] == "false"
         assert blocked_event["opportunity_ai_enabled"] == "false"
         assert blocked_event["opportunity_ai_manual_kill_switch_active"] == "true"
         assert blocked_event["ai_required_for_execution"] == "true"
@@ -69789,6 +69801,9 @@ def test_runtime_controls_snapshot_unavailable_blocks_new_autonomous_open() -> N
         assert blocked_event["execution_permission"] == "blocked"
         assert blocked_event["autonomous_execution_allowed"] == "false"
         assert blocked_event["opportunity_runtime_controls_unavailable"] == "true"
+        assert blocked_event["opportunity_runtime_controls_source"] == "snapshot_unavailable"
+        assert blocked_event["opportunity_runtime_controls_metadata_override"] == "false"
+        assert blocked_event["opportunity_runtime_controls_metadata_stale"] == "false"
         assert blocked_event["opportunity_execution_disabled"] == "false"
         assert blocked_event["opportunity_ai_enabled"] == "true"
         assert blocked_event["opportunity_ai_manual_kill_switch_active"] == "false"
