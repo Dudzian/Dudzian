@@ -1,4 +1,5 @@
 """Minimalny stub biblioteki ccxt na potrzeby testów jednostkowych."""
+
 from __future__ import annotations
 
 import builtins
@@ -25,8 +26,7 @@ for entry in list(sys.path)[1:]:
         and spec.origin
         and (
             current_origin is None
-            or Path(spec.origin).resolve(strict=False)
-            != current_origin.resolve(strict=False)
+            or Path(spec.origin).resolve(strict=False) != current_origin.resolve(strict=False)
         )
     ):
         module = importlib.util.module_from_spec(spec)
@@ -38,19 +38,22 @@ if _real_module is not None:
     sys.modules[__name__] = _real_module
     builtins.ccxt = _real_module
     globals().update(_real_module.__dict__)
-    __all__ = getattr(_real_module, "__all__", tuple(name for name in globals() if not name.startswith("_")))
+    __all__ = getattr(
+        _real_module, "__all__", tuple(name for name in globals() if not name.startswith("_"))
+    )
 else:
+
     class AuthenticationError(Exception):
         """Zastępczy wyjątek ccxt AuthenticationError."""
 
-
     base = SimpleNamespace(errors=SimpleNamespace(AuthenticationError=AuthenticationError))
-
 
     class _BaseExchange:
         """Minimalny kontener udostępniający parse_ticker dla testów kontraktowych."""
 
-        def parse_ticker(self, data: Dict[str, Any], symbol: Optional[str] = None) -> Dict[str, Any]:
+        def parse_ticker(
+            self, data: Dict[str, Any], symbol: Optional[str] = None
+        ) -> Dict[str, Any]:
             bid = self._extract_bid(data)
             ask = self._extract_ask(data)
             last = self._extract_last(data)
@@ -88,31 +91,34 @@ else:
                         continue
             return 0.0
 
-
     class binance(_BaseExchange):
         pass
-
 
     class bitstamp(_BaseExchange):
         pass
 
-
     class bybit(_BaseExchange):
         pass
-
 
     class okx(_BaseExchange):
         pass
 
-
     class kraken(_BaseExchange):
         pass
-
 
     class zonda(_BaseExchange):
         pass
 
-    __all__ = ["AuthenticationError", "base", "binance", "bitstamp", "bybit", "okx", "kraken", "zonda"]
+    __all__ = [
+        "AuthenticationError",
+        "base",
+        "binance",
+        "bitstamp",
+        "bybit",
+        "okx",
+        "kraken",
+        "zonda",
+    ]
 
     # Ułatwienie dla testów odwołujących się do globalnego `ccxt` bez importu.
     builtins.ccxt = sys.modules[__name__]

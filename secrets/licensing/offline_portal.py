@@ -1,4 +1,5 @@
 """Offline licensing portal for OEM deployments."""
+
 from __future__ import annotations
 
 import argparse
@@ -50,7 +51,9 @@ def _decode_secret(value: str | None) -> bytes | None:
         return text.encode("utf-8")
 
 
-def _load_fingerprint(*, fingerprint: str | None, fingerprint_file: str | None, read_local: bool) -> str:
+def _load_fingerprint(
+    *, fingerprint: str | None, fingerprint_file: str | None, read_local: bool
+) -> str:
     if fingerprint:
         return fingerprint.strip()
     if fingerprint_file:
@@ -65,7 +68,9 @@ def _load_fingerprint(*, fingerprint: str | None, fingerprint_file: str | None, 
         if not candidate:
             raise SystemExit("Local fingerprint provider returned an empty value")
         return str(candidate).strip()
-    raise SystemExit("Fingerprint must be provided via --fingerprint, --fingerprint-file or --read-local")
+    raise SystemExit(
+        "Fingerprint must be provided via --fingerprint, --fingerprint-file or --read-local"
+    )
 
 
 def _load_store_document(path: Path, fingerprint: str) -> LicenseStoreDocument:
@@ -139,7 +144,9 @@ def _command_verify(args: argparse.Namespace) -> None:
         algorithm = signature.get("algorithm") or "HMAC-SHA256"
         signature_status = {
             "algorithm": algorithm,
-            "errors": validate_hmac_signature(payload, {"signature": signature}, key=key_bytes, algorithm=str(algorithm)),
+            "errors": validate_hmac_signature(
+                payload, {"signature": signature}, key=key_bytes, algorithm=str(algorithm)
+            ),
         }
         signature_status["valid"] = not signature_status["errors"]
 
@@ -209,13 +216,17 @@ def _command_recover(args: argparse.Namespace) -> None:
         "output_path": str(output_path),
         "old_fingerprint": old_fingerprint,
         "new_fingerprint": new_fingerprint,
-        "licenses": len(document.data.get("licenses", {})) if isinstance(document.data, Mapping) else 0,
+        "licenses": len(document.data.get("licenses", {}))
+        if isinstance(document.data, Mapping)
+        else 0,
     }
 
     if args.report:
         report_path = Path(args.report).expanduser()
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         summary["report_path"] = str(report_path)
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -225,12 +236,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    def _add_fingerprint_options(subparser: argparse.ArgumentParser, *, allow_local: bool = True) -> None:
+    def _add_fingerprint_options(
+        subparser: argparse.ArgumentParser, *, allow_local: bool = True
+    ) -> None:
         subparser.add_argument("--store", required=True, help="Path to license store (JSON)")
         subparser.add_argument("--fingerprint", help="Fingerprint override")
         subparser.add_argument("--fingerprint-file", help="Read fingerprint from file")
         if allow_local:
-            subparser.add_argument("--read-local", action="store_true", help="Read fingerprint from local provider")
+            subparser.add_argument(
+                "--read-local", action="store_true", help="Read fingerprint from local provider"
+            )
         else:
             subparser.add_argument("--read-local", action="store_true", help=argparse.SUPPRESS)
 
@@ -245,14 +260,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="HMAC key for signature validation (supports env:/file:/hex:/base64: prefixes)",
     )
 
-    recover_parser = subparsers.add_parser("recover", help="Re-encrypt license store for new fingerprint")
+    recover_parser = subparsers.add_parser(
+        "recover", help="Re-encrypt license store for new fingerprint"
+    )
     recover_parser.add_argument("--store", required=True, help="Path to encrypted license store")
-    recover_parser.add_argument("--output", help="Destination path for recovered store (defaults to --store)")
+    recover_parser.add_argument(
+        "--output", help="Destination path for recovered store (defaults to --store)"
+    )
     recover_parser.add_argument("--old-fingerprint", help="Original fingerprint")
-    recover_parser.add_argument("--old-fingerprint-file", help="File containing original fingerprint")
+    recover_parser.add_argument(
+        "--old-fingerprint-file", help="File containing original fingerprint"
+    )
     recover_parser.add_argument("--new-fingerprint", help="Target fingerprint")
     recover_parser.add_argument("--new-fingerprint-file", help="File containing target fingerprint")
-    recover_parser.add_argument("--read-local-new", action="store_true", help="Read new fingerprint from local provider")
+    recover_parser.add_argument(
+        "--read-local-new", action="store_true", help="Read new fingerprint from local provider"
+    )
     recover_parser.add_argument("--report", help="Write JSON report to path")
 
     return parser
