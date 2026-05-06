@@ -3390,16 +3390,17 @@ class TradingController:
                 "maintenance_margin": f"{account.maintenance_margin:.8f}",
             },
         )
-        self._metric_orders_total.inc(
-            labels={**metric_labels, "result": "submitted", "side": adjusted_request.side}
-        )
-        self._record_decision_event(
-            "order_submitted",
-            signal=signal,
-            request=adjusted_request,
-            status="submitted",
-        )
-
+        is_autonomy_enforced = self._is_opportunity_autonomy_enforced(signal, adjusted_request)
+        if not is_autonomy_enforced:
+            self._metric_orders_total.inc(
+                labels={**metric_labels, "result": "submitted", "side": adjusted_request.side}
+            )
+            self._record_decision_event(
+                "order_submitted",
+                signal=signal,
+                request=adjusted_request,
+                status="submitted",
+            )
         try:
             should_execute_open_leg = self._maybe_reverse_position(
                 signal,
@@ -3422,10 +3423,27 @@ class TradingController:
         if not should_execute_open_leg:
             self._handle_liquidation_state(risk_result)
             return None
-        if self._is_opportunity_autonomy_enforced(signal, adjusted_request):
+        if is_autonomy_enforced:
             if not self._allow_last_mile_autonomy_execution(signal, adjusted_request, metric_labels):
                 self._handle_liquidation_state(risk_result)
                 return None
+            if not self._allow_last_mile_account_reconciliation_execution(
+                signal,
+                adjusted_request,
+                metric_labels,
+            ):
+                self._handle_liquidation_state(risk_result)
+                return None
+        if is_autonomy_enforced:
+            self._metric_orders_total.inc(
+                labels={**metric_labels, "result": "submitted", "side": adjusted_request.side}
+            )
+            self._record_decision_event(
+                "order_submitted",
+                signal=signal,
+                request=adjusted_request,
+                status="submitted",
+            )
         try:
             result = self.execution_service.execute(adjusted_request, self._execution_context)
         except Exception as exc:  # noqa: BLE001
@@ -3654,6 +3672,107 @@ class TradingController:
         )
         self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
         return False
+
+    def _allow_last_mile_account_reconciliation_execution(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+        metric_labels: Mapping[str, str],
+    ) -> bool:
+        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        existing_open_tracker = (
+            self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
+        )
+        try:
+            account = self.account_snapshot_provider()
+        except Exception:
+            account = None
+        if existing_open_tracker is None:
+            if account is None:
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    request=request,
+                    status="skipped",
+                    metadata={
+                        "reason": "last_mile_autonomous_open_account_snapshot_unavailable_suppressed",
+                        "proxy_correlation_key": correlation_key,
+                    },
+                )
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return False
+            runtime_position_notional = self._runtime_position_notional_for_symbol(
+                account=account,
+                symbol=str(request.symbol),
+            )
+            if runtime_position_notional is not None and abs(runtime_position_notional) > 1e-12:
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    request=request,
+                    status="skipped",
+                    metadata={
+                        "reason": "last_mile_autonomous_open_untracked_runtime_position_suppressed",
+                        "proxy_correlation_key": correlation_key,
+                    },
+                )
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return False
+            return True
+        if not self._is_closing_side(str(existing_open_tracker.side), str(request.side)):
+            return True
+        if not self._is_autonomous_restored_tracker_contract(existing_open_tracker):
+            return True
+        runtime_position_notional = self._runtime_position_notional_for_symbol(
+            account=account,
+            symbol=str(request.symbol),
+        )
+        expected_runtime_sign = 1.0 if str(existing_open_tracker.side).upper() in _BUY_SIDES else -1.0
+        sign_mismatch = (
+            runtime_position_notional is not None
+            and abs(runtime_position_notional) > 1e-12
+            and runtime_position_notional * expected_runtime_sign < 0.0
+        )
+        if runtime_position_notional is None:
+            return True
+        if abs(runtime_position_notional) <= 1e-12 or sign_mismatch:
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": (
+                        "last_mile_restored_tracker_runtime_position_sign_mismatch_suppressed"
+                        if sign_mismatch
+                        else "last_mile_restored_tracker_runtime_position_absent_suppressed"
+                    ),
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+            return False
+        remaining_quantity = self._remaining_quantity_for_tracker(existing_open_tracker)
+        if (
+            remaining_quantity is not None
+            and remaining_quantity > 1e-12
+            and abs(runtime_position_notional) + 1e-12 < remaining_quantity
+        ):
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": "last_mile_restored_tracker_account_quantity_mismatch_suppressed",
+                    "proxy_correlation_key": correlation_key,
+                    "restored_tracker_remaining_quantity": remaining_quantity,
+                    "runtime_position_notional": runtime_position_notional,
+                },
+            )
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+            return False
+        return True
 
     def _is_opportunity_autonomy_enforced(
         self,
