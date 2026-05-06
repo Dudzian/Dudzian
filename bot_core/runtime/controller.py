@@ -3113,6 +3113,42 @@ class TradingController:
             request=request,
             tracker=existing_open_tracker,
         )
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        normalized_signal_mode = str(request_metadata.get("mode") or "").strip().lower()
+        enforce_restored_scope_isolation = normalized_signal_mode == "ai" or (
+            normalized_signal_mode == ""
+            and self._is_opportunity_autonomy_enforced(signal, request)
+            and str(request_metadata.get("opportunity_autonomy_mode") or "").strip().lower()
+            in {"paper_autonomous", "live_autonomous"}
+        )
+        if (
+            correlation_key
+            and existing_open_tracker is not None
+            and existing_open_tracker.restored_from_repository
+            and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+            and self._is_autonomous_restored_tracker_contract(existing_open_tracker)
+            and enforce_restored_scope_isolation
+            and (
+                str(existing_open_tracker.symbol) != str(request.symbol)
+                or not self._matches_current_open_tracker_scope(
+                    correlation_key=correlation_key,
+                    symbol=str(request.symbol),
+                    tracker=existing_open_tracker,
+                )
+            )
+        ):
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": "restored_tracker_scope_mismatch_suppressed",
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            return None
         if (
             correlation_key
             and existing_open_tracker is not None
