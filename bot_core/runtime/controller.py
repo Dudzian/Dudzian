@@ -223,6 +223,8 @@ _OPPORTUNITY_RUNTIME_LINEAGE_PROVENANCE_KEYS = (
     "opportunity_policy_mode",
     "opportunity_ai_enabled",
     "opportunity_ai_manual_kill_switch_active",
+    "opportunity_execution_disabled",
+    "opportunity_runtime_controls_revision",
     "ai_required_for_execution",
     "ai_decision_available",
     "ai_decision_status",
@@ -2673,6 +2675,27 @@ class TradingController:
                 sanitized_request_metadata["opportunity_autonomy_decision"] = {}
                 request = replace(request, metadata=sanitized_request_metadata)
         if self._is_opportunity_autonomy_enforced(signal, request):
+            runtime_lineage = self._extract_opportunity_runtime_lineage_snapshot(request.metadata)
+            if runtime_lineage.get("opportunity_execution_disabled") == "true":
+                hard_stop_metadata: dict[str, object] = {
+                    "environment": self.environment,
+                    **runtime_lineage,
+                    "execution_permission": "blocked",
+                    "autonomous_execution_allowed": False,
+                    "autonomy_primary_reason": "emergency_stop_active",
+                    "blocking_reason": "emergency_stop_active",
+                    "autonomy_decisive_stage": "runtime_controls",
+                    "autonomy_decisive_reason": "emergency_stop_active",
+                }
+                self._record_decision_event(
+                    "opportunity_autonomy_enforcement",
+                    signal=signal,
+                    request=request,
+                    status="blocked",
+                    metadata=hard_stop_metadata,
+                )
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return None
             if self._is_autonomous_open_handoff_path(request):
                 contract_valid, missing_fields, mode, blocking_reason = (
                     self._validate_autonomous_open_handoff_contract(
@@ -2774,7 +2797,6 @@ class TradingController:
             existing_open_tracker = (
                 self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
             )
-            runtime_lineage = self._extract_opportunity_runtime_lineage_snapshot(request.metadata)
             runtime_controls_disable_new_open = (
                 runtime_lineage.get("opportunity_ai_enabled") == "false"
                 and runtime_lineage.get("opportunity_ai_manual_kill_switch_active") == "true"

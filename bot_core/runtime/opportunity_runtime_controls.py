@@ -12,6 +12,7 @@ class OpportunityRuntimeControlsSnapshot:
 
     opportunity_ai_enabled: bool
     manual_kill_switch: bool
+    execution_disabled: bool
     policy_mode: str
     revision: int
 
@@ -26,11 +27,13 @@ class OpportunityRuntimeControls:
         *,
         opportunity_ai_enabled: bool = True,
         manual_kill_switch: bool = False,
+        execution_disabled: bool = False,
         policy_mode: str = "shadow",
     ) -> None:
         self._lock = threading.RLock()
         self._opportunity_ai_enabled = bool(opportunity_ai_enabled)
         self._manual_kill_switch = bool(manual_kill_switch)
+        self._execution_disabled = bool(execution_disabled)
         self._policy_mode = self._normalize_policy_mode(policy_mode)
         self._revision = 0
 
@@ -46,6 +49,7 @@ class OpportunityRuntimeControls:
             return OpportunityRuntimeControlsSnapshot(
                 opportunity_ai_enabled=self._opportunity_ai_enabled,
                 manual_kill_switch=self._manual_kill_switch,
+                execution_disabled=self._execution_disabled,
                 policy_mode=self._policy_mode,
                 revision=self._revision,
             )
@@ -55,6 +59,7 @@ class OpportunityRuntimeControls:
         *,
         opportunity_ai_enabled: bool | None = None,
         manual_kill_switch: bool | None = None,
+        execution_disabled: bool | None = None,
         policy_mode: str | None = None,
     ) -> OpportunityRuntimeControlsSnapshot:
         with self._lock:
@@ -68,6 +73,11 @@ class OpportunityRuntimeControls:
                 next_kill = bool(manual_kill_switch)
                 if next_kill != self._manual_kill_switch:
                     self._manual_kill_switch = next_kill
+                    changed = True
+            if execution_disabled is not None:
+                next_execution_disabled = bool(execution_disabled)
+                if next_execution_disabled != self._execution_disabled:
+                    self._execution_disabled = next_execution_disabled
                     changed = True
             if policy_mode is not None:
                 next_mode = self._normalize_policy_mode(policy_mode)
