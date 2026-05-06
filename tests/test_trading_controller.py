@@ -69717,6 +69717,278 @@ def test_runtime_controls_soft_snapshot_allows_legal_close_without_signal_metada
             policy_mode=initial.policy_mode,
         )
 
+
+def test_runtime_controls_snapshot_unavailable_blocks_new_autonomous_open() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    runtime_controls = get_opportunity_runtime_controls()
+    original_snapshot = runtime_controls.snapshot
+    runtime_controls.snapshot = lambda: (_ for _ in ()).throw(RuntimeError("snapshot unavailable"))
+    try:
+        open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+        open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+        assert controller.process_signals([open_signal]) == []
+        assert risk_engine.last_checks == []
+        assert execution.requests == []
+        assert controller._opportunity_open_outcomes == {}
+        events = [dict(event) for event in journal.export()]
+        blocked = [
+            event for event in events if event.get("event") == "opportunity_autonomy_enforcement"
+        ]
+        assert blocked
+        assert blocked[-1]["blocking_reason"] == "runtime_controls_unavailable"
+        assert blocked[-1]["opportunity_runtime_controls_unavailable"] == "true"
+        assert not any(
+            event.get("event")
+            in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+            for event in events
+        )
+    finally:
+        runtime_controls.snapshot = original_snapshot
+
+
+def test_runtime_controls_snapshot_unavailable_metadata_hard_stop_remains_fail_closed() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    runtime_controls = get_opportunity_runtime_controls()
+    original_snapshot = runtime_controls.snapshot
+    runtime_controls.snapshot = lambda: (_ for _ in ()).throw(RuntimeError("snapshot unavailable"))
+    try:
+        open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+        open_signal.metadata = {
+            **dict(open_signal.metadata),
+            "opportunity_execution_disabled": "true",
+            "mode": "ai",
+        }
+        assert controller.process_signals([open_signal]) == []
+        assert risk_engine.last_checks == []
+        assert execution.requests == []
+        blocked = [
+            dict(event)
+            for event in journal.export()
+            if event.get("event") == "opportunity_autonomy_enforcement"
+        ]
+        assert blocked
+        assert blocked[-1]["blocking_reason"] == "emergency_stop_active"
+    finally:
+        runtime_controls.snapshot = original_snapshot
+
+
+def test_runtime_controls_snapshot_unavailable_legal_close_policy() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    correlation_key = "runtime-controls-unavailable-legal-close"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="paper",
+        portfolio_scope="paper-1",
+    )
+    runtime_controls = get_opportunity_runtime_controls()
+    original_snapshot = runtime_controls.snapshot
+    runtime_controls.snapshot = lambda: (_ for _ in ()).throw(RuntimeError("snapshot unavailable"))
+    try:
+        close_signal = _opportunity_autonomy_signal(
+            "paper_autonomous",
+            side="SELL",
+            include_decision_payload=True,
+            decision_effective_mode="paper_autonomous",
+        )
+        close_signal.metadata = {
+            **dict(close_signal.metadata),
+            "opportunity_shadow_record_key": correlation_key,
+            "mode": "ai",
+        }
+        results = controller.process_signals([close_signal])
+        assert [result.status for result in results] == ["filled"]
+        assert len(risk_engine.last_checks) >= 1
+        assert execution.requests
+        events = [
+            dict(event)
+            for event in journal.export()
+            if str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        ]
+        assert not any(
+            event.get("event") == "opportunity_autonomy_enforcement"
+            and event.get("blocking_reason") == "runtime_controls_unavailable"
+            for event in events
+        )
+    finally:
+        runtime_controls.snapshot = original_snapshot
+
+
+def test_runtime_controls_snapshot_unavailable_invalid_close_does_not_execute() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    runtime_controls = get_opportunity_runtime_controls()
+    original_snapshot = runtime_controls.snapshot
+    runtime_controls.snapshot = lambda: (_ for _ in ()).throw(RuntimeError("snapshot unavailable"))
+    try:
+        invalid_close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL")
+        invalid_close_signal.metadata = {
+            **dict(invalid_close_signal.metadata),
+            "opportunity_shadow_record_key": "missing-correlation",
+            "mode": "ai",
+        }
+        assert controller.process_signals([invalid_close_signal]) == []
+        assert risk_engine.last_checks == []
+        assert execution.requests == []
+        events = [dict(event) for event in journal.export()]
+        blocked = [
+            event for event in events if event.get("event") == "opportunity_autonomy_enforcement"
+        ]
+        assert blocked
+        assert blocked[-1]["blocking_reason"] == "runtime_controls_unavailable"
+        assert not any(
+            event.get("event")
+            in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+            for event in events
+        )
+    finally:
+        runtime_controls.snapshot = original_snapshot
+
+
+def test_runtime_controls_snapshot_unavailable_close_symbol_mismatch_does_not_execute() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    correlation_key = "runtime-controls-unavailable-close-symbol-mismatch"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="paper",
+        portfolio_scope="paper-1",
+    )
+    runtime_controls = get_opportunity_runtime_controls()
+    original_snapshot = runtime_controls.snapshot
+    runtime_controls.snapshot = lambda: (_ for _ in ()).throw(RuntimeError("snapshot unavailable"))
+    try:
+        close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL")
+        close_signal.symbol = "ETH/USDT"
+        close_signal.metadata = {
+            **dict(close_signal.metadata),
+            "opportunity_shadow_record_key": correlation_key,
+            "mode": "ai",
+        }
+        assert controller.process_signals([close_signal]) == []
+        assert risk_engine.last_checks == []
+        assert execution.requests == []
+        tracker = controller._opportunity_open_outcomes[correlation_key]
+        assert tracker.closed_quantity == pytest.approx(0.0)
+        events = [dict(event) for event in journal.export()]
+        blocked = [
+            event for event in events if event.get("event") == "opportunity_autonomy_enforcement"
+        ]
+        assert blocked
+        assert not any(
+            event.get("event")
+            in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+            for event in events
+        )
+    finally:
+        runtime_controls.snapshot = original_snapshot
+
+
+def test_runtime_controls_snapshot_unavailable_foreign_scope_close_does_not_execute() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [8.0, 6.0, 4.0],
+            environment="paper",
+            portfolio_id="paper-1",
+        ),
+    )
+    correlation_key = "runtime-controls-unavailable-close-foreign-scope"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="live",
+        portfolio_scope="live-1",
+    )
+    runtime_controls = get_opportunity_runtime_controls()
+    original_snapshot = runtime_controls.snapshot
+    runtime_controls.snapshot = lambda: (_ for _ in ()).throw(RuntimeError("snapshot unavailable"))
+    try:
+        close_signal = _opportunity_autonomy_signal("paper_autonomous", side="SELL")
+        close_signal.metadata = {
+            **dict(close_signal.metadata),
+            "opportunity_shadow_record_key": correlation_key,
+            "mode": "ai",
+        }
+        assert controller.process_signals([close_signal]) == []
+        assert risk_engine.last_checks == []
+        assert execution.requests == []
+        tracker = controller._opportunity_open_outcomes[correlation_key]
+        assert tracker.closed_quantity == pytest.approx(0.0)
+        events = [dict(event) for event in journal.export()]
+        blocked = [
+            event for event in events if event.get("event") == "opportunity_autonomy_enforcement"
+        ]
+        assert blocked
+        assert not any(
+            event.get("event")
+            in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+            for event in events
+        )
+    finally:
+        runtime_controls.snapshot = original_snapshot
+
 def test_opportunity_runtime_controls_execution_disabled_contract_minimal() -> None:
     runtime_controls = OpportunityRuntimeControls(
         policy_mode="live",

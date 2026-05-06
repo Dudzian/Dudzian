@@ -234,6 +234,7 @@ _OPPORTUNITY_RUNTIME_LINEAGE_PROVENANCE_KEYS = (
     "final_decision_accepted",
     "ai_decision_accepted",
     "opportunity_ai_disabled_reason",
+    "opportunity_runtime_controls_unavailable",
 )
 _LIVE_AUTONOMY_ADMISSION_BLOCKER_REASONS = frozenset(
     {
@@ -900,10 +901,12 @@ class TradingController:
         self, metadata: Mapping[str, object] | None
     ) -> dict[str, str]:
         lineage = self._extract_opportunity_runtime_lineage_snapshot(metadata)
+        runtime_controls_unavailable = False
         try:
             runtime_snapshot = get_opportunity_runtime_controls().snapshot()
         except Exception:
             runtime_snapshot = None
+            runtime_controls_unavailable = True
         if runtime_snapshot is not None:
             lineage["opportunity_ai_enabled"] = (
                 "true" if runtime_snapshot.opportunity_ai_enabled else "false"
@@ -921,6 +924,8 @@ class TradingController:
                 and runtime_snapshot.manual_kill_switch
             ):
                 lineage["ai_required_for_execution"] = "true"
+        if runtime_controls_unavailable:
+            lineage["opportunity_runtime_controls_unavailable"] = "true"
         metadata_lineage = self._extract_opportunity_runtime_lineage_snapshot(metadata)
         if metadata_lineage.get("opportunity_execution_disabled") == "true":
             lineage["opportunity_execution_disabled"] = "true"
@@ -2721,6 +2726,12 @@ class TradingController:
                 request = replace(request, metadata=sanitized_request_metadata)
         if self._is_opportunity_autonomy_enforced(signal, request):
             runtime_lineage = self._effective_opportunity_runtime_lineage_snapshot(request.metadata)
+            correlation_key = str(
+                (request.metadata or {}).get("opportunity_shadow_record_key") or ""
+            ).strip()
+            existing_open_tracker = (
+                self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
+            )
             if runtime_lineage.get("opportunity_execution_disabled") == "true":
                 hard_stop_metadata: dict[str, object] = {
                     "environment": self.environment,
@@ -2741,6 +2752,37 @@ class TradingController:
                 )
                 self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
                 return None
+            if runtime_lineage.get("opportunity_runtime_controls_unavailable") == "true":
+                is_legal_close = (
+                    existing_open_tracker is not None
+                    and str(existing_open_tracker.symbol) == str(request.symbol)
+                    and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+                    and self._matches_current_open_tracker_scope(
+                        correlation_key=correlation_key,
+                        symbol=str(request.symbol),
+                        tracker=existing_open_tracker,
+                    )
+                )
+                if not is_legal_close:
+                    unavailable_metadata: dict[str, object] = {
+                        "environment": self.environment,
+                        **runtime_lineage,
+                        "execution_permission": "blocked",
+                        "autonomous_execution_allowed": False,
+                        "autonomy_primary_reason": "runtime_controls_unavailable",
+                        "blocking_reason": "runtime_controls_unavailable",
+                        "autonomy_decisive_stage": "runtime_controls",
+                        "autonomy_decisive_reason": "runtime_controls_unavailable",
+                    }
+                    self._record_decision_event(
+                        "opportunity_autonomy_enforcement",
+                        signal=signal,
+                        request=request,
+                        status="blocked",
+                        metadata=unavailable_metadata,
+                    )
+                    self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                    return None
             if self._is_autonomous_open_handoff_path(request):
                 contract_valid, missing_fields, mode, blocking_reason = (
                     self._validate_autonomous_open_handoff_contract(
@@ -2836,12 +2878,6 @@ class TradingController:
                         **autonomy_chain,
                     },
                 )
-            correlation_key = str(
-                (request.metadata or {}).get("opportunity_shadow_record_key") or ""
-            ).strip()
-            existing_open_tracker = (
-                self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
-            )
             runtime_controls_disable_new_open = (
                 runtime_lineage.get("opportunity_ai_enabled") == "false"
                 and runtime_lineage.get("opportunity_ai_manual_kill_switch_active") == "true"
