@@ -76,6 +76,7 @@ except Exception:  # pragma: no cover
 # Exchanges commons
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+from bot_core.runtime.opportunity_runtime_controls import get_opportunity_runtime_controls
 
 try:
     from bot_core.runtime.tco_reporting import RuntimeTCOReporter
@@ -893,6 +894,50 @@ class TradingController:
             }.items()
             if value is not None
         }
+
+
+    def _effective_opportunity_runtime_lineage_snapshot(
+        self, metadata: Mapping[str, object] | None
+    ) -> dict[str, str]:
+        lineage = self._extract_opportunity_runtime_lineage_snapshot(metadata)
+        try:
+            runtime_snapshot = get_opportunity_runtime_controls().snapshot()
+        except Exception:
+            runtime_snapshot = None
+        if runtime_snapshot is not None:
+            lineage["opportunity_ai_enabled"] = (
+                "true" if runtime_snapshot.opportunity_ai_enabled else "false"
+            )
+            lineage["opportunity_ai_manual_kill_switch_active"] = (
+                "true" if runtime_snapshot.manual_kill_switch else "false"
+            )
+            lineage["opportunity_execution_disabled"] = (
+                "true" if runtime_snapshot.execution_disabled else "false"
+            )
+            lineage["opportunity_policy_mode"] = str(runtime_snapshot.policy_mode)
+            lineage["opportunity_runtime_controls_revision"] = str(runtime_snapshot.revision)
+            if (
+                not runtime_snapshot.opportunity_ai_enabled
+                and runtime_snapshot.manual_kill_switch
+            ):
+                lineage["ai_required_for_execution"] = "true"
+        metadata_lineage = self._extract_opportunity_runtime_lineage_snapshot(metadata)
+        if metadata_lineage.get("opportunity_execution_disabled") == "true":
+            lineage["opportunity_execution_disabled"] = "true"
+            if metadata_lineage.get("opportunity_runtime_controls_revision"):
+                lineage["opportunity_runtime_controls_revision"] = metadata_lineage[
+                    "opportunity_runtime_controls_revision"
+                ]
+        metadata_soft_kill = (
+            metadata_lineage.get("opportunity_ai_enabled") == "false"
+            and metadata_lineage.get("opportunity_ai_manual_kill_switch_active") == "true"
+            and metadata_lineage.get("ai_required_for_execution") == "true"
+        )
+        if metadata_soft_kill:
+            lineage["opportunity_ai_enabled"] = "false"
+            lineage["opportunity_ai_manual_kill_switch_active"] = "true"
+            lineage["ai_required_for_execution"] = "true"
+        return lineage
 
     def _extract_opportunity_runtime_lineage_snapshot(
         self, metadata: Mapping[str, object] | None
@@ -2675,7 +2720,7 @@ class TradingController:
                 sanitized_request_metadata["opportunity_autonomy_decision"] = {}
                 request = replace(request, metadata=sanitized_request_metadata)
         if self._is_opportunity_autonomy_enforced(signal, request):
-            runtime_lineage = self._extract_opportunity_runtime_lineage_snapshot(request.metadata)
+            runtime_lineage = self._effective_opportunity_runtime_lineage_snapshot(request.metadata)
             if runtime_lineage.get("opportunity_execution_disabled") == "true":
                 hard_stop_metadata: dict[str, object] = {
                     "environment": self.environment,
