@@ -69521,7 +69521,20 @@ def test_runtime_controls_hard_stop_metadata_true_remains_fail_closed() -> None:
             event for event in events if event.get("event") == "opportunity_autonomy_enforcement"
         ]
         assert blocked
-        assert blocked[-1]["blocking_reason"] == "emergency_stop_active"
+        blocked_event = blocked[-1]
+        assert blocked_event["blocking_reason"] == "emergency_stop_active"
+        assert blocked_event["autonomy_decisive_stage"] == "runtime_controls"
+        assert blocked_event["autonomy_decisive_reason"] == "emergency_stop_active"
+        assert blocked_event["execution_permission"] == "blocked"
+        assert blocked_event["autonomous_execution_allowed"] == "false"
+        assert blocked_event["opportunity_execution_disabled"] == "true"
+        assert blocked_event["opportunity_runtime_controls_unavailable"] == "false"
+        assert blocked_event["opportunity_ai_enabled"] == "true"
+        assert blocked_event["opportunity_ai_manual_kill_switch_active"] == "false"
+        assert blocked_event["ai_required_for_execution"] == "true"
+        assert blocked_event["opportunity_policy_mode"] in {"paper", "shadow"}
+        assert blocked_event["environment"] == "paper"
+        assert "opportunity_runtime_controls_revision" in blocked_event
         assert not any(
             event.get("event")
             in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
@@ -69613,8 +69626,20 @@ def test_runtime_controls_hard_stop_snapshot_blocks_open_without_signal_metadata
         assert execution.requests == []
         blocked = [dict(e) for e in journal.export() if e.get("event") == "opportunity_autonomy_enforcement"]
         assert blocked
-        assert blocked[-1]["blocking_reason"] == "emergency_stop_active"
-        assert blocked[-1]["opportunity_runtime_controls_revision"] == str(runtime_controls.snapshot().revision)
+        blocked_event = blocked[-1]
+        assert blocked_event["blocking_reason"] == "emergency_stop_active"
+        assert blocked_event["autonomy_decisive_stage"] == "runtime_controls"
+        assert blocked_event["autonomy_decisive_reason"] == "emergency_stop_active"
+        assert blocked_event["execution_permission"] == "blocked"
+        assert blocked_event["autonomous_execution_allowed"] == "false"
+        assert blocked_event["opportunity_execution_disabled"] == "true"
+        assert blocked_event["opportunity_runtime_controls_unavailable"] == "false"
+        assert blocked_event["opportunity_ai_enabled"] == "true"
+        assert blocked_event["opportunity_ai_manual_kill_switch_active"] == "false"
+        assert blocked_event["ai_required_for_execution"] == "true"
+        assert blocked_event["opportunity_policy_mode"] in {"paper", "shadow"}
+        assert blocked_event["opportunity_runtime_controls_revision"] == str(runtime_controls.snapshot().revision)
+        assert blocked_event["environment"] == "paper"
     finally:
         runtime_controls.update(
             opportunity_ai_enabled=initial.opportunity_ai_enabled,
@@ -69668,7 +69693,20 @@ def test_runtime_controls_soft_snapshot_blocks_new_open_without_signal_metadata(
         assert risk_engine.last_checks == []
         assert execution.requests == []
         blocked = [dict(e) for e in journal.export() if e.get("event") == "opportunity_autonomy_enforcement"]
-        assert blocked[-1]["blocking_reason"] == "autonomy_mode_denied"
+        blocked_event = blocked[-1]
+        assert blocked_event["blocking_reason"] == "autonomy_mode_denied"
+        assert blocked_event["autonomy_decisive_stage"] == "runtime_controls"
+        assert blocked_event["autonomy_decisive_reason"] == "autonomy_mode_denied"
+        assert blocked_event["execution_permission"] == "blocked"
+        assert blocked_event["autonomous_execution_allowed"] == "false"
+        assert blocked_event["opportunity_execution_disabled"] == "false"
+        assert blocked_event["opportunity_runtime_controls_unavailable"] == "false"
+        assert blocked_event["opportunity_ai_enabled"] == "false"
+        assert blocked_event["opportunity_ai_manual_kill_switch_active"] == "true"
+        assert blocked_event["ai_required_for_execution"] == "true"
+        assert blocked_event["opportunity_policy_mode"] == "live"
+        assert blocked_event["environment"] == "paper"
+        assert "opportunity_runtime_controls_revision" in blocked_event
     finally:
         runtime_controls.update(
             opportunity_ai_enabled=initial.opportunity_ai_enabled,
@@ -69744,8 +69782,19 @@ def test_runtime_controls_snapshot_unavailable_blocks_new_autonomous_open() -> N
             event for event in events if event.get("event") == "opportunity_autonomy_enforcement"
         ]
         assert blocked
-        assert blocked[-1]["blocking_reason"] == "runtime_controls_unavailable"
-        assert blocked[-1]["opportunity_runtime_controls_unavailable"] == "true"
+        blocked_event = blocked[-1]
+        assert blocked_event["blocking_reason"] == "runtime_controls_unavailable"
+        assert blocked_event["autonomy_decisive_stage"] == "runtime_controls"
+        assert blocked_event["autonomy_decisive_reason"] == "runtime_controls_unavailable"
+        assert blocked_event["execution_permission"] == "blocked"
+        assert blocked_event["autonomous_execution_allowed"] == "false"
+        assert blocked_event["opportunity_runtime_controls_unavailable"] == "true"
+        assert blocked_event["opportunity_execution_disabled"] == "false"
+        assert blocked_event["opportunity_ai_enabled"] == "true"
+        assert blocked_event["opportunity_ai_manual_kill_switch_active"] == "false"
+        assert blocked_event["ai_required_for_execution"] == "true"
+        assert blocked_event["opportunity_policy_mode"] == "paper"
+        assert blocked_event["environment"] == "paper"
         assert not any(
             event.get("event")
             in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
