@@ -912,7 +912,6 @@ class TradingController:
             if value is not None
         }
 
-
     def _effective_opportunity_runtime_lineage_snapshot(
         self, metadata: Mapping[str, object] | None
     ) -> dict[str, str]:
@@ -954,10 +953,7 @@ class TradingController:
             )
             lineage["opportunity_policy_mode"] = str(runtime_snapshot.policy_mode)
             lineage["opportunity_runtime_controls_revision"] = str(runtime_snapshot.revision)
-            if (
-                not runtime_snapshot.opportunity_ai_enabled
-                and runtime_snapshot.manual_kill_switch
-            ):
+            if not runtime_snapshot.opportunity_ai_enabled and runtime_snapshot.manual_kill_switch:
                 lineage["ai_required_for_execution"] = "true"
         if runtime_controls_unavailable:
             lineage["opportunity_runtime_controls_unavailable"] = "true"
@@ -3339,7 +3335,9 @@ class TradingController:
                 },
             )
             return None
-        if self._is_pending_autonomous_order_replay(request=request, correlation_key=correlation_key):
+        if self._is_pending_autonomous_order_replay(
+            request=request, correlation_key=correlation_key
+        ):
             self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
             self._record_decision_event(
                 "signal_skipped",
@@ -3450,7 +3448,9 @@ class TradingController:
             self._handle_liquidation_state(risk_result)
             return None
         if is_autonomy_enforced:
-            if not self._allow_last_mile_autonomy_execution(signal, adjusted_request, metric_labels):
+            if not self._allow_last_mile_autonomy_execution(
+                signal, adjusted_request, metric_labels
+            ):
                 self._handle_liquidation_state(risk_result)
                 return None
             if not self._allow_last_mile_account_reconciliation_execution(
@@ -3633,7 +3633,9 @@ class TradingController:
         self._handle_liquidation_state(risk_result)
         return result
 
-    def _is_pending_autonomous_order_replay(self, *, request: OrderRequest, correlation_key: str) -> bool:
+    def _is_pending_autonomous_order_replay(
+        self, *, request: OrderRequest, correlation_key: str
+    ) -> bool:
         if not correlation_key:
             return False
         if not self._is_autonomous_order_request(request):
@@ -3653,7 +3655,9 @@ class TradingController:
         normalized_status: str,
         result: OrderResult,
     ) -> None:
-        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        correlation_key = str(
+            (request.metadata or {}).get("opportunity_shadow_record_key") or ""
+        ).strip()
         if not correlation_key:
             return
         if not self._is_autonomous_order_request(request):
@@ -3685,7 +3689,9 @@ class TradingController:
     ) -> tuple[str, str, str, str] | None:
         if not self._is_autonomous_order_request(request):
             return None
-        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        correlation_key = str(
+            (request.metadata or {}).get("opportunity_shadow_record_key") or ""
+        ).strip()
         if not correlation_key:
             return None
         existing_open_tracker = self._opportunity_open_outcomes.get(correlation_key)
@@ -3706,7 +3712,9 @@ class TradingController:
         metric_labels: Mapping[str, str],
     ) -> bool:
         runtime_lineage = self._effective_opportunity_runtime_lineage_snapshot(request.metadata)
-        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        correlation_key = str(
+            (request.metadata or {}).get("opportunity_shadow_record_key") or ""
+        ).strip()
         existing_open_tracker = (
             self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
         )
@@ -3731,7 +3739,10 @@ class TradingController:
                 "autonomy_decisive_stage": "runtime_controls",
                 "autonomy_decisive_reason": "emergency_stop_active",
             }
-        elif runtime_lineage.get("opportunity_runtime_controls_unavailable") == "true" and not is_legal_close:
+        elif (
+            runtime_lineage.get("opportunity_runtime_controls_unavailable") == "true"
+            and not is_legal_close
+        ):
             blocked_metadata = {
                 "environment": self.environment,
                 **runtime_lineage,
@@ -3776,7 +3787,9 @@ class TradingController:
         request: OrderRequest,
         metric_labels: Mapping[str, str],
     ) -> bool:
-        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        correlation_key = str(
+            (request.metadata or {}).get("opportunity_shadow_record_key") or ""
+        ).strip()
         existing_open_tracker = (
             self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
         )
@@ -3824,7 +3837,9 @@ class TradingController:
             account=account,
             symbol=str(request.symbol),
         )
-        expected_runtime_sign = 1.0 if str(existing_open_tracker.side).upper() in _BUY_SIDES else -1.0
+        expected_runtime_sign = (
+            1.0 if str(existing_open_tracker.side).upper() in _BUY_SIDES else -1.0
+        )
         sign_mismatch = (
             runtime_position_notional is not None
             and abs(runtime_position_notional) > 1e-12

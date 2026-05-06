@@ -34,5 +34,3 @@ OEM_MODEL_REPOSITORY: Final[Path | None] = _detect_packaged_repository()
 
 class AIModels(_BuiltinAIModels):
     """Alias zachowujący kompatybilność ze starszym API importującym ``ai_models``."""
-
-

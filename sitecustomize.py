@@ -1,4 +1,5 @@
 """Umożliwia import lokalnych modułów bez instalacji pakietu."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -273,7 +274,9 @@ _original_reload = importlib.reload
 
 def _patched_reload(module):  # type: ignore[override]
     result = _original_reload(module)
-    if getattr(module, "__name__", "") == "numpy" or getattr(module, "__name__", "").startswith("numpy."):
+    if getattr(module, "__name__", "") == "numpy" or getattr(module, "__name__", "").startswith(
+        "numpy."
+    ):
         _stabilize_numpy_no_value()
     return result
 

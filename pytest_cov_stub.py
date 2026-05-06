@@ -33,9 +33,7 @@ def _pytest_cov_active(config: Any) -> bool:
     if pm is None:
         return False
     return bool(
-        pm.hasplugin("pytest_cov")
-        or pm.hasplugin("pytest_cov.plugin")
-        or pm.hasplugin("cov")
+        pm.hasplugin("pytest_cov") or pm.hasplugin("pytest_cov.plugin") or pm.hasplugin("cov")
     )
 
 
@@ -54,8 +52,8 @@ class _CoverageState:
     fail_under: Optional[float] = None
     term_missing: bool = False
     overall: float = 100.0
-    module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]] = field(
-        default_factory=list
+    module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]] = (
+        field(default_factory=list)
     )
     failed: bool = False
 
@@ -272,9 +270,7 @@ def pytest_configure(config: Any) -> None:  # pragma: no cover - hook wywoływan
         _reset_state(keep_tracer=False)
         return
     modules = [
-        mod
-        for mod in (getattr(options, "cov_sources", None) or getattr(options, "cov", []))
-        if mod
+        mod for mod in (getattr(options, "cov_sources", None) or getattr(options, "cov", [])) if mod
     ]
     if not modules:
         _reset_state(keep_tracer=False)
@@ -338,7 +334,9 @@ def _relative_path(path: Path) -> str:
         return path.resolve().as_posix()
 
 
-def _summaries() -> tuple[float, list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]]]:
+def _summaries() -> tuple[
+    float, list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]]
+]:
     module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]] = []
     total_executable = 0
     total_covered = 0
@@ -366,7 +364,9 @@ def _summaries() -> tuple[float, list[tuple[str, float, int, int, list[tuple[_Co
     return overall, module_summaries
 
 
-def _render_term(module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]]) -> str:
+def _render_term(
+    module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]],
+) -> str:
     lines = ["Pokrycie (trace stub)"]
     header = f"{'Moduł':40} {'Pokrycie':>10} {'Linie':>12}"
     lines.append(header)
@@ -376,7 +376,9 @@ def _render_term(module_summaries: list[tuple[str, float, int, int, list[tuple[_
     return "\n".join(lines)
 
 
-def _render_missing(module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]]) -> str:
+def _render_missing(
+    module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]],
+) -> str:
     lines = ["Brakujące linie (trace stub)"]
     for module, _, _, _, files in module_summaries:
         for file, total, covered in files:
@@ -394,7 +396,11 @@ def _render_missing(module_summaries: list[tuple[str, float, int, int, list[tupl
     return "\n".join(lines)
 
 
-def _write_xml(overall: float, module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]], destination: Path) -> None:
+def _write_xml(
+    overall: float,
+    module_summaries: list[tuple[str, float, int, int, list[tuple[_CoverageFile, int, int]]]],
+    destination: Path,
+) -> None:
     root = ET.Element(
         "coverage",
         attrib={
@@ -444,7 +450,9 @@ def _write_xml(overall: float, module_summaries: list[tuple[str, float, int, int
     ET.ElementTree(root).write(destination, encoding="utf-8", xml_declaration=True)
 
 
-def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any) -> None:  # pragma: no cover
+def pytest_terminal_summary(
+    terminalreporter: Any, exitstatus: int, config: Any
+) -> None:  # pragma: no cover
     if _pytest_cov_active(config):
         return
     if not _STATE.files_by_module:
@@ -452,10 +460,7 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any)
     if not _STATE.module_summaries:
         terminalreporter.write_line("(cov stub) brak danych do raportu")
         return
-    if (
-        any(kind in {"term", "term-missing"} for kind, _ in _STATE.reports)
-        or not _STATE.reports
-    ):
+    if any(kind in {"term", "term-missing"} for kind, _ in _STATE.reports) or not _STATE.reports:
         terminalreporter.write_line(_render_term(_STATE.module_summaries))
     if _STATE.term_missing:
         terminalreporter.write_line(_render_missing(_STATE.module_summaries))
