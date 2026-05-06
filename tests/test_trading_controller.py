@@ -51015,6 +51015,188 @@ def test_autonomous_open_pending_like_statuses_reserve_replay_guard(
     )
 
 
+
+
+def test_pending_open_same_correlation_after_controller_restart_current_contract(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT", decision_timestamp=decision_timestamp, model_version="opportunity-v1", rank=1
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)])
+
+    execution_a = SequencedExecutionService(
+        [{"status": "pending", "order_id": "pending-A", "filled_quantity": 0.0, "avg_price": None}]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_a,
+        opportunity_shadow_repository=repository,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp
+    )
+    assert [row.status for row in controller_a.process_signals([signal])] == ["pending"]
+
+    execution_b = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+    )
+    controller_b, _execution_b, journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_b,
+        opportunity_shadow_repository=repository,
+    )
+    replay = controller_b.process_signals([signal])
+
+    assert [row.status for row in replay] == ["filled"]
+    assert len(execution_b.requests) == 1
+    assert not any(
+        event.get("event") == "signal_skipped"
+        and event.get("reason") == "pending_autonomous_order_replay_suppressed"
+        for event in journal_b.export()
+    )
+
+
+def test_pending_open_same_symbol_different_correlation_after_controller_restart_current_contract(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key_a = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT", decision_timestamp=decision_timestamp, model_version="opportunity-v1", rank=1
+    )
+    correlation_key_b = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT", decision_timestamp=decision_timestamp, model_version="opportunity-v1", rank=2
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(correlation_key=correlation_key_a, decision_timestamp=decision_timestamp),
+            _shadow_record_for_key(correlation_key=correlation_key_b, decision_timestamp=decision_timestamp),
+        ]
+    )
+
+    execution_a = SequencedExecutionService(
+        [{"status": "pending", "order_id": "pending-A", "filled_quantity": 0.0, "avg_price": None}]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_a,
+        opportunity_shadow_repository=repository,
+    )
+    signal_a = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key=correlation_key_a, decision_timestamp=decision_timestamp
+    )
+    assert [row.status for row in controller_a.process_signals([signal_a])] == ["pending"]
+
+    execution_b = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+    )
+    controller_b, _execution_b, journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_b,
+        opportunity_shadow_repository=repository,
+    )
+    signal_b = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key=correlation_key_b, decision_timestamp=decision_timestamp
+    )
+    replay = controller_b.process_signals([signal_b])
+
+    assert [row.status for row in replay] == ["filled"]
+    assert len(execution_b.requests) == 1
+    assert not any(
+        event.get("event") == "signal_skipped"
+        and event.get("reason") == "pending_autonomous_order_replay_suppressed"
+        for event in journal_b.export()
+    )
+
+
+def test_pending_close_after_controller_restart_current_contract_duplicates_despite_proxy_label(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 8, 12, 0, tzinfo=timezone.utc)
+    correlation_key = "pending-close-restart-proxy-idempotent"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+
+    execution_a = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "pending", "order_id": "close-pending-1", "filled_quantity": 0.0, "avg_price": None},
+        ]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_a,
+        opportunity_shadow_repository=repository,
+    )
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)])
+    open_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp)
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.metadata = {**dict(close_signal.metadata), "mode": "ai", "opportunity_shadow_record_key": correlation_key}
+
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+    assert [row.status for row in controller_a.process_signals([close_signal])] == ["pending"]
+    assert any(
+        row.label_quality == "execution_proxy_pending_exit" and row.correlation_key == correlation_key
+        for row in repository.load_outcome_labels()
+    )
+
+    execution_b = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}]
+    )
+    controller_b, _execution_b, _journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_b,
+        opportunity_shadow_repository=repository,
+    )
+
+    replay = controller_b.process_signals([close_signal])
+    assert [row.status for row in replay] == ["filled"]
+    assert len(execution_b.requests) == 1
+
+
+def test_rejected_open_after_controller_restart_allows_retry(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT", decision_timestamp=decision_timestamp, model_version="opportunity-v1", rank=1
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)])
+
+    execution_a = SequencedExecutionService(
+        [{"status": "rejected", "order_id": "reject-1", "filled_quantity": 0.0, "avg_price": None}]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_a,
+        opportunity_shadow_repository=repository,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp
+    )
+    assert [row.status for row in controller_a.process_signals([signal])] == ["rejected"]
+
+    execution_b = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+    )
+    controller_b, _execution_b, _journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_b,
+        opportunity_shadow_repository=repository,
+    )
+    retry = controller_b.process_signals([signal])
+
+    assert [row.status for row in retry] == ["filled"]
+    assert len(execution_b.requests) == 1
 def test_autonomous_open_rejected_result_allows_retry_without_pending_suppression(tmp_path: Path) -> None:
     decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     correlation_key = OpportunityShadowRecord.build_record_key(
