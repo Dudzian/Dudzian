@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 
 import pytest
@@ -158,10 +158,11 @@ class StatusExecutionService(ExecutionService):
         self._filled_quantity = filled_quantity
         self._avg_price = avg_price
         self.requests: list[OrderRequest] = []
+        self.after_execute_callback: Callable[[], None] | None = None
 
     def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
         self.requests.append(request)
-        return OrderResult(
+        result = OrderResult(
             order_id="order-status-1",
             status=self.status,
             filled_quantity=request.quantity
@@ -170,6 +171,9 @@ class StatusExecutionService(ExecutionService):
             avg_price=self._avg_price,
             raw_response={"context": context.metadata},
         )
+        if self.after_execute_callback is not None:
+            self.after_execute_callback()
+        return result
 
     def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
         return None
@@ -69571,6 +69575,244 @@ def test_runtime_controls_soft_kill_switch_activated_after_risk_blocks_open_befo
         assert controller.process_signals([open_signal]) == []
         assert len(risk_engine.last_checks) == 1
         assert execution.requests == []
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
+
+
+def test_runtime_controls_hard_stop_after_execute_filled_open_materializes_real_fill() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    runtime_controls.update(execution_disabled=False, opportunity_ai_enabled=True, manual_kill_switch=False)
+    try:
+        decision_timestamp = datetime(2026, 1, 3, 12, 0, tzinfo=timezone.utc)
+        correlation_key = "hs-after-exec-open-filled"
+        execution = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=99.0)
+        execution.after_execute_callback = lambda: runtime_controls.update(execution_disabled=True)
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=DummyRiskEngine(),
+            execution_service=execution,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+                [8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"
+            ),
+        )
+        repository = controller._opportunity_shadow_repository
+        assert repository is not None
+        repository.append_shadow_records(
+            [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        )
+        signal = _autonomy_signal_with_correlation(
+            mode="paper_autonomous",
+            side="BUY",
+            correlation_key=correlation_key,
+            decision_timestamp=decision_timestamp,
+            include_decision_payload=True,
+            decision_effective_mode="paper_autonomous",
+        )
+        signal.metadata = {**dict(signal.metadata), "mode": "ai"}
+        results = controller.process_signals([signal])
+        assert [r.status for r in results] == ["filled"]
+        events = [dict(event) for event in journal.export()]
+        assert any(e.get("event") == "order_executed" for e in events)
+        assert execution.requests
+        open_rows = [
+            row
+            for row in repository.load_open_outcomes()
+            if row.correlation_key == correlation_key
+        ]
+        assert len(open_rows) == 1
+        assert open_rows[0].entry_quantity == pytest.approx(1.0, rel=1e-6)
+        assert open_rows[0].entry_price == pytest.approx(99.0, rel=1e-6)
+        assert correlation_key in controller._opportunity_open_outcomes
+        tracker = controller._opportunity_open_outcomes[correlation_key]
+        assert tracker.entry_quantity == pytest.approx(1.0, rel=1e-6)
+        assert tracker.entry_price == pytest.approx(99.0, rel=1e-6)
+        assert not any(
+            e.get("event") == "opportunity_autonomy_enforcement"
+            and e.get("status") == "blocked"
+            and str(e.get("blocking_reason") or "") == "emergency_stop_active"
+            for e in events
+        )
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
+
+
+def test_runtime_controls_hard_stop_after_execute_nonfilled_open_does_not_materialize_tracker() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    runtime_controls.update(execution_disabled=False, opportunity_ai_enabled=True, manual_kill_switch=False)
+    try:
+        decision_timestamp = datetime(2026, 1, 3, 12, 5, tzinfo=timezone.utc)
+        correlation_key = "hs-after-exec-open-nonfilled"
+        execution = StatusExecutionService(status="rejected", filled_quantity=0.0, avg_price=None)
+        execution.after_execute_callback = lambda: runtime_controls.update(execution_disabled=True)
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=DummyRiskEngine(),
+            execution_service=execution,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+                [8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"
+            ),
+        )
+        repository = controller._opportunity_shadow_repository
+        assert repository is not None
+        repository.append_shadow_records(
+            [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        )
+        signal = _autonomy_signal_with_correlation(
+            mode="paper_autonomous",
+            side="BUY",
+            correlation_key=correlation_key,
+            decision_timestamp=decision_timestamp,
+            include_decision_payload=True,
+            decision_effective_mode="paper_autonomous",
+        )
+        signal.metadata = {**dict(signal.metadata), "mode": "ai"}
+        results = controller.process_signals([signal])
+        assert [r.status for r in results] == ["rejected"]
+        events = [dict(event) for event in journal.export()]
+        assert not any(e.get("event") == "order_executed" for e in events)
+        assert correlation_key not in controller._opportunity_open_outcomes
+        assert all(
+            row.correlation_key != correlation_key
+            for row in repository.load_open_outcomes()
+        )
+        assert not any(
+            e.get("event") == "opportunity_outcome_attach"
+            and e.get("status") in {"attached", "partial_attached", "final_attached", "proxy_attached"}
+            and str(e.get("order_opportunity_shadow_record_key") or "").strip()
+            == correlation_key
+            for e in events
+        )
+        assert any(e.get("event") == "order_execution_result" and e.get("status") == "rejected" for e in events)
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
+
+
+def test_runtime_controls_hard_stop_after_execute_filled_close_finalizes_real_close() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    runtime_controls.update(execution_disabled=False, opportunity_ai_enabled=True, manual_kill_switch=False)
+    try:
+        execution = StatusExecutionService(status="filled", filled_quantity=1.0, avg_price=99.0)
+        execution.after_execute_callback = lambda: runtime_controls.update(execution_disabled=True)
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=DummyRiskEngine(),
+            execution_service=execution,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+                [8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"
+            ),
+        )
+        correlation_key = "hs-after-exec-close-filled"
+        controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            environment_scope="paper",
+            portfolio_scope="paper-1",
+        )
+        close_signal = _opportunity_autonomy_signal(
+            "paper_autonomous", side="SELL", include_decision_payload=True, decision_effective_mode="paper_autonomous"
+        )
+        close_signal.metadata = {**dict(close_signal.metadata), "opportunity_shadow_record_key": correlation_key, "mode": "ai"}
+        results = controller.process_signals([close_signal])
+        assert [r.status for r in results] == ["filled"]
+        assert controller._opportunity_open_outcomes[correlation_key].closed_quantity == pytest.approx(
+            1.0, rel=1e-6
+        )
+        events = [dict(event) for event in journal.export()]
+        assert any(e.get("event") == "order_executed" for e in events)
+        close_attach_events = [
+            e
+            for e in events
+            if e.get("event") == "opportunity_outcome_attach"
+            and str(e.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+        ]
+        if close_attach_events:
+            assert close_attach_events[-1].get("status") in {
+                "attached",
+                "skipped_no_labels",
+                "missing_shadow_record",
+            }
+        assert not any(
+            e.get("event") == "opportunity_autonomy_enforcement"
+            and e.get("status") == "blocked"
+            and str(e.get("blocking_reason") or "") == "emergency_stop_active"
+            for e in events
+        )
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
+
+
+def test_runtime_controls_hard_stop_after_execute_nonfilled_close_preserves_tracker() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    runtime_controls.update(execution_disabled=False, opportunity_ai_enabled=True, manual_kill_switch=False)
+    try:
+        execution = StatusExecutionService(status="rejected", filled_quantity=0.0, avg_price=None)
+        execution.after_execute_callback = lambda: runtime_controls.update(execution_disabled=True)
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=DummyRiskEngine(),
+            execution_service=execution,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+                [8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"
+            ),
+        )
+        correlation_key = "hs-after-exec-close-nonfilled"
+        controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+            correlation_key=correlation_key,
+            symbol="BTC/USDT",
+            side="BUY",
+            entry_price=100.0,
+            decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            entry_quantity=1.0,
+            closed_quantity=0.0,
+            environment_scope="paper",
+            portfolio_scope="paper-1",
+        )
+        close_signal = _opportunity_autonomy_signal(
+            "paper_autonomous", side="SELL", include_decision_payload=True, decision_effective_mode="paper_autonomous"
+        )
+        close_signal.metadata = {**dict(close_signal.metadata), "opportunity_shadow_record_key": correlation_key, "mode": "ai"}
+        results = controller.process_signals([close_signal])
+        assert [r.status for r in results] == ["rejected"]
+        assert correlation_key in controller._opportunity_open_outcomes
+        assert controller._opportunity_open_outcomes[correlation_key].closed_quantity == pytest.approx(0.0)
+        events = [dict(event) for event in journal.export()]
+        assert any(e.get("event") == "order_execution_result" and e.get("status") == "rejected" for e in events)
+        assert not any(e.get("event") == "order_executed" for e in events)
+        assert not any(
+            e.get("event") == "opportunity_outcome_attach"
+            and e.get("status") in {"attached", "partial_attached", "final_attached", "proxy_attached"}
+            and str(e.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+            for e in events
+        )
     finally:
         runtime_controls.update(
             opportunity_ai_enabled=initial.opportunity_ai_enabled,
