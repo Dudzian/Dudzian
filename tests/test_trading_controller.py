@@ -519,6 +519,27 @@ def _order_path_events_with_shadow_key(
     ]
 
 
+def _opportunity_attach_events_referencing_key(
+    journal: CollectingDecisionJournal, correlation_key: str
+) -> list[Mapping[str, str]]:
+    normalized_key = str(correlation_key).strip()
+    if not normalized_key:
+        return []
+    return [
+        event
+        for event in journal.export()
+        if event.get("event") == "opportunity_outcome_attach"
+        and normalized_key
+        in {
+            str(event.get("order_opportunity_shadow_record_key") or "").strip(),
+            str(event.get("proxy_correlation_key") or "").strip(),
+            str(event.get("partial_correlation_key") or "").strip(),
+            str(event.get("final_correlation_key") or "").strip(),
+            str(event.get("correlation_key") or "").strip(),
+        }
+    ]
+
+
 def _assert_no_durable_artifacts_for_shadow_key(
     repository: OpportunityShadowRepository,
     *,
@@ -71133,7 +71154,7 @@ def test_same_batch_restored_residual_close_then_fresh_open_same_symbol_no_reent
     open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
     assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
 
-    controller_b, execution_b, _journal_b = _build_autonomy_controller_with_risk(
+    controller_b, execution_b, journal_b = _build_autonomy_controller_with_risk(
         environment="paper",
         risk_engine=DummyRiskEngine(),
         execution_service=SequencedExecutionService(
@@ -71154,6 +71175,23 @@ def test_same_batch_restored_residual_close_then_fresh_open_same_symbol_no_reent
     assert [row.status for row in controller_b.process_signals([restored_close, fresh_open])] == ["filled"]
     assert len(execution_b.requests) == 1
     assert execution_b.requests[0].side == "SELL"
+    close_events = _order_path_events_with_shadow_key(journal_b, correlation_key)
+    assert any(event["event"] == "order_executed" for event in close_events)
+    blocked_open_key = "fresh-open-should-not-reenter"
+    assert _order_path_events_with_shadow_key(journal_b, blocked_open_key) == []
+    assert _opportunity_attach_events_referencing_key(journal_b, blocked_open_key) == []
+    skip_events = [
+        event
+        for event in journal_b.export()
+        if event.get("event") in {"signal_skipped", "opportunity_autonomy_enforcement"}
+        and str(event.get("correlation_key") or "").strip() == blocked_open_key
+    ]
+    if skip_events:
+        assert any(
+            "open_conflict_with_existing_position" in str(event.get("reason") or "")
+            or "blocked_existing_position" in str(event.get("reason") or "")
+            for event in skip_events
+        )
 
 
 def test_same_batch_fresh_open_then_restored_residual_close_same_symbol_no_order_bypass(tmp_path: Path) -> None:
@@ -71175,7 +71213,7 @@ def test_same_batch_fresh_open_then_restored_residual_close_same_symbol_no_order
     open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
     assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
 
-    controller_b, execution_b, _journal_b = _build_autonomy_controller_with_risk(
+    controller_b, execution_b, journal_b = _build_autonomy_controller_with_risk(
         environment="paper",
         risk_engine=DummyRiskEngine(),
         execution_service=SequencedExecutionService(
@@ -71198,6 +71236,11 @@ def test_same_batch_fresh_open_then_restored_residual_close_same_symbol_no_order
     assert [row.status for row in controller_b.process_signals([fresh_open, restored_close])] == ["filled"]
     assert len(execution_b.requests) == 1
     assert execution_b.requests[0].side == "SELL"
+    blocked_open_key = "order-open-before-close"
+    assert _order_path_events_with_shadow_key(journal_b, blocked_open_key) == []
+    assert _opportunity_attach_events_referencing_key(journal_b, blocked_open_key) == []
+    close_events = _order_path_events_with_shadow_key(journal_b, correlation_key)
+    assert any(event["event"] == "order_executed" for event in close_events)
 
 
 def test_same_batch_final_replay_close_does_not_enable_fresh_open_same_correlation(tmp_path: Path) -> None:
@@ -71227,7 +71270,7 @@ def test_same_batch_final_replay_close_does_not_enable_fresh_open_same_correlati
     assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
     assert [row.status for row in controller_a.process_signals([close_signal])] == ["filled"]
 
-    controller_b, execution_b, _journal_b = _build_autonomy_controller_with_risk(
+    controller_b, execution_b, journal_b = _build_autonomy_controller_with_risk(
         environment="paper",
         risk_engine=DummyRiskEngine(),
         execution_service=SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 102.0}]),
@@ -71243,6 +71286,19 @@ def test_same_batch_final_replay_close_does_not_enable_fresh_open_same_correlati
     fresh_open_same_key.metadata = {**dict(fresh_open_same_key.metadata), "mode": "ai"}
     assert controller_b.process_signals([replay_close, fresh_open_same_key]) == []
     assert execution_b.requests == []
+    assert _order_path_events_with_shadow_key(journal_b, correlation_key) == []
+    assert _opportunity_attach_events_referencing_key(journal_b, correlation_key) == []
+    final_labels = [
+        label
+        for label in repository.load_outcome_labels()
+        if label.correlation_key == correlation_key and label.label_quality == "final"
+    ]
+    assert len(final_labels) == 1
+    assert not any(
+        label.correlation_key == correlation_key
+        and label.label_quality == "execution_proxy_pending_exit"
+        for label in repository.load_outcome_labels()
+    )
 
 
 def test_same_batch_foreign_scope_close_does_not_enable_open_from_foreign_tracker(tmp_path: Path) -> None:
@@ -71271,7 +71327,7 @@ def test_same_batch_foreign_scope_close_does_not_enable_open_from_foreign_tracke
         )
     )
 
-    controller, execution, _journal = _build_autonomy_controller_with_risk(
+    controller, execution, journal = _build_autonomy_controller_with_risk(
         environment="paper",
         risk_engine=DummyRiskEngine(),
         execution_service=SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]),
@@ -71287,6 +71343,11 @@ def test_same_batch_foreign_scope_close_does_not_enable_open_from_foreign_tracke
     fresh_open.metadata = {**dict(fresh_open.metadata), "mode": "ai"}
     assert controller.process_signals([foreign_close, fresh_open]) == []
     assert execution.requests == []
+    assert _order_path_events_with_shadow_key(journal, foreign_key) == []
+    fresh_open_key = "same-batch-fresh-open-after-foreign-close"
+    assert _order_path_events_with_shadow_key(journal, fresh_open_key) == []
+    assert _opportunity_attach_events_referencing_key(journal, foreign_key) == []
+    assert _opportunity_attach_events_referencing_key(journal, fresh_open_key) == []
 
 def test_runtime_controls_soft_kill_switch_activated_after_risk_allows_legal_close() -> None:
     runtime_controls = get_opportunity_runtime_controls()
