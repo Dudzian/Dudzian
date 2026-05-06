@@ -68884,9 +68884,7 @@ def test_ai_failover_blocks_new_autonomous_open_before_risk_and_execution() -> N
         event.get("event") in {"order_executed", "order_partially_executed"}
         for event in journal.export()
     )
-    skipped_events = [
-        event for event in journal.export() if event.get("event") == "signal_skipped"
-    ]
+    skipped_events = [event for event in journal.export() if event.get("event") == "signal_skipped"]
     assert skipped_events
     assert skipped_events[-1]["reason"] == "ai_failover_active"
 
@@ -68949,7 +68947,10 @@ def test_ai_failover_allows_legal_autonomous_close_for_existing_tracker() -> Non
     assert close_request.symbol == "BTC/USDT"
     assert close_request.side == "SELL"
     assert close_request.quantity == pytest.approx(1.0)
-    assert str((close_request.metadata or {}).get("opportunity_shadow_record_key") or "").strip() == correlation_key
+    assert (
+        str((close_request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        == correlation_key
+    )
     skipped_close_events = [
         event
         for event in journal.export()
@@ -69012,7 +69013,8 @@ def test_ai_failover_still_blocks_invalid_same_side_close_for_existing_tracker()
     assert risk_engine.last_checks == []
     journal_events = [dict(event) for event in journal.export()]
     assert not any(
-        event.get("event") in {"order_executed", "order_partially_executed"} for event in journal_events
+        event.get("event") in {"order_executed", "order_partially_executed"}
+        for event in journal_events
     )
     assert [
         event
@@ -69029,8 +69031,14 @@ def test_ai_failover_still_blocks_invalid_same_side_close_for_existing_tracker()
     assert close_contract_blocks
     blocked_event = close_contract_blocks[-1]
     assert blocked_event.get("status") == "blocked"
-    assert blocked_event.get("blocking_reason") == "accepted_autonomous_handoff_shadow_reference_unresolved"
-    assert blocked_event.get("autonomy_decisive_reason") == "accepted_autonomous_handoff_shadow_reference_unresolved"
+    assert (
+        blocked_event.get("blocking_reason")
+        == "accepted_autonomous_handoff_shadow_reference_unresolved"
+    )
+    assert (
+        blocked_event.get("autonomy_decisive_reason")
+        == "accepted_autonomous_handoff_shadow_reference_unresolved"
+    )
     assert not any(
         event.get("event") == "signal_skipped"
         and str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
@@ -69077,12 +69085,15 @@ def test_ai_failover_blocked_open_replay_idempotent_without_risk_execution_or_tr
     ]
     assert len(failover_skips) == 2
     assert not any(
-        event.get("event") in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+        event.get("event")
+        in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
         for event in journal_events
     )
 
 
-def test_runtime_controls_manual_kill_switch_blocks_new_autonomous_open_before_risk_and_execution() -> None:
+def test_runtime_controls_manual_kill_switch_blocks_new_autonomous_open_before_risk_and_execution() -> (
+    None
+):
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     journal = CollectingDecisionJournal()
@@ -69114,16 +69125,21 @@ def test_runtime_controls_manual_kill_switch_blocks_new_autonomous_open_before_r
     assert controller._opportunity_open_outcomes == {}
     events = [dict(event) for event in journal.export()]
     assert not any(
-        event.get("event") in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+        event.get("event")
+        in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
         for event in events
     )
-    blocked = [event for event in events if event.get("event") == "opportunity_autonomy_enforcement"]
+    blocked = [
+        event for event in events if event.get("event") == "opportunity_autonomy_enforcement"
+    ]
     assert blocked
     assert blocked[-1]["status"] == "blocked"
     assert blocked[-1]["blocking_reason"] == "autonomy_mode_denied"
 
 
-def test_runtime_controls_manual_kill_switch_allows_legal_autonomous_close_for_existing_tracker() -> None:
+def test_runtime_controls_manual_kill_switch_allows_legal_autonomous_close_for_existing_tracker() -> (
+    None
+):
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     journal = CollectingDecisionJournal()
@@ -69172,7 +69188,9 @@ def test_runtime_controls_manual_kill_switch_allows_legal_autonomous_close_for_e
     assert execution.requests[-1].symbol == "BTC/USDT"
     assert execution.requests[-1].quantity == pytest.approx(1.0)
     assert (
-        str((execution.requests[-1].metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        str(
+            (execution.requests[-1].metadata or {}).get("opportunity_shadow_record_key") or ""
+        ).strip()
         == correlation_key
     )
     close_events = [
@@ -69192,7 +69210,9 @@ def test_runtime_controls_manual_kill_switch_allows_legal_autonomous_close_for_e
     )
 
 
-def test_runtime_controls_invalid_same_side_close_preserves_close_contract_blocking_reason() -> None:
+def test_runtime_controls_invalid_same_side_close_preserves_close_contract_blocking_reason() -> (
+    None
+):
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     journal = CollectingDecisionJournal()
@@ -69238,11 +69258,16 @@ def test_runtime_controls_invalid_same_side_close_preserves_close_contract_block
     assert risk_engine.last_checks == []
     assert execution.requests == []
     events = [dict(event) for event in journal.export()]
-    blocked = [event for event in events if event.get("event") == "opportunity_autonomy_enforcement"]
+    blocked = [
+        event for event in events if event.get("event") == "opportunity_autonomy_enforcement"
+    ]
     assert blocked
-    assert blocked[-1]["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_unresolved"
+    assert (
+        blocked[-1]["blocking_reason"] == "accepted_autonomous_handoff_shadow_reference_unresolved"
+    )
     assert not any(
-        event.get("event") in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
+        event.get("event")
+        in {"order_executed", "order_partially_executed", "opportunity_outcome_attach"}
         for event in events
     )
 
@@ -69279,12 +69304,15 @@ def test_runtime_controls_manual_kill_switch_blocked_open_replay_is_idempotent()
     blocked = [
         dict(event)
         for event in journal.export()
-        if event.get("event") == "opportunity_autonomy_enforcement" and event.get("status") == "blocked"
+        if event.get("event") == "opportunity_autonomy_enforcement"
+        and event.get("status") == "blocked"
     ]
     assert len(blocked) == 2
 
 
-def test_runtime_controls_manual_kill_switch_disable_then_reenable_retry_open_reaches_execution() -> None:
+def test_runtime_controls_manual_kill_switch_disable_then_reenable_retry_open_reaches_execution() -> (
+    None
+):
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     journal = CollectingDecisionJournal()
@@ -69323,6 +69351,7 @@ def test_runtime_controls_manual_kill_switch_disable_then_reenable_retry_open_re
     assert [result.status for result in retried] == ["filled"]
     assert len(risk_engine.last_checks) == 1
     assert len(execution.requests) == 1
+
 
 def test_opportunity_autonomy_duplicate_close_guard_incomplete_final_scope_does_not_suppress_with_valid_shadow_scope() -> (
     None

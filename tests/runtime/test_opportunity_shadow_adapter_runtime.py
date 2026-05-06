@@ -356,7 +356,11 @@ def test_decision_sink_missing_portfolio_does_not_persist_environment_as_portfol
         symbol="BTCUSDT",
         side="BUY",
         confidence=0.9,
-        metadata={"expected_probability": 0.9, "expected_return_bps": 12.0, **_candidate_metadata()},
+        metadata={
+            "expected_probability": 0.9,
+            "expected_return_bps": 12.0,
+            **_candidate_metadata(),
+        },
     )
 
     sink.submit(
