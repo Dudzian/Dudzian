@@ -71114,6 +71114,179 @@ def test_partial_close_follow_up_close_uses_remaining_quantity_and_finalizes(tmp
     )
 
 
+def test_same_batch_restored_residual_close_then_fresh_open_same_symbol_no_reentry(tmp_path: Path) -> None:
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    correlation_key = "same-batch-restored-close-then-open"
+    decision_timestamp = datetime(2026, 1, 6, 10, 0, tzinfo=timezone.utc)
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp)
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+
+    controller_b, execution_b, _journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    restored_close = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="SELL", correlation_key=correlation_key, decision_timestamp=decision_timestamp + timedelta(minutes=1)
+    )
+    restored_close.metadata = {**dict(restored_close.metadata), "mode": "ai", "opportunity_shadow_record_key": correlation_key}
+    fresh_open = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key="fresh-open-should-not-reenter", decision_timestamp=decision_timestamp + timedelta(minutes=2)
+    )
+    fresh_open.symbol = restored_close.symbol
+    fresh_open.metadata = {**dict(fresh_open.metadata), "mode": "ai"}
+
+    assert [row.status for row in controller_b.process_signals([restored_close, fresh_open])] == ["filled"]
+    assert len(execution_b.requests) == 1
+    assert execution_b.requests[0].side == "SELL"
+
+
+def test_same_batch_fresh_open_then_restored_residual_close_same_symbol_no_order_bypass(tmp_path: Path) -> None:
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    correlation_key = "same-batch-open-then-restored-close"
+    decision_timestamp = datetime(2026, 1, 6, 11, 0, tzinfo=timezone.utc)
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp)
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+
+    controller_b, execution_b, _journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 102.0},
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 103.0},
+            ]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    fresh_open = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key="order-open-before-close", decision_timestamp=decision_timestamp + timedelta(minutes=1)
+    )
+    fresh_open.metadata = {**dict(fresh_open.metadata), "mode": "ai"}
+    fresh_open.symbol = "BTC/USDT"
+    restored_close = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="SELL", correlation_key=correlation_key, decision_timestamp=decision_timestamp + timedelta(minutes=2)
+    )
+    restored_close.metadata = {**dict(restored_close.metadata), "mode": "ai", "opportunity_shadow_record_key": correlation_key}
+    assert [row.status for row in controller_b.process_signals([fresh_open, restored_close])] == ["filled"]
+    assert len(execution_b.requests) == 1
+    assert execution_b.requests[0].side == "SELL"
+
+
+def test_same_batch_final_replay_close_does_not_enable_fresh_open_same_correlation(tmp_path: Path) -> None:
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    correlation_key = "same-batch-final-replay-close-open"
+    decision_timestamp = datetime(2026, 1, 6, 12, 0, tzinfo=timezone.utc)
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0},
+            ]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp)
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="SELL", correlation_key=correlation_key, decision_timestamp=decision_timestamp + timedelta(minutes=1)
+    )
+    close_signal.metadata = {**dict(close_signal.metadata), "mode": "ai", "opportunity_shadow_record_key": correlation_key}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+    assert [row.status for row in controller_a.process_signals([close_signal])] == ["filled"]
+
+    controller_b, execution_b, _journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 102.0}]),
+        opportunity_shadow_repository=repository,
+    )
+    replay_close = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="SELL", correlation_key=correlation_key, decision_timestamp=decision_timestamp + timedelta(minutes=2)
+    )
+    replay_close.metadata = {**dict(replay_close.metadata), "mode": "ai", "opportunity_shadow_record_key": correlation_key}
+    fresh_open_same_key = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp + timedelta(minutes=3)
+    )
+    fresh_open_same_key.metadata = {**dict(fresh_open_same_key.metadata), "mode": "ai"}
+    assert controller_b.process_signals([replay_close, fresh_open_same_key]) == []
+    assert execution_b.requests == []
+
+
+def test_same_batch_foreign_scope_close_does_not_enable_open_from_foreign_tracker(tmp_path: Path) -> None:
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    decision_timestamp = datetime(2026, 1, 6, 13, 0, tzinfo=timezone.utc)
+    foreign_key = "same-batch-foreign-scope-close"
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=foreign_key, decision_timestamp=decision_timestamp)]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService([{"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 100.0}]),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key=foreign_key, decision_timestamp=decision_timestamp
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["partially_filled"]
+    restored_row = repository.load_open_outcomes()[0]
+    repository.upsert_open_outcome(
+        replace(
+            restored_row,
+            provenance={**dict(restored_row.provenance), "environment": "live", "portfolio": "live-1"},
+        )
+    )
+
+    controller, execution, _journal = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]),
+        opportunity_shadow_repository=repository,
+    )
+    foreign_close = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="SELL", correlation_key=foreign_key, decision_timestamp=decision_timestamp + timedelta(minutes=1)
+    )
+    foreign_close.metadata = {**dict(foreign_close.metadata), "mode": "ai", "opportunity_shadow_record_key": foreign_key}
+    fresh_open = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key="same-batch-fresh-open-after-foreign-close", decision_timestamp=decision_timestamp + timedelta(minutes=2)
+    )
+    fresh_open.metadata = {**dict(fresh_open.metadata), "mode": "ai"}
+    assert controller.process_signals([foreign_close, fresh_open]) == []
+    assert execution.requests == []
 
 def test_runtime_controls_soft_kill_switch_activated_after_risk_allows_legal_close() -> None:
     runtime_controls = get_opportunity_runtime_controls()
