@@ -1386,7 +1386,9 @@ def test_outcome_label_attach_allows_upgrade_proxy_to_partial_to_final(tmp_path)
     assert labels[0].label_quality == "final"
 
 
-def test_opportunity_shadow_repository_persists_pending_entry_marker_with_provenance(tmp_path) -> None:
+def test_opportunity_shadow_repository_persists_pending_entry_marker_with_provenance(
+    tmp_path,
+) -> None:
     repo = OpportunityShadowRepository(tmp_path / "shadow")
     marker = OpportunityOutcomeLabel(
         symbol="BTC/USDT",
