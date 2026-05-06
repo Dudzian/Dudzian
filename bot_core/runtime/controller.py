@@ -583,6 +583,11 @@ class TradingController:
         repr=False,
         default_factory=dict,
     )
+    _pending_autonomous_open_signatures_by_key: dict[str, tuple[str, str, str, str]] = field(
+        init=False,
+        repr=False,
+        default_factory=dict,
+    )
 
     def __post_init__(self) -> None:
         self.performance_guard_recent_final_window_size = _validate_optional_positive_int(
@@ -710,7 +715,9 @@ class TradingController:
         self._opportunity_open_outcomes = {}
         self._pending_autonomous_order_replays = set()
         self._pending_autonomous_open_signatures = {}
+        self._pending_autonomous_open_signatures_by_key = {}
         self._restore_opportunity_open_outcomes()
+        self._restore_pending_autonomous_open_guards()
 
     def _restore_opportunity_open_outcomes(self) -> None:
         repository = self._opportunity_shadow_repository
@@ -806,6 +813,34 @@ class TradingController:
                 portfolio_scope=restored_portfolio or None,
                 restored_from_repository=True,
             )
+
+    def _restore_pending_autonomous_open_guards(self) -> None:
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return
+        try:
+            labels = repository.load_outcome_labels()
+        except Exception:  # pragma: no cover - diagnostics only
+            return
+        for label in labels:
+            if str(label.label_quality).strip() != "execution_proxy_pending_entry":
+                continue
+            provenance = label.provenance if isinstance(label.provenance, Mapping) else {}
+            order_id = str(provenance.get("order_id") or "").strip()
+            status = _normalize_execution_status(provenance.get("execution_status"))
+            if not order_id or status not in _PENDING_EXECUTION_STATUSES:
+                continue
+            correlation_key = str(label.correlation_key).strip()
+            symbol = str(label.symbol).strip()
+            side = str(provenance.get("side") or "").strip().upper()
+            environment = str(provenance.get("environment") or "").strip()
+            portfolio = str(provenance.get("portfolio") or "").strip()
+            if not correlation_key or not symbol or side not in _BUY_SIDES | _SELL_SIDES:
+                continue
+            self._pending_autonomous_order_replays.add(correlation_key)
+            signature = (environment, portfolio, symbol, side)
+            self._pending_autonomous_open_signatures[signature] = correlation_key
+            self._pending_autonomous_open_signatures_by_key[correlation_key] = signature
 
     def _persist_open_outcome_tracker(self, tracker: _OpportunityOpenOutcomeTracker) -> None:
         repository = self._opportunity_shadow_repository
@@ -3335,9 +3370,11 @@ class TradingController:
                 },
             )
             return None
-        if self._is_pending_autonomous_order_replay(
-            request=request, correlation_key=correlation_key
-        ):
+        pending_replay_reason = self._pending_autonomous_order_replay_reason(
+            request=request,
+            correlation_key=correlation_key,
+        )
+        if pending_replay_reason is not None:
             self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
             self._record_decision_event(
                 "signal_skipped",
@@ -3345,7 +3382,7 @@ class TradingController:
                 request=request,
                 status="skipped",
                 metadata={
-                    "reason": "pending_autonomous_order_replay_suppressed",
+                    "reason": pending_replay_reason,
                     "proxy_correlation_key": correlation_key,
                 },
             )
@@ -3633,20 +3670,22 @@ class TradingController:
         self._handle_liquidation_state(risk_result)
         return result
 
-    def _is_pending_autonomous_order_replay(
+    def _pending_autonomous_order_replay_reason(
         self, *, request: OrderRequest, correlation_key: str
-    ) -> bool:
+    ) -> str | None:
         if not correlation_key:
-            return False
-        if not self._is_autonomous_order_request(request):
-            return False
-        if correlation_key in self._pending_autonomous_order_replays:
-            return True
+            return None
         pending_signature = self._pending_autonomous_open_signature(request=request)
-        if pending_signature is None:
-            return False
-        pending_correlation_key = self._pending_autonomous_open_signatures.get(pending_signature)
-        return bool(pending_correlation_key and pending_correlation_key != correlation_key)
+        if pending_signature is not None:
+            stored_signature = self._pending_autonomous_open_signatures_by_key.get(correlation_key)
+            if stored_signature is not None and stored_signature == pending_signature:
+                return "pending_autonomous_order_durable_replay_suppressed"
+            pending_correlation_key = self._pending_autonomous_open_signatures.get(pending_signature)
+            if pending_correlation_key and pending_correlation_key != correlation_key:
+                return "pending_autonomous_order_durable_symbol_replay_suppressed"
+        if pending_signature is None and correlation_key in self._pending_autonomous_order_replays:
+            return "pending_autonomous_order_replay_suppressed"
+        return None
 
     def _update_pending_autonomous_order_replay_state(
         self,
@@ -3668,6 +3707,13 @@ class TradingController:
             pending_signature = self._pending_autonomous_open_signature(request=request)
             if pending_signature is not None:
                 self._pending_autonomous_open_signatures[pending_signature] = correlation_key
+                self._pending_autonomous_open_signatures_by_key[correlation_key] = pending_signature
+            self._persist_pending_autonomous_open_marker(
+                request=request,
+                correlation_key=correlation_key,
+                normalized_status=normalized_status,
+                order_id=str(result.order_id or "").strip(),
+            )
             return
         self._pending_autonomous_order_replays.discard(correlation_key)
         self._pending_autonomous_open_signatures = {
@@ -3675,6 +3721,56 @@ class TradingController:
             for signature, tracked_key in self._pending_autonomous_open_signatures.items()
             if tracked_key != correlation_key
         }
+        self._pending_autonomous_open_signatures_by_key.pop(correlation_key, None)
+
+    def _persist_pending_autonomous_open_marker(
+        self,
+        *,
+        request: OrderRequest,
+        correlation_key: str,
+        normalized_status: str,
+        order_id: str,
+    ) -> None:
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return
+        signature = self._pending_autonomous_open_signature(request=request)
+        if signature is None:
+            return
+        environment, portfolio, symbol, side = signature
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        timestamp_raw = request_metadata.get("opportunity_decision_timestamp")
+        timestamp_utc = datetime.now(timezone.utc)
+        if timestamp_raw is not None:
+            try:
+                parsed = datetime.fromisoformat(str(timestamp_raw))
+                timestamp_utc = parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+        marker = OpportunityOutcomeLabel(
+            symbol=symbol,
+            decision_timestamp=timestamp_utc,
+            correlation_key=correlation_key,
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            provenance={
+                "source": "trading_controller_execution_result",
+                "order_id": order_id,
+                "execution_status": normalized_status,
+                "symbol": symbol,
+                "side": side,
+                "environment": environment,
+                "portfolio": portfolio,
+                "correlation_key": correlation_key,
+            },
+            label_quality="execution_proxy_pending_entry",
+        )
+        try:
+            repository.attach_outcome_labels_idempotent([marker])
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug("Nie udało się zapisać pending OPEN marker", exc_info=True)
 
     def _is_autonomous_order_request(self, request: OrderRequest) -> bool:
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
