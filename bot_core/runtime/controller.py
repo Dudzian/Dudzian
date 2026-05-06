@@ -3328,6 +3328,10 @@ class TradingController:
         if not should_execute_open_leg:
             self._handle_liquidation_state(risk_result)
             return None
+        if self._is_opportunity_autonomy_enforced(signal, adjusted_request):
+            if not self._allow_last_mile_autonomy_execution(signal, adjusted_request, metric_labels):
+                self._handle_liquidation_state(risk_result)
+                return None
         try:
             result = self.execution_service.execute(adjusted_request, self._execution_context)
         except Exception as exc:  # noqa: BLE001
@@ -3485,6 +3489,77 @@ class TradingController:
         )
         self._handle_liquidation_state(risk_result)
         return result
+
+    def _allow_last_mile_autonomy_execution(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+        metric_labels: Mapping[str, str],
+    ) -> bool:
+        runtime_lineage = self._effective_opportunity_runtime_lineage_snapshot(request.metadata)
+        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        existing_open_tracker = (
+            self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
+        )
+        is_legal_close = (
+            existing_open_tracker is not None
+            and str(existing_open_tracker.symbol) == str(request.symbol)
+            and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+            and self._matches_current_open_tracker_scope(
+                correlation_key=correlation_key,
+                symbol=str(request.symbol),
+                tracker=existing_open_tracker,
+            )
+        )
+        if runtime_lineage.get("opportunity_execution_disabled") == "true":
+            blocked_metadata: dict[str, object] = {
+                "environment": self.environment,
+                **runtime_lineage,
+                "execution_permission": "blocked",
+                "autonomous_execution_allowed": False,
+                "autonomy_primary_reason": "emergency_stop_active",
+                "blocking_reason": "emergency_stop_active",
+                "autonomy_decisive_stage": "runtime_controls",
+                "autonomy_decisive_reason": "emergency_stop_active",
+            }
+        elif runtime_lineage.get("opportunity_runtime_controls_unavailable") == "true" and not is_legal_close:
+            blocked_metadata = {
+                "environment": self.environment,
+                **runtime_lineage,
+                "execution_permission": "blocked",
+                "autonomous_execution_allowed": False,
+                "autonomy_primary_reason": "runtime_controls_unavailable",
+                "blocking_reason": "runtime_controls_unavailable",
+                "autonomy_decisive_stage": "runtime_controls",
+                "autonomy_decisive_reason": "runtime_controls_unavailable",
+            }
+        elif (
+            runtime_lineage.get("opportunity_ai_enabled") == "false"
+            and runtime_lineage.get("opportunity_ai_manual_kill_switch_active") == "true"
+            and runtime_lineage.get("ai_required_for_execution") == "true"
+            and existing_open_tracker is None
+        ):
+            blocked_metadata = {
+                "environment": self.environment,
+                **runtime_lineage,
+                "execution_permission": "blocked",
+                "autonomous_execution_allowed": False,
+                "autonomy_primary_reason": "autonomy_mode_denied",
+                "blocking_reason": "autonomy_mode_denied",
+                "autonomy_decisive_stage": "runtime_controls",
+                "autonomy_decisive_reason": "autonomy_mode_denied",
+            }
+        else:
+            return True
+        self._record_decision_event(
+            "opportunity_autonomy_enforcement",
+            signal=signal,
+            request=request,
+            status="blocked",
+            metadata=blocked_metadata,
+        )
+        self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+        return False
 
     def _is_opportunity_autonomy_enforced(
         self,
