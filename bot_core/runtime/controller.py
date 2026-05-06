@@ -235,6 +235,9 @@ _OPPORTUNITY_RUNTIME_LINEAGE_PROVENANCE_KEYS = (
     "ai_decision_accepted",
     "opportunity_ai_disabled_reason",
     "opportunity_runtime_controls_unavailable",
+    "opportunity_runtime_controls_source",
+    "opportunity_runtime_controls_metadata_override",
+    "opportunity_runtime_controls_metadata_stale",
 )
 _LIVE_AUTONOMY_ADMISSION_BLOCKER_REASONS = frozenset(
     {
@@ -913,12 +916,19 @@ class TradingController:
             lineage["opportunity_execution_disabled"] = "false"
         if "opportunity_runtime_controls_unavailable" not in lineage:
             lineage["opportunity_runtime_controls_unavailable"] = "false"
+        if "opportunity_runtime_controls_source" not in lineage:
+            lineage["opportunity_runtime_controls_source"] = "snapshot"
+        if "opportunity_runtime_controls_metadata_override" not in lineage:
+            lineage["opportunity_runtime_controls_metadata_override"] = "false"
+        if "opportunity_runtime_controls_metadata_stale" not in lineage:
+            lineage["opportunity_runtime_controls_metadata_stale"] = "false"
         runtime_controls_unavailable = False
         try:
             runtime_snapshot = get_opportunity_runtime_controls().snapshot()
         except Exception:
             runtime_snapshot = None
             runtime_controls_unavailable = True
+            lineage["opportunity_runtime_controls_source"] = "snapshot_unavailable"
         if runtime_snapshot is not None:
             lineage["opportunity_ai_enabled"] = (
                 "true" if runtime_snapshot.opportunity_ai_enabled else "false"
@@ -939,12 +949,20 @@ class TradingController:
         if runtime_controls_unavailable:
             lineage["opportunity_runtime_controls_unavailable"] = "true"
         metadata_lineage = self._extract_opportunity_runtime_lineage_snapshot(metadata)
-        if metadata_lineage.get("opportunity_execution_disabled") == "true":
+        metadata_hard_stop = metadata_lineage.get("opportunity_execution_disabled") == "true"
+        metadata_stale_false = metadata_lineage.get("opportunity_execution_disabled") == "false"
+        snapshot_hard_stop = lineage.get("opportunity_execution_disabled") == "true"
+        if metadata_hard_stop:
             lineage["opportunity_execution_disabled"] = "true"
+            if not snapshot_hard_stop:
+                lineage["opportunity_runtime_controls_source"] = "metadata"
+                lineage["opportunity_runtime_controls_metadata_override"] = "true"
             if metadata_lineage.get("opportunity_runtime_controls_revision"):
                 lineage["opportunity_runtime_controls_revision"] = metadata_lineage[
                     "opportunity_runtime_controls_revision"
                 ]
+        elif snapshot_hard_stop and metadata_stale_false:
+            lineage["opportunity_runtime_controls_metadata_stale"] = "true"
         metadata_soft_kill = (
             metadata_lineage.get("opportunity_ai_enabled") == "false"
             and metadata_lineage.get("opportunity_ai_manual_kill_switch_active") == "true"
