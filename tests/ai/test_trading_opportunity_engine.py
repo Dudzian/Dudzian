@@ -1386,6 +1386,119 @@ def test_outcome_label_attach_allows_upgrade_proxy_to_partial_to_final(tmp_path)
     assert labels[0].label_quality == "final"
 
 
+def test_opportunity_shadow_repository_persists_pending_entry_marker_with_provenance(tmp_path) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    marker = OpportunityOutcomeLabel(
+        symbol="BTC/USDT",
+        decision_timestamp=datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc),
+        correlation_key="pending-entry-key",
+        horizon_minutes=0,
+        realized_return_bps=0.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="execution_proxy_pending_entry",
+        provenance={
+            "order_id": "pending-open-1",
+            "execution_status": "pending",
+            "symbol": "BTC/USDT",
+            "side": "BUY",
+            "environment": "paper",
+            "portfolio": "paper-1",
+            "correlation_key": "pending-entry-key",
+        },
+    )
+    repo.append_outcome_labels([marker])
+
+    reloaded_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    labels = reloaded_repo.load_outcome_labels()
+    persisted = next((row for row in labels if row.correlation_key == "pending-entry-key"), None)
+
+    assert persisted is not None
+    assert persisted.label_quality == "execution_proxy_pending_entry"
+    assert dict(persisted.provenance) == {
+        "order_id": "pending-open-1",
+        "execution_status": "pending",
+        "symbol": "BTC/USDT",
+        "side": "BUY",
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "correlation_key": "pending-entry-key",
+    }
+    normalized_quality = str(persisted.label_quality).strip().lower()
+    assert not normalized_quality.startswith("final")
+    assert normalized_quality != "partial_exit_unconfirmed"
+    assert normalized_quality != "execution_proxy_pending_exit"
+
+
+def test_opportunity_shadow_repository_distinguishes_pending_entry_from_pending_exit_marker(
+    tmp_path,
+) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    labels = [
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc),
+            correlation_key="pending-entry-key",
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            label_quality="execution_proxy_pending_entry",
+            provenance={
+                "order_id": "pending-open-1",
+                "execution_status": "pending",
+                "symbol": "BTC/USDT",
+                "side": "BUY",
+                "environment": "paper",
+                "portfolio": "paper-1",
+            },
+        ),
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=datetime(2026, 1, 2, 10, 31, tzinfo=timezone.utc),
+            correlation_key="pending-exit-key",
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            label_quality="execution_proxy_pending_exit",
+            provenance={
+                "order_id": "pending-close-1",
+                "execution_status": "pending",
+                "symbol": "BTC/USDT",
+                "side": "SELL",
+                "environment": "paper",
+                "portfolio": "paper-1",
+            },
+        ),
+    ]
+    repo.append_outcome_labels(labels)
+
+    reloaded_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    loaded = reloaded_repo.load_outcome_labels()
+    pending_entry = [
+        row
+        for row in loaded
+        if row.label_quality == "execution_proxy_pending_entry"
+        and row.symbol == "BTC/USDT"
+        and str(row.provenance.get("side")) == "BUY"
+    ]
+    pending_exit = [
+        row
+        for row in loaded
+        if row.label_quality == "execution_proxy_pending_exit"
+        and row.symbol == "BTC/USDT"
+        and str(row.provenance.get("side")) == "SELL"
+    ]
+
+    assert len(loaded) == 2
+    assert len(pending_entry) == 1
+    assert len(pending_exit) == 1
+    assert pending_entry[0].label_quality != pending_exit[0].label_quality
+    assert pending_entry[0].provenance.get("order_id") == "pending-open-1"
+    assert pending_exit[0].provenance.get("order_id") == "pending-close-1"
+
+
 def test_record_key_is_canonical_for_same_instant_in_different_timezones() -> None:
     utc_instant = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
     plus_two = utc_instant.astimezone(timezone(timedelta(hours=2)))
