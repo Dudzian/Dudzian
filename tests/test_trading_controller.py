@@ -70067,6 +70067,72 @@ def test_partial_open_restore_follow_up_close_uses_restored_filled_quantity(tmp_
     assert any(row.correlation_key == correlation_key and row.label_quality == "final" for row in labels)
 
 
+def test_partial_open_restore_follow_up_close_preserves_origin_lineage(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 7, 9, 0, tzinfo=timezone.utc)
+    correlation_key = "partial-open-restore-follow-up-close-origin-lineage"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+
+    execution_a = SequencedExecutionService(
+        [{"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 100.0}]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_a,
+        opportunity_shadow_repository=repository,
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        model_version="open-model-v1",
+        decision_source="open-source",
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["partially_filled"]
+    assert controller_a._opportunity_open_outcomes[correlation_key].model_version == "open-model-v1"
+    assert controller_a._opportunity_open_outcomes[correlation_key].decision_source == "open-source"
+
+    controller_b, _execution_b, _journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 0.4, "avg_price": 101.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    restored_tracker = controller_b._opportunity_open_outcomes[correlation_key]
+    assert restored_tracker.model_version == "open-model-v1"
+    assert restored_tracker.decision_source == "open-source"
+    assert restored_tracker.decision_timestamp == decision_timestamp
+
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="close-model-v2",
+        decision_source="close-source",
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "ai",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    assert [row.status for row in controller_b.process_signals([close_signal])] == ["filled"]
+    labels = [row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key]
+    final = next(row for row in labels if row.label_quality == "final")
+    provenance = dict(final.provenance)
+    assert provenance.get("model_version") == "open-model-v1"
+    assert provenance.get("decision_source") == "open-source"
+    assert provenance.get("environment") == "paper"
+    assert provenance.get("portfolio") == "paper-1"
+
+
 def test_partial_close_restore_follow_up_close_uses_remaining_quantity_and_finalizes(tmp_path: Path) -> None:
     decision_timestamp = datetime(2026, 1, 5, 14, 0, tzinfo=timezone.utc)
     correlation_key = "partial-close-restore-follow-up-close-remaining"
@@ -70132,6 +70198,92 @@ def test_partial_close_restore_follow_up_close_uses_remaining_quantity_and_final
     labels = [row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key]
     assert any(row.label_quality == "final" for row in labels)
 
+
+
+def test_partial_close_restore_residual_final_preserves_origin_lineage(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 7, 10, 0, tzinfo=timezone.utc)
+    correlation_key = "partial-close-restore-residual-final-origin-lineage"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+
+    execution_a = SequencedExecutionService(
+        [
+            {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+            {"status": "partially_filled", "filled_quantity": 0.4, "avg_price": 101.0},
+        ]
+    )
+    controller_a, _execution_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_a,
+        opportunity_shadow_repository=repository,
+    )
+    repository.append_shadow_records(
+        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        model_version="open-model-v1",
+        decision_source="open-source",
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    partial_close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+        model_version="close-model-v2",
+        decision_source="close-source",
+    )
+    partial_close_signal.metadata = {**dict(partial_close_signal.metadata), "mode": "ai"}
+
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+    assert [row.status for row in controller_a.process_signals([partial_close_signal])] == ["partially_filled"]
+    partial_label = next(
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == correlation_key and row.label_quality == "partial_exit_unconfirmed"
+    )
+    partial_provenance = dict(partial_label.provenance)
+    assert partial_provenance.get("model_version") == "open-model-v1"
+    assert partial_provenance.get("decision_source") == "open-source"
+
+    controller_b, _execution_b, _journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 0.6, "avg_price": 102.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    restored_tracker = controller_b._opportunity_open_outcomes[correlation_key]
+    assert restored_tracker.model_version == "open-model-v1"
+    assert restored_tracker.decision_source == "open-source"
+    assert restored_tracker.closed_quantity == pytest.approx(0.4, rel=1e-6)
+    assert restored_tracker.decision_timestamp == decision_timestamp
+
+    residual_close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=2),
+        model_version="close-model-v3",
+        decision_source="close-source-2",
+    )
+    residual_close_signal.metadata = {**dict(residual_close_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_b.process_signals([residual_close_signal])] == ["filled"]
+    final_label = next(
+        row
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == correlation_key and row.label_quality == "final"
+    )
+    final_provenance = dict(final_label.provenance)
+    assert final_provenance.get("model_version") == "open-model-v1"
+    assert final_provenance.get("decision_source") == "open-source"
+    assert final_provenance.get("environment") == "paper"
+    assert final_provenance.get("portfolio") == "paper-1"
 
 
 def test_partial_open_restore_foreign_environment_close_does_not_execute(tmp_path: Path) -> None:
