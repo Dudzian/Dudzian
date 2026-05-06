@@ -203,6 +203,7 @@ _SIDE_ALIASES = {
 }
 _FILLED_EXECUTION_STATUSES = frozenset({"filled", "executed", "complete", "completed"})
 _PARTIAL_EXECUTION_STATUSES = frozenset({"partial", "partially_filled", "partially-filled"})
+_PENDING_EXECUTION_STATUSES = frozenset({"pending", "open", "accepted", "submitted", "new"})
 _BUY_SIDES = frozenset({"BUY", "LONG"})
 _SELL_SIDES = frozenset({"SELL", "SHORT"})
 _OPPORTUNITY_AUTONOMY_PROVENANCE_KEYS = (
@@ -572,6 +573,16 @@ class TradingController:
         repr=False,
         default=False,
     )
+    _pending_autonomous_order_replays: set[str] = field(
+        init=False,
+        repr=False,
+        default_factory=set,
+    )
+    _pending_autonomous_open_signatures: dict[tuple[str, str, str, str], str] = field(
+        init=False,
+        repr=False,
+        default_factory=dict,
+    )
 
     def __post_init__(self) -> None:
         self.performance_guard_recent_final_window_size = _validate_optional_positive_int(
@@ -697,6 +708,8 @@ class TradingController:
         self._ai_health_status = None
         self._opportunity_shadow_repository = self.opportunity_shadow_repository
         self._opportunity_open_outcomes = {}
+        self._pending_autonomous_order_replays = set()
+        self._pending_autonomous_open_signatures = {}
         self._restore_opportunity_open_outcomes()
 
     def _restore_opportunity_open_outcomes(self) -> None:
@@ -3326,6 +3339,19 @@ class TradingController:
                 },
             )
             return None
+        if self._is_pending_autonomous_order_replay(request=request, correlation_key=correlation_key):
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": "pending_autonomous_order_replay_suppressed",
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            return None
         account = self.account_snapshot_provider()
         risk_result = self.risk_engine.apply_pre_trade_checks(
             request,
@@ -3464,6 +3490,11 @@ class TradingController:
         normalized_status = _normalize_execution_status(result.status)
         is_partial = normalized_status in _PARTIAL_EXECUTION_STATUSES
         is_filled = normalized_status in _FILLED_EXECUTION_STATUSES
+        self._update_pending_autonomous_order_replay_state(
+            request=adjusted_request,
+            normalized_status=normalized_status,
+            result=result,
+        )
         is_close_ranked = (
             str((adjusted_request.metadata or {}).get("mode", "")).strip().lower() == "close_ranked"
         )
@@ -3601,6 +3632,72 @@ class TradingController:
         )
         self._handle_liquidation_state(risk_result)
         return result
+
+    def _is_pending_autonomous_order_replay(self, *, request: OrderRequest, correlation_key: str) -> bool:
+        if not correlation_key:
+            return False
+        if not self._is_autonomous_order_request(request):
+            return False
+        if correlation_key in self._pending_autonomous_order_replays:
+            return True
+        pending_signature = self._pending_autonomous_open_signature(request=request)
+        if pending_signature is None:
+            return False
+        pending_correlation_key = self._pending_autonomous_open_signatures.get(pending_signature)
+        return bool(pending_correlation_key and pending_correlation_key != correlation_key)
+
+    def _update_pending_autonomous_order_replay_state(
+        self,
+        *,
+        request: OrderRequest,
+        normalized_status: str,
+        result: OrderResult,
+    ) -> None:
+        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        if not correlation_key:
+            return
+        if not self._is_autonomous_order_request(request):
+            return
+        has_order_id = bool(str(result.order_id or "").strip())
+        if normalized_status in _PENDING_EXECUTION_STATUSES and has_order_id:
+            self._pending_autonomous_order_replays.add(correlation_key)
+            pending_signature = self._pending_autonomous_open_signature(request=request)
+            if pending_signature is not None:
+                self._pending_autonomous_open_signatures[pending_signature] = correlation_key
+            return
+        self._pending_autonomous_order_replays.discard(correlation_key)
+        self._pending_autonomous_open_signatures = {
+            signature: tracked_key
+            for signature, tracked_key in self._pending_autonomous_open_signatures.items()
+            if tracked_key != correlation_key
+        }
+
+    def _is_autonomous_order_request(self, request: OrderRequest) -> bool:
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        mode_raw = request_metadata.get("opportunity_autonomy_mode")
+        mode = str(mode_raw or "").strip().lower()
+        return mode in {"paper_autonomous", "live_autonomous"}
+
+    def _pending_autonomous_open_signature(
+        self,
+        *,
+        request: OrderRequest,
+    ) -> tuple[str, str, str, str] | None:
+        if not self._is_autonomous_order_request(request):
+            return None
+        correlation_key = str((request.metadata or {}).get("opportunity_shadow_record_key") or "").strip()
+        if not correlation_key:
+            return None
+        existing_open_tracker = self._opportunity_open_outcomes.get(correlation_key)
+        if existing_open_tracker is not None:
+            return None
+        side = str(request.side or "").strip().upper()
+        if side not in {"BUY", "SELL"}:
+            return None
+        symbol = str(request.symbol or "").strip()
+        if not symbol:
+            return None
+        return (self.environment, self.portfolio_id, symbol, side)
 
     def _allow_last_mile_autonomy_execution(
         self,
