@@ -837,13 +837,18 @@ class TradingController:
             for label in labels
             if str(label.label_quality).startswith("final")
         }
-        terminal_nonfill_by_key_order_id = {
+        terminal_nonfill_signatures = {
             (
                 str(label.correlation_key).strip(),
                 str((label.provenance or {}).get("order_id") or "").strip(),
+                str(label.symbol).strip(),
+                str((label.provenance or {}).get("side") or "").strip().upper(),
+                str((label.provenance or {}).get("environment") or "").strip(),
+                str((label.provenance or {}).get("portfolio") or "").strip(),
             )
             for label in labels
             if str(label.label_quality).strip() == "execution_proxy_terminal_nonfill"
+            and str((label.provenance or {}).get("order_id") or "").strip()
             and _normalize_execution_status((label.provenance or {}).get("execution_status"))
             in _TERMINAL_NONFILL_EXECUTION_STATUSES
         }
@@ -854,16 +859,16 @@ class TradingController:
             order_id = str(provenance.get("order_id") or "").strip()
             status = _normalize_execution_status(provenance.get("execution_status"))
             correlation_key = str(label.correlation_key).strip()
-            if correlation_key in finalized_correlation_keys:
-                continue
-            if (correlation_key, order_id) in terminal_nonfill_by_key_order_id:
-                continue
-            if not order_id or status not in _PENDING_EXECUTION_STATUSES:
-                continue
             symbol = str(label.symbol).strip()
             side = str(provenance.get("side") or "").strip().upper()
             environment = str(provenance.get("environment") or "").strip()
             portfolio = str(provenance.get("portfolio") or "").strip()
+            if correlation_key in finalized_correlation_keys:
+                continue
+            if (correlation_key, order_id, symbol, side, environment, portfolio) in terminal_nonfill_signatures:
+                continue
+            if not order_id or status not in _PENDING_EXECUTION_STATUSES:
+                continue
             if not correlation_key or not symbol or side not in _BUY_SIDES | _SELL_SIDES:
                 continue
             self._pending_autonomous_order_replays.add(correlation_key)
@@ -884,13 +889,18 @@ class TradingController:
             for label in labels
             if str(label.label_quality).startswith("final")
         }
-        terminal_nonfill_by_key_order_id = {
+        terminal_nonfill_signatures = {
             (
                 str(label.correlation_key).strip(),
                 str((label.provenance or {}).get("order_id") or "").strip(),
+                str(label.symbol).strip(),
+                str((label.provenance or {}).get("side") or "").strip().upper(),
+                str((label.provenance or {}).get("environment") or "").strip(),
+                str((label.provenance or {}).get("portfolio") or "").strip(),
             )
             for label in labels
             if str(label.label_quality).strip() == "execution_proxy_terminal_nonfill"
+            and str((label.provenance or {}).get("order_id") or "").strip()
             and _normalize_execution_status((label.provenance or {}).get("execution_status"))
             in _TERMINAL_NONFILL_EXECUTION_STATUSES
         }
@@ -901,14 +911,14 @@ class TradingController:
             order_id = str(provenance.get("order_id") or "").strip()
             status = _normalize_execution_status(provenance.get("execution_status"))
             correlation_key = str(label.correlation_key).strip()
-            if correlation_key in finalized_correlation_keys:
-                continue
-            if (correlation_key, order_id) in terminal_nonfill_by_key_order_id:
-                continue
             symbol = str(label.symbol).strip()
             side = str(provenance.get("side") or "").strip().upper()
             environment = str(provenance.get("environment") or "").strip()
             portfolio = str(provenance.get("portfolio") or "").strip()
+            if correlation_key in finalized_correlation_keys:
+                continue
+            if (correlation_key, order_id, symbol, side, environment, portfolio) in terminal_nonfill_signatures:
+                continue
             if (
                 not order_id
                 or status not in _PENDING_EXECUTION_STATUSES
