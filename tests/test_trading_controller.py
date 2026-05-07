@@ -52234,6 +52234,128 @@ def test_final_label_without_terminal_nonfill_in_memory_close_tracker_is_safely_
     assert tracker.closed_quantity == 0.0
 
 
+
+
+def test_in_memory_final_close_without_terminal_nonfill_foreign_environment_final_label_does_not_block_legal_close(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 16, 11, 10, tzinfo=timezone.utc)
+    key = "in-memory-final-close-foreign-environment"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp + timedelta(minutes=5),
+            correlation_key=key,
+            horizon_minutes=60,
+            realized_return_bps=11.0,
+            max_favorable_excursion_bps=11.0,
+            max_adverse_excursion_bps=-3.0,
+            provenance={"autonomy_final_mode": "paper_autonomous", "environment": "live", "portfolio": "paper-1"},
+            label_quality="final",
+        )
+    ])
+    risk_engine = DummyRiskEngine()
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}])
+    controller, _exec, journal = _build_autonomy_controller_with_risk(
+        environment="paper", portfolio_id="paper-1", risk_engine=risk_engine, execution_service=execution, opportunity_shadow_repository=repository
+    )
+    controller._opportunity_open_outcomes[key] = _OpportunityOpenOutcomeTracker(correlation_key=key, symbol="BTC/USDT", side="BUY", entry_price=100.0, decision_timestamp=decision_timestamp, entry_quantity=1.0, closed_quantity=0.0, environment_scope="paper", portfolio_scope="paper-1")
+    result = controller.process_signals([_autonomy_signal_with_correlation(mode="paper_autonomous", side="SELL", correlation_key=key, decision_timestamp=decision_timestamp + timedelta(minutes=1))])
+    assert [row.status for row in result] == ["filled"]
+    assert len(execution.requests) == 1
+    reasons = [str(e.get("reason") or "").strip() for e in journal.export() if e.get("event") == "signal_skipped" and e.get("opportunity_shadow_record_key") == key]
+    assert "duplicate_autonomous_close_replay_suppressed" not in reasons
+    assert "final_outcome_replay_close_suppressed" not in reasons
+
+
+def test_in_memory_final_close_without_terminal_nonfill_foreign_portfolio_final_label_does_not_block_legal_close(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 16, 11, 20, tzinfo=timezone.utc)
+    key = "in-memory-final-close-foreign-portfolio"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp + timedelta(minutes=5),
+            correlation_key=key,
+            horizon_minutes=60,
+            realized_return_bps=11.0,
+            max_favorable_excursion_bps=11.0,
+            max_adverse_excursion_bps=-3.0,
+            provenance={"autonomy_final_mode": "paper_autonomous", "environment": "paper", "portfolio": "portfolio-A"},
+            label_quality="final",
+        )
+    ])
+    risk_engine = DummyRiskEngine()
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}])
+    controller, _exec, journal = _build_autonomy_controller_with_risk(
+        environment="paper", portfolio_id="portfolio-B", risk_engine=risk_engine, execution_service=execution, opportunity_shadow_repository=repository
+    )
+    controller._opportunity_open_outcomes[key] = _OpportunityOpenOutcomeTracker(correlation_key=key, symbol="BTC/USDT", side="BUY", entry_price=100.0, decision_timestamp=decision_timestamp, entry_quantity=1.0, closed_quantity=0.0, environment_scope="paper", portfolio_scope="portfolio-B")
+    result = controller.process_signals([_autonomy_signal_with_correlation(mode="paper_autonomous", side="SELL", correlation_key=key, decision_timestamp=decision_timestamp + timedelta(minutes=1))])
+    assert [row.status for row in result] == ["filled"]
+    assert len(execution.requests) == 1
+    reasons = [str(e.get("reason") or "").strip() for e in journal.export() if e.get("event") == "signal_skipped" and e.get("opportunity_shadow_record_key") == key]
+    assert "duplicate_autonomous_close_replay_suppressed" not in reasons
+    assert "final_outcome_replay_close_suppressed" not in reasons
+
+
+def test_in_memory_final_close_without_terminal_nonfill_wrong_symbol_final_label_does_not_block_legal_close(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 16, 11, 30, tzinfo=timezone.utc)
+    key = "in-memory-final-close-wrong-symbol"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(
+            symbol="ETH/USDT",
+            decision_timestamp=decision_timestamp + timedelta(minutes=5),
+            correlation_key=key,
+            horizon_minutes=60,
+            realized_return_bps=11.0,
+            max_favorable_excursion_bps=11.0,
+            max_adverse_excursion_bps=-3.0,
+            provenance={"autonomy_final_mode": "paper_autonomous", "environment": "paper", "portfolio": "paper-1"},
+            label_quality="final",
+        )
+    ])
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}])
+    controller, _exec, journal = _build_autonomy_controller_with_risk(environment="paper", portfolio_id="paper-1", risk_engine=DummyRiskEngine(), execution_service=execution, opportunity_shadow_repository=repository)
+    controller._opportunity_open_outcomes[key] = _OpportunityOpenOutcomeTracker(correlation_key=key, symbol="BTC/USDT", side="BUY", entry_price=100.0, decision_timestamp=decision_timestamp, entry_quantity=1.0, closed_quantity=0.0, environment_scope="paper", portfolio_scope="paper-1")
+    result = controller.process_signals([_autonomy_signal_with_correlation(mode="paper_autonomous", side="SELL", correlation_key=key, decision_timestamp=decision_timestamp + timedelta(minutes=1))])
+    assert [row.status for row in result] == ["filled"]
+    assert len(execution.requests) == 1
+    reasons = [str(e.get("reason") or "").strip() for e in journal.export() if e.get("event") == "signal_skipped" and e.get("opportunity_shadow_record_key") == key]
+    assert "duplicate_autonomous_close_replay_suppressed" not in reasons
+    assert "final_outcome_replay_close_suppressed" not in reasons
+
+
+def test_in_memory_final_close_without_terminal_nonfill_non_autonomous_final_label_does_not_block_legal_close(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 16, 11, 40, tzinfo=timezone.utc)
+    key = "in-memory-final-close-non-autonomous"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp + timedelta(minutes=5),
+            correlation_key=key,
+            horizon_minutes=60,
+            realized_return_bps=11.0,
+            max_favorable_excursion_bps=11.0,
+            max_adverse_excursion_bps=-3.0,
+            provenance={"autonomy_final_mode": "manual", "environment": "paper", "portfolio": "paper-1"},
+            label_quality="final",
+        )
+    ])
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}])
+    controller, _exec, journal = _build_autonomy_controller_with_risk(environment="paper", portfolio_id="paper-1", risk_engine=DummyRiskEngine(), execution_service=execution, opportunity_shadow_repository=repository)
+    controller._opportunity_open_outcomes[key] = _OpportunityOpenOutcomeTracker(correlation_key=key, symbol="BTC/USDT", side="BUY", entry_price=100.0, decision_timestamp=decision_timestamp, entry_quantity=1.0, closed_quantity=0.0, environment_scope="paper", portfolio_scope="paper-1")
+    result = controller.process_signals([_autonomy_signal_with_correlation(mode="paper_autonomous", side="SELL", correlation_key=key, decision_timestamp=decision_timestamp + timedelta(minutes=1))])
+    assert [row.status for row in result] == ["filled"]
+    assert len(execution.requests) == 1
+    reasons = [str(e.get("reason") or "").strip() for e in journal.export() if e.get("event") == "signal_skipped" and e.get("opportunity_shadow_record_key") == key]
+    assert "duplicate_autonomous_close_replay_suppressed" not in reasons
+    assert "final_outcome_replay_close_suppressed" not in reasons
 def test_final_label_without_terminal_nonfill_pending_close_marker_is_safely_suppressed_by_duplicate_guard(tmp_path: Path) -> None:
     decision_timestamp = datetime(2026, 1, 16, 11, 0, tzinfo=timezone.utc)
     key = "final-blocks-pending-close-without-terminal-nonfill"
