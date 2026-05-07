@@ -588,6 +588,11 @@ class TradingController:
         repr=False,
         default_factory=dict,
     )
+    _pending_autonomous_close_replays: set[tuple[str, str, str]] = field(
+        init=False,
+        repr=False,
+        default_factory=set,
+    )
 
     def __post_init__(self) -> None:
         self.performance_guard_recent_final_window_size = _validate_optional_positive_int(
@@ -716,8 +721,10 @@ class TradingController:
         self._pending_autonomous_order_replays = set()
         self._pending_autonomous_open_signatures = {}
         self._pending_autonomous_open_signatures_by_key = {}
+        self._pending_autonomous_close_replays = set()
         self._restore_opportunity_open_outcomes()
         self._restore_pending_autonomous_open_guards()
+        self._restore_pending_autonomous_close_guards()
 
     def _restore_opportunity_open_outcomes(self) -> None:
         repository = self._opportunity_shadow_repository
@@ -841,6 +848,37 @@ class TradingController:
             signature = (environment, portfolio, symbol, side)
             self._pending_autonomous_open_signatures[signature] = correlation_key
             self._pending_autonomous_open_signatures_by_key[correlation_key] = signature
+
+    def _restore_pending_autonomous_close_guards(self) -> None:
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return
+        try:
+            labels = repository.load_outcome_labels()
+        except Exception:  # pragma: no cover - diagnostics only
+            return
+        for label in labels:
+            if str(label.label_quality).strip() != "execution_proxy_pending_close":
+                continue
+            provenance = label.provenance if isinstance(label.provenance, Mapping) else {}
+            order_id = str(provenance.get("order_id") or "").strip()
+            status = _normalize_execution_status(provenance.get("execution_status"))
+            correlation_key = str(label.correlation_key).strip()
+            symbol = str(label.symbol).strip()
+            side = str(provenance.get("side") or "").strip().upper()
+            environment = str(provenance.get("environment") or "").strip()
+            portfolio = str(provenance.get("portfolio") or "").strip()
+            if (
+                not order_id
+                or status not in _PENDING_EXECUTION_STATUSES
+                or not correlation_key
+                or not symbol
+                or side not in _BUY_SIDES | _SELL_SIDES
+                or environment != self.environment
+                or portfolio != self.portfolio_id
+            ):
+                continue
+            self._pending_autonomous_close_replays.add((correlation_key, symbol, side))
 
     def _persist_open_outcome_tracker(self, tracker: _OpportunityOpenOutcomeTracker) -> None:
         repository = self._opportunity_shadow_repository
@@ -3387,6 +3425,23 @@ class TradingController:
                 },
             )
             return None
+        pending_close_durable_reason = self._pending_autonomous_close_replay_reason(
+            request=request,
+            correlation_key=correlation_key,
+        )
+        if pending_close_durable_reason is not None:
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": pending_close_durable_reason,
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            return None
         account = self.account_snapshot_provider()
         risk_result = self.risk_engine.apply_pre_trade_checks(
             request,
@@ -3771,6 +3826,84 @@ class TradingController:
             repository.attach_outcome_labels_idempotent([marker])
         except Exception:  # pragma: no cover - diagnostics only
             _LOGGER.debug("Nie udało się zapisać pending OPEN marker", exc_info=True)
+
+    def _pending_autonomous_close_replay_reason(
+        self,
+        *,
+        request: OrderRequest,
+        correlation_key: str,
+    ) -> str | None:
+        if not self._is_autonomous_order_request(request):
+            return None
+        if not correlation_key:
+            return None
+        symbol = str(request.symbol or "").strip()
+        side = str(request.side or "").strip().upper()
+        if not symbol or side not in _BUY_SIDES | _SELL_SIDES:
+            return None
+        if (correlation_key, symbol, side) in self._pending_autonomous_close_replays:
+            return "pending_autonomous_close_durable_replay_suppressed"
+        return None
+
+    def _persist_pending_autonomous_close_marker(
+        self,
+        *,
+        request: OrderRequest,
+        correlation_key: str,
+        normalized_status: str,
+        order_id: str,
+    ) -> None:
+        repository = self._opportunity_shadow_repository
+        if repository is None or not self._is_autonomous_order_request(request):
+            return
+        symbol = str(request.symbol or "").strip()
+        side = str(request.side or "").strip().upper()
+        if not correlation_key or not symbol or side not in _BUY_SIDES | _SELL_SIDES:
+            return
+        try:
+            labels = repository.load_outcome_labels()
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug("Nie udało się odczytać outcome labels dla pending CLOSE marker", exc_info=True)
+            labels = []
+        for label in labels:
+            if str(label.label_quality).strip() != "execution_proxy_pending_close":
+                continue
+            provenance = label.provenance if isinstance(label.provenance, Mapping) else {}
+            if (
+                str(label.correlation_key).strip() == correlation_key
+                and str(provenance.get("order_id") or "").strip() == order_id
+                and _normalize_execution_status(provenance.get("execution_status")) in _PENDING_EXECUTION_STATUSES
+                and str(provenance.get("side") or "").strip().upper() == side
+                and str(provenance.get("environment") or "").strip() == self.environment
+                and str(provenance.get("portfolio") or "").strip() == self.portfolio_id
+            ):
+                self._pending_autonomous_close_replays.add((correlation_key, symbol, side))
+                return
+        marker = OpportunityOutcomeLabel(
+            symbol=symbol,
+            decision_timestamp=self._clock().astimezone(timezone.utc),
+            correlation_key=correlation_key,
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            provenance={
+                "source": "trading_controller_execution_result",
+                "order_id": order_id,
+                "execution_status": normalized_status,
+                "symbol": symbol,
+                "side": side,
+                "environment": self.environment,
+                "portfolio": self.portfolio_id,
+                "correlation_key": correlation_key,
+            },
+            label_quality="execution_proxy_pending_close",
+        )
+        try:
+            repository.append_outcome_labels([marker])
+            self._pending_autonomous_close_replays.add((correlation_key, symbol, side))
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug("Nie udało się zapisać pending CLOSE marker", exc_info=True)
 
     def _is_autonomous_order_request(self, request: OrderRequest) -> bool:
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
@@ -5797,6 +5930,24 @@ class TradingController:
                 },
                 label_quality="execution_proxy_pending_exit",
             )
+        pending_close_tracker = (
+            self._opportunity_open_outcomes.get(correlation_key) if correlation_key else None
+        )
+        if (
+            correlation_key
+            and pending_close_tracker is not None
+            and self._is_autonomous_order_request(request)
+            and self._is_closing_side(str(pending_close_tracker.side), str(request.side))
+            and normalized_status in _PENDING_EXECUTION_STATUSES
+        ):
+            pending_order_id = str(result.order_id or "").strip()
+            if pending_order_id:
+                self._persist_pending_autonomous_close_marker(
+                    request=request,
+                    correlation_key=correlation_key,
+                    normalized_status=normalized_status,
+                    order_id=pending_order_id,
+                )
 
         labels_to_attach: list[OpportunityOutcomeLabel] = []
         if proxy_label is not None:
