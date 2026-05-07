@@ -3680,7 +3680,9 @@ class TradingController:
             stored_signature = self._pending_autonomous_open_signatures_by_key.get(correlation_key)
             if stored_signature is not None and stored_signature == pending_signature:
                 return "pending_autonomous_order_durable_replay_suppressed"
-            pending_correlation_key = self._pending_autonomous_open_signatures.get(pending_signature)
+            pending_correlation_key = self._pending_autonomous_open_signatures.get(
+                pending_signature
+            )
             if pending_correlation_key and pending_correlation_key != correlation_key:
                 return "pending_autonomous_order_durable_symbol_replay_suppressed"
         if pending_signature is None and correlation_key in self._pending_autonomous_order_replays:
@@ -3744,7 +3746,11 @@ class TradingController:
         if timestamp_raw is not None:
             try:
                 parsed = datetime.fromisoformat(str(timestamp_raw))
-                timestamp_utc = parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+                timestamp_utc = (
+                    parsed.astimezone(timezone.utc)
+                    if parsed.tzinfo
+                    else parsed.replace(tzinfo=timezone.utc)
+                )
             except ValueError:
                 pass
         marker = OpportunityOutcomeLabel(

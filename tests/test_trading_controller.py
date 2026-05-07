@@ -51143,7 +51143,9 @@ def test_pending_open_same_correlation_after_controller_restart_blocks_with_dura
         opportunity_shadow_repository=repository,
     )
     replay = controller_b.process_signals([signal])
-    labels = [row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key]
+    labels = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key
+    ]
 
     assert replay == []
     assert execution_b.requests == []
@@ -51220,12 +51222,16 @@ def test_pending_open_same_symbol_different_correlation_after_controller_restart
         decision_timestamp=decision_timestamp,
     )
     replay = controller_b.process_signals([signal_b])
-    labels_b = [row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key_b]
+    labels_b = [
+        row for row in repository.load_outcome_labels() if row.correlation_key == correlation_key_b
+    ]
 
     assert replay == []
     assert execution_b.requests == []
     assert labels_b == []
-    assert not any(row.correlation_key == correlation_key_b for row in repository.load_open_outcomes())
+    assert not any(
+        row.correlation_key == correlation_key_b for row in repository.load_open_outcomes()
+    )
     assert any(
         event.get("event") == "signal_skipped"
         and event.get("reason") == "pending_autonomous_order_durable_symbol_replay_suppressed"
@@ -51245,7 +51251,11 @@ def test_pending_open_rejected_after_controller_restart_allows_retry_without_dur
     )
     repository = OpportunityShadowRepository(tmp_path / "shadow")
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution_a = SequencedExecutionService(
         [{"status": "rejected", "order_id": "reject-A", "filled_quantity": 0.0, "avg_price": None}]
@@ -51293,7 +51303,11 @@ def test_pending_open_durable_marker_foreign_environment_same_correlation_does_n
     )
     repository = OpportunityShadowRepository(tmp_path / "shadow")
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     repository.append_outcome_labels(
         [
@@ -51318,7 +51332,9 @@ def test_pending_open_durable_marker_foreign_environment_same_correlation_does_n
             )
         ]
     )
-    execution_b = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}])
+    execution_b = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]
+    )
     controller_b, journal_b = _build_autonomy_controller_with_execution(
         environment="paper",
         execution_service=execution_b,
@@ -51386,7 +51402,9 @@ def test_pending_open_durable_marker_foreign_portfolio_same_symbol_different_key
             )
         ]
     )
-    execution_b = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}])
+    execution_b = SequencedExecutionService(
+        [{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]
+    )
     controller_b, _execution_b, journal_b = _build_autonomy_controller_with_risk(
         environment="paper",
         portfolio_id="portfolio-B",
@@ -51404,7 +51422,9 @@ def test_pending_open_durable_marker_foreign_portfolio_same_symbol_different_key
     assert result == []
     assert len(execution_b.requests) == 0
     enforcement_events = [
-        event for event in journal_b.export() if event.get("event") == "opportunity_autonomy_enforcement"
+        event
+        for event in journal_b.export()
+        if event.get("event") == "opportunity_autonomy_enforcement"
     ]
     assert enforcement_events
     assert (
@@ -51501,12 +51521,21 @@ def test_pending_close_same_process_replay_keeps_non_durable_reason(tmp_path: Pa
     correlation_key = "pending-close-same-process-nondurable-reason"
     repository = OpportunityShadowRepository(tmp_path / "shadow.db")
     repository.append_shadow_records(
-        [_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)]
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
     )
     execution = SequencedExecutionService(
         [
             {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
-            {"status": "pending", "order_id": "close-pending-1", "filled_quantity": 0.0, "avg_price": None},
+            {
+                "status": "pending",
+                "order_id": "close-pending-1",
+                "filled_quantity": 0.0,
+                "avg_price": None,
+            },
             {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0},
         ]
     )
@@ -51535,7 +51564,9 @@ def test_pending_close_same_process_replay_keeps_non_durable_reason(tmp_path: Pa
     assert replay == []
     assert len(execution.requests) == 2
     skip_events = [event for event in journal.export() if event.get("event") == "signal_skipped"]
-    assert any(event.get("reason") == "pending_autonomous_order_replay_suppressed" for event in skip_events)
+    assert any(
+        event.get("reason") == "pending_autonomous_order_replay_suppressed" for event in skip_events
+    )
     assert not any(
         str(event.get("reason", "")).startswith("pending_autonomous_order_durable")
         for event in skip_events
