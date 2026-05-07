@@ -1381,6 +1381,59 @@ class TradingController:
             return False
         return False
 
+    def _is_in_memory_final_close_replay_without_terminal_nonfill(
+        self,
+        *,
+        request: OrderRequest,
+        correlation_key: str,
+        existing_open_tracker: _OpportunityOpenOutcomeTracker | None,
+    ) -> bool:
+        if not correlation_key or existing_open_tracker is None:
+            return False
+        if str(request.symbol) != str(existing_open_tracker.symbol):
+            return False
+        if not self._is_closing_side(str(existing_open_tracker.side), str(request.side)):
+            return False
+        tracker_environment = str(existing_open_tracker.environment_scope or "").strip()
+        tracker_portfolio = str(existing_open_tracker.portfolio_scope or "").strip()
+        scope_environment = str(self.environment or "").strip()
+        scope_portfolio = str(self.portfolio_id or "").strip()
+        if tracker_environment and scope_environment and tracker_environment != scope_environment:
+            return False
+        if tracker_portfolio and scope_portfolio and tracker_portfolio != scope_portfolio:
+            return False
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return False
+        try:
+            labels = repository.load_outcome_labels()
+            open_outcomes = repository.load_open_outcomes()
+        except Exception:  # pragma: no cover - diagnostics only
+            return False
+        if any(str(outcome.correlation_key) == correlation_key for outcome in open_outcomes):
+            return False
+        for row in labels:
+            if (
+                row.correlation_key != correlation_key
+                or str(row.symbol) != str(request.symbol)
+                or str(row.label_quality) != "final"
+            ):
+                continue
+            provenance = row.provenance if isinstance(row.provenance, Mapping) else {}
+            mode = str(provenance.get("autonomy_final_mode") or "").strip().lower()
+            if mode not in {"paper_autonomous", "live_autonomous"}:
+                continue
+            label_environment = str(provenance.get("environment") or "").strip()
+            label_portfolio = str(provenance.get("portfolio") or "").strip() or str(
+                provenance.get("portfolio_id") or ""
+            ).strip()
+            if label_environment and scope_environment and label_environment != scope_environment:
+                continue
+            if label_portfolio and scope_portfolio and label_portfolio != scope_portfolio:
+                continue
+            return True
+        return False
+
     def _is_final_outcome_close_replay_suppressed(
         self,
         *,
@@ -3543,6 +3596,23 @@ class TradingController:
                 status="skipped",
                 metadata={
                     "reason": "final_outcome_replay_close_suppressed",
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            return None
+        if self._is_in_memory_final_close_replay_without_terminal_nonfill(
+            request=request,
+            correlation_key=correlation_key,
+            existing_open_tracker=existing_open_tracker,
+        ):
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": "duplicate_autonomous_close_replay_suppressed",
                     "proxy_correlation_key": correlation_key,
                 },
             )
