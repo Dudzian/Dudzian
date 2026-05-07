@@ -51944,6 +51944,182 @@ def test_pending_close_durable_marker_terminal_status_does_not_block_restart_ret
     assert not any(event.get("event") == "signal_skipped" and event.get("reason") == "pending_autonomous_close_durable_replay_suppressed" for event in journal.export())
 
 
+
+
+def test_terminal_nonfill_marker_ignored_when_final_label_exists_for_same_correlation_after_restart(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
+    key = "terminal-nonfill-final-open-restart"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(symbol="BTC/USDT", decision_timestamp=decision_timestamp + timedelta(seconds=1), correlation_key=key, horizon_minutes=0, realized_return_bps=0.0, max_favorable_excursion_bps=0.0, max_adverse_excursion_bps=0.0, provenance={"source": "trading_controller_execution_result", "order_id": "open-rejected-1", "execution_status": "rejected", "symbol": "BTC/USDT", "side": "BUY", "environment": "paper", "portfolio": "paper-1", "correlation_key": key}, label_quality="execution_proxy_terminal_nonfill"),
+        OpportunityOutcomeLabel(symbol="BTC/USDT", decision_timestamp=decision_timestamp + timedelta(minutes=5), correlation_key=key, horizon_minutes=60, realized_return_bps=10.0, max_favorable_excursion_bps=12.0, max_adverse_excursion_bps=-5.0, provenance={"autonomy_final_mode": "paper_autonomous", "environment": "paper", "portfolio": "paper-1"}, label_quality="final"),
+    ])
+    controller, execution, journal = _build_autonomy_controller_with_risk(environment="paper", risk_engine=DummyRiskEngine(), opportunity_shadow_repository=repository)
+    signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=key, decision_timestamp=decision_timestamp)
+    assert controller.process_signals([signal]) == []
+    reasons = [str(e.get("reason") or "").strip() for e in journal.export() if e.get("event")=="signal_skipped"]
+    assert "final_outcome_replay_open_suppressed" in reasons
+    assert "pending_autonomous_order_durable_replay_suppressed" not in reasons
+    assert "pending_autonomous_order_durable_symbol_replay_suppressed" not in reasons
+    assert execution.requests == []
+    labels = [row for row in repository.load_outcome_labels() if row.correlation_key == key]
+    assert len([row for row in labels if row.label_quality == "final"]) == 1
+    assert not any(row.label_quality in {"partial_exit_unconfirmed", "execution_proxy_pending_entry"} for row in labels)
+
+
+def test_terminal_nonfill_marker_does_not_block_new_symbol_key_after_original_key_finalized(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 15, 10, 10, tzinfo=timezone.utc)
+    key_a = "terminal-nonfill-final-key-a"
+    key_b = "terminal-nonfill-final-key-b"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([
+        _shadow_record_for_key(correlation_key=key_a, decision_timestamp=decision_timestamp),
+        _shadow_record_for_key(correlation_key=key_b, decision_timestamp=decision_timestamp + timedelta(minutes=1)),
+    ])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(symbol="BTC/USDT", decision_timestamp=decision_timestamp + timedelta(seconds=1), correlation_key=key_a, horizon_minutes=0, realized_return_bps=0.0, max_favorable_excursion_bps=0.0, max_adverse_excursion_bps=0.0, provenance={"source": "trading_controller_execution_result", "order_id": "open-rejected-1", "execution_status": "rejected", "symbol": "BTC/USDT", "side": "BUY", "environment": "paper", "portfolio": "paper-1", "correlation_key": key_a}, label_quality="execution_proxy_terminal_nonfill"),
+        OpportunityOutcomeLabel(symbol="BTC/USDT", decision_timestamp=decision_timestamp + timedelta(minutes=5), correlation_key=key_a, horizon_minutes=60, realized_return_bps=8.0, max_favorable_excursion_bps=8.0, max_adverse_excursion_bps=-4.0, provenance={"autonomy_final_mode": "paper_autonomous", "environment": "paper", "portfolio": "paper-1"}, label_quality="final"),
+    ])
+    controller, execution, journal = _build_autonomy_controller_with_risk(environment="paper", risk_engine=DummyRiskEngine(), execution_service=SequencedExecutionService([{"status":"filled","filled_quantity":1.0,"avg_price":100.0}]), opportunity_shadow_repository=repository)
+    signal_b = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=key_b, decision_timestamp=decision_timestamp + timedelta(minutes=1))
+    results = controller.process_signals([signal_b])
+    assert [row.status for row in results] == ["filled"]
+    assert [req.side for req in execution.requests] == ["BUY"]
+    assert not any(e.get("event")=="signal_skipped" and str(e.get("reason") or "").strip() in {"pending_autonomous_order_durable_symbol_replay_suppressed", "pending_autonomous_order_durable_replay_suppressed"} for e in journal.export())
+
+
+def test_terminal_nonfill_close_marker_ignored_when_final_label_exists_for_same_correlation_after_restart(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 15, 10, 20, tzinfo=timezone.utc)
+    key = "terminal-nonfill-final-close-restart"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(symbol="BTC/USDT", decision_timestamp=decision_timestamp + timedelta(seconds=1), correlation_key=key, horizon_minutes=0, realized_return_bps=0.0, max_favorable_excursion_bps=0.0, max_adverse_excursion_bps=0.0, provenance={"source": "trading_controller_execution_result", "order_id": "close-rejected-1", "execution_status": "rejected", "symbol": "BTC/USDT", "side": "SELL", "environment": "paper", "portfolio": "paper-1", "correlation_key": key}, label_quality="execution_proxy_terminal_nonfill"),
+        OpportunityOutcomeLabel(symbol="BTC/USDT", decision_timestamp=decision_timestamp + timedelta(minutes=5), correlation_key=key, horizon_minutes=60, realized_return_bps=11.0, max_favorable_excursion_bps=11.0, max_adverse_excursion_bps=-3.0, provenance={"autonomy_final_mode": "paper_autonomous", "environment": "paper", "portfolio": "paper-1"}, label_quality="final"),
+    ])
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(environment="paper", risk_engine=risk_engine, opportunity_shadow_repository=repository)
+    controller._opportunity_open_outcomes[key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=decision_timestamp,
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="paper",
+        portfolio_scope="paper-1",
+    )
+    close_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="SELL", correlation_key=key, decision_timestamp=decision_timestamp + timedelta(minutes=1))
+    results = controller.process_signals([close_signal])
+    assert results == []
+    reasons = [str(e.get("reason") or "").strip() for e in journal.export() if e.get("event")=="signal_skipped"]
+    assert reasons[-1] == "final_outcome_replay_close_suppressed"
+    assert "pending_autonomous_close_durable_replay_suppressed" not in reasons
+    assert risk_engine.last_checks == []
+    assert execution.requests == []
+    assert key in controller._opportunity_open_outcomes
+    assert controller._opportunity_open_outcomes[key].closed_quantity == pytest.approx(0.0)
+    assert not any(
+        event.get("event") in {"order_submitted", "order_executed", "order_partially_executed"}
+        and event.get("opportunity_shadow_record_key") == key
+        for event in journal.export()
+    )
+    assert not any(
+        event.get("event") == "opportunity_outcome_attach"
+        and event.get("opportunity_shadow_record_key") == key
+        for event in journal.export()
+    )
+    labels_for_key = [row for row in repository.load_outcome_labels() if row.correlation_key == key]
+    assert len([row for row in labels_for_key if row.label_quality == "final"]) == 1
+    assert not any(
+        row.label_quality in {"partial_exit_unconfirmed", "execution_proxy_pending_exit"}
+        and row.correlation_key == key
+        for row in repository.load_outcome_labels()
+    )
+
+
+def test_final_label_blocks_restored_close_even_when_terminal_nonfill_marker_exists(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 15, 10, 40, tzinfo=timezone.utc)
+    key = "final-blocks-restored-close-with-terminal-nonfill"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    execution_a = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}])
+    controller_a, _exec_a, _journal_a = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=execution_a,
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="BUY", correlation_key=key, decision_timestamp=decision_timestamp
+    )
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(symbol="BTC/USDT", decision_timestamp=decision_timestamp + timedelta(seconds=1), correlation_key=key, horizon_minutes=0, realized_return_bps=0.0, max_favorable_excursion_bps=0.0, max_adverse_excursion_bps=0.0, provenance={"source": "trading_controller_execution_result", "order_id": "close-rejected-1", "execution_status": "rejected", "symbol": "BTC/USDT", "side": "SELL", "environment": "paper", "portfolio": "paper-1", "correlation_key": key}, label_quality="execution_proxy_terminal_nonfill"),
+        OpportunityOutcomeLabel(symbol="BTC/USDT", decision_timestamp=decision_timestamp + timedelta(minutes=5), correlation_key=key, horizon_minutes=60, realized_return_bps=11.0, max_favorable_excursion_bps=11.0, max_adverse_excursion_bps=-3.0, provenance={"autonomy_final_mode": "paper_autonomous", "environment": "paper", "portfolio": "paper-1"}, label_quality="final"),
+    ])
+    risk_engine = DummyRiskEngine()
+    controller_b, execution_b, journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        execution_service=SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]),
+        opportunity_shadow_repository=repository,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous", side="SELL", correlation_key=key, decision_timestamp=decision_timestamp + timedelta(minutes=1)
+    )
+    labels_before_replay = [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in repository.load_outcome_labels()
+        if row.correlation_key == key
+    ]
+    assert controller_b.process_signals([close_signal]) == []
+    reasons = [str(e.get("reason") or "").strip() for e in journal_b.export() if e.get("event") == "signal_skipped"]
+    assert reasons[-1] == "final_outcome_replay_close_suppressed"
+    assert risk_engine.last_checks == []
+    assert execution_b.requests == []
+    assert not any(
+        event.get("event") in {"order_submitted", "order_executed", "order_partially_executed"}
+        and event.get("opportunity_shadow_record_key") == key
+        for event in journal_b.export()
+    )
+    assert not any(
+        event.get("event") == "opportunity_outcome_attach"
+        and event.get("opportunity_shadow_record_key") == key
+        for event in journal_b.export()
+    )
+    labels_for_key = [row for row in repository.load_outcome_labels() if row.correlation_key == key]
+    assert len([row for row in labels_for_key if row.label_quality == "final"]) == 1
+    assert [
+        (row.correlation_key, row.label_quality, dict(row.provenance))
+        for row in labels_for_key
+    ] == labels_before_replay
+
+
+def test_same_process_terminal_nonfill_then_final_clears_pending_guards_for_correlation(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 15, 10, 30, tzinfo=timezone.utc)
+    key = "same-process-terminal-nonfill-final-cleanup"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=key, decision_timestamp=decision_timestamp)])
+    controller, _execution, _journal = _build_autonomy_controller_with_risk(environment="paper", risk_engine=DummyRiskEngine(), opportunity_shadow_repository=repository)
+    signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=key, decision_timestamp=decision_timestamp)
+    controller._update_pending_autonomous_order_replay_state(
+        request=signal,
+        normalized_status="submitted",
+        result=OrderResult(order_id="pending-open-1", status="submitted", filled_quantity=0.0, avg_price=None, raw_response={}),
+    )
+    controller._update_pending_autonomous_order_replay_state(
+        request=signal,
+        normalized_status="rejected",
+        result=OrderResult(order_id="pending-open-1", status="rejected", filled_quantity=0.0, avg_price=None, raw_response={}),
+    )
+    controller._clear_pending_autonomous_guards_for_correlation_key(key)
+    assert key not in controller._pending_autonomous_order_replays
+    assert key not in controller._pending_autonomous_open_signatures_by_key
+    assert not any(tracked_key == key for tracked_key in controller._pending_autonomous_open_signatures.values())
+    assert not any(replay[0] == key for replay in controller._pending_autonomous_close_replays)
 def test_terminal_nonfill_marker_written_for_rejected_autonomous_open_result(tmp_path: Path) -> None:
     decision_timestamp = datetime(2026, 1, 8, 12, 0, tzinfo=timezone.utc)
     correlation_key = "terminal-nonfill-open-rejected"
