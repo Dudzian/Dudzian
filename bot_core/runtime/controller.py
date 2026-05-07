@@ -3758,6 +3758,20 @@ class TradingController:
             return "pending_autonomous_order_replay_suppressed"
         return None
 
+    def _clear_pending_autonomous_guards_for_correlation_key(self, correlation_key: str) -> None:
+        if not correlation_key:
+            return
+        self._pending_autonomous_order_replays.discard(correlation_key)
+        self._pending_autonomous_open_signatures = {
+            signature: tracked_key
+            for signature, tracked_key in self._pending_autonomous_open_signatures.items()
+            if tracked_key != correlation_key
+        }
+        self._pending_autonomous_open_signatures_by_key.pop(correlation_key, None)
+        self._pending_autonomous_close_replays = {
+            replay for replay in self._pending_autonomous_close_replays if replay[0] != correlation_key
+        }
+
     def _update_pending_autonomous_order_replay_state(
         self,
         *,
@@ -6048,6 +6062,8 @@ class TradingController:
                 attach_metadata["missing"] = ";".join(attach_result.missing_correlation_keys)
             else:
                 attach_status = "skipped"
+            if final_label is not None and attach_status in {"final_attached", "final_upgraded", "duplicate_noop"}:
+                self._clear_pending_autonomous_guards_for_correlation_key(final_label.correlation_key)
             self._record_decision_event(
                 "opportunity_outcome_attach",
                 signal=signal,
