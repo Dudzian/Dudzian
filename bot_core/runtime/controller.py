@@ -1381,6 +1381,111 @@ class TradingController:
             return False
         return False
 
+    def _is_final_outcome_close_replay_suppressed(
+        self,
+        *,
+        request: OrderRequest,
+        correlation_key: str,
+        existing_open_tracker: _OpportunityOpenOutcomeTracker | None,
+    ) -> bool:
+        if not correlation_key:
+            return False
+        side = str(request.side or "").upper()
+        if side not in (_BUY_SIDES | _SELL_SIDES):
+            return False
+        repository = self._opportunity_shadow_repository
+        if repository is None:
+            return False
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        local_mode = str(request_metadata.get("mode") or "").strip().lower()
+        is_close_intent = local_mode == "close_ranked"
+        if (
+            existing_open_tracker is not None
+            and self._is_closing_side(str(existing_open_tracker.side), side)
+        ):
+            is_close_intent = True
+        try:
+            labels = repository.load_outcome_labels()
+            shadow_records = repository.load_shadow_records()
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug(
+                "Nie udało się zweryfikować replay close po final outcome",
+                exc_info=True,
+            )
+            return False
+        if not is_close_intent:
+            for shadow_record in shadow_records:
+                if shadow_record.record_key != correlation_key:
+                    continue
+                if str(getattr(shadow_record, "symbol", "")) != str(request.symbol):
+                    continue
+                proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                expected_open_side = (
+                    "BUY" if proposed_direction in {"long", "buy"} else ("SELL" if proposed_direction in {"short", "sell"} else "")
+                )
+                if expected_open_side and self._is_closing_side(expected_open_side, side):
+                    is_close_intent = True
+                    break
+        if not is_close_intent:
+            return False
+        scope_environment = str(self.environment or "").strip()
+        scope_portfolio = str(self.portfolio_id or "").strip()
+        terminal_nonfill_close_marker_present = False
+        for row in labels:
+            if (
+                row.correlation_key != correlation_key
+                or str(row.symbol) != str(request.symbol)
+                or str(row.label_quality).strip() != "execution_proxy_terminal_nonfill"
+            ):
+                continue
+            provenance = row.provenance if isinstance(row.provenance, Mapping) else {}
+            marker_side = str(provenance.get("side") or "").strip().upper()
+            if marker_side != side:
+                continue
+            marker_environment = str(provenance.get("environment") or "").strip()
+            marker_portfolio_raw = str(provenance.get("portfolio") or "").strip()
+            marker_portfolio_id_raw = str(provenance.get("portfolio_id") or "").strip()
+            marker_portfolio = marker_portfolio_raw or marker_portfolio_id_raw
+            if scope_environment and marker_environment and marker_environment != scope_environment:
+                continue
+            if scope_portfolio and marker_portfolio and marker_portfolio != scope_portfolio:
+                continue
+            terminal_nonfill_close_marker_present = True
+            break
+        if not terminal_nonfill_close_marker_present:
+            return False
+        for row in labels:
+            if (
+                row.correlation_key != correlation_key
+                or str(row.symbol) != str(request.symbol)
+                or str(row.label_quality).strip().lower() != "final"
+            ):
+                continue
+            final_provenance = row.provenance if isinstance(row.provenance, Mapping) else {}
+            final_mode = str(final_provenance.get("autonomy_final_mode") or "").strip().lower()
+            if final_mode not in {"paper_autonomous", "live_autonomous"}:
+                continue
+            final_environment = str(final_provenance.get("environment") or "").strip()
+            final_portfolio_raw = str(final_provenance.get("portfolio") or "").strip()
+            final_portfolio_id_raw = str(final_provenance.get("portfolio_id") or "").strip()
+            if (
+                final_portfolio_raw
+                and final_portfolio_id_raw
+                and final_portfolio_raw != final_portfolio_id_raw
+            ):
+                continue
+            final_portfolio = final_portfolio_raw or final_portfolio_id_raw
+            if scope_environment and not final_environment:
+                continue
+            if scope_portfolio and not final_portfolio:
+                continue
+            if final_environment and scope_environment and final_environment != scope_environment:
+                continue
+            if final_portfolio and scope_portfolio and final_portfolio != scope_portfolio:
+                continue
+            return True
+        return False
+
     def _is_duplicate_autonomous_open_replay_after_final_close(
         self,
         *,
@@ -3425,6 +3530,23 @@ class TradingController:
                         "restored_tracker_quantity_clamped": True,
                     },
                 )
+        if self._is_final_outcome_close_replay_suppressed(
+            request=request,
+            correlation_key=correlation_key,
+            existing_open_tracker=existing_open_tracker,
+        ):
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+            self._record_decision_event(
+                "signal_skipped",
+                signal=signal,
+                request=request,
+                status="skipped",
+                metadata={
+                    "reason": "final_outcome_replay_close_suppressed",
+                    "proxy_correlation_key": correlation_key,
+                },
+            )
+            return None
         if self._is_duplicate_autonomous_close_replay(
             request=request,
             correlation_key=correlation_key,
