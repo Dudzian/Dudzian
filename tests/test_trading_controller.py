@@ -51601,6 +51601,108 @@ def test_pending_close_durable_marker_foreign_environment_does_not_block_current
     assert not any(event.get("event") == "signal_skipped" and event.get("reason") == "pending_autonomous_close_durable_replay_suppressed" for event in journal.export())
 
 
+def test_pending_close_durable_marker_foreign_portfolio_does_not_block_current_scope(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 8, 12, 0, tzinfo=timezone.utc)
+    correlation_key = "pending-close-foreign-portfolio"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp,
+            correlation_key=correlation_key,
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            provenance={"source": "trading_controller_execution_result", "order_id": "foreign-portfolio-pending-1", "execution_status": "pending", "symbol": "BTC/USDT", "side": "SELL", "environment": "paper", "portfolio": "portfolio-A", "correlation_key": correlation_key},
+            label_quality="execution_proxy_pending_close",
+        )
+    ])
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}, {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    controller, _exec, journal = _build_autonomy_controller_with_risk(
+        environment="paper", portfolio_id="portfolio-B", risk_engine=DummyRiskEngine(), execution_service=execution, opportunity_shadow_repository=repository
+    )
+    open_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp)
+    close_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="SELL", correlation_key=correlation_key, decision_timestamp=decision_timestamp + timedelta(minutes=1))
+    controller.process_signals([open_signal])
+    close_result = controller.process_signals([close_signal])
+    assert [row.status for row in close_result] == ["filled"]
+    assert not any(
+        event.get("event") == "signal_skipped"
+        and event.get("reason") == "pending_autonomous_close_durable_replay_suppressed"
+        for event in journal.export()
+    )
+
+
+def test_pending_close_durable_marker_terminal_status_does_not_block_restart_retry(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 8, 12, 0, tzinfo=timezone.utc)
+    correlation_key = "pending-close-terminal-status"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp,
+            correlation_key=correlation_key,
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            provenance={"source": "trading_controller_execution_result", "order_id": "terminal-close-1", "execution_status": "rejected", "symbol": "BTC/USDT", "side": "SELL", "environment": "paper", "portfolio": "paper-1", "correlation_key": correlation_key},
+            label_quality="execution_proxy_pending_close",
+        )
+    ])
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}, {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    controller, _exec, journal = _build_autonomy_controller_with_risk(
+        environment="paper", risk_engine=DummyRiskEngine(), execution_service=execution, opportunity_shadow_repository=repository
+    )
+    open_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp)
+    close_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="SELL", correlation_key=correlation_key, decision_timestamp=decision_timestamp + timedelta(minutes=1))
+    assert [row.status for row in controller.process_signals([open_signal])] == ["filled"]
+    replay = controller.process_signals([close_signal])
+    assert [row.status for row in replay] == ["filled"]
+    assert not any(event.get("event") == "signal_skipped" and event.get("reason") == "pending_autonomous_close_durable_replay_suppressed" for event in journal.export())
+
+
+def test_pending_close_durable_marker_missing_order_id_does_not_block_restart_retry(tmp_path: Path) -> None:
+    decision_timestamp = datetime(2026, 1, 8, 12, 0, tzinfo=timezone.utc)
+    correlation_key = "pending-close-missing-order-id"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records([_shadow_record_for_key(correlation_key=correlation_key, decision_timestamp=decision_timestamp)])
+    repository.append_outcome_labels([
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=decision_timestamp,
+            correlation_key=correlation_key,
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            provenance={"source": "trading_controller_execution_result", "execution_status": "pending", "symbol": "BTC/USDT", "side": "SELL", "environment": "paper", "portfolio": "paper-1", "correlation_key": correlation_key},
+            label_quality="execution_proxy_pending_close",
+        )
+    ])
+    execution = SequencedExecutionService([{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}, {"status": "filled", "filled_quantity": 1.0, "avg_price": 99.0}])
+    controller, _exec, journal = _build_autonomy_controller_with_risk(
+        environment="paper", risk_engine=DummyRiskEngine(), execution_service=execution, opportunity_shadow_repository=repository
+    )
+    open_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="BUY", correlation_key=correlation_key, decision_timestamp=decision_timestamp)
+    close_signal = _autonomy_signal_with_correlation(mode="paper_autonomous", side="SELL", correlation_key=correlation_key, decision_timestamp=decision_timestamp + timedelta(minutes=1))
+    assert [row.status for row in controller.process_signals([open_signal])] == ["filled"]
+    replay = controller.process_signals([close_signal])
+    assert [row.status for row in replay] == ["filled"]
+    assert not any(event.get("event") == "signal_skipped" and event.get("reason") == "pending_autonomous_close_durable_replay_suppressed" for event in journal.export())
+    labels = repository.load_outcome_labels()
+    assert not any(label.label_quality == "partial_exit_unconfirmed" for label in labels)
+    assert not any(
+        label.label_quality == "execution_proxy_pending_close"
+        and not str((label.provenance or {}).get("order_id") or "").strip()
+        and str(label.correlation_key).strip() == correlation_key
+        for label in labels
+    )
+
+
 def test_pending_close_same_process_replay_keeps_non_durable_reason(tmp_path: Path) -> None:
     decision_timestamp = datetime(2026, 1, 8, 12, 0, tzinfo=timezone.utc)
     correlation_key = "pending-close-same-process-nondurable-reason"
@@ -52116,6 +52218,7 @@ def test_opportunity_autonomous_close_unrecognized_non_fill_zero_fill_keeps_trac
     assert len(pending_close_labels) == 2
     assert any(label.label_quality == "execution_proxy_pending_exit" for label in pending_close_labels)
     assert any(label.label_quality == "execution_proxy_pending_close" for label in pending_close_labels)
+    assert len([label for label in pending_close_labels if label.label_quality == "execution_proxy_pending_close" and label.correlation_key == correlation_key]) == 1
     attach_events = [
         event for event in _journal.export() if event["event"] == "opportunity_outcome_attach"
     ]
@@ -52132,6 +52235,9 @@ def test_opportunity_autonomous_close_unrecognized_non_fill_zero_fill_keeps_trac
     assert len(labels) == 2
     assert any(label.label_quality == "execution_proxy_pending_exit" for label in labels)
     assert any(label.label_quality == "execution_proxy_pending_close" for label in labels)
+    assert len([label for label in labels if label.label_quality == "execution_proxy_pending_close" and label.correlation_key == correlation_key]) == 1
+    assert not any(label.label_quality.startswith("final") for label in labels)
+    assert not any(label.label_quality == "partial_exit_unconfirmed" for label in labels)
     open_outcomes_after_replay = shadow_repo.load_open_outcomes()
     assert len(open_outcomes_after_replay) == 1
     assert open_outcomes_after_replay[0].closed_quantity == 0.0
@@ -52142,6 +52248,11 @@ def test_opportunity_autonomous_close_unrecognized_non_fill_zero_fill_keeps_trac
         and event.get("reason") == "pending_autonomous_order_replay_suppressed"
     ]
     assert skip_events
+    assert not any(
+        event.get("event") == "signal_skipped"
+        and event.get("reason") == "pending_autonomous_close_durable_replay_suppressed"
+        for event in _journal.export()
+    )
 
 
 def test_controller_final_close_after_partial_upgrades_and_removes_tracker(tmp_path: Path) -> None:

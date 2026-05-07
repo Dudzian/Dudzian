@@ -3875,8 +3875,10 @@ class TradingController:
             if str(label.label_quality).strip() != "execution_proxy_pending_close":
                 continue
             provenance = label.provenance if isinstance(label.provenance, Mapping) else {}
+            label_symbol = str(label.symbol).strip()
             if (
                 str(label.correlation_key).strip() == correlation_key
+                and label_symbol == symbol
                 and str(provenance.get("order_id") or "").strip() == order_id
                 and _normalize_execution_status(provenance.get("execution_status")) in _PENDING_EXECUTION_STATUSES
                 and str(provenance.get("side") or "").strip().upper() == side
