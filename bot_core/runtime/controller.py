@@ -829,15 +829,22 @@ class TradingController:
             labels = repository.load_outcome_labels()
         except Exception:  # pragma: no cover - diagnostics only
             return
+        finalized_correlation_keys = {
+            str(label.correlation_key).strip()
+            for label in labels
+            if str(label.label_quality).startswith("final")
+        }
         for label in labels:
             if str(label.label_quality).strip() != "execution_proxy_pending_entry":
                 continue
             provenance = label.provenance if isinstance(label.provenance, Mapping) else {}
             order_id = str(provenance.get("order_id") or "").strip()
             status = _normalize_execution_status(provenance.get("execution_status"))
+            correlation_key = str(label.correlation_key).strip()
+            if correlation_key in finalized_correlation_keys:
+                continue
             if not order_id or status not in _PENDING_EXECUTION_STATUSES:
                 continue
-            correlation_key = str(label.correlation_key).strip()
             symbol = str(label.symbol).strip()
             side = str(provenance.get("side") or "").strip().upper()
             environment = str(provenance.get("environment") or "").strip()
@@ -857,6 +864,11 @@ class TradingController:
             labels = repository.load_outcome_labels()
         except Exception:  # pragma: no cover - diagnostics only
             return
+        finalized_correlation_keys = {
+            str(label.correlation_key).strip()
+            for label in labels
+            if str(label.label_quality).startswith("final")
+        }
         for label in labels:
             if str(label.label_quality).strip() != "execution_proxy_pending_close":
                 continue
@@ -864,6 +876,8 @@ class TradingController:
             order_id = str(provenance.get("order_id") or "").strip()
             status = _normalize_execution_status(provenance.get("execution_status"))
             correlation_key = str(label.correlation_key).strip()
+            if correlation_key in finalized_correlation_keys:
+                continue
             symbol = str(label.symbol).strip()
             side = str(provenance.get("side") or "").strip().upper()
             environment = str(provenance.get("environment") or "").strip()
