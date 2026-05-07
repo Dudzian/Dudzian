@@ -1501,6 +1501,177 @@ def test_opportunity_shadow_repository_distinguishes_pending_entry_from_pending_
     assert pending_exit[0].provenance.get("order_id") == "pending-close-1"
 
 
+def test_opportunity_shadow_repository_persists_terminal_nonfill_marker_with_provenance(
+    tmp_path,
+) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    marker = OpportunityOutcomeLabel(
+        symbol="BTC/USDT",
+        decision_timestamp=datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc),
+        correlation_key="terminal-nonfill-entry-key",
+        horizon_minutes=0,
+        realized_return_bps=0.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="execution_proxy_terminal_nonfill",
+        provenance={
+            "source": "trading_controller_execution_result",
+            "order_id": "terminal-rejected-1",
+            "execution_status": "rejected",
+            "symbol": "BTC/USDT",
+            "side": "BUY",
+            "environment": "paper",
+            "portfolio": "paper-1",
+            "correlation_key": "terminal-nonfill-entry-key",
+            "terminal": True,
+        },
+    )
+    repo.append_outcome_labels([marker])
+
+    reloaded_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    labels = reloaded_repo.load_outcome_labels()
+    persisted = next(
+        (row for row in labels if row.correlation_key == "terminal-nonfill-entry-key"),
+        None,
+    )
+
+    assert persisted is not None
+    assert persisted.label_quality == "execution_proxy_terminal_nonfill"
+    assert dict(persisted.provenance) == {
+        "source": "trading_controller_execution_result",
+        "order_id": "terminal-rejected-1",
+        "execution_status": "rejected",
+        "symbol": "BTC/USDT",
+        "side": "BUY",
+        "environment": "paper",
+        "portfolio": "paper-1",
+        "correlation_key": "terminal-nonfill-entry-key",
+        "terminal": True,
+    }
+    normalized_quality = str(persisted.label_quality).strip().lower()
+    assert not normalized_quality.startswith("final")
+    assert normalized_quality != "partial_exit_unconfirmed"
+    assert normalized_quality != "execution_proxy_pending_entry"
+    assert normalized_quality != "execution_proxy_pending_close"
+    assert normalized_quality != "execution_proxy_pending_exit"
+
+
+def test_opportunity_shadow_repository_distinguishes_terminal_nonfill_from_pending_entry_and_pending_close(
+    tmp_path,
+) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    labels = [
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc),
+            correlation_key="pending-entry-key",
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            label_quality="execution_proxy_pending_entry",
+            provenance={"order_id": "pending-open-1", "execution_status": "pending"},
+        ),
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=datetime(2026, 1, 2, 10, 31, tzinfo=timezone.utc),
+            correlation_key="pending-close-key",
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            label_quality="execution_proxy_pending_close",
+            provenance={"order_id": "pending-close-1", "execution_status": "pending"},
+        ),
+        OpportunityOutcomeLabel(
+            symbol="BTC/USDT",
+            decision_timestamp=datetime(2026, 1, 2, 10, 32, tzinfo=timezone.utc),
+            correlation_key="terminal-nonfill-key",
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            label_quality="execution_proxy_terminal_nonfill",
+            provenance={"order_id": "terminal-close-1", "execution_status": "canceled"},
+        ),
+    ]
+    repo.append_outcome_labels(labels)
+
+    loaded = OpportunityShadowRepository(tmp_path / "shadow").load_outcome_labels()
+    by_quality = {row.label_quality: row for row in loaded}
+    terminal = by_quality["execution_proxy_terminal_nonfill"]
+
+    assert len(loaded) == 3
+    assert "execution_proxy_pending_entry" in by_quality
+    assert "execution_proxy_pending_close" in by_quality
+    assert "execution_proxy_terminal_nonfill" in by_quality
+    assert str(terminal.provenance.get("execution_status")) in {
+        "rejected",
+        "canceled",
+        "expired",
+        "failed",
+        "error",
+    }
+    assert by_quality["execution_proxy_pending_entry"].label_quality != terminal.label_quality
+    assert by_quality["execution_proxy_pending_close"].label_quality != terminal.label_quality
+    assert by_quality["execution_proxy_pending_entry"].provenance.get("order_id") == "pending-open-1"
+    assert by_quality["execution_proxy_pending_close"].provenance.get("order_id") == "pending-close-1"
+    assert terminal.provenance.get("order_id") == "terminal-close-1"
+
+
+def test_opportunity_shadow_repository_terminal_nonfill_marker_can_share_correlation_with_pending_marker(
+    tmp_path,
+) -> None:
+    repo = OpportunityShadowRepository(tmp_path / "shadow")
+    correlation_key = "shared-correlation-key"
+    order_id = "shared-order-id"
+    pending = OpportunityOutcomeLabel(
+        symbol="BTC/USDT",
+        decision_timestamp=datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc),
+        correlation_key=correlation_key,
+        horizon_minutes=0,
+        realized_return_bps=0.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="execution_proxy_pending_entry",
+        provenance={"order_id": order_id, "execution_status": "pending"},
+    )
+    terminal = OpportunityOutcomeLabel(
+        symbol="BTC/USDT",
+        decision_timestamp=datetime(2026, 1, 2, 10, 31, tzinfo=timezone.utc),
+        correlation_key=correlation_key,
+        horizon_minutes=0,
+        realized_return_bps=0.0,
+        max_favorable_excursion_bps=0.0,
+        max_adverse_excursion_bps=0.0,
+        label_quality="execution_proxy_terminal_nonfill",
+        provenance={"order_id": order_id, "execution_status": "rejected", "terminal": True},
+    )
+    repo.append_outcome_labels([pending, terminal])
+
+    loaded = OpportunityShadowRepository(tmp_path / "shadow").load_outcome_labels()
+    pending_rows = [
+        row
+        for row in loaded
+        if row.correlation_key == correlation_key
+        and row.label_quality == "execution_proxy_pending_entry"
+        and row.provenance.get("order_id") == order_id
+    ]
+    terminal_rows = [
+        row
+        for row in loaded
+        if row.correlation_key == correlation_key
+        and row.provenance.get("order_id") == order_id
+        and str(row.provenance.get("execution_status")) in {"rejected", "canceled", "expired", "failed", "error"}
+    ]
+
+    assert len(loaded) == 2
+    assert len(pending_rows) == 1
+    assert len(terminal_rows) == 1
+    assert pending_rows[0].provenance.get("execution_status") == "pending"
+    assert terminal_rows[0].label_quality == "execution_proxy_terminal_nonfill"
+
+
 def test_record_key_is_canonical_for_same_instant_in_different_timezones() -> None:
     utc_instant = datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc)
     plus_two = utc_instant.astimezone(timezone(timedelta(hours=2)))
