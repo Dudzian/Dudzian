@@ -204,6 +204,9 @@ _SIDE_ALIASES = {
 _FILLED_EXECUTION_STATUSES = frozenset({"filled", "executed", "complete", "completed"})
 _PARTIAL_EXECUTION_STATUSES = frozenset({"partial", "partially_filled", "partially-filled"})
 _PENDING_EXECUTION_STATUSES = frozenset({"pending", "open", "accepted", "submitted", "new"})
+_TERMINAL_NONFILL_EXECUTION_STATUSES = frozenset(
+    {"rejected", "canceled", "cancelled", "expired", "failed", "error"}
+)
 _BUY_SIDES = frozenset({"BUY", "LONG"})
 _SELL_SIDES = frozenset({"SELL", "SHORT"})
 _OPPORTUNITY_AUTONOMY_PROVENANCE_KEYS = (
@@ -834,6 +837,16 @@ class TradingController:
             for label in labels
             if str(label.label_quality).startswith("final")
         }
+        terminal_nonfill_by_key_order_id = {
+            (
+                str(label.correlation_key).strip(),
+                str((label.provenance or {}).get("order_id") or "").strip(),
+            )
+            for label in labels
+            if str(label.label_quality).strip() == "execution_proxy_terminal_nonfill"
+            and _normalize_execution_status((label.provenance or {}).get("execution_status"))
+            in _TERMINAL_NONFILL_EXECUTION_STATUSES
+        }
         for label in labels:
             if str(label.label_quality).strip() != "execution_proxy_pending_entry":
                 continue
@@ -842,6 +855,8 @@ class TradingController:
             status = _normalize_execution_status(provenance.get("execution_status"))
             correlation_key = str(label.correlation_key).strip()
             if correlation_key in finalized_correlation_keys:
+                continue
+            if (correlation_key, order_id) in terminal_nonfill_by_key_order_id:
                 continue
             if not order_id or status not in _PENDING_EXECUTION_STATUSES:
                 continue
@@ -869,6 +884,16 @@ class TradingController:
             for label in labels
             if str(label.label_quality).startswith("final")
         }
+        terminal_nonfill_by_key_order_id = {
+            (
+                str(label.correlation_key).strip(),
+                str((label.provenance or {}).get("order_id") or "").strip(),
+            )
+            for label in labels
+            if str(label.label_quality).strip() == "execution_proxy_terminal_nonfill"
+            and _normalize_execution_status((label.provenance or {}).get("execution_status"))
+            in _TERMINAL_NONFILL_EXECUTION_STATUSES
+        }
         for label in labels:
             if str(label.label_quality).strip() != "execution_proxy_pending_close":
                 continue
@@ -877,6 +902,8 @@ class TradingController:
             status = _normalize_execution_status(provenance.get("execution_status"))
             correlation_key = str(label.correlation_key).strip()
             if correlation_key in finalized_correlation_keys:
+                continue
+            if (correlation_key, order_id) in terminal_nonfill_by_key_order_id:
                 continue
             symbol = str(label.symbol).strip()
             side = str(provenance.get("side") or "").strip().upper()
@@ -3800,6 +3827,13 @@ class TradingController:
                 order_id=str(result.order_id or "").strip(),
             )
             return
+        if normalized_status in _TERMINAL_NONFILL_EXECUTION_STATUSES and has_order_id:
+            self._persist_terminal_nonfill_autonomous_marker(
+                request=request,
+                correlation_key=correlation_key,
+                normalized_status=normalized_status,
+                order_id=str(result.order_id or "").strip(),
+            )
         self._pending_autonomous_order_replays.discard(correlation_key)
         self._pending_autonomous_open_signatures = {
             signature: tracked_key
@@ -3807,6 +3841,53 @@ class TradingController:
             if tracked_key != correlation_key
         }
         self._pending_autonomous_open_signatures_by_key.pop(correlation_key, None)
+
+    def _persist_terminal_nonfill_autonomous_marker(
+        self,
+        *,
+        request: OrderRequest,
+        correlation_key: str,
+        normalized_status: str,
+        order_id: str,
+    ) -> None:
+        repository = self._opportunity_shadow_repository
+        if (
+            repository is None
+            or not self._is_autonomous_order_request(request)
+            or not correlation_key
+            or not order_id
+            or normalized_status not in _TERMINAL_NONFILL_EXECUTION_STATUSES
+        ):
+            return
+        symbol = str(request.symbol or "").strip()
+        side = str(request.side or "").strip().upper()
+        if not symbol or side not in _BUY_SIDES | _SELL_SIDES:
+            return
+        marker = OpportunityOutcomeLabel(
+            symbol=symbol,
+            decision_timestamp=self._clock().astimezone(timezone.utc),
+            correlation_key=correlation_key,
+            horizon_minutes=0,
+            realized_return_bps=0.0,
+            max_favorable_excursion_bps=0.0,
+            max_adverse_excursion_bps=0.0,
+            provenance={
+                "source": "trading_controller_execution_result",
+                "order_id": order_id,
+                "execution_status": normalized_status,
+                "symbol": symbol,
+                "side": side,
+                "environment": self.environment,
+                "portfolio": self.portfolio_id,
+                "correlation_key": correlation_key,
+                "terminal": True,
+            },
+            label_quality="execution_proxy_terminal_nonfill",
+        )
+        try:
+            repository.append_outcome_labels([marker])
+        except Exception:  # pragma: no cover - diagnostics only
+            _LOGGER.debug("Nie udało się zapisać terminal non-fill marker", exc_info=True)
 
     def _persist_pending_autonomous_open_marker(
         self,
