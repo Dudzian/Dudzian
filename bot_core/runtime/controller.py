@@ -865,7 +865,14 @@ class TradingController:
             portfolio = str(provenance.get("portfolio") or "").strip()
             if correlation_key in finalized_correlation_keys:
                 continue
-            if (correlation_key, order_id, symbol, side, environment, portfolio) in terminal_nonfill_signatures:
+            if (
+                correlation_key,
+                order_id,
+                symbol,
+                side,
+                environment,
+                portfolio,
+            ) in terminal_nonfill_signatures:
                 continue
             if not order_id or status not in _PENDING_EXECUTION_STATUSES:
                 continue
@@ -917,7 +924,14 @@ class TradingController:
             portfolio = str(provenance.get("portfolio") or "").strip()
             if correlation_key in finalized_correlation_keys:
                 continue
-            if (correlation_key, order_id, symbol, side, environment, portfolio) in terminal_nonfill_signatures:
+            if (
+                correlation_key,
+                order_id,
+                symbol,
+                side,
+                environment,
+                portfolio,
+            ) in terminal_nonfill_signatures:
                 continue
             if (
                 not order_id
@@ -1424,9 +1438,10 @@ class TradingController:
             if mode not in {"paper_autonomous", "live_autonomous"}:
                 continue
             label_environment = str(provenance.get("environment") or "").strip()
-            label_portfolio = str(provenance.get("portfolio") or "").strip() or str(
-                provenance.get("portfolio_id") or ""
-            ).strip()
+            label_portfolio = (
+                str(provenance.get("portfolio") or "").strip()
+                or str(provenance.get("portfolio_id") or "").strip()
+            )
             if label_environment and scope_environment and label_environment != scope_environment:
                 continue
             if label_portfolio and scope_portfolio and label_portfolio != scope_portfolio:
@@ -1452,9 +1467,8 @@ class TradingController:
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
         local_mode = str(request_metadata.get("mode") or "").strip().lower()
         is_close_intent = local_mode == "close_ranked"
-        if (
-            existing_open_tracker is not None
-            and self._is_closing_side(str(existing_open_tracker.side), side)
+        if existing_open_tracker is not None and self._is_closing_side(
+            str(existing_open_tracker.side), side
         ):
             is_close_intent = True
         try:
@@ -1472,9 +1486,13 @@ class TradingController:
                     continue
                 if str(getattr(shadow_record, "symbol", "")) != str(request.symbol):
                     continue
-                proposed_direction = str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                proposed_direction = (
+                    str(getattr(shadow_record, "proposed_direction", "")).strip().lower()
+                )
                 expected_open_side = (
-                    "BUY" if proposed_direction in {"long", "buy"} else ("SELL" if proposed_direction in {"short", "sell"} else "")
+                    "BUY"
+                    if proposed_direction in {"long", "buy"}
+                    else ("SELL" if proposed_direction in {"short", "sell"} else "")
                 )
                 if expected_open_side and self._is_closing_side(expected_open_side, side):
                     is_close_intent = True
@@ -3998,7 +4016,9 @@ class TradingController:
         }
         self._pending_autonomous_open_signatures_by_key.pop(correlation_key, None)
         self._pending_autonomous_close_replays = {
-            replay for replay in self._pending_autonomous_close_replays if replay[0] != correlation_key
+            replay
+            for replay in self._pending_autonomous_close_replays
+            if replay[0] != correlation_key
         }
 
     def _update_pending_autonomous_order_replay_state(
@@ -4208,7 +4228,9 @@ class TradingController:
         try:
             labels = repository.load_outcome_labels()
         except Exception:  # pragma: no cover - diagnostics only
-            _LOGGER.debug("Nie udało się odczytać outcome labels dla pending CLOSE marker", exc_info=True)
+            _LOGGER.debug(
+                "Nie udało się odczytać outcome labels dla pending CLOSE marker", exc_info=True
+            )
             labels = []
         for label in labels:
             if str(label.label_quality).strip() != "execution_proxy_pending_close":
@@ -4219,7 +4241,8 @@ class TradingController:
                 str(label.correlation_key).strip() == correlation_key
                 and label_symbol == symbol
                 and str(provenance.get("order_id") or "").strip() == order_id
-                and _normalize_execution_status(provenance.get("execution_status")) in _PENDING_EXECUTION_STATUSES
+                and _normalize_execution_status(provenance.get("execution_status"))
+                in _PENDING_EXECUTION_STATUSES
                 and str(provenance.get("side") or "").strip().upper() == side
                 and str(provenance.get("environment") or "").strip() == self.environment
                 and str(provenance.get("portfolio") or "").strip() == self.portfolio_id
@@ -6373,8 +6396,14 @@ class TradingController:
                 attach_metadata["missing"] = ";".join(attach_result.missing_correlation_keys)
             else:
                 attach_status = "skipped"
-            if final_label is not None and attach_status in {"final_attached", "final_upgraded", "duplicate_noop"}:
-                self._clear_pending_autonomous_guards_for_correlation_key(final_label.correlation_key)
+            if final_label is not None and attach_status in {
+                "final_attached",
+                "final_upgraded",
+                "duplicate_noop",
+            }:
+                self._clear_pending_autonomous_guards_for_correlation_key(
+                    final_label.correlation_key
+                )
             self._record_decision_event(
                 "opportunity_outcome_attach",
                 signal=signal,
