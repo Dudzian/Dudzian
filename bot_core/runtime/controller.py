@@ -3873,6 +3873,34 @@ class TradingController:
         side = str(request.side or "").strip().upper()
         if not symbol or side not in _BUY_SIDES | _SELL_SIDES:
             return
+        try:
+            labels = repository.load_outcome_labels()
+        except Exception:  # pragma: no cover - diagnostics only
+            labels = []
+        marker_signature = (
+            correlation_key,
+            order_id,
+            symbol,
+            side,
+            self.environment,
+            self.portfolio_id,
+            normalized_status,
+        )
+        for label in labels:
+            if str(label.label_quality).strip() != "execution_proxy_terminal_nonfill":
+                continue
+            provenance = label.provenance if isinstance(label.provenance, Mapping) else {}
+            existing_signature = (
+                str(label.correlation_key).strip(),
+                str(provenance.get("order_id") or "").strip(),
+                str(label.symbol).strip(),
+                str(provenance.get("side") or "").strip().upper(),
+                str(provenance.get("environment") or "").strip(),
+                str(provenance.get("portfolio") or "").strip(),
+                _normalize_execution_status(provenance.get("execution_status")),
+            )
+            if existing_signature == marker_signature:
+                return
         marker = OpportunityOutcomeLabel(
             symbol=symbol,
             decision_timestamp=self._clock().astimezone(timezone.utc),
