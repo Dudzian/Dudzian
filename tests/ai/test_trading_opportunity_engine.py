@@ -1614,8 +1614,12 @@ def test_opportunity_shadow_repository_distinguishes_terminal_nonfill_from_pendi
     }
     assert by_quality["execution_proxy_pending_entry"].label_quality != terminal.label_quality
     assert by_quality["execution_proxy_pending_close"].label_quality != terminal.label_quality
-    assert by_quality["execution_proxy_pending_entry"].provenance.get("order_id") == "pending-open-1"
-    assert by_quality["execution_proxy_pending_close"].provenance.get("order_id") == "pending-close-1"
+    assert (
+        by_quality["execution_proxy_pending_entry"].provenance.get("order_id") == "pending-open-1"
+    )
+    assert (
+        by_quality["execution_proxy_pending_close"].provenance.get("order_id") == "pending-close-1"
+    )
     assert terminal.provenance.get("order_id") == "terminal-close-1"
 
 
@@ -1662,7 +1666,8 @@ def test_opportunity_shadow_repository_terminal_nonfill_marker_can_share_correla
         for row in loaded
         if row.correlation_key == correlation_key
         and row.provenance.get("order_id") == order_id
-        and str(row.provenance.get("execution_status")) in {"rejected", "canceled", "expired", "failed", "error"}
+        and str(row.provenance.get("execution_status"))
+        in {"rejected", "canceled", "expired", "failed", "error"}
     ]
 
     assert len(loaded) == 2
