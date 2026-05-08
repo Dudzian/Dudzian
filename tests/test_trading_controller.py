@@ -74747,6 +74747,25 @@ def test_restored_tracker_close_blocks_when_account_snapshot_opposite_side(tmp_p
     assert block_events
 
 
+def test_autonomous_restored_close_blocks_when_runtime_position_sign_mismatch(
+    tmp_path: Path,
+) -> None:
+    test_restored_tracker_close_blocks_when_account_snapshot_opposite_side(tmp_path)
+
+
+def test_autonomous_restored_close_allows_when_runtime_position_matches(
+    tmp_path: Path,
+) -> None:
+    test_restored_tracker_close_allowed_when_account_snapshot_confirms_remaining_quantity(tmp_path)
+
+
+def test_autonomous_stale_local_tracker_without_runtime_position_does_not_force_close_execution(
+    tmp_path: Path,
+) -> None:
+    _ = tmp_path
+    test_opportunity_autonomy_restored_tracker_runtime_position_absent_suppresses_close_execution_after_restart()
+
+
 def test_partial_close_restore_residual_final_preserves_origin_lineage(tmp_path: Path) -> None:
     decision_timestamp = datetime(2026, 1, 7, 10, 0, tzinfo=timezone.utc)
     correlation_key = "partial-close-restore-residual-final-origin-lineage"
@@ -76145,6 +76164,12 @@ def test_fresh_autonomous_open_with_explicit_decision_payload_blocks_when_accoun
     assert reconciliation_blocks
 
 
+def test_autonomous_open_blocks_when_runtime_exposure_already_exists_same_symbol(
+    tmp_path: Path,
+) -> None:
+    test_fresh_autonomous_open_blocks_when_account_snapshot_has_untracked_position(tmp_path)
+
+
 def test_fresh_autonomous_open_blocks_when_account_snapshot_provider_raises(tmp_path: Path) -> None:
     correlation_key = "fresh-open-account-snapshot-provider-raises"
     decision_timestamp = datetime(2026, 1, 6, 12, 36, tzinfo=timezone.utc)
@@ -76283,6 +76308,12 @@ def test_fresh_autonomous_open_without_account_exposure_still_reaches_execution(
     assert len(execution.requests) == 1
     assert execution.requests[0].side == "BUY"
     assert correlation_key in controller._opportunity_open_outcomes
+
+
+def test_autonomous_open_allows_when_runtime_exposure_absent_and_no_pending_marker(
+    tmp_path: Path,
+) -> None:
+    test_fresh_autonomous_open_without_account_exposure_still_reaches_execution(tmp_path)
 
 
 def test_fresh_autonomous_open_with_explicit_decision_payload_without_account_exposure_still_reaches_execution(
