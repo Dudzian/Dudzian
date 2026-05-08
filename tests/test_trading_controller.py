@@ -75029,6 +75029,339 @@ def test_autonomous_restored_close_blocks_when_account_snapshot_position_numeric
     )
 
 
+@pytest.mark.parametrize(
+    ("slash_value", "compact_value"),
+    [("not-a-number", 1.0), (1.0, "not-a-number")],
+)
+def test_autonomous_restored_close_allows_when_one_position_alias_invalid_but_other_alias_valid(
+    tmp_path: Path, slash_value: object, compact_value: object
+) -> None:
+    decision_timestamp = datetime(2026, 1, 9, 15, 28, tzinfo=timezone.utc)
+    correlation_key = f"last-mile-restored-close-account-one-alias-invalid-{abs(hash(str((slash_value, compact_value)))) % 100000}"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller_a, _, _ = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+
+    risk_engine = DummyRiskEngine()
+    controller_b, execution_b, journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    controller_b.account_snapshot_provider = lambda: AccountSnapshot(
+        balances={
+            "BTC/USDT_position": slash_value,
+            "BTCUSDT_position": compact_value,
+            "USDT": 1000.0,
+        },
+        available_margin=1000.0,
+        total_equity=1000.0,
+        maintenance_margin=0.0,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "ai",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    results = controller_b.process_signals([close_signal])
+    assert len(results) == 1
+    assert len(execution_b.requests) == 1
+    assert risk_engine.last_checks
+    assert not any(
+        event.get("event") in {"signal_skipped", "opportunity_autonomy_enforcement"}
+        and str(event.get("reason") or "").strip()
+        == "restored_tracker_runtime_position_absent_suppressed"
+        and str(event.get("proxy_correlation_key") or "").strip() == correlation_key
+        for event in journal_b.export()
+    )
+
+
+def test_autonomous_restored_close_allows_when_account_snapshot_position_aliases_are_consistent(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 9, 15, 28, tzinfo=timezone.utc)
+    correlation_key = "last-mile-restored-close-account-aliases-consistent"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller_a, _, _ = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+    controller_b, execution_b, _ = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    controller_b.account_snapshot_provider = lambda: AccountSnapshot(
+        balances={"BTC/USDT_position": 1.0, "BTCUSDT_position": 1.0, "USDT": 1000.0},
+        available_margin=1000.0,
+        total_equity=1000.0,
+        maintenance_margin=0.0,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "ai",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    assert [row.status for row in controller_b.process_signals([close_signal])] == ["filled"]
+    assert len(execution_b.requests) == 1
+    assert execution_b.requests[0].quantity == pytest.approx(1.0, rel=1e-6)
+
+
+def test_autonomous_restored_close_blocks_when_position_aliases_have_opposite_signs(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 9, 15, 29, tzinfo=timezone.utc)
+    correlation_key = "last-mile-restored-close-account-aliases-sign-conflict"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller_a, _, _ = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+    risk_engine = DummyRiskEngine()
+    controller_b, execution_b, journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    controller_b.account_snapshot_provider = lambda: AccountSnapshot(
+        balances={"BTC/USDT_position": 1.0, "BTCUSDT_position": -1.0, "USDT": 1000.0},
+        available_margin=1000.0,
+        total_equity=1000.0,
+        maintenance_margin=0.0,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "ai",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    assert controller_b.process_signals([close_signal]) == []
+    assert execution_b.requests == []
+    assert risk_engine.last_checks == []
+    assert _order_path_events_with_shadow_key(journal_b, correlation_key) == []
+    assert _opportunity_attach_events_referencing_key(journal_b, correlation_key) == []
+    assert any(
+        event.get("reason") == "restored_tracker_runtime_position_sign_mismatch_suppressed"
+        for event in journal_b.export()
+    )
+
+
+def test_autonomous_restored_close_blocks_when_position_aliases_disagree_around_remaining_quantity(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 9, 15, 30, tzinfo=timezone.utc)
+    correlation_key = "last-mile-restored-close-account-aliases-quantity-conflict"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller_a, _e, _j = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+                {"status": "partially_filled", "filled_quantity": 0.0, "avg_price": 101.0},
+            ]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+    risk_engine = DummyRiskEngine()
+    controller_b, execution_b, journal_b = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=risk_engine,
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 101.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    controller_b.account_snapshot_provider = lambda: AccountSnapshot(
+        balances={"BTC/USDT_position": 0.5, "BTCUSDT_position": 1.0, "USDT": 1000.0},
+        available_margin=1000.0,
+        total_equity=1000.0,
+        maintenance_margin=0.0,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "ai",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    assert controller_b.process_signals([close_signal]) == []
+    assert execution_b.requests == []
+    assert risk_engine.last_checks == []
+    assert _order_path_events_with_shadow_key(journal_b, correlation_key) == []
+    assert _opportunity_attach_events_referencing_key(journal_b, correlation_key) == []
+    assert any(
+        event.get("reason") == "restored_tracker_account_quantity_mismatch_suppressed"
+        for event in journal_b.export()
+    )
+
+
+def test_autonomous_restored_close_allows_when_position_aliases_both_cover_remaining_quantity(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 9, 15, 31, tzinfo=timezone.utc)
+    correlation_key = "last-mile-restored-close-account-aliases-cover-remaining"
+    repository = OpportunityShadowRepository(tmp_path / "shadow.db")
+    repository.append_shadow_records(
+        [
+            _shadow_record_for_key(
+                correlation_key=correlation_key, decision_timestamp=decision_timestamp
+            )
+        ]
+    )
+    controller_a, _ea, _ja = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [
+                {"status": "filled", "filled_quantity": 1.0, "avg_price": 100.0},
+                {"status": "partially_filled", "filled_quantity": 0.0, "avg_price": 101.0},
+            ]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    open_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+    )
+    open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+    assert [row.status for row in controller_a.process_signals([open_signal])] == ["filled"]
+    controller_b, execution_b, _jb = _build_autonomy_controller_with_risk(
+        environment="paper",
+        risk_engine=DummyRiskEngine(),
+        execution_service=SequencedExecutionService(
+            [{"status": "filled", "filled_quantity": 1.0, "avg_price": 102.0}]
+        ),
+        opportunity_shadow_repository=repository,
+    )
+    controller_b.account_snapshot_provider = lambda: AccountSnapshot(
+        balances={"BTC/USDT_position": 1.0, "BTCUSDT_position": 2.0, "USDT": 1000.0},
+        available_margin=1000.0,
+        total_equity=1000.0,
+        maintenance_margin=0.0,
+    )
+    close_signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="SELL",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp + timedelta(minutes=1),
+    )
+    close_signal.metadata = {
+        **dict(close_signal.metadata),
+        "mode": "ai",
+        "opportunity_shadow_record_key": correlation_key,
+    }
+    assert [row.status for row in controller_b.process_signals([close_signal])] == ["filled"]
+    assert len(execution_b.requests) == 1
+    assert execution_b.requests[0].quantity == pytest.approx(1.0, rel=1e-6)
+
+
 def test_autonomous_restored_close_allows_when_account_snapshot_position_is_numeric_string_if_supported(
     tmp_path: Path,
 ) -> None:

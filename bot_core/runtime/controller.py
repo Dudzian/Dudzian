@@ -1282,6 +1282,36 @@ class TradingController:
             return False
         return not has_valid_candidate
 
+    def _runtime_position_alias_values_for_symbol(
+        self,
+        *,
+        account: AccountSnapshot | None,
+        symbol: str,
+    ) -> list[float]:
+        if account is None:
+            return []
+        balances = getattr(account, "balances", None)
+        if not isinstance(balances, Mapping):
+            return []
+        normalized_symbol = str(symbol or "").strip()
+        if not normalized_symbol:
+            return []
+        lookup_keys = (
+            f"{normalized_symbol}_position",
+            f"{normalized_symbol.replace('/', '')}_position",
+        )
+        values: list[float] = []
+        for key in lookup_keys:
+            if key not in balances:
+                continue
+            try:
+                value = float(balances.get(key))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value):
+                values.append(value)
+        return values
+
     @staticmethod
     def _is_autonomous_restored_tracker_contract(
         tracker: _OpportunityOpenOutcomeTracker | None,
@@ -3567,10 +3597,31 @@ class TradingController:
                 account=account_for_runtime_truth,
                 symbol=str(request.symbol),
             )
+            runtime_alias_values = self._runtime_position_alias_values_for_symbol(
+                account=account_for_runtime_truth,
+                symbol=str(request.symbol),
+            )
             if runtime_position_notional is not None:
                 expected_runtime_sign = (
                     1.0 if str(existing_open_tracker.side).upper() in _BUY_SIDES else -1.0
                 )
+                finite_positive = any(value > 1e-12 for value in runtime_alias_values)
+                finite_negative = any(value < -1e-12 for value in runtime_alias_values)
+                if finite_positive and finite_negative:
+                    self._discard_open_outcome_tracker(correlation_key)
+                    existing_open_tracker = None
+                    self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                    self._record_decision_event(
+                        "signal_skipped",
+                        signal=signal,
+                        request=request,
+                        status="skipped",
+                        metadata={
+                            "reason": "restored_tracker_runtime_position_sign_mismatch_suppressed",
+                            "proxy_correlation_key": correlation_key,
+                        },
+                    )
+                    return None
                 sign_mismatch = (
                     abs(runtime_position_notional) > 1e-12
                     and runtime_position_notional * expected_runtime_sign < 0.0
@@ -3598,7 +3649,14 @@ class TradingController:
                 if (
                     remaining_quantity is not None
                     and remaining_quantity > 1e-12
-                    and abs(runtime_position_notional) + 1e-12 < remaining_quantity
+                    and (
+                        abs(runtime_position_notional) + 1e-12 < remaining_quantity
+                        or (
+                            len(runtime_alias_values) >= 2
+                            and min(abs(value) for value in runtime_alias_values) + 1e-12
+                            < remaining_quantity
+                        )
+                    )
                 ):
                     self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
                     self._record_decision_event(
