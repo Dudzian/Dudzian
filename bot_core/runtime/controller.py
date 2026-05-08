@@ -1245,6 +1245,43 @@ class TradingController:
             return value
         return None
 
+    def _runtime_position_value_invalid_for_symbol(
+        self,
+        *,
+        account: AccountSnapshot | None,
+        symbol: str,
+    ) -> bool:
+        if account is None:
+            return False
+        balances = getattr(account, "balances", None)
+        if not isinstance(balances, Mapping):
+            return False
+        normalized_symbol = str(symbol or "").strip()
+        if not normalized_symbol:
+            return False
+        lookup_keys = (
+            f"{normalized_symbol}_position",
+            f"{normalized_symbol.replace('/', '')}_position",
+        )
+        found_candidate = False
+        has_valid_candidate = False
+        for key in lookup_keys:
+            if key not in balances:
+                continue
+            found_candidate = True
+            raw_value = balances.get(key)
+            if raw_value is None:
+                continue
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value):
+                has_valid_candidate = True
+        if not found_candidate:
+            return False
+        return not has_valid_candidate
+
     @staticmethod
     def _is_autonomous_restored_tracker_contract(
         tracker: _OpportunityOpenOutcomeTracker | None,
@@ -3508,6 +3545,24 @@ class TradingController:
                 account_for_runtime_truth = self.account_snapshot_provider()
             except Exception:  # pragma: no cover - diagnostics only
                 account_for_runtime_truth = None
+            if self._runtime_position_value_invalid_for_symbol(
+                account=account_for_runtime_truth,
+                symbol=str(request.symbol),
+            ):
+                self._discard_open_outcome_tracker(correlation_key)
+                existing_open_tracker = None
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    request=request,
+                    status="skipped",
+                    metadata={
+                        "reason": "restored_tracker_runtime_position_absent_suppressed",
+                        "proxy_correlation_key": correlation_key,
+                    },
+                )
+                return None
             runtime_position_notional = self._runtime_position_notional_for_symbol(
                 account=account_for_runtime_truth,
                 symbol=str(request.symbol),
