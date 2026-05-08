@@ -3703,7 +3703,27 @@ class TradingController:
                 },
             )
             return None
-        account = self.account_snapshot_provider()
+        try:
+            account = self.account_snapshot_provider()
+        except Exception:
+            if str(
+                request.side
+            ).upper() == "SELL" and self._is_autonomous_restored_tracker_contract(
+                existing_open_tracker
+            ):
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    request=request,
+                    status="skipped",
+                    metadata={
+                        "reason": "last_mile_restored_tracker_account_snapshot_unavailable_suppressed",
+                        "proxy_correlation_key": correlation_key,
+                    },
+                )
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return None
+            raise
         risk_result = self.risk_engine.apply_pre_trade_checks(
             request,
             account=account,
