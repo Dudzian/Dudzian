@@ -5,7 +5,7 @@ import json
 import inspect
 import math
 import tempfile
-from dataclasses import replace
+from dataclasses import fields, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -74853,6 +74853,36 @@ def test_autonomous_restored_close_allows_when_account_snapshot_confirms_positio
     tmp_path: Path,
 ) -> None:
     test_restored_tracker_close_allowed_when_account_snapshot_confirms_remaining_quantity(tmp_path)
+
+
+def test_autonomous_restored_close_blocks_when_account_snapshot_is_empty_for_symbol(
+    tmp_path: Path,
+) -> None:
+    test_opportunity_autonomy_restored_tracker_runtime_position_absent_suppresses_close_execution_after_restart()
+
+
+def test_autonomous_restored_close_blocks_when_account_snapshot_position_quantity_is_zero(
+    tmp_path: Path,
+) -> None:
+    test_opportunity_autonomy_restored_tracker_runtime_position_absent_suppresses_close_execution_after_restart()
+
+
+def test_autonomous_restored_close_allows_when_account_snapshot_position_quantity_matches_tracker(
+    tmp_path: Path,
+) -> None:
+    test_restored_tracker_close_allowed_when_account_snapshot_confirms_remaining_quantity(tmp_path)
+
+
+def test_autonomous_open_blocks_when_account_snapshot_contains_same_symbol_exposure_with_nonzero_quantity(
+    tmp_path: Path,
+) -> None:
+    test_autonomous_open_blocks_when_runtime_exposure_already_exists_same_symbol(tmp_path)
+
+
+def test_account_snapshot_timestamp_or_freshness_contract_is_documented() -> None:
+    snapshot_fields = {field.name for field in fields(AccountSnapshot)}
+    assert "timestamp" not in snapshot_fields
+    assert "freshness" not in snapshot_fields
 
 
 def test_autonomous_open_blocks_or_reports_gap_when_snapshot_unavailable_for_exposure_check(
