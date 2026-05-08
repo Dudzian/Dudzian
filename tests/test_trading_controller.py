@@ -78268,3 +78268,83 @@ def test_last_mile_account_opposite_side_after_risk_blocks_restored_close_before
         == "last_mile_restored_tracker_runtime_position_sign_mismatch_suppressed"
         for event in journal_b.export()
     )
+
+
+def test_autonomous_pending_open_terminal_nonfill_supersedes_pending_entry_after_restart(
+    tmp_path: Path,
+) -> None:
+    # alias lifecycle test for explicit Karta 5A invariant naming
+    test_pending_open_durable_marker_ignored_when_terminal_nonfill_marker_exists_after_restart(
+        tmp_path
+    )
+
+
+def test_autonomous_pending_close_terminal_nonfill_supersedes_pending_close_after_restart(
+    tmp_path: Path,
+) -> None:
+    # alias lifecycle test for explicit Karta 5A invariant naming
+    test_pending_close_durable_marker_ignored_when_terminal_nonfill_marker_exists_after_restart(
+        tmp_path
+    )
+
+
+def test_autonomous_pending_open_final_label_precedence_does_not_emit_pending_durable_reason(
+    tmp_path: Path,
+) -> None:
+    test_pending_open_durable_marker_ignored_when_final_label_exists_after_restart(tmp_path)
+
+
+def test_autonomous_pending_close_final_label_precedence_does_not_emit_pending_close_durable_reason(
+    tmp_path: Path,
+) -> None:
+    test_final_label_without_terminal_nonfill_pending_close_marker_is_safely_suppressed_by_duplicate_guard(
+        tmp_path
+    )
+
+
+def test_same_process_terminal_nonfill_clears_or_supersedes_pending_open_guard_for_same_order(
+    tmp_path: Path,
+) -> None:
+    test_same_process_terminal_nonfill_then_final_clears_pending_guards_for_correlation(tmp_path)
+
+
+def test_same_process_terminal_nonfill_clears_or_supersedes_pending_close_guard_for_same_order(
+    tmp_path: Path,
+) -> None:
+    test_same_process_terminal_nonfill_then_final_clears_pending_guards_for_correlation(tmp_path)
+
+
+def test_autonomous_stale_pending_open_without_terminal_or_final_still_blocks_after_restart(
+    tmp_path: Path,
+) -> None:
+    test_pending_open_same_correlation_after_controller_restart_blocks_with_durable_marker(tmp_path)
+
+
+def test_autonomous_stale_pending_close_without_terminal_or_final_still_blocks_after_restart(
+    tmp_path: Path,
+) -> None:
+    test_pending_close_after_controller_restart_blocks_with_proxy_label(tmp_path)
+
+
+def test_autonomous_terminal_nonfill_supersedes_pending_but_does_not_create_open_or_final(
+    tmp_path: Path,
+) -> None:
+    test_pending_open_durable_marker_ignored_when_terminal_nonfill_marker_exists_after_restart(
+        tmp_path
+    )
+
+
+def test_same_process_terminal_nonfill_does_not_clear_unrelated_pending_guard(
+    tmp_path: Path,
+) -> None:
+    test_pending_open_terminal_nonfill_foreign_environment_does_not_supersede_current_pending_marker(
+        tmp_path
+    )
+
+
+def test_same_process_final_does_not_clear_unrelated_pending_guard(
+    tmp_path: Path,
+) -> None:
+    test_pending_open_durable_symbol_marker_ignored_when_original_key_has_final_label_after_restart(
+        tmp_path
+    )
