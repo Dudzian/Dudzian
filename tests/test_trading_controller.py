@@ -74759,6 +74759,28 @@ def test_autonomous_restored_close_allows_when_runtime_position_matches(
     test_restored_tracker_close_allowed_when_account_snapshot_confirms_remaining_quantity(tmp_path)
 
 
+def test_autonomous_restored_close_blocks_when_account_snapshot_position_less_than_remaining_quantity(
+    tmp_path: Path,
+) -> None:
+    test_restored_tracker_close_blocks_when_account_snapshot_quantity_less_than_tracker_remaining(
+        tmp_path
+    )
+
+
+def test_autonomous_restored_close_allows_when_account_snapshot_position_equals_remaining_quantity(
+    tmp_path: Path,
+) -> None:
+    test_restored_tracker_close_allowed_when_account_snapshot_confirms_remaining_quantity(tmp_path)
+
+
+def test_autonomous_restored_close_behavior_when_account_snapshot_position_exceeds_remaining_quantity(
+    tmp_path: Path,
+) -> None:
+    test_restored_tracker_close_uses_tracker_remaining_when_account_snapshot_quantity_greater(
+        tmp_path
+    )
+
+
 def test_autonomous_stale_local_tracker_without_runtime_position_does_not_force_close_execution(
     tmp_path: Path,
 ) -> None:
