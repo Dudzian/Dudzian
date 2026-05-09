@@ -64294,6 +64294,50 @@ def test_upstream_handoff_scope_aware_resolution_blocks_ambiguous_same_scope_sha
     )
 
 
+def test_opportunity_engine_handoff_requires_shadow_record_key_for_autonomous_open(
+    tmp_path: Path,
+) -> None:
+    test_upstream_handoff_accepted_autonomous_open_with_incomplete_contract_is_fail_closed(
+        tmp_path,
+        missing_key=True,
+        missing_timestamp=False,
+    )
+
+
+def test_opportunity_engine_handoff_requires_decision_timestamp_for_autonomous_open(
+    tmp_path: Path,
+) -> None:
+    test_upstream_handoff_malformed_accepted_autonomous_without_timestamp_is_fail_closed(tmp_path)
+
+
+def test_opportunity_engine_handoff_rejects_multiple_accepted_candidates_for_same_scope(
+    tmp_path: Path,
+) -> None:
+    test_upstream_handoff_scope_aware_resolution_blocks_ambiguous_same_scope_shadow_reference(
+        tmp_path
+    )
+
+
+def test_opportunity_engine_handoff_rejects_foreign_environment_candidate(
+    tmp_path: Path,
+) -> None:
+    test_upstream_handoff_payload_only_effective_mode_scope_aware_resolution_blocks_foreign_scope_only(
+        tmp_path
+    )
+
+
+def test_opportunity_engine_handoff_rejects_symbol_or_side_mismatch(
+    tmp_path: Path,
+) -> None:
+    test_upstream_handoff_complete_contract_but_symbol_mismatch_shadow_record_is_fail_closed(
+        tmp_path
+    )
+
+
+def test_opportunity_engine_handoff_preserves_model_provenance_on_accepted_open() -> None:
+    test_upstream_handoff_complete_contract_with_performance_guard_payload_uses_runtime_local_path()
+
+
 @pytest.mark.parametrize("foreign_first", (True, False))
 def test_upstream_handoff_open_close_classifier_is_order_independent_for_actual_open_with_timestamp_mismatch(
     tmp_path: Path,
