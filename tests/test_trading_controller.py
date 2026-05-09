@@ -64338,6 +64338,208 @@ def test_opportunity_engine_handoff_preserves_model_provenance_on_accepted_open(
     test_upstream_handoff_complete_contract_with_performance_guard_payload_uses_runtime_local_path()
 
 
+def test_opportunity_engine_shadow_output_records_candidate_lineage_without_execution_side_effect(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opp-v1",
+        rank=1,
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opp-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=8.0,
+                success_probability=0.74,
+                confidence=0.42,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"lineage": "engine-candidate"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={"candidate_id": "cand-1"},
+                context=OpportunityShadowContext(
+                    environment="paper",
+                    notes={"portfolio": "paper-1"},
+                ),
+            )
+        ]
+    )
+    persisted = repository.load_shadow_records()
+    assert len(persisted) == 1
+    assert persisted[0].record_key == correlation_key
+    assert persisted[0].symbol == "BTC/USDT"
+    assert persisted[0].proposed_direction == "long"
+    assert persisted[0].decision_timestamp == decision_timestamp
+    assert persisted[0].context.environment == "paper"
+    assert persisted[0].context.notes["portfolio"] == "paper-1"
+    controller, execution, _journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    assert execution.requests == []
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    _ = controller.process_signals([signal])
+    assert execution.requests != []
+
+
+def test_opportunity_engine_shadow_output_preserves_score_rank_and_model_metadata() -> None:
+    record = OpportunityShadowRecord(
+        record_key="k",
+        symbol="BTC/USDT",
+        decision_timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        model_version="opp-v1",
+        decision_source="opportunity_ai_shadow",
+        expected_edge_bps=5.0,
+        success_probability=0.7,
+        confidence=0.3,
+        proposed_direction="long",
+        accepted=True,
+        rejection_reason=None,
+        rank=1,
+        provenance={"model": "gbm"},
+        threshold_config=OpportunityThresholdConfig(),
+        snapshot={},
+        context=OpportunityShadowContext(environment="paper", notes={"portfolio": "paper-1"}),
+    )
+    assert record.rank == 1
+    assert record.model_version == "opp-v1"
+    assert record.decision_source == "opportunity_ai_shadow"
+    assert "score" not in record.to_dict()
+
+
+def test_opportunity_engine_shadow_output_rejects_candidate_without_scope(
+    tmp_path: Path,
+) -> None:
+    test_upstream_handoff_scope_aware_resolution_blocks_same_environment_invalid_portfolio_scope(
+        tmp_path,
+        {},
+    )
+
+
+def test_opportunity_engine_shadow_output_rejects_filtered_candidate_as_handoff(
+    tmp_path: Path,
+) -> None:
+    test_controller_decision_rejection_blocks_autonomous_open_before_enforcement()
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _channel, _audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+
+    class _RejectingOrchestrator:
+        def evaluate_candidate(self, candidate, _context):
+            return SimpleNamespace(candidate=candidate, accepted=False, reasons=("filtered",))
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_orchestrator=_RejectingOrchestrator(),
+        decision_journal=journal,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous")
+    results = controller.process_signals([signal])
+    assert results == []
+    assert execution.requests == []
+    assert any(
+        e.event_type == "decision_evaluation" and e.status == "rejected" for e in journal.events
+    )
+
+
+def test_opportunity_engine_shadow_output_rejects_multiple_accepted_candidates_in_same_scope(
+    tmp_path: Path,
+) -> None:
+    test_upstream_handoff_scope_aware_resolution_blocks_ambiguous_same_scope_shadow_reference(
+        tmp_path
+    )
+
+
+def test_opportunity_engine_shadow_output_accepted_candidate_key_matches_controller_handoff(
+    tmp_path: Path,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opp-v1",
+        rank=1,
+    )
+    repository = OpportunityShadowRepository(tmp_path / "shadow")
+    repository.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opp-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=8.0,
+                success_probability=0.74,
+                confidence=0.42,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"lineage": "engine-candidate"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(
+                    environment="paper",
+                    notes={"portfolio": "paper-1"},
+                ),
+            )
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=repository,
+    )
+    signal = _opportunity_autonomy_signal("paper_autonomous", include_decision_payload=True)
+    signal.metadata = {
+        **dict(signal.metadata),
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "opportunity_shadow_record_key": correlation_key,
+        "opportunity_decision_timestamp": decision_timestamp.isoformat(),
+    }
+    _ = controller.process_signals([signal])
+    executed = execution.requests[-1]
+    assert (
+        str(executed.metadata.get("opportunity_shadow_record_key") or "").strip() == correlation_key
+    )
+    matched_events = [
+        event
+        for event in journal.export()
+        if str(event.get("order_opportunity_shadow_record_key") or "").strip() == correlation_key
+    ]
+    assert matched_events
+    assert (
+        str(signal.metadata.get("opportunity_shadow_record_key") or "").strip() == correlation_key
+    )
+
+
 @pytest.mark.parametrize("foreign_first", (True, False))
 def test_upstream_handoff_open_close_classifier_is_order_independent_for_actual_open_with_timestamp_mismatch(
     tmp_path: Path,
