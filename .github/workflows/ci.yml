@@ -1266,7 +1266,7 @@ jobs:
             PySide6_Addons==${PYSIDE6_VERSION} \
             PySide6_Essentials==${PYSIDE6_VERSION} \
             shiboken6==${PYSIDE6_VERSION}
-          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[test]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[test,codegen]
 
       - name: Preflight test environment
         shell: bash
@@ -1362,7 +1362,7 @@ jobs:
             PySide6_Addons==${PYSIDE6_VERSION} \
             PySide6_Essentials==${PYSIDE6_VERSION} \
             shiboken6==${PYSIDE6_VERSION}
-          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[test]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[test,codegen]
 
       - name: Preflight test environment
         shell: bash
@@ -1447,7 +1447,7 @@ jobs:
             PySide6_Addons==${PYSIDE6_VERSION} \
             PySide6_Essentials==${PYSIDE6_VERSION} \
             shiboken6==${PYSIDE6_VERSION}
-          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[test]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[test,codegen]
 
       - name: Preflight test environment
         shell: bash
@@ -1534,7 +1534,7 @@ jobs:
             PySide6_Addons==${PYSIDE6_VERSION} \
             PySide6_Essentials==${PYSIDE6_VERSION} \
             shiboken6==${PYSIDE6_VERSION}
-          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[test]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[test,codegen]
 
       - name: Preflight test environment
         shell: bash
