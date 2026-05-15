@@ -20,6 +20,29 @@ Dokument opisuje sposób uruchomienia scenariusza demo → paper na stacji roboc
 3. Raporty JSON oraz Markdown znajdziesz w `reports/e2e/`. Artefakty logów testu umieszczane są w `logs/e2e/`.
 4. Raporty z retrainingu (Markdown i JSON) są zapisywane w `reports/retraining/`.
 
+## Autonomy matrix: setup środowiska testowego
+1. Preferowany setup repo-native:
+   ```bash
+   python -m pip install -e ".[test]"
+   ```
+2. Znany problem operacyjny: w części środowisk resolver pip może długo backtrackować na `grpcio-tools`.
+3. Dozwolony fallback minimalny dla testów autonomii:
+   ```bash
+   python -m pip install numpy pandas PyYAML requests pydantic scipy joblib cryptography PyNaCl jsonschema PySide6==6.10.3 grpcio protobuf
+   ```
+4. Sanity check zależności:
+   ```bash
+   python - <<'PY'
+   import numpy, pandas, yaml, pydantic, grpc, google.protobuf
+   print("autonomy test dependencies ok")
+   PY
+   ```
+5. Podstawowe selektory autonomy matrix:
+   ```bash
+   python -m pytest -q tests/test_trading_controller.py -k "direction_mismatch" -vv
+   python -m pytest -q tests/test_trading_controller.py -k "opportunity_autonomy or accepted_autonomous_handoff or shadow_reference or duplicate_open_guard or handoff"
+   ```
+
 ## Artefakty
 - `reports/e2e/` – raporty generowane przez `DemoPaperReport` (JSON + Markdown).
 - `reports/retraining/` – raporty generowane przez `RetrainingReport` (JSON + Markdown).
