@@ -4643,8 +4643,12 @@ class TradingController:
         if not isinstance(decision_payload, Mapping):
             decision_payload = signal_metadata.get("opportunity_autonomy_decision")
         payload_decision_source = ""
+        payload_effective_mode = ""
         if isinstance(decision_payload, Mapping):
             payload_decision_source = str(decision_payload.get("decision_source") or "").strip()
+            payload_effective_mode = (
+                str(decision_payload.get("effective_mode") or "").strip().lower()
+            )
         mode: str | None = None
         try:
             decision = self._extract_opportunity_autonomy_decision(
@@ -4750,6 +4754,30 @@ class TradingController:
             )
         runtime_environment = str(self.environment).strip().lower()
         runtime_portfolio = str(self.portfolio_id or "").strip().lower()
+        signal_side_raw = getattr(signal.side, "value", signal.side)
+        request_side_raw = getattr(request.side, "value", request.side)
+        direction_source_raw = signal_side_raw or request_side_raw
+        requested_direction = str(direction_source_raw or "").strip().lower()
+        strict_accepted_direction_enforcement = payload_effective_mode in {
+            "paper_autonomous",
+            "live_autonomous",
+        }
+
+        def _is_direction_consistent(candidate: object) -> bool:
+            candidate_direction_raw = (
+                str(getattr(candidate, "proposed_direction", "")).strip().lower()
+            )
+            if candidate_direction_raw == "buy":
+                candidate_direction_raw = "long"
+            elif candidate_direction_raw == "sell":
+                candidate_direction_raw = "short"
+            if candidate_direction_raw not in {"long", "short"}:
+                return False
+            if not requested_direction:
+                return True
+            expected_direction = "buy" if candidate_direction_raw == "long" else "sell"
+            return requested_direction == expected_direction
+
         scoped_candidates = []
         for candidate in timestamp_candidates:
             candidate_context = getattr(candidate, "context", None)
@@ -4821,6 +4849,23 @@ class TradingController:
                 (),
                 mode,
                 "accepted_autonomous_handoff_shadow_reference_scope_ambiguous",
+            )
+        scoped_candidate = scoped_candidates[0]
+        if strict_accepted_direction_enforcement and not bool(
+            getattr(scoped_candidate, "accepted", False)
+        ):
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_not_accepted",
+            )
+        if strict_accepted_direction_enforcement and not _is_direction_consistent(scoped_candidate):
+            return (
+                False,
+                (),
+                mode,
+                "accepted_autonomous_handoff_shadow_reference_direction_mismatch",
             )
         return True, (), mode, ""
 
