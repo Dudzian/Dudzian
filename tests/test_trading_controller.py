@@ -63222,6 +63222,149 @@ def test_upstream_handoff_complete_contract_with_matching_timestamp_still_allows
     assert len(shadow_repo.load_open_outcomes()) == 1
 
 
+def test_upstream_handoff_complete_contract_direction_mismatch_fail_closed_for_explicit_autonomous_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    correlation_key = OpportunityShadowRecord.build_record_key(
+        symbol="BTC/USDT",
+        decision_timestamp=decision_timestamp,
+        model_version="opportunity-v1",
+        rank=1,
+    )
+    shadow_repo = OpportunityShadowRepository(tmp_path / "shadow")
+    shadow_repo.append_shadow_records(
+        [
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp,
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="short",
+                accepted=True,
+                rejection_reason=None,
+                rank=1,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
+            ),
+            # Utrzymujemy drugi rekord z tym samym record_key, ale innym timestampem
+            # i przeciwnym implied open side. To odzwierciedla istniejący kontrakt
+            # klasyfikatora _is_autonomous_open_handoff_path(...): bez trackera i przy
+            # jednym scoped candidate klasyfikator może zinterpretować request BUY jako
+            # CLOSE względem implied SELL i nie uruchomić walidatora handoff.
+            # Ten drugi rekord wymusza konflikt implied side (BUY/SELL), dzięki czemu
+            # ścieżka trafia do walidatora, który następnie rozstrzyga po explicit
+            # key+timestamp i zwraca direction_mismatch dla rekordu SHORT.
+            OpportunityShadowRecord(
+                record_key=correlation_key,
+                symbol="BTC/USDT",
+                decision_timestamp=decision_timestamp + timedelta(minutes=1),
+                model_version="opportunity-v1",
+                decision_source="opportunity_ai_shadow",
+                expected_edge_bps=5.0,
+                success_probability=0.7,
+                confidence=0.3,
+                proposed_direction="long",
+                accepted=True,
+                rejection_reason=None,
+                rank=2,
+                provenance={"probability_method": "test"},
+                threshold_config=OpportunityThresholdConfig(),
+                snapshot={},
+                context=OpportunityShadowContext(
+                    environment="paper", notes={"portfolio": "paper-1"}
+                ),
+            ),
+        ]
+    )
+    controller, execution, journal = _build_autonomy_controller(
+        environment="paper",
+        opportunity_shadow_repository=shadow_repo,
+    )
+    signal = _autonomy_signal_with_correlation(
+        mode="paper_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        assisted_approval=True,
+        decision_effective_mode="paper_autonomous",
+    )
+    original_validator = TradingController._validate_autonomous_open_handoff_contract
+    traces: list[dict[str, object]] = []
+
+    def _spy_validator(
+        self: TradingController,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+    ) -> tuple[bool, tuple[str, ...], str | None, str]:
+        payload = request.metadata.get("opportunity_autonomy_decision")
+        payload_effective_mode = ""
+        if isinstance(payload, Mapping):
+            payload_effective_mode = str(payload.get("effective_mode") or "").strip().lower()
+        records = self._opportunity_shadow_repository.load_shadow_records()
+        matched_records = [
+            row for row in records if str(getattr(row, "record_key", "")).strip() == correlation_key
+        ]
+        traces.append(
+            {
+                "signal_side": str(getattr(signal.side, "value", signal.side) or "")
+                .strip()
+                .lower(),
+                "request_side": str(getattr(request.side, "value", request.side) or "")
+                .strip()
+                .lower(),
+                "effective_mode": payload_effective_mode,
+                "correlation_key": str(
+                    request.metadata.get("opportunity_shadow_record_key") or ""
+                ).strip(),
+                "decision_timestamp": str(
+                    request.metadata.get("opportunity_decision_timestamp") or ""
+                ).strip(),
+                "candidate_proposed_direction": str(
+                    getattr(matched_records[0], "proposed_direction", "") if matched_records else ""
+                )
+                .strip()
+                .lower(),
+            }
+        )
+        return original_validator(self, signal=signal, request=request)
+
+    monkeypatch.setattr(
+        TradingController,
+        "_validate_autonomous_open_handoff_contract",
+        _spy_validator,
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(traces) == 1
+    assert traces[0]["signal_side"] == "buy"
+    assert traces[0]["request_side"] == "buy"
+    assert traces[0]["effective_mode"] == "paper_autonomous"
+    assert traces[0]["correlation_key"] == correlation_key
+    assert traces[0]["decision_timestamp"] == decision_timestamp.isoformat()
+    assert traces[0]["candidate_proposed_direction"] == "short"
+    assert results == []
+    assert execution.requests == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert (
+        event["blocking_reason"]
+        == "accepted_autonomous_handoff_shadow_reference_direction_mismatch"
+    )
+
+
 def test_upstream_handoff_payload_only_effective_mode_timestamp_mismatch_is_fail_closed(
     tmp_path: Path,
 ) -> None:
