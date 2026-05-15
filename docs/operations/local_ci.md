@@ -37,7 +37,11 @@ Dokument opisuje sposób uruchomienia scenariusza demo → paper na stacji roboc
    print("autonomy test dependencies ok")
    PY
    ```
-5. Podstawowe selektory autonomy matrix:
+5. Repo-native runner autonomy matrix:
+   ```bash
+   python scripts/ci/run_autonomy_matrix.py
+   ```
+6. Fallback ręczny (selektory pozostają wspierane):
    ```bash
    python -m pytest -q tests/test_trading_controller.py -k "direction_mismatch" -vv
    python -m pytest -q tests/test_trading_controller.py -k "opportunity_autonomy or accepted_autonomous_handoff or shadow_reference or duplicate_open_guard or handoff"
