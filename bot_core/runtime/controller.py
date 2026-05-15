@@ -4900,6 +4900,8 @@ class TradingController:
             and has_accepted_autonomous_handoff_intent
             and runtime_environment == "paper"
         ):
+            if self._has_same_scope_close_or_replay_state(request=request):
+                return False
             return True
         if correlation_key and has_handoff_decision_timestamp and has_performance_guard_payload:
             return False
@@ -4963,7 +4965,48 @@ class TradingController:
         if len(implied_expected_open_sides) != 1:
             return True
         expected_open_side = next(iter(implied_expected_open_sides))
-        return not self._is_closing_side(expected_open_side, str(request.side))
+        if not self._is_closing_side(expected_open_side, str(request.side)):
+            return True
+        return not self._has_same_scope_close_or_replay_state(request=request)
+
+    def _has_same_scope_close_or_replay_state(self, *, request: OrderRequest) -> bool:
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        correlation_key = str(request_metadata.get("opportunity_shadow_record_key") or "").strip()
+        if not correlation_key:
+            return False
+        request_symbol = str(request.symbol or "").strip()
+        request_side = str(request.side or "")
+        tracker = self._opportunity_open_outcomes.get(correlation_key)
+        if (
+            tracker is not None
+            and self._is_closing_side(str(tracker.side), request_side)
+            and self._matches_current_open_tracker_scope(
+                correlation_key=correlation_key,
+                symbol=request_symbol,
+                tracker=tracker,
+            )
+        ):
+            return True
+        if not request_symbol:
+            return False
+        request_side_normalized = request_side.strip().upper()
+        if request_side_normalized not in {"BUY", "SELL"}:
+            return False
+        if (
+            correlation_key,
+            request_symbol,
+            request_side_normalized,
+        ) in self._pending_autonomous_close_replays:
+            return True
+        return self._is_final_outcome_close_replay_suppressed(
+            request=request,
+            correlation_key=correlation_key,
+            existing_open_tracker=tracker,
+        ) or self._is_in_memory_final_close_replay_without_terminal_nonfill(
+            request=request,
+            correlation_key=correlation_key,
+            existing_open_tracker=tracker,
+        )
 
     def _select_opportunity_autonomy_payload(
         self,
