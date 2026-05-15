@@ -116,7 +116,7 @@ def _ensure_dependency(module: str, package: str) -> None:
         __import__(module)
     except ImportError as exc:  # pragma: no cover - defensywne logowanie
         raise StubGenerationError(
-            f"Brak modułu '{module}'. Zainstaluj pakiet '{package}' (np. poetry add {package})."
+            f"Brak modułu '{module}'. Zainstaluj pakiet '{package}' przez: python -m pip install -e '.[codegen]'."
         ) from exc
 
 
