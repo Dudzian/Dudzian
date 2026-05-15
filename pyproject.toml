@@ -235,6 +235,9 @@ test = [
   "joblib>=1.3",
   "pytest-timeout>=2.3",
 ]
+codegen = [
+  "grpcio-tools>=1.62,<2",
+]
 tools = [
   # Dependencies for CI tooling/scripts (reports, marketplace, parity checks).
   "PyYAML>=6.0",

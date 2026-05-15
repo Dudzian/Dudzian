@@ -25,23 +25,27 @@ Dokument opisuje sposób uruchomienia scenariusza demo → paper na stacji roboc
    ```bash
    python -m pip install -e ".[test]"
    ```
-2. Znany problem operacyjny: w części środowisk resolver pip może długo backtrackować na `grpcio-tools`.
-3. Dozwolony fallback minimalny dla testów autonomii:
+2. `grpcio-tools` nie jest wymagane do runtime testów autonomii (`.[test]`).
+3. Codegen gRPC/protobuf (opcjonalnie, tylko przy regeneracji stubów):
+   ```bash
+   python -m pip install -e ".[codegen]"
+   ```
+4. Dozwolony fallback minimalny dla testów autonomii:
    ```bash
    python -m pip install numpy pandas PyYAML requests pydantic scipy joblib cryptography PyNaCl jsonschema PySide6==6.10.3 grpcio protobuf
    ```
-4. Sanity check zależności:
+5. Sanity check zależności:
    ```bash
    python - <<'PY'
    import numpy, pandas, yaml, pydantic, grpc, google.protobuf
    print("autonomy test dependencies ok")
    PY
    ```
-5. Repo-native runner autonomy matrix:
+6. Repo-native runner autonomy matrix:
    ```bash
    python scripts/ci/run_autonomy_matrix.py
    ```
-6. Fallback ręczny (selektory pozostają wspierane):
+7. Fallback ręczny (selektory pozostają wspierane):
    ```bash
    python -m pytest -q tests/test_trading_controller.py -k "direction_mismatch" -vv
    python -m pytest -q tests/test_trading_controller.py -k "opportunity_autonomy or accepted_autonomous_handoff or shadow_reference or duplicate_open_guard or handoff"
