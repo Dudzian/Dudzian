@@ -63256,34 +63256,6 @@ def test_upstream_handoff_complete_contract_direction_mismatch_fail_closed_for_e
                     environment="paper", notes={"portfolio": "paper-1"}
                 ),
             ),
-            # Utrzymujemy drugi rekord z tym samym record_key, ale innym timestampem
-            # i przeciwnym implied open side. To odzwierciedla istniejący kontrakt
-            # klasyfikatora _is_autonomous_open_handoff_path(...): bez trackera i przy
-            # jednym scoped candidate klasyfikator może zinterpretować request BUY jako
-            # CLOSE względem implied SELL i nie uruchomić walidatora handoff.
-            # Ten drugi rekord wymusza konflikt implied side (BUY/SELL), dzięki czemu
-            # ścieżka trafia do walidatora, który następnie rozstrzyga po explicit
-            # key+timestamp i zwraca direction_mismatch dla rekordu SHORT.
-            OpportunityShadowRecord(
-                record_key=correlation_key,
-                symbol="BTC/USDT",
-                decision_timestamp=decision_timestamp + timedelta(minutes=1),
-                model_version="opportunity-v1",
-                decision_source="opportunity_ai_shadow",
-                expected_edge_bps=5.0,
-                success_probability=0.7,
-                confidence=0.3,
-                proposed_direction="long",
-                accepted=True,
-                rejection_reason=None,
-                rank=2,
-                provenance={"probability_method": "test"},
-                threshold_config=OpportunityThresholdConfig(),
-                snapshot={},
-                context=OpportunityShadowContext(
-                    environment="paper", notes={"portfolio": "paper-1"}
-                ),
-            ),
         ]
     )
     controller, execution, journal = _build_autonomy_controller(
