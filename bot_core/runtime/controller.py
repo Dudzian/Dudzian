@@ -4967,7 +4967,37 @@ class TradingController:
         expected_open_side = next(iter(implied_expected_open_sides))
         if not self._is_closing_side(expected_open_side, str(request.side)):
             return True
-        return not self._has_same_scope_close_or_replay_state(request=request)
+        if (
+            correlation_key
+            and has_handoff_decision_timestamp
+            and payload_effective_mode in {"paper_autonomous", "live_autonomous"}
+            and str(request_metadata.get("autonomy_assisted_approval") or "").strip().lower()
+            == "true"
+        ):
+            handoff_decision_timestamp_raw = str(
+                request_metadata.get("opportunity_decision_timestamp") or ""
+            ).strip()
+            try:
+                handoff_decision_timestamp = datetime.fromisoformat(
+                    handoff_decision_timestamp_raw.replace("Z", "+00:00")
+                )
+            except ValueError:
+                return False
+            if handoff_decision_timestamp.tzinfo is None:
+                handoff_decision_timestamp = handoff_decision_timestamp.replace(tzinfo=timezone.utc)
+            handoff_decision_timestamp = handoff_decision_timestamp.astimezone(timezone.utc)
+            for candidate in scoped_candidates:
+                candidate_decision_timestamp = getattr(candidate, "decision_timestamp", None)
+                if not isinstance(candidate_decision_timestamp, datetime):
+                    continue
+                if candidate_decision_timestamp.tzinfo is None:
+                    candidate_decision_timestamp = candidate_decision_timestamp.replace(
+                        tzinfo=timezone.utc
+                    )
+                candidate_decision_timestamp = candidate_decision_timestamp.astimezone(timezone.utc)
+                if candidate_decision_timestamp == handoff_decision_timestamp:
+                    return True
+        return False
 
     def _has_same_scope_close_or_replay_state(self, *, request: OrderRequest) -> bool:
         request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
