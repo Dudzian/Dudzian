@@ -469,6 +469,8 @@ jobs:
 
       - name: Install dependencies
         shell: bash
+        env:
+          INSTALL_EXTRAS: test,codegen
         run: |
           bash scripts/ci/install_deps_python.sh
 
@@ -556,6 +558,8 @@ jobs:
 
       - name: Install dependencies
         shell: bash
+        env:
+          INSTALL_EXTRAS: test,codegen
         run: |
           bash scripts/ci/install_deps_python.sh
 
@@ -624,6 +628,8 @@ jobs:
 
       - name: Install dependencies
         shell: bash
+        env:
+          INSTALL_EXTRAS: test,codegen
         run: |
           bash scripts/ci/install_deps_python.sh
 
