@@ -214,6 +214,10 @@ jobs:
         shell: bash
         run: mkdir -p test-results
 
+      - name: Run autonomy matrix
+        shell: bash
+        run: python scripts/ci/run_autonomy_matrix.py
+
       - name: Pytest (unit suite) with coverage
         shell: bash
         # Intentional narrow blocking-gate subset for autonomy/governance contracts.
