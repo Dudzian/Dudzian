@@ -29950,6 +29950,14 @@ def test_opportunity_autonomy_active_budget_ranked_close_ranked_partial_close_ke
 @pytest.mark.parametrize(
     "close_status",
     ["rejected", "canceled", "cancelled", "pending", "failed", "error"],
+    ids=[
+        "rejected_status",
+        "canceled_status",
+        "cancelled_status",
+        "pending_status",
+        "failed_status",
+        "nonfilled_error_status",
+    ],
 )
 def test_opportunity_autonomy_active_budget_ranked_close_ranked_non_filled_close_keeps_deferred_ranked_losers_before_permission(
     monkeypatch: pytest.MonkeyPatch,
