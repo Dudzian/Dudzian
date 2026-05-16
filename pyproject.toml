@@ -236,7 +236,7 @@ test = [
   "pytest-timeout>=2.3",
 ]
 codegen = [
-  "grpcio-tools>=1.62,<2",
+  "grpcio-tools==1.71.2",
 ]
 tools = [
   # Dependencies for CI tooling/scripts (reports, marketplace, parity checks).
