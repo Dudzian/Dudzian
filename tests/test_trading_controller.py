@@ -1930,6 +1930,66 @@ def test_opportunity_autonomy_enforcement_performance_guard_rewrite_preserves_up
     assert event["upstream_autonomy_inference_model_version"] == "2026.04.11"
 
 
+def test_opportunity_autonomy_enforcement_blocked_payload_snapshot_without_decision_envelope() -> (
+    None
+):
+    controller, execution, journal = _build_autonomy_controller(
+        environment="live",
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_inconsistent_live_allow",
+        assisted_approval=False,
+    )
+    signal.metadata = {
+        **dict(signal.metadata or {}),
+        "opportunity_shadow_record_key": "payload-contract-blocked",
+        "opportunity_decision_timestamp": datetime(2026, 4, 11, tzinfo=timezone.utc).isoformat(),
+        "opportunity_autonomy_decision": {
+            "effective_mode": "live_autonomous",
+            "primary_reason": "upstream_inconsistent_live_allow",
+            "decision_source": "readiness_source",
+            "inference_model": "readiness_model",
+            "inference_model_version": "2026.04.11",
+            "blocking_reasons": [
+                "promotion_not_ready_for_live_autonomous",
+                "other_blocker",
+            ],
+            "reasons": [
+                "upstream_inconsistent_live_allow",
+                "governance_hint",
+            ],
+        },
+    }
+
+    assert controller.process_signals([signal]) == []
+    assert execution.requests == []
+
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "paper_autonomy_blocks_live_environment"
+    assert event["upstream_autonomy_decision_source"] == "readiness_source"
+    assert event["upstream_autonomy_inference_model"] == "readiness_model"
+    assert event["upstream_autonomy_inference_model_version"] == "2026.04.11"
+    shadow_key = str(
+        event.get("opportunity_shadow_record_key")
+        or event.get("order_opportunity_shadow_record_key")
+        or ""
+    ).strip()
+    if shadow_key:
+        assert shadow_key == "payload-contract-blocked"
+    # Snapshot blokuje tylko stabilny subset dla tej ścieżki blocked;
+    # opportunity_decision_timestamp nie jest tutaj gwarantowanym kontraktem.
+    assert "decision_envelope" not in event
+
+
 def test_opportunity_autonomy_runtime_local_snapshot_good_outcomes_allow_execution() -> None:
     controller, execution, journal = _build_autonomy_controller(
         environment="live",
