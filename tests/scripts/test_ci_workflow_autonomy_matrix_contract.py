@@ -120,3 +120,43 @@ def test_lint_and_test_contains_risk_execution_matrix_step_with_expected_command
     assert risk_idx < pytest_idx, (
         "Krok 'Run risk/execution matrix' musi występować przed 'Pytest (unit suite) with coverage'"
     )
+
+
+def test_lint_and_test_contains_recovery_matrix_step_with_expected_command_and_order() -> None:
+    step_blocks = _extract_lint_and_test_step_blocks()
+    step_names = [_step_name(block) for block in step_blocks]
+
+    assert "Run recovery matrix" in step_names, (
+        "Brak kroku 'Run recovery matrix' w jobs.lint-and-test.steps"
+    )
+    recovery_idx = step_names.index("Run recovery matrix")
+
+    recovery_block = step_blocks[recovery_idx]
+    recovery_body = "\n".join(recovery_block)
+    assert "python scripts/ci/run_recovery_matrix.py" in recovery_body, (
+        "Krok 'Run recovery matrix' musi uruchamiać 'python scripts/ci/run_recovery_matrix.py'"
+    )
+
+    for dependency_step_name in ("Set up Python", "Download wheelhouse", "Install dependencies"):
+        assert dependency_step_name in step_names, (
+            f"Brak kroku zależności '{dependency_step_name}' wymaganego przez kontrakt CI"
+        )
+        assert recovery_idx > step_names.index(dependency_step_name), (
+            f"Krok 'Run recovery matrix' musi być po kroku '{dependency_step_name}'"
+        )
+
+    assert "Run risk/execution matrix" in step_names, (
+        "Brak kroku 'Run risk/execution matrix' wymaganego przez kontrakt kolejności"
+    )
+    risk_idx = step_names.index("Run risk/execution matrix")
+    assert recovery_idx > risk_idx, (
+        "Krok 'Run recovery matrix' musi występować po 'Run risk/execution matrix'"
+    )
+
+    assert "Pytest (unit suite) with coverage" in step_names, (
+        "Brak kroku 'Pytest (unit suite) with coverage' w jobs.lint-and-test.steps"
+    )
+    pytest_idx = step_names.index("Pytest (unit suite) with coverage")
+    assert recovery_idx < pytest_idx, (
+        "Krok 'Run recovery matrix' musi występować przed 'Pytest (unit suite) with coverage'"
+    )
