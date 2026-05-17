@@ -43,18 +43,18 @@ def build_decision_envelope_view(
     metadata: Mapping[str, object], provenance: Mapping[str, object] | None = None
 ) -> dict[str, object]:
     """Zwraca minimalny, read-only widok pól DecisionEnvelope z dostępnych mapowań."""
-    merged: dict[str, object] = {}
-    merged.update(metadata)
-    if provenance:
-        merged.update(provenance)
+    metadata_view: dict[str, object] = dict(metadata)
 
-    autonomy_decision = metadata.get("opportunity_autonomy_decision")
+    autonomy_decision = metadata_view.get("opportunity_autonomy_decision")
     if isinstance(autonomy_decision, Mapping) and "effective_mode" in autonomy_decision:
-        merged["effective_mode"] = autonomy_decision["effective_mode"]
+        metadata_view["effective_mode"] = autonomy_decision["effective_mode"]
 
     envelope: dict[str, object] = {}
+    provenance_view: Mapping[str, object] = provenance or {}
     for field_name, aliases in _CANONICAL_ALIASES.items():
-        value = _pick_first(merged, aliases)
+        value = _pick_first(metadata_view, aliases)
+        if value is None:
+            value = _pick_first(provenance_view, aliases)
         if value is not None:
             envelope[field_name] = value
 
