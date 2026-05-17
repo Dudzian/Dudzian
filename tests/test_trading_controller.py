@@ -1995,6 +1995,26 @@ def test_opportunity_autonomy_enforcement_blocked_payload_includes_read_only_dec
     assert decision_envelope["effective_mode"] == "live_autonomous"
     assert decision_envelope["blocking_reason"] == "paper_autonomy_blocks_live_environment"
 
+    # Read-model compatibility contract before broader DecisionEnvelope integrations.
+    exported_event = next(
+        exported
+        for exported in journal.export()
+        if exported.get("event") == "opportunity_autonomy_enforcement"
+        and exported.get("status") == "blocked"
+    )
+    exported_envelope = exported_event.get("decision_envelope")
+    if exported_envelope is None:
+        exported_envelope = exported_event.get("meta_decision_envelope")
+    assert exported_envelope is not None
+    if isinstance(exported_envelope, str):
+        exported_envelope = json.loads(exported_envelope)
+    assert isinstance(exported_envelope, dict)
+    assert exported_envelope["decision_source"] == "readiness_source"
+    assert exported_envelope["inference_model"] == "readiness_model"
+    assert exported_envelope["inference_model_version"] == "2026.04.11"
+    assert exported_envelope["effective_mode"] == "live_autonomous"
+    assert exported_envelope["blocking_reason"] == "paper_autonomy_blocks_live_environment"
+
 
 def test_opportunity_autonomy_runtime_local_snapshot_good_outcomes_allow_execution() -> None:
     controller, execution, journal = _build_autonomy_controller(
