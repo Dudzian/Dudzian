@@ -210,6 +210,30 @@ def test_runtime_service_degrades_to_demo_when_grpc_dependency_missing(
     assert service.errorMessage
 
 
+def test_runtime_service_feed_transport_snapshot_reports_fallback_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
+    monkeypatch.setenv("BOT_CORE_UI_GRPC_ENDPOINT", "localhost:50051")
+    monkeypatch.setattr(runtime_service_module, "grpc", None)
+
+    service = RuntimeService(decision_loader=lambda limit: [])
+    monkeypatch.setattr(
+        service,
+        "_build_live_loader",
+        lambda profile: (_ for _ in ()).throw(FileNotFoundError("missing")),
+    )
+
+    assert service.attachToLiveDecisionLog("paper") is True
+
+    snapshot = service.feedTransportSnapshot
+    assert snapshot["status"] == "fallback"
+    assert snapshot["mode"] == "demo"
+    assert snapshot["adapter"] == "demo"
+    assert isinstance(snapshot["reconnects"], int)
+    assert snapshot["lastError"]
+
+
 def test_runtime_service_demo_mode_forces_demo_source(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(RuntimeService, "_auto_connect_grpc", lambda self: None)
     monkeypatch.setenv("BOT_CORE_UI_GRPC_ENDPOINT", "localhost:50051")
