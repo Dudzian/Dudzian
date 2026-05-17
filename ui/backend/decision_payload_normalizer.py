@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, MutableMapping
 
+from bot_core.runtime.decision_envelope import normalize_decision_envelope_from_record
+
 
 DecisionRecord = Mapping[str, object]
 DEFAULT_DECISION_PAYLOAD_SCHEMA_VERSION = "1"
@@ -292,6 +294,10 @@ def parse_runtime_decision_entry(record: DecisionRecord) -> RuntimeDecisionEntry
 
     for meta_key, meta_value in metadata_payload.items():
         extras.setdefault(meta_key, meta_value)
+
+    normalized_decision_envelope = normalize_decision_envelope_from_record(record)
+    if normalized_decision_envelope is not None:
+        extras.setdefault("decision_envelope", normalized_decision_envelope)
 
     return RuntimeDecisionEntry(
         event=str(base["event"] or ""),

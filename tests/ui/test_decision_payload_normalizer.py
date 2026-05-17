@@ -201,3 +201,41 @@ def test_parse_runtime_decision_entry_schema_version_backwards_compatible() -> N
     assert "schema_version" not in legacy_entry["metadata"]
     assert "schema_version" not in versioned_entry["metadata"]
     assert "schema_version" not in blank_version_entry["metadata"]
+
+
+def test_parse_runtime_decision_entry_adds_normalized_decision_envelope_from_mapping() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "event": "opportunity_autonomy_enforcement",
+            "decision_envelope": {"decision_source": "runtime", "effective_mode": "paper"},
+            "metadata": {"source": "journal"},
+        }
+    ).to_payload()
+
+    assert entry["metadata"]["source"] == "journal"
+    assert entry["metadata"]["decision_envelope"] == {
+        "decision_source": "runtime",
+        "effective_mode": "paper",
+    }
+
+
+def test_parse_runtime_decision_entry_adds_normalized_decision_envelope_from_meta_json() -> None:
+    entry = parse_runtime_decision_entry(
+        {
+            "meta_decision_envelope": '{"decision_source":"meta","blocking_reason":"risk_block"}',
+            "custom_field": "value",
+        }
+    ).to_payload()
+
+    assert entry["metadata"]["custom_field"] == "value"
+    assert entry["metadata"]["decision_envelope"] == {
+        "decision_source": "meta",
+        "blocking_reason": "risk_block",
+    }
+
+
+def test_parse_runtime_decision_entry_skips_decision_envelope_when_missing() -> None:
+    entry = parse_runtime_decision_entry({"custom_field": "value"}).to_payload()
+
+    assert entry["metadata"]["custom_field"] == "value"
+    assert "decision_envelope" not in entry["metadata"]
