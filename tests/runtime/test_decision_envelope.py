@@ -51,3 +51,34 @@ def test_build_decision_envelope_view_maps_provenance_aliases() -> None:
 
 def test_build_decision_envelope_view_is_sparse_and_safe_for_empty_mapping() -> None:
     assert build_decision_envelope_view({}) == {}
+
+
+def test_build_decision_envelope_view_prefers_metadata_over_provenance_on_conflicts() -> None:
+    metadata = {
+        "decision_source": "runtime-source",
+        "model_version": "runtime-model",
+        "confidence": 0.91,
+        "rank": 1,
+        "environment_scope": "paper",
+        "portfolio_scope": "runtime-portfolio",
+        "opportunity_autonomy_decision": {"effective_mode": "paper_autonomous"},
+    }
+    provenance = {
+        "source": "final-label-source",
+        "model_version": "provenance-model",
+        "confidence": 0.42,
+        "rank": 9,
+        "environment": "live",
+        "portfolio_id": "provenance-portfolio",
+    }
+
+    envelope = build_decision_envelope_view(metadata, provenance)
+
+    assert envelope["decision_source"] == "runtime-source"
+    assert envelope["model_version"] == "runtime-model"
+    assert envelope["confidence"] == 0.91
+    assert envelope["rank"] == 1
+    assert envelope["environment_scope"] == "paper"
+    assert envelope["portfolio_scope"] == "runtime-portfolio"
+    assert envelope["effective_mode"] == "paper_autonomous"
+    assert envelope["provenance"] == provenance
