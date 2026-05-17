@@ -416,3 +416,31 @@ def test_runtime_service_load_recent_decisions_preserves_normalized_decision_env
         "blocking_reason": "risk_block",
     }
     assert "decisionEnvelope" not in decisions[0]
+
+
+def test_runtime_service_apply_grpc_snapshot_preserves_normalized_decision_envelope_metadata() -> (
+    None
+):
+    service = RuntimeService(decision_loader=lambda limit: [])
+    service._apply_grpc_snapshot(
+        [
+            {
+                "event": "opportunity_autonomy_enforcement",
+                "meta_decision_envelope": '{"decision_source":"stream","effective_mode":"paper","blocking_reason":"stream_block"}',
+                "metadata": {"source": "grpc"},
+                "custom_field": "stream-custom",
+            }
+        ]
+    )
+
+    assert len(service._decisions) == 1
+    payload = service._decisions[0]
+    metadata = payload["metadata"]
+    assert metadata["source"] == "grpc"
+    assert metadata["custom_field"] == "stream-custom"
+    assert metadata["decision_envelope"] == {
+        "decision_source": "stream",
+        "effective_mode": "paper",
+        "blocking_reason": "stream_block",
+    }
+    assert "decisionEnvelope" not in payload
