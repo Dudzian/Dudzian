@@ -490,6 +490,59 @@ def test_router_records_suppressed_metric() -> None:
     ) == pytest.approx(1.0)
 
 
+def test_alert_dedup_preserves_highest_severity() -> None:
+    audit = InMemoryAlertAuditLog()
+    clock = _MutableClock(start=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    throttle = AlertThrottle(
+        window=timedelta(seconds=120),
+        clock=clock,
+        exclude_severities=frozenset(),
+    )
+    router = DefaultAlertRouter(audit_log=audit, throttle=throttle)
+    channel = DummyChannel()
+    router.register(channel)
+
+    warning_alert = AlertMessage(
+        category="risk",
+        title="Limit ryzyka",
+        body="Próg ostrzegawczy został osiągnięty.",
+        severity="warning",
+        context={"profile": "balanced", "instrument": "BTC/USDT"},
+        timestamp=clock(),
+    )
+    critical_alert = AlertMessage(
+        category=warning_alert.category,
+        title=warning_alert.title,
+        body=warning_alert.body,
+        severity="critical",
+        context=warning_alert.context,
+        timestamp=clock(),
+    )
+
+    router.dispatch(warning_alert)
+    clock.advance(5)
+    router.dispatch(critical_alert)
+    clock.advance(5)
+    router.dispatch(critical_alert)
+
+    assert [message.severity for message in channel.messages] == ["warning", "critical"]
+    assert len(channel.messages) == 2
+
+    exported = tuple(audit.export())
+    dummy_entries = [entry for entry in exported if entry["channel"] == "dummy"]
+    assert [entry["severity"] for entry in dummy_entries] == ["warning", "critical"]
+    assert any(
+        entry["channel"] == "__suppressed__" and entry["severity"] == "critical"
+        for entry in exported
+    )
+
+    severity_rank = {"info": 0, "warning": 1, "critical": 2}
+    assert (
+        max(severity_rank[entry["severity"]] for entry in dummy_entries)
+        == severity_rank["critical"]
+    )
+
+
 def test_router_health_snapshot_records_metric(sample_message: AlertMessage) -> None:
     audit = InMemoryAlertAuditLog()
     registry = MetricsRegistry()
