@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from typing import Any
 
 _CANONICAL_ALIASES: dict[str, tuple[str, ...]] = {
@@ -64,4 +65,27 @@ def build_decision_envelope_view(
     return envelope
 
 
-__all__ = ["build_decision_envelope_view"]
+def normalize_decision_envelope_from_record(
+    record: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Ekstrahuje i normalizuje payload decision_envelope z rekordu read-model/export."""
+
+    envelope_payload = record.get("decision_envelope")
+    if envelope_payload is None:
+        envelope_payload = record.get("meta_decision_envelope")
+
+    if isinstance(envelope_payload, Mapping):
+        return dict(envelope_payload)
+
+    if isinstance(envelope_payload, str):
+        try:
+            parsed = json.loads(envelope_payload)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if isinstance(parsed, Mapping):
+            return dict(parsed)
+
+    return None
+
+
+__all__ = ["build_decision_envelope_view", "normalize_decision_envelope_from_record"]

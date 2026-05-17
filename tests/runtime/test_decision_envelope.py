@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from bot_core.runtime.decision_envelope import build_decision_envelope_view
+from bot_core.runtime.decision_envelope import (
+    build_decision_envelope_view,
+    normalize_decision_envelope_from_record,
+)
 
 
 def test_build_decision_envelope_view_maps_runtime_metadata() -> None:
@@ -121,3 +124,58 @@ def test_build_decision_envelope_view_does_not_mutate_input_mappings() -> None:
     assert metadata == metadata_before
     assert provenance == provenance_before
     assert envelope["provenance"] == provenance
+
+
+def test_normalize_decision_envelope_from_record_supports_direct_mapping() -> None:
+    source = {"decision_source": "runtime", "blocking_reason": "blocked"}
+    record = {"decision_envelope": source}
+
+    normalized = normalize_decision_envelope_from_record(record)
+
+    assert normalized == {"decision_source": "runtime", "blocking_reason": "blocked"}
+    assert normalized is not source
+
+
+def test_normalize_decision_envelope_from_record_supports_meta_json_string() -> None:
+    record = {
+        "meta_decision_envelope": '{"decision_source":"runtime","effective_mode":"paper_autonomous"}'
+    }
+
+    normalized = normalize_decision_envelope_from_record(record)
+
+    assert normalized == {"decision_source": "runtime", "effective_mode": "paper_autonomous"}
+
+
+def test_normalize_decision_envelope_from_record_prefers_decision_over_meta() -> None:
+    record = {
+        "decision_envelope": {"decision_source": "primary"},
+        "meta_decision_envelope": '{"decision_source":"secondary"}',
+    }
+
+    normalized = normalize_decision_envelope_from_record(record)
+
+    assert normalized == {"decision_source": "primary"}
+
+
+def test_normalize_decision_envelope_from_record_returns_none_for_missing_or_invalid_payload() -> (
+    None
+):
+    assert normalize_decision_envelope_from_record({}) is None
+    assert normalize_decision_envelope_from_record({"meta_decision_envelope": "not-json"}) is None
+    assert normalize_decision_envelope_from_record({"meta_decision_envelope": "[]"}) is None
+    assert normalize_decision_envelope_from_record({"meta_decision_envelope": '"plain"'}) is None
+    assert normalize_decision_envelope_from_record({"meta_decision_envelope": "123"}) is None
+
+
+def test_normalize_decision_envelope_from_record_is_read_only_for_input_record() -> None:
+    nested = {"decision_source": "runtime", "provenance": {"source": "x"}}
+    record = {"decision_envelope": nested}
+    record_before = {
+        "decision_envelope": {"decision_source": "runtime", "provenance": {"source": "x"}}
+    }
+
+    normalized = normalize_decision_envelope_from_record(record)
+
+    assert normalized == nested
+    assert record == record_before
+    assert record["decision_envelope"] is nested
