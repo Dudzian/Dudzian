@@ -388,3 +388,31 @@ def test_runtime_service_operator_action_is_recorded_for_unmappable_payload() ->
     assert service.requestFreeze(_UnmappableEntry()) is True
     assert service.lastOperatorAction["action"] == "freeze"
     assert service.lastOperatorAction["entry"] == {}
+
+
+def test_runtime_service_load_recent_decisions_preserves_normalized_decision_envelope_metadata() -> (
+    None
+):
+    service = RuntimeService(
+        decision_loader=lambda limit: [
+            {
+                "event": "opportunity_autonomy_enforcement",
+                "meta_decision_envelope": '{"decision_source":"runtime","effective_mode":"paper","blocking_reason":"risk_block"}',
+                "metadata": {"source": "journal"},
+                "custom_field": "custom",
+            }
+        ]
+    )
+
+    decisions = service.loadRecentDecisions(1)
+
+    assert len(decisions) == 1
+    metadata = decisions[0]["metadata"]
+    assert metadata["source"] == "journal"
+    assert metadata["custom_field"] == "custom"
+    assert metadata["decision_envelope"] == {
+        "decision_source": "runtime",
+        "effective_mode": "paper",
+        "blocking_reason": "risk_block",
+    }
+    assert "decisionEnvelope" not in decisions[0]
