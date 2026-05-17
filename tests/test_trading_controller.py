@@ -1930,7 +1930,7 @@ def test_opportunity_autonomy_enforcement_performance_guard_rewrite_preserves_up
     assert event["upstream_autonomy_inference_model_version"] == "2026.04.11"
 
 
-def test_opportunity_autonomy_enforcement_blocked_payload_snapshot_without_decision_envelope() -> (
+def test_opportunity_autonomy_enforcement_blocked_payload_includes_read_only_decision_envelope() -> (
     None
 ):
     controller, execution, journal = _build_autonomy_controller(
@@ -1985,9 +1985,15 @@ def test_opportunity_autonomy_enforcement_blocked_payload_snapshot_without_decis
     ).strip()
     if shadow_key:
         assert shadow_key == "payload-contract-blocked"
-    # Snapshot blokuje tylko stabilny subset dla tej ścieżki blocked;
-    # opportunity_decision_timestamp nie jest tutaj gwarantowanym kontraktem.
-    assert "decision_envelope" not in event
+    decision_envelope = event.get("decision_envelope")
+    if isinstance(decision_envelope, str):
+        decision_envelope = json.loads(decision_envelope)
+    assert isinstance(decision_envelope, dict)
+    assert decision_envelope["decision_source"] == "readiness_source"
+    assert decision_envelope["inference_model"] == "readiness_model"
+    assert decision_envelope["inference_model_version"] == "2026.04.11"
+    assert decision_envelope["effective_mode"] == "live_autonomous"
+    assert decision_envelope["blocking_reason"] == "paper_autonomy_blocks_live_environment"
 
 
 def test_opportunity_autonomy_runtime_local_snapshot_good_outcomes_allow_execution() -> None:
