@@ -78,3 +78,45 @@ def test_lint_and_test_contains_autonomy_matrix_step_with_expected_command_and_o
     assert autonomy_idx < pytest_idx, (
         "Krok 'Run autonomy matrix' musi występować przed 'Pytest (unit suite) with coverage'"
     )
+
+
+def test_lint_and_test_contains_risk_execution_matrix_step_with_expected_command_and_order() -> (
+    None
+):
+    step_blocks = _extract_lint_and_test_step_blocks()
+    step_names = [_step_name(block) for block in step_blocks]
+
+    assert "Run risk/execution matrix" in step_names, (
+        "Brak kroku 'Run risk/execution matrix' w jobs.lint-and-test.steps"
+    )
+    risk_idx = step_names.index("Run risk/execution matrix")
+
+    risk_block = step_blocks[risk_idx]
+    risk_body = "\n".join(risk_block)
+    assert "python scripts/ci/run_risk_execution_matrix.py" in risk_body, (
+        "Krok 'Run risk/execution matrix' musi uruchamiać 'python scripts/ci/run_risk_execution_matrix.py'"
+    )
+
+    for dependency_step_name in ("Set up Python", "Download wheelhouse", "Install dependencies"):
+        assert dependency_step_name in step_names, (
+            f"Brak kroku zależności '{dependency_step_name}' wymaganego przez kontrakt CI"
+        )
+        assert risk_idx > step_names.index(dependency_step_name), (
+            f"Krok 'Run risk/execution matrix' musi być po kroku '{dependency_step_name}'"
+        )
+
+    assert "Run autonomy matrix" in step_names, (
+        "Brak kroku 'Run autonomy matrix' wymaganego przez kontrakt kolejności"
+    )
+    autonomy_idx = step_names.index("Run autonomy matrix")
+    assert risk_idx > autonomy_idx, (
+        "Krok 'Run risk/execution matrix' musi występować po 'Run autonomy matrix'"
+    )
+
+    assert "Pytest (unit suite) with coverage" in step_names, (
+        "Brak kroku 'Pytest (unit suite) with coverage' w jobs.lint-and-test.steps"
+    )
+    pytest_idx = step_names.index("Pytest (unit suite) with coverage")
+    assert risk_idx < pytest_idx, (
+        "Krok 'Run risk/execution matrix' musi występować przed 'Pytest (unit suite) with coverage'"
+    )

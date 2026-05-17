@@ -218,6 +218,10 @@ jobs:
         shell: bash
         run: python scripts/ci/run_autonomy_matrix.py
 
+      - name: Run risk/execution matrix
+        shell: bash
+        run: python scripts/ci/run_risk_execution_matrix.py
+
       - name: Pytest (unit suite) with coverage
         shell: bash
         # Intentional narrow blocking-gate subset for autonomy/governance contracts.
