@@ -444,3 +444,29 @@ def test_runtime_service_apply_grpc_snapshot_preserves_normalized_decision_envel
         "blocking_reason": "stream_block",
     }
     assert "decisionEnvelope" not in payload
+
+
+def test_runtime_service_append_grpc_record_preserves_normalized_decision_envelope_metadata() -> (
+    None
+):
+    service = RuntimeService(decision_loader=lambda limit: [])
+    service._append_grpc_record(
+        {
+            "event": "opportunity_autonomy_enforcement",
+            "meta_decision_envelope": '{"decision_source":"append","effective_mode":"paper","blocking_reason":"append_block"}',
+            "metadata": {"source": "grpc-append"},
+            "custom_field": "append-custom",
+        }
+    )
+
+    assert len(service._decisions) == 1
+    payload = service._decisions[0]
+    metadata = payload["metadata"]
+    assert metadata["source"] == "grpc-append"
+    assert metadata["custom_field"] == "append-custom"
+    assert metadata["decision_envelope"] == {
+        "decision_source": "append",
+        "effective_mode": "paper",
+        "blocking_reason": "append_block",
+    }
+    assert "decisionEnvelope" not in payload
