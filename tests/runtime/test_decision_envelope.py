@@ -82,3 +82,42 @@ def test_build_decision_envelope_view_prefers_metadata_over_provenance_on_confli
     assert envelope["portfolio_scope"] == "runtime-portfolio"
     assert envelope["effective_mode"] == "paper_autonomous"
     assert envelope["provenance"] == provenance
+
+
+def test_build_decision_envelope_view_does_not_mutate_input_mappings() -> None:
+    metadata = {
+        "decision_source": "runtime-source",
+        "model_version": "runtime-model",
+        "opportunity_autonomy_decision": {
+            "effective_mode": "paper_autonomous",
+            "reason": "shadow_gate",
+        },
+        "performance_guard": {"status": "ok", "latency_ms": 42},
+    }
+    provenance = {
+        "source": "provenance-source",
+        "environment": "paper",
+        "portfolio_id": "main",
+        "confidence": 0.66,
+    }
+    metadata_before = {
+        "decision_source": "runtime-source",
+        "model_version": "runtime-model",
+        "opportunity_autonomy_decision": {
+            "effective_mode": "paper_autonomous",
+            "reason": "shadow_gate",
+        },
+        "performance_guard": {"status": "ok", "latency_ms": 42},
+    }
+    provenance_before = {
+        "source": "provenance-source",
+        "environment": "paper",
+        "portfolio_id": "main",
+        "confidence": 0.66,
+    }
+
+    envelope = build_decision_envelope_view(metadata, provenance)
+
+    assert metadata == metadata_before
+    assert provenance == provenance_before
+    assert envelope["provenance"] == provenance
