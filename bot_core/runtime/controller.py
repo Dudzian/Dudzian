@@ -75,6 +75,7 @@ except Exception:  # pragma: no cover
 
 # Exchanges commons
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
+from bot_core.runtime.decision_envelope import build_decision_envelope_view
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.runtime.opportunity_runtime_controls import get_opportunity_runtime_controls
 
@@ -1970,6 +1971,32 @@ class TradingController:
             self._inject_explainability_metadata(enriched_request_metadata)
             for key, value in enriched_request_metadata.items():
                 meta.setdefault(f"order_{key}", value)
+
+        if event_type == "opportunity_autonomy_enforcement" and status == "blocked":
+            decision_envelope_metadata = dict(meta)
+            decision_envelope_metadata.setdefault(
+                "decision_source", meta.get("upstream_autonomy_decision_source")
+            )
+            decision_envelope_metadata.setdefault(
+                "inference_model", meta.get("upstream_autonomy_inference_model")
+            )
+            decision_envelope_metadata.setdefault(
+                "inference_model_version", meta.get("upstream_autonomy_inference_model_version")
+            )
+            if "opportunity_autonomy_decision" not in decision_envelope_metadata:
+                effective_mode = None
+                signal_decision_payload = meta.get("signal_opportunity_autonomy_decision")
+                if isinstance(signal_decision_payload, Mapping):
+                    effective_mode = signal_decision_payload.get("effective_mode")
+                if effective_mode is None:
+                    effective_mode = meta.get("autonomy_mode")
+                if effective_mode is not None:
+                    decision_envelope_metadata["opportunity_autonomy_decision"] = {
+                        "effective_mode": effective_mode
+                    }
+            decision_envelope = build_decision_envelope_view(decision_envelope_metadata)
+            if decision_envelope:
+                meta.setdefault("decision_envelope", decision_envelope)
 
         symbol = request.symbol if request else (signal.symbol if signal else None)
         side = None
