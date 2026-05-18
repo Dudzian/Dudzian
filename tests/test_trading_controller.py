@@ -78400,6 +78400,24 @@ def test_runtime_controls_soft_snapshot_allows_legal_close_without_signal_metada
             and str(e.get("blocking_reason") or "") == "autonomy_mode_denied"
             for e in events
         )
+
+        allow_event = next(
+            event
+            for event in reversed(events)
+            if event.get("event") == "opportunity_autonomy_enforcement"
+        )
+        assert allow_event["execution_permission"] == "allowed"
+        assert allow_event["autonomy_decisive_stage"] == "none"
+        assert allow_event["autonomy_decisive_reason"] == "reason:paper_autonomous"
+
+        normalized_payload = parse_runtime_decision_entry(allow_event).to_payload()
+        assert normalized_payload["event"] == "opportunity_autonomy_enforcement"
+        assert normalized_payload["status"] == "allowed"
+        assert normalized_payload["metadata"]["execution_permission"] == "allowed"
+        assert normalized_payload["metadata"]["autonomy_decisive_stage"] == "none"
+        assert (
+            normalized_payload["metadata"]["autonomy_decisive_reason"] == "reason:paper_autonomous"
+        )
     finally:
         runtime_controls.update(
             opportunity_ai_enabled=initial.opportunity_ai_enabled,
