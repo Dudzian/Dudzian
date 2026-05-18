@@ -54,6 +54,16 @@ COMMANDS: tuple[list[str], ...] = (
         "tests/docs/test_decision_envelope_feasibility_contract.py",
         "-vv",
     ],
+    [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_promotion_to_live_script.py",
+        "-k",
+        "canary or promotion_report",
+        "-vv",
+    ],
 )
 
 
