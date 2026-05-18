@@ -27,6 +27,8 @@ def test_commands_cover_expected_observability_selectors() -> None:
         "decision_envelope",
         "test_alerts.py",
         "test_decision_payload_normalizer.py",
+        "runtime_controls_soft_snapshot",
+        "execution_permission",
     ):
         assert required_token in selectors
 
