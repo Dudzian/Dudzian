@@ -11,8 +11,9 @@ COMMANDS: tuple[list[str], ...] = (
         "pytest",
         "-q",
         "tests/test_trading_controller.py",
+        "tests/test_runtime_pipeline.py",
         "-k",
-        "risk or performance_guard or ai_failover or failover",
+        "risk or performance_guard or ai_failover or failover or without_exchange_credentials",
         "-vv",
     ],
     [
