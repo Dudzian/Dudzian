@@ -46,6 +46,7 @@ from bot_core.runtime.opportunity_runtime_controls import (
 from bot_core.runtime import pipeline as runtime_pipeline
 from bot_core.runtime.pipeline import DecisionAwareSignalSink, InMemoryStrategySignalSink
 from bot_core.strategies import SignalLeg, StrategySignal
+from ui.backend.decision_payload_normalizer import parse_runtime_decision_entry
 from ui.backend.runtime_service import RuntimeService
 
 from tests._alert_channel_helpers import CollectingChannel
@@ -78287,6 +78288,54 @@ def test_runtime_controls_soft_snapshot_blocks_new_open_without_signal_metadata(
         assert blocked_event["opportunity_policy_mode"] == "live"
         assert blocked_event["environment"] == "paper"
         assert "opportunity_runtime_controls_revision" in blocked_event
+    finally:
+        runtime_controls.update(
+            opportunity_ai_enabled=initial.opportunity_ai_enabled,
+            manual_kill_switch=initial.manual_kill_switch,
+            execution_disabled=initial.execution_disabled,
+            policy_mode=initial.policy_mode,
+        )
+
+
+def test_runtime_controls_soft_snapshot_block_reason_is_visible_in_read_model_payload() -> None:
+    runtime_controls = get_opportunity_runtime_controls()
+    initial = runtime_controls.snapshot()
+    runtime_controls.update(
+        opportunity_ai_enabled=False,
+        manual_kill_switch=True,
+        execution_disabled=False,
+        policy_mode="live",
+    )
+    try:
+        risk_engine = DummyRiskEngine()
+        controller, execution, journal = _build_autonomy_controller_with_risk(
+            environment="paper",
+            risk_engine=risk_engine,
+            opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+                [8.0, 6.0, 4.0], environment="paper", portfolio_id="paper-1"
+            ),
+        )
+        open_signal = _opportunity_autonomy_signal("paper_autonomous", side="BUY")
+        open_signal.metadata = {**dict(open_signal.metadata), "mode": "ai"}
+
+        assert controller.process_signals([open_signal]) == []
+        assert risk_engine.last_checks == []
+        assert execution.requests == []
+
+        blocked_event = next(
+            dict(event)
+            for event in reversed(journal.export())
+            if event.get("event") == "opportunity_autonomy_enforcement"
+        )
+        assert blocked_event["blocking_reason"] == "autonomy_mode_denied"
+        normalized_payload = parse_runtime_decision_entry(blocked_event).to_payload()
+
+        assert normalized_payload["event"] == "opportunity_autonomy_enforcement"
+        assert normalized_payload["status"] == "blocked"
+        assert normalized_payload["metadata"]["blocking_reason"] == "autonomy_mode_denied"
+        assert normalized_payload["metadata"]["autonomy_decisive_stage"] == "runtime_controls"
+        assert normalized_payload["metadata"]["autonomy_decisive_reason"] == "autonomy_mode_denied"
+        assert normalized_payload["metadata"]["execution_permission"] == "blocked"
     finally:
         runtime_controls.update(
             opportunity_ai_enabled=initial.opportunity_ai_enabled,
