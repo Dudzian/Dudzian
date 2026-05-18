@@ -85,6 +85,59 @@ def _build_license_summary(core_config: CoreConfig, *, skip_license: bool) -> Ma
     return context
 
 
+def _build_canary_contract(
+    *,
+    environment: EnvironmentConfig,
+    risk_profile: RiskProfileConfig | None,
+    readiness: Any,
+    checklist: object,
+) -> Mapping[str, Any]:
+    """Buduje jawny kontrakt canary wyłącznie do raportu promocji."""
+
+    blocking_reasons: list[str] = []
+    if isinstance(checklist, list):
+        for entry in checklist:
+            if not isinstance(entry, Mapping):
+                continue
+            status = entry.get("status")
+            if status in (None, "ok", "skipped"):
+                continue
+            item = entry.get("item") or "readiness"
+            reason = entry.get("reason") or entry.get("message") or status
+            blocking_reasons.append(f"{item}: {reason}")
+
+    checklist_id = getattr(readiness, "checklist_id", None) if readiness is not None else None
+    signed_by = tuple(getattr(readiness, "signed_by", ()) or ()) if readiness is not None else ()
+    exchange = str(environment.exchange).strip() if environment.exchange else ""
+
+    return {
+        # Etap 19C: kontrakt canary jest wyłącznie widocznością w raporcie;
+        # egzekucja nadal pozostaje w istniejących risk/runtime gates.
+        "report_only": True,
+        "canary_status": "not_configured",
+        "canary_profile_id": None,
+        "allowed_exchanges": [exchange] if exchange else [],
+        "allowed_symbols": [],
+        "max_order_notional": None,
+        "max_position_notional": None,
+        "max_daily_loss": getattr(risk_profile, "max_daily_loss_pct", None)
+        if risk_profile is not None
+        else None,
+        "max_open_positions": getattr(risk_profile, "max_open_positions", None)
+        if risk_profile is not None
+        else None,
+        "review_required_at": None,
+        "expires_at": None,
+        "operator_approval_id": checklist_id if signed_by else None,
+        "promotion_source": "promotion_to_live",
+        "readiness_report_id": checklist_id,
+        "rollback_policy": "existing_runtime_controls",
+        "kill_switch_required": True,
+        "no_go_reason": blocking_reasons[0] if blocking_reasons else None,
+        "blocking_reasons": blocking_reasons,
+    }
+
+
 def build_promotion_report(
     environment_name: str,
     *,
@@ -128,6 +181,12 @@ def build_promotion_report(
         },
         "license": _build_license_summary(core_config, skip_license=skip_license),
         "live_readiness_checklist": checklist,
+        "canary_contract": _build_canary_contract(
+            environment=environment,
+            risk_profile=risk_profile,
+            readiness=getattr(environment, "live_readiness", None),
+            checklist=checklist,
+        ),
     }
 
     if risk_profile is not None:
