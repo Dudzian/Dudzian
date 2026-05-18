@@ -1035,21 +1035,45 @@ jobs:
         id: stress-lab-run
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH_NAME: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
+          is_pull_request=false
+          if [ "${EVENT_NAME}" = "pull_request" ] || [ "${EVENT_NAME}" = "pull_request_target" ]; then
+            is_pull_request=true
+          fi
+
+          is_protected_context=false
+          if [ "${is_pull_request}" != "true" ] && { [ "${BRANCH_NAME}" = "main" ] || [ "${BRANCH_NAME}" = "${DEFAULT_BRANCH}" ] || [[ "${BRANCH_NAME}" == release/* ]] || [[ "${BRANCH_NAME}" == nightly* ]]; }; then
+            is_protected_context=true
+          fi
+
           run_id="$(gh api \
+            --method GET \
             -H 'Accept: application/vnd.github+json' \
-            "/repos/${{ github.repository }}/actions/workflows/stress-lab-report.yml/runs?branch=${BRANCH_NAME}&status=success&per_page=1" \
+            "/repos/${{ github.repository }}/actions/workflows/stress-lab-report.yml/runs" \
+            -f "branch=${BRANCH_NAME}" \
+            -f "status=success" \
+            -f "per_page=1" \
             --jq '.workflow_runs[0].id')"
 
           if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
-            echo "::error::No successful stress-lab-report workflow run found for branch '${BRANCH_NAME}'."
-            exit 1
+            if [ "${is_protected_context}" = "true" ]; then
+              echo "::error::No successful stress-lab-report workflow run found for protected branch '${BRANCH_NAME}'."
+              exit 1
+            fi
+            echo "::warning::No successful stress-lab-report workflow run found for feature branch '${BRANCH_NAME}'. Marketing parity will be reported as skipped."
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "missing=false" >> "$GITHUB_OUTPUT"
 
       - name: Download latest Stress Lab artefact
+        if: steps.stress-lab-run.outputs.run_id != ''
         uses: actions/download-artifact@v7
         with:
           github-token: ${{ github.token }}
@@ -1057,6 +1081,14 @@ jobs:
           run-id: ${{ steps.stress-lab-run.outputs.run_id }}
           name: stress-lab-report
           path: artifacts/stress-lab-report
+
+      - name: Generate skipped parity report for missing Stress Lab artefact
+        if: steps.stress-lab-run.outputs.missing == 'true'
+        run: |
+          python -m scripts.audit.marketing_parity_skip_report \
+            --audit-output docs/audit/marketing_parity_report.md \
+            --json-output docs/audit/marketing_parity_report.json \
+            --reason missing_stress_lab_report_skipped_due_to_missing_upstream_report
 
       - name: Sync mirror from S3
         if: env.MIRROR_S3_URI != ''
@@ -1101,7 +1133,7 @@ jobs:
           fi
 
       - name: Validate marketing bundle parity
-        if: env.MIRROR_ROOT != ''
+        if: env.MIRROR_ROOT != '' && steps.stress-lab-run.outputs.missing != 'true'
         run: |
           python -m scripts.audit.marketing_parity_check \
             --stress-lab-dir artifacts/stress-lab-report/reports/stress_lab \
