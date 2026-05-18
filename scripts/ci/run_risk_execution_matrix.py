@@ -22,8 +22,10 @@ COMMANDS: tuple[list[str], ...] = (
         "pytest",
         "-q",
         "tests/test_trading_controller.py",
+        "tests/exchanges",
+        "tests/integration/exchanges",
         "-k",
-        "execution or filled or non_filled or partially or partial or order_executed or order_partially_executed",
+        "execution or filled or non_filled or partially or partial or order_executed or order_partially_executed or place_order or create_order or retry",
         "-vv",
     ],
     [

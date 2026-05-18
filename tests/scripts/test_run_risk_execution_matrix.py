@@ -13,6 +13,8 @@ def test_commands_contract_shape() -> None:
         assert "tests/test_trading_controller.py" in command
 
     assert "tests/test_runtime_pipeline.py" in commands[0]
+    assert "tests/exchanges" in commands[1]
+    assert "tests/integration/exchanges" in commands[1]
 
 
 def test_commands_cover_expected_boundary_selectors() -> None:
@@ -26,6 +28,9 @@ def test_commands_cover_expected_boundary_selectors() -> None:
     assert "performance_guard" in selectors
     assert "ai_failover" in selectors
     assert "execution" in selectors
+    assert "place_order" in selectors
+    assert "create_order" in selectors
+    assert "retry" in selectors
     assert "non_filled" in selectors
     assert "partial" in selectors
     assert "duplicate" in selectors
