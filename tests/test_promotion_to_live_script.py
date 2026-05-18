@@ -82,6 +82,32 @@ def test_build_promotion_report_produces_summary(tmp_path: Path) -> None:
     assert documents["kyc_packet"]["signed"] is True
 
 
+def test_promotion_report_includes_report_only_canary_contract(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    _write_core_config(config_path)
+
+    report = build_promotion_report("binance_live", config_path=config_path, skip_license=True)
+
+    canary_contract = report["canary_contract"]
+    assert canary_contract["report_only"] is True
+    for required_field in (
+        "canary_status",
+        "canary_profile_id",
+        "allowed_exchanges",
+        "allowed_symbols",
+        "max_order_notional",
+        "max_position_notional",
+        "max_daily_loss",
+        "max_open_positions",
+        "operator_approval_id",
+        "blocking_reasons",
+    ):
+        assert required_field in canary_contract
+    assert "review_required_at" in canary_contract or "expires_at" in canary_contract
+    assert "promotion_source" in canary_contract or "readiness_report_id" in canary_contract
+    assert "rollback_policy" in canary_contract or "kill_switch_required" in canary_contract
+
+
 def test_cli_execution_writes_report(tmp_path: Path) -> None:
     config_path = tmp_path / "core.yaml"
     _write_core_config(config_path)
