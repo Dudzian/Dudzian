@@ -12,6 +12,8 @@ def test_commands_contract_shape() -> None:
         assert "pytest" in command
         assert "tests/test_trading_controller.py" in command
 
+    assert "tests/test_runtime_pipeline.py" in commands[0]
+
 
 def test_commands_cover_expected_boundary_selectors() -> None:
     selectors = " ".join(
@@ -30,6 +32,7 @@ def test_commands_cover_expected_boundary_selectors() -> None:
     assert "final_label" in selectors
     assert "validator" in selectors
     assert "direction_mismatch" in selectors
+    assert "without_exchange_credentials" in selectors
 
 
 def test_main_fail_fast_returns_first_non_zero(monkeypatch) -> None:
