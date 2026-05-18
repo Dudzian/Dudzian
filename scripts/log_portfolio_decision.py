@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
+if sys.path and Path(sys.path[0]).resolve() == SCRIPT_DIR.resolve():
+    # Unikamy shadowingu zależności przez katalog `scripts/` (np. scripts/packaging).
+    sys.path.pop(0)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
