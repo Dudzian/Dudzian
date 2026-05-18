@@ -11,6 +11,10 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 
 if __package__ is None:  # pragma: no cover - uruchomienie jako skrypt
+    script_dir = str(Path(__file__).resolve().parent)
+    if sys.path and Path(sys.path[0]).resolve() == Path(script_dir).resolve():
+        # Unikamy shadowingu zależności przez katalog `scripts/` (np. scripts/packaging).
+        sys.path.pop(0)
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.config.loader import load_core_config
