@@ -12,7 +12,7 @@ COMMANDS: tuple[list[str], ...] = (
         "-q",
         "tests/test_trading_controller.py",
         "-k",
-        "journal or feed or alert or severity or signal_skipped or order_executed or order_partially_executed or opportunity_autonomy_enforcement or performance_guard or risk_rejected",
+        "journal or feed or alert or severity or signal_skipped or order_executed or order_partially_executed or opportunity_autonomy_enforcement or performance_guard or risk_rejected or runtime_controls_soft_snapshot or execution_permission",
         "-vv",
         "--maxfail=20",
     ],
