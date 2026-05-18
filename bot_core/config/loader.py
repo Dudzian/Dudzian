@@ -34,6 +34,7 @@ from bot_core.config.models import (
     EnvironmentAIPipelineScheduleConfig,
     EnvironmentConfig,
     ExchangeAccountConfig,
+    ExchangeLifecycleConfig,
     NativeExchangeAdapterConfig,
     LiveChecklistDocumentConfig,
     LiveReadinessChecklistConfig,
@@ -550,6 +551,30 @@ def _load_exchange_adapters(
         if entries:
             adapters[normalized_exchange] = entries
     return adapters
+
+
+def _load_exchange_lifecycle(raw: Mapping[str, Any]) -> Mapping[str, ExchangeLifecycleConfig]:
+    allowed_statuses = frozenset({"active", "disabled", "deprecated"})
+    lifecycle_raw = raw.get("exchange_lifecycle") or {}
+    lifecycle: dict[str, ExchangeLifecycleConfig] = {}
+    if not isinstance(lifecycle_raw, Mapping):
+        return lifecycle
+
+    for exchange_id, entry in lifecycle_raw.items():
+        normalized_exchange = str(exchange_id).strip().lower()
+        if not normalized_exchange:
+            continue
+        status = "active"
+        if isinstance(entry, Mapping):
+            status = str(entry.get("status", "active")).strip().lower() or "active"
+        elif entry not in (None, ""):
+            status = str(entry).strip().lower() or "active"
+        if status not in allowed_statuses:
+            raise ValueError(
+                f"Nieznany status lifecycle dla giełdy '{normalized_exchange}': {status}"
+            )
+        lifecycle[normalized_exchange] = ExchangeLifecycleConfig(status=status)
+    return lifecycle
 
 
 def _maybe_float(value: Any) -> float | None:
@@ -4296,6 +4321,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     permission_profiles = _load_permission_profiles(raw)
     exchange_accounts = _load_exchange_accounts(raw)
     exchange_adapters = _load_exchange_adapters(raw)
+    exchange_lifecycle = _load_exchange_lifecycle(raw)
 
     # Środowiska – budujemy kwargs dynamicznie, tak by działało na różnych gałęziach modeli.
     environments: dict[str, EnvironmentConfig] = {}
@@ -4493,6 +4519,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["exchange_accounts"] = exchange_accounts
     if exchange_adapters and _core_has("exchange_adapters"):
         core_kwargs["exchange_adapters"] = exchange_adapters
+    if exchange_lifecycle and _core_has("exchange_lifecycle"):
+        core_kwargs["exchange_lifecycle"] = exchange_lifecycle
     if _core_has("instrument_universes"):
         core_kwargs["instrument_universes"] = instrument_universes
     if _core_has("instrument_buckets"):
