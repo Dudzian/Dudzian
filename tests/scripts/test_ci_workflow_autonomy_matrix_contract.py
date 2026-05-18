@@ -160,3 +160,50 @@ def test_lint_and_test_contains_recovery_matrix_step_with_expected_command_and_o
     assert recovery_idx < pytest_idx, (
         "Krok 'Run recovery matrix' musi występować przed 'Pytest (unit suite) with coverage'"
     )
+
+
+def test_lint_and_test_contains_observability_matrix_step_with_expected_command_and_order() -> None:
+    step_blocks = _extract_lint_and_test_step_blocks()
+    step_names = [_step_name(block) for block in step_blocks]
+
+    assert "Run observability matrix" in step_names, (
+        "Brak kroku 'Run observability matrix' w jobs.lint-and-test.steps"
+    )
+    observability_idx = step_names.index("Run observability matrix")
+
+    observability_block = step_blocks[observability_idx]
+    observability_body = "\n".join(observability_block)
+    assert "python scripts/ci/run_observability_matrix.py" in observability_body, (
+        "Krok 'Run observability matrix' musi uruchamiać "
+        "'python scripts/ci/run_observability_matrix.py'"
+    )
+
+    for dependency_step_name in (
+        "Set up Python",
+        "Download wheelhouse",
+        "Install dependencies",
+        "Run autonomy matrix",
+        "Run risk/execution matrix",
+    ):
+        assert dependency_step_name in step_names, (
+            f"Brak kroku zależności '{dependency_step_name}' wymaganego przez kontrakt CI"
+        )
+        assert observability_idx > step_names.index(dependency_step_name), (
+            f"Krok 'Run observability matrix' musi być po kroku '{dependency_step_name}'"
+        )
+
+    assert "Run recovery matrix" in step_names, (
+        "Brak kroku 'Run recovery matrix' wymaganego przez kontrakt kolejności"
+    )
+    recovery_idx = step_names.index("Run recovery matrix")
+    assert observability_idx < recovery_idx, (
+        "Krok 'Run observability matrix' musi występować przed 'Run recovery matrix'"
+    )
+
+    assert "Pytest (unit suite) with coverage" in step_names, (
+        "Brak kroku 'Pytest (unit suite) with coverage' w jobs.lint-and-test.steps"
+    )
+    pytest_idx = step_names.index("Pytest (unit suite) with coverage")
+    assert observability_idx < pytest_idx, (
+        "Krok 'Run observability matrix' musi występować przed 'Pytest (unit suite) with coverage'"
+    )
