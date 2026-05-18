@@ -331,6 +331,10 @@ exchange_adapters:
           private_path: /stream/bitmex_spot/private
           poll_interval: 0.5
 
+exchange_lifecycle:
+  zonda_spot:
+    status: disabled
+
 license:
   license_path: var/licenses/active/license.json
   fingerprint_path: var/licenses/active/fingerprint.json

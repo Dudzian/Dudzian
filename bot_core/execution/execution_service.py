@@ -15,6 +15,7 @@ from bot_core.exchanges.base import ExchangeAdapter, OrderRequest
 from bot_core.security import build_transaction_signer_selector
 
 _LOGGER = logging.getLogger(__name__)
+_ALLOWED_EXCHANGE_LIFECYCLE = frozenset({"active", "disabled", "deprecated"})
 
 
 def resolve_execution_mode(
@@ -128,6 +129,24 @@ def _collect_adapters(bootstrap_ctx: Any) -> MutableMapping[str, ExchangeAdapter
     return adapters
 
 
+def _collect_exchange_lifecycle(bootstrap_ctx: Any) -> dict[str, str]:
+    core_config = getattr(bootstrap_ctx, "core_config", None)
+    lifecycle_cfg = getattr(core_config, "exchange_lifecycle", None)
+    statuses: dict[str, str] = {}
+    if isinstance(lifecycle_cfg, Mapping):
+        for exchange_name, entry in lifecycle_cfg.items():
+            name = str(exchange_name).strip()
+            if not name:
+                continue
+            status = str(getattr(entry, "status", entry) or "active").strip().lower() or "active"
+            if status not in _ALLOWED_EXCHANGE_LIFECYCLE:
+                raise RuntimeError(
+                    f"Nieznany status lifecycle dla giełdy '{name}': {status}"
+                )
+            statuses[name] = status
+    return statuses
+
+
 def build_live_execution_service(
     *,
     bootstrap_ctx: Any,
@@ -141,6 +160,7 @@ def build_live_execution_service(
         raise ValueError("Sekcja runtime.execution.live musi być aktywna, aby uruchomić tryb live")
 
     adapters = _collect_adapters(bootstrap_ctx)
+    exchange_lifecycle = _collect_exchange_lifecycle(bootstrap_ctx)
     environment_exchange = str(getattr(environment, "exchange", "")).strip()
     primary_adapter = getattr(bootstrap_ctx, "adapter", None)
     if environment_exchange and isinstance(primary_adapter, ExchangeAdapter):
@@ -148,6 +168,17 @@ def build_live_execution_service(
 
     if not adapters:
         raise RuntimeError("Brak zarejestrowanych adapterów giełdowych do trybu live")
+
+    blocked_for_live = {
+        name
+        for name in adapters.keys()
+        if exchange_lifecycle.get(name, "active") in {"disabled", "deprecated"}
+    }
+    if environment_exchange and environment_exchange in blocked_for_live:
+        raise RuntimeError(
+            f"Giełda środowiska '{environment_exchange}' jest "
+            f"{exchange_lifecycle.get(environment_exchange, 'active')} i nie może być użyta w live execution"
+        )
 
     default_route = tuple(live_cfg.default_route or ())
     if not default_route:
@@ -157,6 +188,12 @@ def build_live_execution_service(
     if missing:
         raise RuntimeError(
             f"Konfiguracja live odwołuje się do nieznanych adapterów: {', '.join(missing)}"
+        )
+    blocked_in_default = [name for name in default_route if name in blocked_for_live]
+    if blocked_in_default:
+        raise RuntimeError(
+            "Domyślna trasa live zawiera giełdę niedozwoloną (disabled/deprecated): "
+            + ", ".join(blocked_in_default)
         )
 
     overrides: dict[str, tuple[str, ...]] = {}
@@ -168,6 +205,11 @@ def build_live_execution_service(
         if unknown:
             raise RuntimeError(
                 f"Override dla symbolu {symbol} zawiera nieznane giełdy: {', '.join(unknown)}"
+            )
+        blocked = [name for name in normalized if name in blocked_for_live]
+        if blocked:
+            raise RuntimeError(
+                f"Override dla symbolu {symbol} zawiera giełdy niedozwolone (disabled/deprecated): {', '.join(blocked)}"
             )
         overrides[str(symbol)] = normalized
 
@@ -277,7 +319,9 @@ def build_live_execution_service(
     if io_dispatcher is not None:
         router_kwargs["io_dispatcher"] = io_dispatcher
 
-    return LiveExecutionRouter(**router_kwargs)
+    router = LiveExecutionRouter(**router_kwargs)
+    setattr(router, "exchange_lifecycle", dict(exchange_lifecycle))
+    return router
 
 
 __all__ = [

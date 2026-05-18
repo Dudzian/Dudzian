@@ -933,6 +933,13 @@ class NativeExchangeAdapterConfig:
     default_settings: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class ExchangeLifecycleConfig:
+    """Status operacyjny giełdy/adaptatora."""
+
+    status: str = "active"
+
+
 # --- Instrumenty / uniwersa --------------------------------------------------
 
 
@@ -1626,6 +1633,7 @@ class CoreConfig:
     exchange_adapters: Mapping[str, Mapping[Mode, NativeExchangeAdapterConfig]] = field(
         default_factory=dict
     )
+    exchange_lifecycle: Mapping[str, ExchangeLifecycleConfig] = field(default_factory=dict)
     instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
     instrument_buckets: Mapping[str, InstrumentBucketConfig] = field(default_factory=dict)
     strategy_definitions: Mapping[str, StrategyDefinitionConfig] = field(default_factory=dict)
