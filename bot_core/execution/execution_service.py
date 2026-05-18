@@ -140,9 +140,7 @@ def _collect_exchange_lifecycle(bootstrap_ctx: Any) -> dict[str, str]:
                 continue
             status = str(getattr(entry, "status", entry) or "active").strip().lower() or "active"
             if status not in _ALLOWED_EXCHANGE_LIFECYCLE:
-                raise RuntimeError(
-                    f"Nieznany status lifecycle dla giełdy '{name}': {status}"
-                )
+                raise RuntimeError(f"Nieznany status lifecycle dla giełdy '{name}': {status}")
             statuses[name] = status
     return statuses
 

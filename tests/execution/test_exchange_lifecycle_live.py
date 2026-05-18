@@ -168,7 +168,9 @@ def test_zonda_reported_as_disabled_in_exchange_registry() -> None:
         live=RuntimeExecutionLiveSettings(enabled=True, default_route=("binance_spot",))
     )
     lifecycle = {"zonda_spot": types.SimpleNamespace(status="disabled")}
-    bootstrap = _Bootstrap(adapters={"binance_spot": _DummyAdapter("binance_spot")}, lifecycle=lifecycle)
+    bootstrap = _Bootstrap(
+        adapters={"binance_spot": _DummyAdapter("binance_spot")}, lifecycle=lifecycle
+    )
 
     router = build_live_execution_service(
         bootstrap_ctx=bootstrap,
