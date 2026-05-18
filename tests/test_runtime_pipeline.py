@@ -28,7 +28,7 @@ from bot_core.runtime.pipeline import (
     build_daily_trend_pipeline,
     create_trading_controller,
 )
-from bot_core.security import SecretManager, SecretStorage
+from bot_core.security import SecretManager, SecretStorage, SecretStorageError
 from bot_core.strategies import StrategySignal
 from bot_core.strategies.daily_trend import DailyTrendMomentumStrategy
 
@@ -913,11 +913,13 @@ def _patch_pipeline_contract_build_path(
     )
     monkeypatch.setattr(
         "bot_core.runtime.pipeline._build_account_loader",
-        lambda **_kwargs: lambda: AccountSnapshot(
-            balances={"USDT": 1_000.0},
-            total_equity=1_000.0,
-            available_margin=1_000.0,
-            maintenance_margin=0.0,
+        lambda **_kwargs: (
+            lambda: AccountSnapshot(
+                balances={"USDT": 1_000.0},
+                total_equity=1_000.0,
+                available_margin=1_000.0,
+                maintenance_margin=0.0,
+            )
         ),
     )
     monkeypatch.setattr(
@@ -988,6 +990,37 @@ def test_build_daily_trend_pipeline_live_failfast_without_exchange_adapter(monke
             secret_manager=SecretManager(_InMemorySecretStorage()),
         )
     assert flags["live_builder_called"] is True
+
+
+def test_build_daily_trend_pipeline_live_failfast_without_exchange_credentials(monkeypatch) -> None:
+    live_builder_called = {"value": False}
+
+    def _fake_bootstrap_environment(*_args, **_kwargs):
+        raise SecretStorageError(
+            "Brak sekretu 'tests:binance_live_key:trading'. Dodaj go do natywnego keychaina przed startem systemu."
+        )
+
+    def _build_live_service(**_kwargs):
+        live_builder_called["value"] = True
+        return object()
+
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline.bootstrap_environment", _fake_bootstrap_environment
+    )
+    monkeypatch.setattr(
+        "bot_core.runtime.execution_bootstrapper.build_live_execution_service", _build_live_service
+    )
+
+    with pytest.raises(SecretStorageError, match="Brak sekretu"):
+        build_daily_trend_pipeline(
+            environment_name="binance_live",
+            strategy_name="core_daily_trend",
+            controller_name="daily_trend_core",
+            config_path="ignored.yaml",
+            secret_manager=SecretManager(_InMemorySecretStorage()),
+        )
+
+    assert live_builder_called["value"] is False
 
 
 def test_build_daily_trend_pipeline_reuses_bootstrap_paper_execution_service(monkeypatch) -> None:
