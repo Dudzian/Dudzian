@@ -222,6 +222,10 @@ jobs:
         shell: bash
         run: python scripts/ci/run_risk_execution_matrix.py
 
+      - name: Run observability matrix
+        shell: bash
+        run: python scripts/ci/run_observability_matrix.py
+
       - name: Run recovery matrix
         shell: bash
         run: python scripts/ci/run_recovery_matrix.py
