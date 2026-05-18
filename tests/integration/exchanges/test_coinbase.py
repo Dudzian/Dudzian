@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections import Counter
 
+import pytest
+
 from bot_core.exchanges.base import Environment, ExchangeCredentials
+from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.exchanges.coinbase import CoinbaseSpotAdapter
 from bot_core.exchanges.rate_limiter import RateLimitRule
 
@@ -42,7 +45,8 @@ def test_coinbase_spot_rate_limit_and_retry(monkeypatch, rate_limiter_registry):
     symbols = adapter.fetch_symbols()
     snapshot = adapter.fetch_account_snapshot()
     candles = adapter.fetch_ohlcv("BTC/USDT", "1m", limit=1)
-    order = adapter.place_order(make_order_request())
+    with pytest.raises(ExchangeNetworkError):
+        adapter.place_order(make_order_request())
 
     limiter_key = f"{adapter.name}:{adapter._exchange_id}:{adapter._environment.value}"  # type: ignore[attr-defined]
     limiter = rate_limiter_registry.created[limiter_key]
@@ -50,7 +54,6 @@ def test_coinbase_spot_rate_limit_and_retry(monkeypatch, rate_limiter_registry):
     assert symbols == ("BTC/USDT",)
     assert snapshot.total_equity == 1000.0
     assert candles[0][4] == 105.0
-    assert order.status == "closed"
     assert Counter(limiter.calls)[1.0] >= 4
-    assert client.create_attempts == 2
-    assert sleeps, "Retry logic should invoke backoff sleep"
+    assert client.create_attempts == 1
+    assert not sleeps, "Mutating place_order should fail fast without retry backoff"
