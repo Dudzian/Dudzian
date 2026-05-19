@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import threading
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
@@ -17,6 +19,7 @@ from bot_core.data.data_sources import CacheStorage
 _COLUMNS: tuple[str, ...] = ("open_time", "open", "high", "low", "close", "volume")
 _PARTITION_FILENAME = "data.parquet"
 _METADATA_FILENAME = "metadata.json"
+_LOGGER = logging.getLogger(__name__)
 
 
 class _ParquetMetadata(MutableMapping[str, str]):
@@ -106,6 +109,26 @@ class ParquetCacheStorage(CacheStorage):
     def _normalize_row(self, row: Sequence[float], mapping: Mapping[str, int]) -> list[float]:
         return [float(row[mapping[column]]) for column in _COLUMNS]
 
+    def _read_table_or_raise_keyerror(self, file_path: Path, cache_key: str) -> pa.Table:
+        try:
+            return pq.read_table(file_path)
+        except (pa.ArrowInvalid, OSError, ValueError) as exc:
+            _LOGGER.warning(
+                "Ignoruję uszkodzony cache OHLCV parquet (key=%s, path=%s, error=%s); traktuję jako cache miss.",
+                cache_key,
+                file_path,
+                exc.__class__.__name__,
+            )
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError as unlink_exc:
+                _LOGGER.warning(
+                    "Nie udało się usunąć uszkodzonego cache parquet (path=%s): %s",
+                    file_path,
+                    unlink_exc,
+                )
+            raise KeyError(cache_key) from exc
+
     def read(self, key: str) -> Mapping[str, Sequence[Sequence[float]]]:
         symbol, interval = key.split("::", maxsplit=1)
         base = self._symbol_dir(symbol, interval)
@@ -118,7 +141,7 @@ class ParquetCacheStorage(CacheStorage):
                 file_path = month_dir / _PARTITION_FILENAME
                 if not file_path.exists():
                     continue
-                table = pq.read_table(file_path)
+                table = self._read_table_or_raise_keyerror(file_path, key)
                 data = table.to_pydict()
                 if not data:
                     continue
@@ -164,11 +187,15 @@ class ParquetCacheStorage(CacheStorage):
             with self._lock:
                 existing: dict[float, list[float]] = {}
                 if partition_path.exists():
-                    table = pq.read_table(partition_path)
-                    data = table.to_pydict()
-                    open_times = [float(value) for value in data.get("open_time", [])]
-                    for idx, open_time in enumerate(open_times):
-                        existing[open_time] = [float(data[column][idx]) for column in _COLUMNS]
+                    try:
+                        table = self._read_table_or_raise_keyerror(partition_path, key)
+                    except KeyError:
+                        table = None
+                    if table is not None:
+                        data = table.to_pydict()
+                        open_times = [float(value) for value in data.get("open_time", [])]
+                        for idx, open_time in enumerate(open_times):
+                            existing[open_time] = [float(data[column][idx]) for column in _COLUMNS]
 
                 existing.update(partition_rows)
                 sorted_keys = sorted(existing)
@@ -178,7 +205,9 @@ class ParquetCacheStorage(CacheStorage):
                 }
                 table = pa.table(payload_dict)
                 partition_path.parent.mkdir(parents=True, exist_ok=True)
-                pq.write_table(table, partition_path)
+                tmp_path = partition_path.parent / f".{partition_path.name}.tmp-{os.getpid()}"
+                pq.write_table(table, tmp_path)
+                os.replace(tmp_path, partition_path)
 
     def metadata(self) -> MutableMapping[str, str]:
         return _ParquetMetadata(self._root() / _METADATA_FILENAME)
@@ -194,7 +223,11 @@ class ParquetCacheStorage(CacheStorage):
                 file_path = month_dir / _PARTITION_FILENAME
                 if not file_path.exists():
                     continue
-                table = pq.read_table(file_path, columns=["open_time"])
+                try:
+                    table = self._read_table_or_raise_keyerror(file_path, key)
+                except KeyError:
+                    continue
+                table = table.select(["open_time"])
                 if table.num_rows == 0:
                     continue
                 values = [float(value.as_py()) for value in table.column("open_time")]
