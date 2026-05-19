@@ -71,6 +71,22 @@ def test_parquet_storage_deduplicates_rows(tmp_path) -> None:
     assert read_payload["rows"][0][4] == 99.0
 
 
+def test_parquet_storage_corrupted_partition_is_treated_as_cache_miss(tmp_path, caplog) -> None:
+    storage = ParquetCacheStorage(tmp_path, namespace="binance_spot")
+    key = "BTCUSDT::1d"
+    broken_file = (
+        tmp_path / "binance_spot" / "BTCUSDT" / "1d" / "year=2026" / "month=05" / "data.parquet"
+    )
+    broken_file.parent.mkdir(parents=True, exist_ok=True)
+    broken_file.write_text("not a parquet", encoding="utf-8")
+
+    with pytest.raises(KeyError):
+        storage.read(key)
+
+    assert not broken_file.exists()
+    assert any("uszkodzony cache OHLCV parquet" in message for message in caplog.messages)
+
+
 def test_parquet_latest_timestamp_reads_last_partition(tmp_path) -> None:
     storage = ParquetCacheStorage(tmp_path, namespace="kraken_spot")
     key = "SOLUSDT::1h"
@@ -79,6 +95,38 @@ def test_parquet_latest_timestamp_reads_last_partition(tmp_path) -> None:
     storage.write(key, _payload(ts1, ts2))
 
     assert storage.latest_timestamp(key) == ts2
+
+
+def test_parquet_latest_timestamp_skips_and_removes_corrupted_partition(tmp_path, caplog) -> None:
+    storage = ParquetCacheStorage(tmp_path, namespace="binance_spot")
+    key = "BTCUSDT::1d"
+    broken_file = (
+        tmp_path / "binance_spot" / "BTCUSDT" / "1d" / "year=2026" / "month=05" / "data.parquet"
+    )
+    broken_file.parent.mkdir(parents=True, exist_ok=True)
+    broken_file.write_bytes(b"")
+
+    assert storage.latest_timestamp(key) is None
+    assert not broken_file.exists()
+    assert any("uszkodzony cache OHLCV parquet" in message for message in caplog.messages)
+
+
+def test_parquet_write_over_corrupted_partition_continues_and_saves_rows(tmp_path, caplog) -> None:
+    storage = ParquetCacheStorage(tmp_path, namespace="binance_spot")
+    key = "BTCUSDT::1d"
+    broken_file = (
+        tmp_path / "binance_spot" / "BTCUSDT" / "1d" / "year=2026" / "month=05" / "data.parquet"
+    )
+    broken_file.parent.mkdir(parents=True, exist_ok=True)
+    broken_file.write_text("broken parquet payload", encoding="utf-8")
+    ts = _timestamp(2026, 5, 19)
+
+    storage.write(key, _payload(ts))
+
+    read_payload = storage.read(key)
+    assert len(read_payload["rows"]) == 1
+    assert read_payload["rows"][0][0] == ts
+    assert any("uszkodzony cache OHLCV parquet" in message for message in caplog.messages)
 
 
 def test_dual_cache_storage_updates_manifest(tmp_path) -> None:
