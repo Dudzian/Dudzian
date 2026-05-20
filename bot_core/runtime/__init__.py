@@ -261,7 +261,8 @@ def set_optional_exports_logger(logger: _LoggerLike | None) -> None:
         _OPTIONAL_EXPORT_LOGGER = cast(_LoggerLike, _LOGGER)
         return
 
-    if not isinstance(logger, _LoggerLike):
+    log_method = getattr(logger, "log", None)
+    if not callable(log_method):
         raise TypeError("logger must provide a log(level, message, *args, **kwargs) method")
 
     _OPTIONAL_EXPORT_LOGGER = logger
@@ -1781,7 +1782,8 @@ def _emit_log_message(
         cast(_LoggerLike, logger) if logger is not None else get_optional_exports_logger()
     )
 
-    if not isinstance(target_logger, _LoggerLike):  # pragma: no cover - walidacja typu w runtime
+    log_method = getattr(target_logger, "log", None)
+    if not callable(log_method):  # pragma: no cover - walidacja typu w runtime
         raise TypeError("logger must provide a log(level, message, *args, **kwargs) method")
 
     kwargs: dict[str, object] = {}
