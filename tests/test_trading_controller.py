@@ -365,6 +365,40 @@ def _opportunity_autonomy_signal(
     return signal
 
 
+def _approved_runtime_canary_contract(
+    *,
+    exchange: str = "binance",
+    symbol: str = "BTC/USDT",
+    max_order_notional: float = 1_000_000.0,
+    max_position_notional: float = 1_000_000.0,
+) -> dict[str, object]:
+    return {
+        "report_only": False,
+        "canary_status": "approved",
+        "canary_profile_id": "test-live-canary",
+        "allowed_exchanges": [exchange],
+        "allowed_symbols": [symbol],
+        "max_order_notional": max_order_notional,
+        "max_position_notional": max_position_notional,
+        "review_required_at": "2099-01-01T00:00:00Z",
+        "expires_at": "2099-01-02T00:00:00Z",
+    }
+
+
+def _with_approved_runtime_canary(
+    signal,
+    *,
+    exchange: str = "binance",
+    symbol: str = "BTC/USDT",
+):
+    signal.metadata["exchange"] = exchange
+    signal.metadata["canary_contract"] = _approved_runtime_canary_contract(
+        exchange=exchange,
+        symbol=symbol,
+    )
+    return signal
+
+
 def _upstream_governance_envelope(
     *,
     requested_mode: str | None = "live_autonomous",
@@ -925,7 +959,9 @@ def test_opportunity_live_autonomous_open_respects_active_risk_veto_and_never_ex
         ),
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -1421,7 +1457,9 @@ def test_opportunity_autonomy_live_autonomous_allows_live_execution() -> None:
             portfolio_id="live-1",
         ),
     )
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
     assert len(result) == 1
     assert len(execution.requests) == 1
 
@@ -1435,15 +1473,13 @@ def test_opportunity_autonomy_enforcement_uses_effective_mode_from_decision_payl
             portfolio_id="live-1",
         ),
     )
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_effective_mode="paper_autonomous",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
     assert result == []
     assert execution.requests == []
     event = _last_event(journal, "opportunity_autonomy_enforcement")
@@ -2027,7 +2063,9 @@ def test_opportunity_autonomy_runtime_local_snapshot_good_outcomes_allow_executi
         ),
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2078,7 +2116,9 @@ def test_opportunity_autonomy_runtime_local_snapshot_hard_breach_blocks_without_
         ),
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -2093,7 +2133,9 @@ def test_opportunity_autonomy_runtime_local_snapshot_hard_breach_blocks_without_
 def test_opportunity_autonomy_runtime_missing_repository_fails_closed_with_audit_reason() -> None:
     controller, execution, journal = _build_autonomy_controller(environment="live")
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -2115,7 +2157,9 @@ def test_opportunity_autonomy_runtime_missing_repository_fails_closed_emits_over
         performance_guard_max_scan_labels=6,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -2144,7 +2188,9 @@ def test_opportunity_autonomy_runtime_snapshot_load_failure_still_emits_guard_li
         _raise_snapshot_failure,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -2178,7 +2224,9 @@ def test_opportunity_autonomy_runtime_snapshot_load_failure_emits_override_guard
         _raise_snapshot_failure,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -2253,18 +2301,16 @@ def test_opportunity_autonomy_runtime_no_breach_ignores_payload_performance_guar
         ),
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                performance_guard_effective_mode="paper_autonomous",
-                performance_guard_primary_reason="payload_downgrade_should_be_ignored_when_local_guard_works",
-                performance_guard_hard_breach=False,
-                performance_guard_blocked=False,
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        performance_guard_effective_mode="paper_autonomous",
+        performance_guard_primary_reason="payload_downgrade_should_be_ignored_when_local_guard_works",
+        performance_guard_hard_breach=False,
+        performance_guard_blocked=False,
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2286,7 +2332,9 @@ def test_opportunity_autonomy_enforcement_contract_keys_present_for_conservative
         ),
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -2407,7 +2455,9 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_environment_
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2438,7 +2488,9 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_portfolio_la
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2466,7 +2518,9 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_insufficient_local_evidenc
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -2546,7 +2600,9 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_excludes_partial_scope_and
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -2579,15 +2635,13 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_model_versio
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                model_version="A",
-                decision_source="opportunity_ai_shadow",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        model_version="A",
+        decision_source="opportunity_ai_shadow",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2621,16 +2675,14 @@ def test_opportunity_autonomy_runtime_lineage_payload_precedes_stale_request_met
         },
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_payload_model_version="A",
-                decision_payload_decision_source="opportunity_ai_shadow",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_payload_model_version="A",
+        decision_payload_decision_source="opportunity_ai_shadow",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2659,18 +2711,16 @@ def test_opportunity_autonomy_runtime_lineage_payload_precedes_stale_signal_meta
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                model_version="B",
-                decision_source="opportunity_ai_shadow",
-                include_decision_payload=True,
-                decision_payload_model_version="A",
-                decision_payload_decision_source="opportunity_ai_shadow",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        model_version="B",
+        decision_source="opportunity_ai_shadow",
+        include_decision_payload=True,
+        decision_payload_model_version="A",
+        decision_payload_decision_source="opportunity_ai_shadow",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2724,16 +2774,14 @@ def test_opportunity_autonomy_runtime_lineage_request_payload_precedes_signal_pa
         _build_order_request_with_request_payload,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_payload_model_version="B",
-                decision_payload_decision_source="opportunity_ai_shadow",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_payload_model_version="B",
+        decision_payload_decision_source="opportunity_ai_shadow",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2785,16 +2833,14 @@ def test_opportunity_autonomy_runtime_lineage_uses_signal_payload_when_request_p
         _build_order_request_with_request_payload_without_lineage,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_payload_model_version="A",
-                decision_payload_decision_source="opportunity_ai_shadow",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_payload_model_version="A",
+        decision_payload_decision_source="opportunity_ai_shadow",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -2886,15 +2932,13 @@ def test_opportunity_autonomy_malformed_request_payload_does_not_mask_signal_pay
         _build_order_request_with_malformed_request_payload,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_effective_mode="paper_autonomous",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 0
     assert len(execution.requests) == 0
@@ -3950,7 +3994,9 @@ def test_opportunity_autonomy_inconsistent_upstream_blocking_reasons_clamp_live_
         _build_order_request_with_inconsistent_upstream_readiness,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -4031,7 +4077,9 @@ def test_opportunity_autonomy_request_blocker_without_effective_mode_clamps_live
         _build_order_request_with_blocking_reasons_only,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -4078,7 +4126,9 @@ def test_opportunity_autonomy_inconsistent_request_blocker_allows_assisted_when_
         _build_order_request_with_assisted_approved_blocker,
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -4132,6 +4182,7 @@ def test_opportunity_autonomy_downgrade_chain_readiness_clamp_allowed_assisted_p
         **dict(signal.metadata),
         "opportunity_autonomy_decision": decision_payload,
     }
+    signal = _with_approved_runtime_canary(signal)
     controller.process_signals([signal])
     controller.process_signals(
         [
@@ -4197,6 +4248,7 @@ def test_opportunity_autonomy_readiness_clamp_propagates_to_execution_proxy_pend
         **dict(signal.metadata),
         "opportunity_autonomy_decision": decision_payload,
     }
+    signal = _with_approved_runtime_canary(signal)
     controller.process_signals([signal])
 
     proxy_labels = [
@@ -4254,6 +4306,7 @@ def test_opportunity_autonomy_readiness_clamp_open_restart_final_preserves_ident
         **dict(signal.metadata),
         "opportunity_autonomy_decision": decision_payload,
     }
+    signal = _with_approved_runtime_canary(signal)
     controller_open.process_signals([signal])
 
     open_rows = repository.load_open_outcomes()
@@ -4329,6 +4382,7 @@ def test_opportunity_autonomy_readiness_clamp_direct_final_conflicting_close_pre
         **dict(signal.metadata),
         "opportunity_autonomy_decision": decision_payload,
     }
+    signal = _with_approved_runtime_canary(signal)
     controller.process_signals([signal])
     chain_a = {
         "autonomy_requested_mode": "live_autonomous",
@@ -4410,6 +4464,7 @@ def test_opportunity_autonomy_readiness_clamp_propagates_to_partial_and_open_out
         **dict(signal.metadata),
         "opportunity_autonomy_decision": decision_payload,
     }
+    signal = _with_approved_runtime_canary(signal)
     controller.process_signals([signal])
     controller.process_signals(
         [
@@ -4493,6 +4548,7 @@ def test_opportunity_autonomy_readiness_clamp_partial_restart_final_preserves_id
         **dict(signal.metadata),
         "opportunity_autonomy_decision": decision_payload,
     }
+    signal = _with_approved_runtime_canary(signal)
     controller_open_partial.process_signals([signal])
     controller_open_partial.process_signals(
         [
@@ -4592,6 +4648,7 @@ def test_opportunity_autonomy_readiness_clamp_conflicting_close_chain_does_not_o
         **dict(signal.metadata),
         "opportunity_autonomy_decision": decision_payload,
     }
+    signal = _with_approved_runtime_canary(signal)
     controller_open_partial.process_signals([signal])
     chain_a = {
         "autonomy_requested_mode": "live_autonomous",
@@ -4691,15 +4748,13 @@ def test_opportunity_autonomy_empty_request_mapping_does_not_fall_through_to_sig
         _build_order_request_with_empty_request_payload,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_effective_mode="paper_autonomous",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -4739,16 +4794,14 @@ def test_opportunity_autonomy_empty_request_mapping_still_has_precedence_over_si
         _build_order_request_with_empty_request_payload,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_effective_mode="paper_autonomous",
-                decision_primary_reason="signal_payload_reason_that_should_not_win",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="signal_payload_reason_that_should_not_win",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -4788,16 +4841,14 @@ def test_opportunity_autonomy_malformed_request_payload_does_not_mask_signal_pay
         _build_order_request_with_malformed_request_payload,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="signal_payload_primary_reason",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="signal_payload_primary_reason",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -4884,16 +4935,14 @@ def test_opportunity_autonomy_valid_request_payload_still_precedes_valid_signal_
         _build_order_request_with_valid_request_payload,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                include_decision_payload=True,
-                decision_effective_mode="paper_autonomous",
-                decision_primary_reason="signal_payload_reason",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        include_decision_payload=True,
+        decision_effective_mode="paper_autonomous",
+        decision_primary_reason="signal_payload_reason",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -5555,17 +5604,15 @@ def test_opportunity_autonomy_downgrade_chain_local_guard_downgrade_with_permiss
         ),
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                assisted_approval=True,
-                include_decision_payload=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_permissive",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_permissive",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -5607,6 +5654,7 @@ def test_opportunity_autonomy_chain_contract_readiness_clamp_path() -> None:
             "blocking_reasons": ("promotion_not_ready_for_live_autonomous",),
         },
     }
+    signal = _with_approved_runtime_canary(signal)
 
     result = controller.process_signals([signal])
 
@@ -5634,17 +5682,15 @@ def test_opportunity_autonomy_chain_contract_performance_guard_rewrite_path() ->
         ),
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                assisted_approval=True,
-                include_decision_payload=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_permissive",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_permissive",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -5665,7 +5711,9 @@ def test_opportunity_autonomy_chain_contract_performance_guard_rewrite_path() ->
 def test_opportunity_autonomy_downgrade_chain_fail_closed_branch_is_explicit() -> None:
     controller, execution, journal = _build_autonomy_controller(environment="live")
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -5685,7 +5733,9 @@ def test_opportunity_autonomy_downgrade_chain_fail_closed_branch_is_explicit() -
 def test_opportunity_autonomy_chain_contract_fail_closed_local_guard_path() -> None:
     controller, execution, journal = _build_autonomy_controller(environment="live")
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert result == []
     assert execution.requests == []
@@ -5710,7 +5760,9 @@ def test_opportunity_autonomy_downgrade_chain_fully_allowed_branch_has_no_downgr
         ),
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -5787,6 +5839,7 @@ def test_opportunity_autonomy_reason_precedence_readiness_clamp_blocker_override
             ),
         },
     }
+    signal = _with_approved_runtime_canary(signal)
 
     result = controller.process_signals([signal])
 
@@ -5810,17 +5863,15 @@ def test_opportunity_autonomy_reason_precedence_performance_guard_rewrite_overri
         ),
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                assisted_approval=True,
-                include_decision_payload=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_permissive_should_not_win_after_rewrite",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_permissive_should_not_win_after_rewrite",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -5875,7 +5926,9 @@ def test_opportunity_autonomy_reason_precedence_fully_allowed_path_keeps_primary
         ),
     )
 
-    result = controller.process_signals([_opportunity_autonomy_signal("live_autonomous")])
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -5980,6 +6033,7 @@ def test_opportunity_autonomy_cross_sink_consistency_readiness_clamp() -> None:
     decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
     decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
     signal.metadata = {**dict(signal.metadata), "opportunity_autonomy_decision": decision_payload}
+    signal = _with_approved_runtime_canary(signal)
     controller.process_signals([signal])
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     controller.process_signals(
@@ -6049,6 +6103,7 @@ def test_opportunity_autonomy_cross_sink_consistency_readiness_clamp_keeps_model
     decision_payload = dict(signal.metadata.get("opportunity_autonomy_decision", {}))
     decision_payload["blocking_reasons"] = ("promotion_not_ready_for_live_autonomous",)
     signal.metadata = {**dict(signal.metadata), "opportunity_autonomy_decision": decision_payload}
+    signal = _with_approved_runtime_canary(signal)
     controller.process_signals([signal])
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["upstream_autonomy_decision_source"] == "model"
@@ -6102,25 +6157,23 @@ def test_opportunity_autonomy_cross_sink_consistency_performance_guard_rewrite()
         environment="live",
         opportunity_shadow_repository=repository,
     )
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                include_decision_payload=True,
-                assisted_approval=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_initial_allow",
-                performance_guard_effective_mode="live_assisted",
-                performance_guard_primary_reason="insufficient_recent_final_outcomes_for_live",
-                decision_payload_decision_source="guard_source",
-                decision_payload_inference_model="guard_model",
-                decision_payload_inference_model_version="2026.04.09",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        assisted_approval=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_initial_allow",
+        performance_guard_effective_mode="live_assisted",
+        performance_guard_primary_reason="insufficient_recent_final_outcomes_for_live",
+        decision_payload_decision_source="guard_source",
+        decision_payload_inference_model="guard_model",
+        decision_payload_inference_model_version="2026.04.09",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     controller.process_signals(
         [
@@ -6168,25 +6221,23 @@ def test_upstream_handoff_complete_contract_with_performance_guard_payload_uses_
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                include_decision_payload=True,
-                assisted_approval=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_initial_allow",
-                performance_guard_effective_mode="live_assisted",
-                performance_guard_primary_reason="insufficient_recent_final_outcomes_for_live",
-                decision_payload_decision_source="guard_source",
-                decision_payload_inference_model="guard_model",
-                decision_payload_inference_model_version="2026.04.09",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        assisted_approval=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_initial_allow",
+        performance_guard_effective_mode="live_assisted",
+        performance_guard_primary_reason="insufficient_recent_final_outcomes_for_live",
+        decision_payload_decision_source="guard_source",
+        decision_payload_inference_model="guard_model",
+        decision_payload_inference_model_version="2026.04.09",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -6225,24 +6276,22 @@ def test_opportunity_autonomy_cross_sink_consistency_local_guard_rewrite_keeps_h
         environment="live",
         opportunity_shadow_repository=repository,
     )
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                include_decision_payload=True,
-                assisted_approval=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_hybrid_said_live",
-                decision_payload_model_version="A",
-                decision_payload_decision_source="hybrid",
-                decision_payload_inference_model="local_guard_model",
-                decision_payload_inference_model_version="2026.05.02",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        assisted_approval=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_hybrid_said_live",
+        decision_payload_model_version="A",
+        decision_payload_decision_source="hybrid",
+        decision_payload_inference_model="local_guard_model",
+        decision_payload_inference_model_version="2026.05.02",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert event["upstream_autonomy_decision_source"] == "hybrid"
     assert event["upstream_autonomy_inference_model"] == "local_guard_model"
@@ -6491,23 +6540,21 @@ def test_opportunity_autonomy_cross_sink_consistency_fully_allowed_branch() -> N
         environment="live",
         opportunity_shadow_repository=repository,
     )
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                include_decision_payload=True,
-                assisted_approval=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_allow_final",
-                decision_payload_decision_source="allow_source",
-                decision_payload_inference_model="allow_model",
-                decision_payload_inference_model_version="2026.04.11",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        include_decision_payload=True,
+        assisted_approval=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_allow_final",
+        decision_payload_decision_source="allow_source",
+        decision_payload_inference_model="allow_model",
+        decision_payload_inference_model_version="2026.04.11",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     event = _last_event(journal, "opportunity_autonomy_enforcement")
     controller.process_signals(
         [
@@ -7688,25 +7735,23 @@ def test_opportunity_autonomy_assisted_downgrade_preserves_upstream_provenance_a
         ),
         opportunity_shadow_repository=repository,
     )
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                assisted_approval=True,
-                model_version="hybrid-open-v1",
-                decision_source="hybrid",
-                include_decision_payload=True,
-                decision_effective_mode="live_assisted",
-                decision_primary_reason="upstream_hybrid_requires_assisted",
-                decision_payload_decision_source="hybrid",
-                decision_payload_inference_model="hybrid_model",
-                decision_payload_inference_model_version="2026.06.10",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        model_version="hybrid-open-v1",
+        decision_source="hybrid",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_hybrid_requires_assisted",
+        decision_payload_decision_source="hybrid",
+        decision_payload_inference_model="hybrid_model",
+        decision_payload_inference_model_version="2026.06.10",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     open_event = _last_event(journal, "opportunity_autonomy_enforcement")
     assert open_event["status"] == "allowed"
     assert open_event["autonomy_mode"] == "live_assisted"
@@ -7954,25 +7999,23 @@ def test_opportunity_autonomy_assisted_partial_persistence_preserves_upstream_hy
         ),
         opportunity_shadow_repository=repository,
     )
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                assisted_approval=True,
-                model_version="hybrid-partial-v1",
-                decision_source="hybrid",
-                include_decision_payload=True,
-                decision_effective_mode="live_assisted",
-                decision_primary_reason="hybrid_assisted_partial_contract",
-                decision_payload_decision_source="hybrid",
-                decision_payload_inference_model="hybrid_partial_model",
-                decision_payload_inference_model_version="2026.06.12",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        model_version="hybrid-partial-v1",
+        decision_source="hybrid",
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="hybrid_assisted_partial_contract",
+        decision_payload_decision_source="hybrid",
+        decision_payload_inference_model="hybrid_partial_model",
+        decision_payload_inference_model_version="2026.06.12",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     open_event = _last_event(journal, "opportunity_autonomy_enforcement")
     controller.process_signals(
         [
@@ -8633,16 +8676,14 @@ def test_opportunity_autonomy_downgrade_chain_is_persisted_into_open_outcome_and
         opportunity_shadow_repository=repository,
     )
 
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     open_rows = repository.load_open_outcomes()
     assert len(open_rows) == 1
     for key in _AUTONOMY_CHAIN_EXPECTED_KEYS:
@@ -8694,20 +8735,18 @@ def test_opportunity_autonomy_downgrade_chain_upstream_flow_propagates_to_final_
         opportunity_shadow_repository=repository,
     )
 
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                assisted_approval=True,
-                include_decision_payload=True,
-                decision_effective_mode="live_assisted",
-                decision_primary_reason="upstream_downgraded_to_assisted",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_downgraded_to_assisted",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     controller.process_signals(
         [
             _autonomy_signal_with_correlation(
@@ -8759,20 +8798,18 @@ def test_opportunity_autonomy_downgrade_chain_local_guard_flow_propagates_to_fin
         opportunity_shadow_repository=repository,
     )
 
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                assisted_approval=True,
-                include_decision_payload=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_permissive",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_permissive",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     controller.process_signals(
         [
             _autonomy_signal_with_correlation(
@@ -8951,16 +8988,14 @@ def test_opportunity_autonomy_proxy_label_provenance_includes_compact_chain() ->
         opportunity_shadow_repository=repository,
     )
 
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
 
     proxy_labels = [
         label
@@ -9009,20 +9044,18 @@ def test_opportunity_autonomy_partial_label_provenance_includes_compact_chain() 
         opportunity_shadow_repository=repository,
     )
 
-    controller.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                assisted_approval=True,
-                include_decision_payload=True,
-                decision_effective_mode="live_assisted",
-                decision_primary_reason="upstream_downgraded_to_assisted",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_assisted",
+        decision_primary_reason="upstream_downgraded_to_assisted",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller.process_signals([signal])
     controller.process_signals(
         [
             _autonomy_signal_with_correlation(
@@ -9082,20 +9115,18 @@ def test_opportunity_autonomy_partial_restart_final_preserves_identical_compact_
         opportunity_shadow_repository=repository,
     )
 
-    controller_open_partial.process_signals(
-        [
-            _autonomy_signal_with_correlation(
-                mode="live_autonomous",
-                side="BUY",
-                correlation_key=correlation_key,
-                decision_timestamp=decision_timestamp,
-                assisted_approval=True,
-                include_decision_payload=True,
-                decision_effective_mode="live_autonomous",
-                decision_primary_reason="upstream_permissive",
-            )
-        ]
+    signal = _autonomy_signal_with_correlation(
+        mode="live_autonomous",
+        side="BUY",
+        correlation_key=correlation_key,
+        decision_timestamp=decision_timestamp,
+        assisted_approval=True,
+        include_decision_payload=True,
+        decision_effective_mode="live_autonomous",
+        decision_primary_reason="upstream_permissive",
     )
+    signal = _with_approved_runtime_canary(signal)
+    controller_open_partial.process_signals([signal])
     controller_open_partial.process_signals(
         [
             _autonomy_signal_with_correlation(
@@ -9661,16 +9692,14 @@ def test_opportunity_autonomy_runtime_lineage_falls_back_to_signal_metadata_when
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                model_version="A",
-                decision_source="opportunity_ai_shadow",
-                include_decision_payload=True,
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        model_version="A",
+        decision_source="opportunity_ai_shadow",
+        include_decision_payload=True,
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -46417,15 +46446,13 @@ def test_opportunity_autonomy_runtime_scoped_snapshot_ignores_other_decision_sou
         opportunity_shadow_repository=repository,
     )
 
-    result = controller.process_signals(
-        [
-            _opportunity_autonomy_signal(
-                "live_autonomous",
-                model_version="A",
-                decision_source="opportunity_ai_shadow",
-            )
-        ]
+    signal = _opportunity_autonomy_signal(
+        "live_autonomous",
+        model_version="A",
+        decision_source="opportunity_ai_shadow",
     )
+    signal = _with_approved_runtime_canary(signal)
+    result = controller.process_signals([signal])
 
     assert len(result) == 1
     assert len(execution.requests) == 1
@@ -55485,6 +55512,7 @@ def test_controller_handles_multi_leg_signal() -> None:
         ),
     )
 
+    signal = _with_approved_runtime_canary(signal)
     results = controller.process_signals([signal])
 
     assert len(results) == 2
@@ -63055,6 +63083,7 @@ def test_upstream_handoff_complete_contract_but_missing_shadow_record_is_fail_cl
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63113,6 +63142,7 @@ def test_upstream_handoff_complete_contract_but_symbol_mismatch_shadow_record_is
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63309,6 +63339,7 @@ def test_upstream_handoff_complete_contract_with_matching_timestamp_still_allows
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63610,6 +63641,7 @@ def test_upstream_handoff_scope_aware_resolution_blocks_foreign_scope_only_shado
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63678,6 +63710,7 @@ def test_upstream_handoff_scope_mismatch_single_timestamp_candidate_with_missing
         decision_payload_inference_model="local_guard_model",
         decision_payload_inference_model_version="2026.05.02",
     )
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63742,6 +63775,7 @@ def test_upstream_handoff_scope_mismatch_single_timestamp_candidate_missing_scop
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63803,6 +63837,7 @@ def test_upstream_handoff_scope_mismatch_single_timestamp_candidate_hybrid_only_
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63868,6 +63903,7 @@ def test_upstream_handoff_scope_mismatch_single_timestamp_candidate_legacy_live_
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63938,6 +63974,7 @@ def test_upstream_handoff_scope_mismatch_single_timestamp_candidate_legacy_excep
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -63999,6 +64036,7 @@ def test_upstream_handoff_scope_mismatch_single_timestamp_candidate_without_any_
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -64074,6 +64112,7 @@ def test_upstream_handoff_scope_mismatch_multiple_timestamp_candidates_stays_fai
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -64206,6 +64245,7 @@ def test_upstream_handoff_scope_aware_resolution_blocks_same_environment_invalid
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -64282,6 +64322,7 @@ def test_upstream_handoff_scope_aware_resolution_prefers_valid_same_scope_candid
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -64360,6 +64401,7 @@ def test_upstream_handoff_scope_aware_resolution_is_order_independent_when_scope
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -64491,6 +64533,7 @@ def test_upstream_handoff_scope_aware_resolution_blocks_ambiguous_same_scope_sha
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -65310,6 +65353,7 @@ def test_upstream_handoff_classifier_keeps_actual_open_on_open_path_with_same_sc
         "opportunity_shadow_record_key": correlation_key,
         "opportunity_decision_timestamp": decision_timestamp.isoformat(),
     }
+    signal = _with_approved_runtime_canary(signal)
 
     results = controller.process_signals([signal])
 
@@ -79656,3 +79700,109 @@ def test_same_process_final_does_not_clear_unrelated_pending_guard(
     test_pending_open_durable_symbol_marker_ignored_when_original_key_has_final_label_after_restart(
         tmp_path
     )
+
+
+def test_canary_missing_blocks_live_autonomous_open_before_risk_and_execution() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="live",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal.metadata["exchange"] = "binance"
+    result = controller.process_signals([signal])
+    assert result == []
+    assert execution.requests == []
+    assert risk_engine.last_checks == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_canary_contract_missing"
+    assert event["autonomy_decisive_stage"] == "canary_contract"
+
+
+def test_canary_report_only_blocks_live_autonomous_open_before_risk_and_execution() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="live",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    signal = _opportunity_autonomy_signal("live_autonomous")
+    signal.metadata["exchange"] = "binance"
+    contract = _approved_runtime_canary_contract()
+    contract["report_only"] = True
+    signal.metadata["canary_contract"] = contract
+    result = controller.process_signals([signal])
+    assert result == []
+    assert execution.requests == []
+    assert risk_engine.last_checks == []
+    event = _last_event(journal, "opportunity_autonomy_enforcement")
+    assert event["status"] == "blocked"
+    assert event["blocking_reason"] == "accepted_autonomous_canary_contract_report_only"
+
+
+def test_canary_approved_allows_existing_live_autonomous_execution_path() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, _journal = _build_autonomy_controller_with_risk(
+        environment="live",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    signal = _with_approved_runtime_canary(_opportunity_autonomy_signal("live_autonomous"))
+    result = controller.process_signals([signal])
+    assert len(result) == 1
+    assert len(execution.requests) == 1
+    assert len(risk_engine.last_checks) == 1
+
+
+def test_canary_does_not_block_live_autonomous_legal_close_reduce_risk_without_contract() -> None:
+    risk_engine = DummyRiskEngine()
+    controller, execution, journal = _build_autonomy_controller_with_risk(
+        environment="live",
+        risk_engine=risk_engine,
+        opportunity_shadow_repository=_autonomy_shadow_repository_with_final_outcomes(
+            [9.0, 8.0, 7.0, 6.0, 5.0, 4.0],
+            environment="live",
+            portfolio_id="live-1",
+        ),
+    )
+    correlation_key = "canary-legal-close"
+    controller._opportunity_open_outcomes[correlation_key] = _OpportunityOpenOutcomeTracker(
+        correlation_key=correlation_key,
+        symbol="BTC/USDT",
+        side="BUY",
+        entry_price=100.0,
+        decision_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        entry_quantity=1.0,
+        closed_quantity=0.0,
+        environment_scope="live",
+        portfolio_scope="live-1",
+    )
+    close_signal = _opportunity_autonomy_signal("live_autonomous", side="SELL")
+    close_signal.metadata["exchange"] = "binance"
+    close_signal.metadata["opportunity_shadow_record_key"] = correlation_key
+    result = controller.process_signals([close_signal])
+    assert len(result) == 1
+    assert len(risk_engine.last_checks) >= 1
+    assert execution.requests[-1].side == "SELL"
+    blocked_reasons = {
+        str(dict(event).get("blocking_reason") or "").strip()
+        for event in journal.export()
+        if dict(event).get("event") == "opportunity_autonomy_enforcement"
+        and dict(event).get("status") == "blocked"
+    }
+    assert "accepted_autonomous_canary_contract_missing" not in blocked_reasons
+    assert "accepted_autonomous_canary_contract_report_only" not in blocked_reasons

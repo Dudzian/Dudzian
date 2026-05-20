@@ -75,6 +75,7 @@ except Exception:  # pragma: no cover
 
 # Exchanges commons
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
+from bot_core.runtime.canary_gate import evaluate_runtime_canary_gate
 from bot_core.runtime.decision_envelope import build_decision_envelope_view
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.runtime.opportunity_runtime_controls import get_opportunity_runtime_controls
@@ -3840,6 +3841,84 @@ class TradingController:
                 metadata={
                     "reason": pending_close_durable_reason,
                     "proxy_correlation_key": correlation_key,
+                },
+            )
+            return None
+        request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        signal_metadata = signal.metadata if isinstance(signal.metadata, Mapping) else {}
+        request_decision_payload = request_metadata.get("opportunity_autonomy_decision")
+        signal_decision_payload = signal_metadata.get("opportunity_autonomy_decision")
+        request_effective_mode = (
+            request_decision_payload.get("effective_mode")
+            if isinstance(request_decision_payload, Mapping)
+            else None
+        )
+        signal_effective_mode = (
+            signal_decision_payload.get("effective_mode")
+            if isinstance(signal_decision_payload, Mapping)
+            else None
+        )
+        mode_value = (
+            str(
+                request_effective_mode
+                or signal_effective_mode
+                or request_metadata.get("opportunity_autonomy_mode")
+                or signal_metadata.get("opportunity_autonomy_mode")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
+        canary_contract = request_metadata.get("canary_contract")
+        if canary_contract is None:
+            canary_contract = signal_metadata.get("canary_contract")
+        exchange_value = (
+            request_metadata.get("exchange")
+            or signal_metadata.get("exchange")
+            or getattr(request, "exchange", None)
+            or ""
+        )
+        order_notional: float | None = None
+        try:
+            tentative_notional = float(request.quantity) * float(request.price)
+            if math.isfinite(tentative_notional):
+                order_notional = tentative_notional
+        except (TypeError, ValueError):
+            order_notional = None
+        is_reduce_risk = (
+            existing_open_tracker is not None
+            and self._is_closing_side(str(existing_open_tracker.side), str(request.side))
+            and self._matches_current_open_tracker_scope(
+                correlation_key=correlation_key,
+                symbol=str(request.symbol),
+                tracker=existing_open_tracker,
+            )
+        )
+        canary_decision = evaluate_runtime_canary_gate(
+            canary_contract=canary_contract if isinstance(canary_contract, Mapping) else None,
+            mode=mode_value,
+            exchange=str(exchange_value),
+            symbol=str(request.symbol),
+            order_notional=order_notional,
+            position_notional=None,
+            is_reduce_risk=is_reduce_risk,
+        )
+        if not canary_decision.allowed:
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "skipped"})
+            self._record_decision_event(
+                "opportunity_autonomy_enforcement",
+                signal=signal,
+                request=request,
+                status="blocked",
+                metadata={
+                    "blocking_reason": str(canary_decision.blocking_reason or ""),
+                    "autonomy_decisive_stage": "canary_contract",
+                    "autonomy_decisive_reason": str(canary_decision.blocking_reason or ""),
+                    "canary_status": str(canary_decision.canary_status or ""),
+                    "canary_profile_id": str(canary_decision.canary_profile_id or ""),
+                    "canary_contract_snapshot": dict(canary_decision.snapshot),
+                    "execution_permission": "blocked",
+                    "autonomous_execution_allowed": False,
                 },
             )
             return None

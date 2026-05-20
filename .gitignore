@@ -27,3 +27,8 @@ logs/ui/updates/offline_update.log
 logs/ui_telemetry_alerts.jsonl
 
 tmp/
+
+# Local developer environment
+.python-version
+.venv311/
+bot_core/logs/
