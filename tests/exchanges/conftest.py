@@ -47,11 +47,12 @@ def allow_long_poll_in_exchange_tests(monkeypatch: pytest.MonkeyPatch) -> Iterat
         try:
             from bot_core.exchanges.streaming import LocalLongPollStream
         except Exception:
-            return
+            LocalLongPollStream = None
 
-        # best-effort: nie wieszaj suite, ale daj chwilę na join.
-        LocalLongPollStream.close_all_active(timeout=5.0)
+        if LocalLongPollStream is not None:
+            # best-effort: nie wieszaj suite, ale daj chwilę na join.
+            LocalLongPollStream.close_all_active(timeout=5.0)
 
-        # domknij router ponownie po stream-close (rzadkie, ale możliwe referencje wtórne).
-        if LiveExecutionRouter is not None:
-            LiveExecutionRouter.close_all_active()
+            # domknij router ponownie po stream-close (rzadkie, ale możliwe referencje wtórne).
+            if LiveExecutionRouter is not None:
+                LiveExecutionRouter.close_all_active()
