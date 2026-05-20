@@ -7,7 +7,7 @@ from pathlib import Path
 pytest_plugins = ("pytester",)
 
 
-def test_cov_stub_counts_unexecuted_files(pytester):
+def test_cov_stub_counts_unexecuted_files(pytester, monkeypatch):
     package = pytester.mkpydir("sample_pkg")
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "a.py").write_text(
@@ -37,6 +37,7 @@ def test_foo():
 
     repo_root = Path(__file__).resolve().parent.parent
     pytester.makeini(f"[pytest]\npythonpath = {repo_root}\n")
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
     result = pytester.runpytest_subprocess(
         "-p",
         "pytest_cov_stub",
