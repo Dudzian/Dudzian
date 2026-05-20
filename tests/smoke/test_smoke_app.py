@@ -60,11 +60,14 @@ def test_optional_qt_loading() -> None:
         pytest.skip("Brak biblioteki PySide6")
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    app = QCoreApplication([])
+    existing_app = QCoreApplication.instance()
+    created_app = existing_app is None
+    app = existing_app or QCoreApplication([])
     engine = QQmlApplicationEngine()
     engine.load(Path("ui/qml/onboarding/LicenseWizard.qml"))
     if not engine.rootObjects():
         errors = [str(err.toString()) for err in getattr(engine, "errors", lambda: [])()]
         pytest.skip("Brak wsparcia QtQuick/GL w środowisku testowym: %s" % (errors or "unknown"))
-    # Zakończ aplikację, by nie blokować testów.
-    app.quit()
+    # Zakończ aplikację tylko jeśli ten test utworzył nową instancję.
+    if created_app:
+        app.quit()
