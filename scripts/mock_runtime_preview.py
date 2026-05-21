@@ -67,6 +67,7 @@ def _emit(payload: dict[str, Any], as_json: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     config_path = Path(args.config)
+    simulated_max_sleep_seconds = min(args.duration_seconds, 1)
 
     if args.mode == "live":
         payload = {
@@ -76,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
             "config": str(config_path),
             "runtime_preview_started": False,
             "bounded_duration_seconds": args.duration_seconds,
+            "simulated_lifecycle_max_sleep_seconds": simulated_max_sleep_seconds,
             "exchange_io": "disabled",
             "order_execution": "disabled",
             "api_keys_required": False,
@@ -95,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
             "runtime_preview_started": False,
             "bounded_duration_seconds": args.duration_seconds,
             "max_duration_seconds": _MAX_DURATION_SECONDS,
+            "simulated_lifecycle_max_sleep_seconds": simulated_max_sleep_seconds,
             "exchange_io": "disabled",
             "order_execution": "disabled",
             "api_keys_required": False,
@@ -113,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             "config": str(config_path),
             "runtime_preview_started": False,
             "bounded_duration_seconds": args.duration_seconds,
+            "simulated_lifecycle_max_sleep_seconds": simulated_max_sleep_seconds,
             "exchange_io": "disabled",
             "order_execution": "disabled",
             "api_keys_required": False,
@@ -132,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             "config": str(config_path),
             "runtime_preview_started": False,
             "bounded_duration_seconds": args.duration_seconds,
+            "simulated_lifecycle_max_sleep_seconds": simulated_max_sleep_seconds,
             "exchange_io": "disabled",
             "order_execution": "disabled",
             "api_keys_required": False,
@@ -151,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         "mock_offline_preview_finished",
     ]
     # bounded mock lifecycle only; no runtime start, no exchange io
-    time.sleep(min(args.duration_seconds, 1))
+    time.sleep(simulated_max_sleep_seconds)
     elapsed = round(time.monotonic() - started_at, 3)
 
     payload = {
@@ -160,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         "config": str(config_path),
         "runtime_preview_started": True,
         "bounded_duration_seconds": args.duration_seconds,
+        "simulated_lifecycle_max_sleep_seconds": simulated_max_sleep_seconds,
         "preview_elapsed_seconds": elapsed,
         "preview_kind": "controlled_mock_preview",
         "exchange_io": "disabled",

@@ -47,6 +47,7 @@ def test_mock_runtime_preview_safe_config_json() -> None:
     assert payload["api_keys_required"] is False
     assert payload["live_mode_allowed"] is False
     assert payload["runtime_preview_started"] is True
+    assert payload["simulated_lifecycle_max_sleep_seconds"] == 1
     assert payload["issues"] == []
 
 
@@ -82,6 +83,22 @@ def test_mock_runtime_preview_rejects_unsafe_execution_default_mode(tmp_path: Pa
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert "unsafe_config:execution.default_mode" in payload["issues"]
+
+
+def test_mock_runtime_preview_rejects_disabled_paper_mode(tmp_path: Path) -> None:
+    cfg = _mutated_config(tmp_path, "trading.enable_paper_mode", False)
+    result = _run("--mode", "demo", "--config", str(cfg), "--duration-seconds", "5", "--json")
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert "unsafe_config:trading.enable_paper_mode" in payload["issues"]
+
+
+def test_mock_runtime_preview_rejects_disabled_force_paper_when_offline(tmp_path: Path) -> None:
+    cfg = _mutated_config(tmp_path, "execution.force_paper_when_offline", False)
+    result = _run("--mode", "demo", "--config", str(cfg), "--duration-seconds", "5", "--json")
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert "unsafe_config:execution.force_paper_when_offline" in payload["issues"]
 
 
 def test_mock_runtime_preview_rejects_duration_above_bound() -> None:
