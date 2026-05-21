@@ -28,6 +28,12 @@ def test_demo_paper_precheck_passes_for_repo_config() -> None:
     assert "OK:" in result.stdout
 
 
+def test_demo_paper_precheck_stdout_is_cp1252_encodable() -> None:
+    result = _run("--config", str(DEMO_CONFIG))
+    assert result.returncode == 0, result.stderr or result.stdout
+    result.stdout.encode("cp1252")
+
+
 def test_demo_paper_precheck_fails_for_live_enabled(tmp_path: Path) -> None:
     payload = yaml.safe_load(DEMO_CONFIG.read_text(encoding="utf-8"))
     payload["execution"]["live"]["enabled"] = True

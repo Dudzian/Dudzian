@@ -84,9 +84,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(response, ensure_ascii=False, sort_keys=True))
     elif status == "ok":
-        print(f"OK: {config_path} spełnia wymagania safety dla demo/paper")
+        print(f"OK: {config_path} satisfies demo/paper safety requirements")
     else:
-        print("ERROR: wykryto niebezpieczne flagi demo/paper:")
+        print("ERROR: unsafe demo/paper flags detected:")
         for issue in issues:
             print(f" - {issue}")
 
