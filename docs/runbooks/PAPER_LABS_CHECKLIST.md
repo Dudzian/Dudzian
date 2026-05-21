@@ -64,6 +64,7 @@ Cel: uruchomić lokalny scenariusz paper/demo/offline bez realnych zleceń i bez
 
    ```bash
    python scripts/demo_paper_precheck.py --config config/e2e/demo_paper.yml --json
+   python scripts/run_local_bot.py --mode demo --config config/e2e/demo_paper.yml --preview-plan
    python scripts/paper_precheck.py --config config/core.yaml --environment binance --json
    ```
 
@@ -88,6 +89,19 @@ Cel: uruchomić lokalny scenariusz paper/demo/offline bez realnych zleceń i bez
 - Nie uruchamiaj `--mode live`.
 - Nie podawaj konfiguracji środowiska live ani produkcyjnych exchange credentials.
 - Jeśli komenda może łączyć się z live exchange albo składać realne ordery, nie uruchamiaj jej bez jednoznacznego dry-run/paper guarda.
+
+## Safe local runtime preview boundary
+
+- Granica operatorska preview to **wyłącznie** komendy precheck/preview-plan:
+  - `python scripts/demo_paper_precheck.py --config config/e2e/demo_paper.yml --json`
+  - `python scripts/run_local_bot.py --mode demo --config config/e2e/demo_paper.yml --preview-plan`
+- `--preview-plan` nie uruchamia runtime, nie łączy się z exchange i nie wykonuje zleceń.
+- Preview boundary to dry-run/plan, **nie** live trading.
+- Zakazy:
+  - nie używać `--mode live`,
+  - nie używać realnych API keys,
+  - nie używać konfiguracji live exchange,
+  - nie uruchamiać runtime bez wcześniejszego precheck + preview-plan.
 
 6. **Cleanup po testach/audycie**
 
