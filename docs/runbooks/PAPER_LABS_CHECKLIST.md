@@ -113,3 +113,32 @@ Cel: uruchomić lokalny scenariusz paper/demo/offline bez realnych zleceń i bez
    git clean -fd -- reports/exchanges/signal_quality || true
    rm -f test-results/qml/timeline.ndjson
    ```
+
+
+## Controlled mock/offline runtime preview
+
+1. Config safety
+
+   ```bash
+   python scripts/demo_paper_precheck.py --config config/e2e/demo_paper.yml --json
+   ```
+
+2. Preview plan safety gate
+
+   ```bash
+   python scripts/run_local_bot.py --mode demo --config config/e2e/demo_paper.yml --preview-plan
+   ```
+
+3. Bounded mock/offline runtime preview
+
+   ```bash
+   python scripts/mock_runtime_preview.py --mode demo --config config/e2e/demo_paper.yml --duration-seconds 5 --json
+   ```
+
+Restrictions:
+- do not use `--mode live`,
+- do not use real API keys,
+- do not use live exchange config,
+- do not execute real orders.
+
+This command is still not live trading and not real exchange paper trading.
