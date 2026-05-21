@@ -142,3 +142,20 @@ Restrictions:
 - do not execute real orders.
 
 This command is still not live trading and not real exchange paper trading.
+
+
+## Controller-backed mock preview
+
+```bash
+python scripts/controller_mock_preview.py --mode demo --config config/e2e/demo_paper.yml --max-signals 1 --json
+```
+
+This command executes a bounded controller-backed mock preview path (`TradingController/process_signals`) on synthetic signals.
+
+Restrictions:
+- no live exchange/API I/O,
+- no API keys required,
+- no real order submission,
+- no production runtime loop startup.
+
+This is still not live trading and not real exchange paper trading.
