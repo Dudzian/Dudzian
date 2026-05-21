@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final, Mapping, Optional, Sequence, cast
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -57,6 +59,75 @@ class _CloudFallbackSentinel:
 
 
 CLOUD_FALLBACK: Final[_CloudFallbackSentinel] = _CloudFallbackSentinel()
+
+
+def _get_nested_mapping_value(payload: Mapping[str, Any], dotted_path: str) -> Any:
+    current: Any = payload
+    for segment in dotted_path.split("."):
+        if not isinstance(current, Mapping) or segment not in current:
+            return None
+        current = current[segment]
+    return current
+
+
+def _build_preview_plan(args: argparse.Namespace, config_path: Path) -> tuple[int, dict[str, Any]]:
+    if args.mode == "live":
+        return 2, {
+            "status": "blocked",
+            "reason": "preview_plan_forbids_live_mode",
+            "mode": args.mode,
+            "config_path": str(config_path),
+            "exchange_io": "disabled",
+            "order_execution": "disabled",
+            "api_keys_required": False,
+        }
+
+    loaded: Any = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, Mapping):
+        return 2, {
+            "status": "blocked",
+            "reason": "config_not_mapping",
+            "mode": args.mode,
+            "config_path": str(config_path),
+            "exchange_io": "disabled",
+            "order_execution": "disabled",
+            "api_keys_required": False,
+        }
+
+    checks = {
+        "trading.enable_paper_mode": _get_nested_mapping_value(loaded, "trading.enable_paper_mode"),
+        "trading.enable_live_mode": _get_nested_mapping_value(loaded, "trading.enable_live_mode"),
+        "execution.default_mode": _get_nested_mapping_value(loaded, "execution.default_mode"),
+        "execution.force_paper_when_offline": _get_nested_mapping_value(
+            loaded, "execution.force_paper_when_offline"
+        ),
+        "execution.live.enabled": _get_nested_mapping_value(loaded, "execution.live.enabled"),
+    }
+    issues: list[str] = []
+    if checks["trading.enable_paper_mode"] is not True:
+        issues.append("unsafe_config:trading.enable_paper_mode")
+    if checks["trading.enable_live_mode"] is not False:
+        issues.append("unsafe_config:trading.enable_live_mode")
+    if checks["execution.default_mode"] != "paper":
+        issues.append("unsafe_config:execution.default_mode")
+    if checks["execution.force_paper_when_offline"] is not True:
+        issues.append("unsafe_config:execution.force_paper_when_offline")
+    if checks["execution.live.enabled"] is not False:
+        issues.append("unsafe_config:execution.live.enabled")
+
+    return (0 if not issues else 2), {
+        "status": "ok" if not issues else "blocked",
+        "mode": args.mode,
+        "config_path": str(config_path),
+        "entrypoint": args.entrypoint,
+        "exchange_io": "disabled",
+        "order_execution": "disabled",
+        "api_keys_required": False,
+        "runtime_started": False,
+        "checks": checks,
+        "issues": issues,
+        "note": "preview_plan_only_no_runtime_no_exchange_no_orders",
+    }
 
 
 def _configure_logging(level: str) -> None:
@@ -497,6 +568,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default="config/cloud/client.yaml",
         help="Ścieżka do config/cloud/client.yaml dla trybu cloud",
     )
+    parser.add_argument(
+        "--preview-plan",
+        action="store_true",
+        help=(
+            "Tryb planu bezpieczeństwa: nie uruchamia runtime, nie łączy z exchange "
+            "i nie wykonuje zleceń."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -508,6 +587,11 @@ def main(argv: list[str] | None = None) -> int:
     if not config_path.exists():
         _LOGGER.error("Nie odnaleziono pliku konfiguracji runtime: %s", config_path)
         return 2
+
+    if args.preview_plan:
+        exit_code, payload = _build_preview_plan(args, config_path)
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return exit_code
 
     state_manager = RuntimeStateManager(args.state_dir)
     report_root = Path(args.report_dir).expanduser().resolve()
