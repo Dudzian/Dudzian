@@ -589,9 +589,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.preview_plan:
-        exit_code, payload = _build_preview_plan(args, config_path)
+        preview_exit_code, payload = _build_preview_plan(args, config_path)
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        return exit_code
+        return preview_exit_code
 
     state_manager = RuntimeStateManager(args.state_dir)
     report_root = Path(args.report_dir).expanduser().resolve()
