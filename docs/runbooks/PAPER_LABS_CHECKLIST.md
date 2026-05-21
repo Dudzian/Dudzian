@@ -60,13 +60,15 @@ Cel: uruchomić lokalny scenariusz paper/demo/offline bez realnych zleceń i bez
    python -m pytest -q tests/docs/test_demo_paper_startup_contract.py -vv
    ```
 
-3. **Preflight paper-only (bez uruchamiania live runtime)**
+3. **Preflight config safety + paper-only (bez uruchamiania live runtime)**
 
    ```bash
-   python scripts/paper_precheck.py --help
+   python scripts/demo_paper_precheck.py --config config/e2e/demo_paper.yml --json
+   python scripts/paper_precheck.py --config config/core.yaml --environment binance --json
    ```
 
-   > Uwaga: `paper_precheck.py` oczekuje `CoreConfig` (`config/core.yaml`), więc nie należy przekazywać bezpośrednio `config/e2e/demo_paper.yml` jako `--config` bez warstwy mapowania.
+   > `config/e2e/demo_paper.yml` to bezpieczny profil e2e demo/paper (overlay), a nie pełny `CoreConfig`.
+   > `paper_precheck.py` oczekuje `CoreConfig` i środowiska z `core.environments` (np. `binance`), więc `--config config/e2e/demo_paper.yml --environment binance_paper` nie jest poprawnym wejściem.
 
 4. **Smoke i sanity**
 
