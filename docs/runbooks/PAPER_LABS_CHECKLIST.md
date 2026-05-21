@@ -41,3 +41,59 @@ zweryfikowane w ramach scenariuszy baseline oraz stres testów flash crash / dry
   pełnych danych historycznych.
 - W przypadku wykrycia naruszeń (breach/stress failure) należy wygenerować task w systemie ticketowym i zablokować przejście do etapu live.
 - Raporty powinny być przechowywane co najmniej 730 dni w repozytorium audytowym (zgodnie z runbookiem OEM Licensing).
+
+
+## Safe local paper/demo startup recipe
+
+Cel: uruchomić lokalny scenariusz paper/demo/offline bez realnych zleceń i bez realnych kluczy API.
+
+1. **Przygotowanie środowiska**
+
+   ```bash
+   python -m pip install -U pip setuptools wheel
+   python -m pip install -e ".[dev]"
+   ```
+
+2. **Walidacja bezpiecznego configu demo/paper**
+
+   ```bash
+   python -m pytest -q tests/docs/test_demo_paper_startup_contract.py -vv
+   ```
+
+3. **Preflight paper-only (bez uruchamiania live runtime)**
+
+   ```bash
+   python scripts/paper_precheck.py --help
+   ```
+
+   > Uwaga: `paper_precheck.py` oczekuje `CoreConfig` (`config/core.yaml`), więc nie należy przekazywać bezpośrednio `config/e2e/demo_paper.yml` jako `--config` bez warstwy mapowania.
+
+4. **Smoke i sanity**
+
+   ```bash
+   python -m pytest -q tests/test_trading_controller.py -k "paper or demo or dry or sandbox or mock or environment or runtime" -vv --maxfail=20
+   python -m pytest -q tests/runtime -k "paper or demo or dry or sandbox or runtime or config" -vv --maxfail=20
+   python -m pytest -q tests/ui -k "runtime or demo or feed or snapshot" -vv --maxfail=20
+   python scripts/ci/run_autonomy_matrix.py
+   python scripts/ci/run_risk_execution_matrix.py
+   python scripts/ci/run_observability_matrix.py
+   python scripts/ci/run_recovery_matrix.py
+   ```
+
+5. **Bezpieczne granice (zakazy)**
+
+- Nie używaj realnych kluczy API i nie podawaj sekretów live.
+- Nie uruchamiaj `--mode live`.
+- Nie podawaj konfiguracji środowiska live ani produkcyjnych exchange credentials.
+- Jeśli komenda może łączyć się z live exchange albo składać realne ordery, nie uruchamiaj jej bez jednoznacznego dry-run/paper guarda.
+
+6. **Cleanup po testach/audycie**
+
+   ```bash
+   rm -rf bot_core/logs
+   git checkout -- reports/ci/decision_feed_metrics.json || true
+   git checkout -- reports/exchanges/signal_quality || true
+   rm -f trading.db
+   git clean -fd -- reports/exchanges/signal_quality || true
+   rm -f test-results/qml/timeline.ndjson
+   ```
