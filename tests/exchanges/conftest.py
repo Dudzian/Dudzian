@@ -56,3 +56,12 @@ def allow_long_poll_in_exchange_tests(monkeypatch: pytest.MonkeyPatch) -> Iterat
             # domknij router ponownie po stream-close (rzadkie, ale możliwe referencje wtórne).
             if LiveExecutionRouter is not None:
                 LiveExecutionRouter.close_all_active()
+
+        try:
+            from bot_core.database.manager import DatabaseManager
+        except Exception:
+            DatabaseManager = None
+
+        if DatabaseManager is not None:
+            DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+            DatabaseManager.shutdown_background_loop(timeout=5.0)
