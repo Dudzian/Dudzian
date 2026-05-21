@@ -32,3 +32,11 @@ tmp/
 .python-version
 .venv311/
 bot_core/logs/
+
+# Runtime/test generated artifacts
+/trading.db
+*.sqlite
+*.sqlite3
+/logs/security_admin.log
+/var/runtime/
+/var/observability/
