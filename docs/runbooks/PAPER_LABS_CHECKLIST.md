@@ -198,3 +198,14 @@ It is not live trading, not real exchange paper trading, does not use API keys, 
 
 Paper adapter readiness preflight to statyczna walidacja kontraktu (no exchange I/O, no orders, no API keys); to nie jest start real paper runtime ani live trading.
 Mock preview -> paper adapter readiness -> dopiero później paper/sandbox runtime smoke.
+
+## Bounded paper runtime dry-run preflight
+
+```bash
+python scripts/paper_runtime_dry_run.py --mode demo --config config/e2e/demo_paper.yml --duration-seconds 5 --max-signals 1 --json
+```
+
+Bounded wrapper runs preview-plan + mock runtime preview + controller mock preview.
+No live mode, no real API keys, no secret/keychain/env secret value reads, no exchange/API I/O,
+no real order submission, no production runtime loop.
+This is not real paper trading and not sandbox/testnet trading.
