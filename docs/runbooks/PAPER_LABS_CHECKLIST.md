@@ -179,8 +179,9 @@ This is not sandbox/testnet trading; it is only a readiness gate before future s
 python scripts/operator_preview_bundle.py --mode demo --config config/e2e/demo_paper.yml --duration-seconds 5 --max-signals 1 --json
 ```
 
-This command runs the full safe operator preview package chain (precheck -> paper adapter readiness -> preview-plan -> mock runtime preview -> controller-backed mock preview).
+This command runs the full safe operator preview package chain (precheck -> paper adapter readiness -> sandbox/testnet static readiness -> preview-plan -> mock runtime preview -> controller-backed mock preview).
 Bundle includes a paper adapter readiness preflight before preview-plan/mock/controller steps.
+Bundle includes sandbox/testnet static readiness after paper adapter readiness and before preview-plan/mock/controller steps.
 It is not live trading, not real exchange paper trading, does not use API keys, does not submit real orders, and blocks live mode.
 
 
