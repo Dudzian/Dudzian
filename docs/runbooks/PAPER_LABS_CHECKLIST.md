@@ -163,6 +163,16 @@ Restrictions:
 This is still not live trading and not real exchange paper trading.
 
 
+
+## Sandbox/testnet static readiness preflight
+
+```bash
+python scripts/sandbox_testnet_readiness.py --config config/e2e/demo_paper.yml --environment binance_paper --json
+```
+
+Static/config-only gate: no exchange/API I/O, no API keys, no secrets read, no order submission, no runtime loop.
+This is not sandbox/testnet trading; it is only a readiness gate before future sandbox/testnet stages.
+
 ## One-command operator preview bundle
 
 ```bash
