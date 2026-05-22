@@ -97,3 +97,73 @@ def test_controller_mock_preview_output_is_json_parseable() -> None:
     assert result.returncode == 0
     payload = json.loads(result.stdout)
     assert payload["safety_contract_version"] == "controller_mock_preview.v1"
+
+
+def test_controller_mock_preview_invalid_side_blocked() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--max-signals",
+        "1",
+        "--side",
+        "HOLD",
+        "--json",
+    )
+    assert result.returncode == 2
+    assert "invalid choice" in result.stderr
+
+
+def test_controller_mock_preview_quantity_zero_blocked() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--max-signals",
+        "1",
+        "--quantity",
+        "0",
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["reason"] == "controller_mock_preview_invalid_quantity"
+    assert "invalid_quantity" in payload["issues"]
+
+
+def test_controller_mock_preview_quantity_negative_blocked() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--max-signals",
+        "1",
+        "--quantity",
+        "-1",
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["reason"] == "controller_mock_preview_invalid_quantity"
+    assert "invalid_quantity" in payload["issues"]
+
+
+def test_controller_mock_preview_blank_symbol_blocked() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--max-signals",
+        "1",
+        "--symbol",
+        "   ",
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["reason"] == "controller_mock_preview_invalid_symbol"
+    assert "invalid_symbol" in payload["issues"]

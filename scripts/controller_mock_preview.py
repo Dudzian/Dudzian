@@ -104,7 +104,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mode", choices=("demo", "paper", "live"), default="demo")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--symbol", default="BTC/USDT")
-    parser.add_argument("--side", default="BUY")
+    parser.add_argument("--side", choices=("BUY", "SELL"), default="BUY")
     parser.add_argument("--quantity", type=float, default=0.01)
     parser.add_argument("--max-signals", type=int, default=_DEFAULT_MAX_SIGNALS)
     return parser.parse_args(argv)
@@ -177,6 +177,29 @@ def main(argv: list[str] | None = None) -> int:
                 args,
                 reason="max_signals_out_of_bounds",
                 issues=["max_signals_out_of_bounds"],
+            ),
+            args.json,
+        )
+        return 2
+
+    if args.quantity <= 0:
+        _emit(
+            _blocked_payload(
+                args,
+                reason="controller_mock_preview_invalid_quantity",
+                issues=["invalid_quantity"],
+            ),
+            args.json,
+        )
+        return 2
+
+    args.symbol = args.symbol.strip()
+    if not args.symbol:
+        _emit(
+            _blocked_payload(
+                args,
+                reason="controller_mock_preview_invalid_symbol",
+                issues=["invalid_symbol"],
             ),
             args.json,
         )
