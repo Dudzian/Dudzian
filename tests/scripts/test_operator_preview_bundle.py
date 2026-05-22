@@ -38,19 +38,31 @@ def test_operator_preview_bundle_safe_demo_json() -> None:
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["mode"] == "demo"
-    assert len(payload["steps"]) == 5
-    assert payload["summary"]["steps_total"] == 5
-    assert payload["summary"]["steps_passed"] == 5
+    assert len(payload["steps"]) == 6
+    assert payload["summary"]["steps_total"] == 6
+    assert payload["summary"]["steps_passed"] == 6
     assert payload["summary"]["real_orders_submitted"] is False
     assert payload["summary"]["exchange_io"] == "disabled"
     assert payload["summary"]["api_keys_required"] is False
     assert payload["summary"]["runtime_loop_started"] is False
     assert payload["summary"]["controller_backed_preview"] is True
     assert payload["issues"] == []
-    readiness_step = payload["steps"][1]
-    assert readiness_step["name"] == "paper_adapter_readiness"
+    adapter_step = payload["steps"][1]
+    assert adapter_step["name"] == "paper_adapter_readiness"
+    assert adapter_step["status"] == "ok"
+    assert adapter_step["payload"]["adapter_readiness"]["enabled"] is True
+    readiness_step = payload["steps"][2]
+    assert readiness_step["name"] == "sandbox_testnet_readiness"
     assert readiness_step["status"] == "ok"
-    assert readiness_step["payload"]["adapter_readiness"]["enabled"] is True
+    assert readiness_step["payload"]["status"] == "ok"
+    readiness = readiness_step["payload"]["sandbox_testnet_readiness"]
+    assert readiness["static_only"] is True
+    assert readiness["exchange_io"] == "disabled"
+    assert readiness["order_submission"] == "disabled"
+    assert readiness["secrets_read"] is False
+    assert readiness["api_keys_required"] is False
+    assert readiness["runtime_loop_started"] is False
+    assert readiness["live_mode_allowed"] is False
     assert payload["safety_contract_version"] == "operator_preview_bundle.v1"
 
 
@@ -89,6 +101,7 @@ def test_operator_preview_bundle_child_payload_sanity() -> None:
     assert names == [
         "demo_paper_precheck",
         "paper_adapter_readiness",
+        "sandbox_testnet_readiness",
         "preview_plan",
         "mock_runtime_preview",
         "controller_mock_preview",
@@ -115,18 +128,19 @@ def test_operator_preview_bundle_controller_blocked_stops_chain() -> None:
     payload = json.loads(result.stdout)
 
     assert payload["failed_step"] == "controller_mock_preview"
-    assert len(payload["steps"]) == 5
-    assert payload["summary"]["steps_passed"] == 4
+    assert len(payload["steps"]) == 6
+    assert payload["summary"]["steps_passed"] == 5
     assert any("step_failed:controller_mock_preview" in issue for issue in payload["issues"])
-    assert [step["name"] for step in payload["steps"][:4]] == [
+    assert [step["name"] for step in payload["steps"][:5]] == [
         "demo_paper_precheck",
         "paper_adapter_readiness",
+        "sandbox_testnet_readiness",
         "preview_plan",
         "mock_runtime_preview",
     ]
-    assert all(step["exit_code"] == 0 for step in payload["steps"][:4])
-    assert payload["steps"][4]["name"] == "controller_mock_preview"
-    assert payload["steps"][4]["exit_code"] == 2
+    assert all(step["exit_code"] == 0 for step in payload["steps"][:5])
+    assert payload["steps"][5]["name"] == "controller_mock_preview"
+    assert payload["steps"][5]["exit_code"] == 2
 
 
 def test_operator_preview_bundle_mock_duration_blocked_stops_before_controller() -> None:
@@ -148,10 +162,11 @@ def test_operator_preview_bundle_mock_duration_blocked_stops_before_controller()
     assert [step["name"] for step in payload["steps"]] == [
         "demo_paper_precheck",
         "paper_adapter_readiness",
+        "sandbox_testnet_readiness",
         "preview_plan",
         "mock_runtime_preview",
     ]
-    assert payload["summary"]["steps_passed"] == 3
+    assert payload["summary"]["steps_passed"] == 4
 
 
 def test_operator_preview_bundle_no_api_keys_required(monkeypatch) -> None:

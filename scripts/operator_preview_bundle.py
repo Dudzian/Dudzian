@@ -78,6 +78,18 @@ def main(argv: list[str] | None = None) -> int:
             [py, "scripts/paper_adapter_readiness.py", "--config", config, "--json"],
         ),
         (
+            "sandbox_testnet_readiness",
+            [
+                py,
+                "scripts/sandbox_testnet_readiness.py",
+                "--config",
+                config,
+                "--environment",
+                "binance_paper",
+                "--json",
+            ],
+        ),
+        (
             "preview_plan",
             [
                 py,
