@@ -74,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
             [py, "scripts/demo_paper_precheck.py", "--config", config, "--json"],
         ),
         (
+            "paper_adapter_readiness",
+            [py, "scripts/paper_adapter_readiness.py", "--config", config, "--json"],
+        ),
+        (
             "preview_plan",
             [
                 py,
