@@ -160,3 +160,13 @@ Restrictions:
 - no production runtime loop startup.
 
 This is still not live trading and not real exchange paper trading.
+
+
+## One-command operator preview bundle
+
+```bash
+python scripts/operator_preview_bundle.py --mode demo --config config/e2e/demo_paper.yml --duration-seconds 5 --max-signals 1 --json
+```
+
+This command runs the full safe operator preview package chain (precheck -> preview-plan -> mock runtime preview -> controller-backed mock preview).
+It is not live trading, not real exchange paper trading, does not use API keys, does not submit real orders, and blocks live mode.
