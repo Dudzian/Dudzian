@@ -151,6 +151,7 @@ python scripts/controller_mock_preview.py --mode demo --config config/e2e/demo_p
 ```
 
 This command executes a bounded controller-backed mock preview path (`TradingController/process_signals`) on synthetic signals.
+JSON output includes a controller/mock execution outcome summary and safety invariants (`real_orders_submitted=false`).
 
 Restrictions:
 - no live exchange/API I/O,

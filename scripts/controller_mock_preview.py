@@ -67,16 +67,19 @@ class _AllowAllMockRiskEngine(RiskEngine):
 class _RecordingExecutionService(ExecutionService):
     def __init__(self) -> None:
         self.requests: list[OrderRequest] = []
+        self.statuses: list[str] = []
 
     def execute(self, request: OrderRequest, context: ExecutionContext) -> OrderResult:
         self.requests.append(request)
-        return OrderResult(
+        result = OrderResult(
             order_id="controller-mock-preview-order",
             status="filled",
             filled_quantity=request.quantity,
             avg_price=request.price,
             raw_response={"context": dict(context.metadata)},
         )
+        self.statuses.append(result.status)
+        return result
 
     def cancel(self, order_id: str, context: ExecutionContext) -> None:
         del order_id, context
@@ -135,6 +138,13 @@ def _emit(payload: dict[str, Any], as_json: bool) -> None:
 def _blocked_payload(
     args: argparse.Namespace, reason: str, issues: list[str], checks: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    events_observed: list[str] = []
+    safety_invariants = {
+        "exchange_io_disabled": True,
+        "real_orders_submitted": False,
+        "api_keys_required": False,
+        "runtime_loop_started": False,
+    }
     payload: dict[str, Any] = {
         "status": "blocked",
         "reason": reason,
@@ -148,7 +158,16 @@ def _blocked_payload(
         "live_mode_allowed": False,
         "real_orders_submitted": False,
         "runtime_loop_started": False,
-        "events_observed": [],
+        "events_observed": events_observed,
+        "events_observed_count": len(events_observed),
+        "controller_results_count": 0,
+        "controller_result_statuses": [],
+        "mock_execution_requests_count": 0,
+        "mock_execution_statuses": [],
+        "journal_summary": "N/A (controller mock wrapper has no journal export in this stage)",
+        "journal_events_count": None,
+        "journal_event_types": [],
+        "safety_invariants": safety_invariants,
         "issues": issues,
         "safety_contract_version": "controller_mock_preview.v1",
     }
@@ -250,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     signals = [signal for _ in range(args.max_signals)]
     results = controller.process_signals(signals)
 
+    controller_result_statuses = [result.status for result in results]
     payload = {
         "status": "ok",
         "mode": args.mode,
@@ -262,7 +282,21 @@ def main(argv: list[str] | None = None) -> int:
         "live_mode_allowed": False,
         "real_orders_submitted": False,
         "runtime_loop_started": False,
-        "events_observed": [result.status for result in results],
+        "events_observed": controller_result_statuses,
+        "events_observed_count": len(controller_result_statuses),
+        "controller_results_count": len(results),
+        "controller_result_statuses": controller_result_statuses,
+        "mock_execution_requests_count": len(execution.requests),
+        "mock_execution_statuses": list(execution.statuses),
+        "journal_summary": "N/A (controller mock wrapper has no journal export in this stage)",
+        "journal_events_count": None,
+        "journal_event_types": [],
+        "safety_invariants": {
+            "exchange_io_disabled": True,
+            "real_orders_submitted": False,
+            "api_keys_required": False,
+            "runtime_loop_started": False,
+        },
         "issues": [],
         "checks": checks,
         "recorded_mock_requests": len(execution.requests),

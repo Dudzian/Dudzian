@@ -49,6 +49,22 @@ def test_controller_mock_preview_safe_demo_json() -> None:
     assert payload["real_orders_submitted"] is False
     assert payload["runtime_loop_started"] is False
     assert payload["issues"] == []
+    assert payload["controller_results_count"] == 1
+    assert isinstance(payload["controller_result_statuses"], list)
+    assert payload["controller_result_statuses"] == ["filled"]
+    assert isinstance(payload["mock_execution_requests_count"], int)
+    assert payload["mock_execution_requests_count"] == 1
+    assert isinstance(payload["mock_execution_statuses"], list)
+    assert payload["mock_execution_statuses"] == ["filled"]
+    assert isinstance(payload["events_observed_count"], int)
+    assert payload["events_observed_count"] == len(payload["events_observed"])
+    assert payload["journal_summary"].startswith("N/A")
+    assert payload["journal_events_count"] is None
+    assert payload["journal_event_types"] == []
+    assert payload["safety_invariants"]["exchange_io_disabled"] is True
+    assert payload["safety_invariants"]["real_orders_submitted"] is False
+    assert payload["safety_invariants"]["api_keys_required"] is False
+    assert payload["safety_invariants"]["runtime_loop_started"] is False
 
 
 def test_controller_mock_preview_live_mode_blocked() -> None:
