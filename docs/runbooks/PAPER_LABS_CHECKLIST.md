@@ -64,6 +64,7 @@ Cel: uruchomić lokalny scenariusz paper/demo/offline bez realnych zleceń i bez
 
    ```bash
    python scripts/demo_paper_precheck.py --config config/e2e/demo_paper.yml --json
+   python scripts/paper_adapter_readiness.py --config config/e2e/demo_paper.yml --json
    python scripts/run_local_bot.py --mode demo --config config/e2e/demo_paper.yml --preview-plan
    python scripts/paper_precheck.py --config config/core.yaml --environment binance --json
    ```
@@ -170,3 +171,7 @@ python scripts/operator_preview_bundle.py --mode demo --config config/e2e/demo_p
 
 This command runs the full safe operator preview package chain (precheck -> preview-plan -> mock runtime preview -> controller-backed mock preview).
 It is not live trading, not real exchange paper trading, does not use API keys, does not submit real orders, and blocks live mode.
+
+
+Paper adapter readiness preflight to statyczna walidacja kontraktu (no exchange I/O, no orders, no API keys); to nie jest start real paper runtime ani live trading.
+Mock preview -> paper adapter readiness -> dopiero później paper/sandbox runtime smoke.
