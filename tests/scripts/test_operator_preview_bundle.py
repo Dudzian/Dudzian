@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts/operator_preview_bundle.py"
 SAFE_CONFIG = REPO_ROOT / "config/e2e/demo_paper.yml"
@@ -57,6 +59,24 @@ def test_operator_preview_bundle_live_mode_blocked() -> None:
     assert payload["steps"] == []
 
 
+def test_operator_preview_bundle_unsafe_config_stops_at_precheck(tmp_path: Path) -> None:
+    unsafe_config = tmp_path / "unsafe_demo_paper.yml"
+    config_payload = yaml.safe_load(SAFE_CONFIG.read_text(encoding="utf-8"))
+    config_payload.setdefault("execution", {}).setdefault("live", {})["enabled"] = True
+    unsafe_config.write_text(yaml.safe_dump(config_payload, sort_keys=False), encoding="utf-8")
+
+    result = _run("--mode", "demo", "--config", str(unsafe_config), "--json")
+    assert result.returncode in {1, 2}
+
+    payload = json.loads(result.stdout)
+    assert payload["status"] in {"blocked", "error"}
+    assert payload["failed_step"] == "demo_paper_precheck"
+    assert len(payload["steps"]) == 1
+    assert payload["steps"][0]["name"] == "demo_paper_precheck"
+    assert payload["summary"]["steps_passed"] == 0
+    assert any("step_failed:demo_paper_precheck" in issue for issue in payload["issues"])
+
+
 def test_operator_preview_bundle_child_payload_sanity() -> None:
     result = _run("--mode", "demo", "--config", str(SAFE_CONFIG), "--max-signals", "1", "--json")
     assert result.returncode == 0, result.stderr
@@ -72,6 +92,59 @@ def test_operator_preview_bundle_child_payload_sanity() -> None:
     assert controller_payload["real_orders_submitted"] is False
     assert controller_payload["runtime_loop_started"] is False
     assert controller_payload["api_keys_required"] is False
+
+
+def test_operator_preview_bundle_controller_blocked_stops_chain() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "5",
+        "--max-signals",
+        "999",
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+
+    assert payload["failed_step"] == "controller_mock_preview"
+    assert len(payload["steps"]) == 4
+    assert payload["summary"]["steps_passed"] == 3
+    assert any("step_failed:controller_mock_preview" in issue for issue in payload["issues"])
+    assert [step["name"] for step in payload["steps"][:3]] == [
+        "demo_paper_precheck",
+        "preview_plan",
+        "mock_runtime_preview",
+    ]
+    assert all(step["exit_code"] == 0 for step in payload["steps"][:3])
+    assert payload["steps"][3]["name"] == "controller_mock_preview"
+    assert payload["steps"][3]["exit_code"] == 2
+
+
+def test_operator_preview_bundle_mock_duration_blocked_stops_before_controller() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "999",
+        "--max-signals",
+        "1",
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+
+    assert payload["failed_step"] == "mock_runtime_preview"
+    assert [step["name"] for step in payload["steps"]] == [
+        "demo_paper_precheck",
+        "preview_plan",
+        "mock_runtime_preview",
+    ]
+    assert payload["summary"]["steps_passed"] == 2
 
 
 def test_operator_preview_bundle_no_api_keys_required(monkeypatch) -> None:
