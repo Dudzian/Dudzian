@@ -209,3 +209,4 @@ Bounded wrapper runs preview-plan + mock runtime preview + controller mock previ
 No live mode, no real API keys, no secret/keychain/env secret value reads, no exchange/API I/O,
 no real order submission, no production runtime loop.
 This is not real paper trading and not sandbox/testnet trading.
+`paper_runtime_dry_run.py` is a bounded standalone command. Do not nest it into `operator_preview_bundle.py` unless shared `preview-plan` / `mock_runtime_preview` / `controller_mock_preview` steps are split first; otherwise those steps would run twice.
