@@ -90,6 +90,18 @@ def main(argv: list[str] | None = None) -> int:
             ],
         ),
         (
+            "credential_reference_readiness",
+            [
+                py,
+                "scripts/credential_reference_readiness.py",
+                "--config",
+                config,
+                "--environment",
+                "binance_paper",
+                "--json",
+            ],
+        ),
+        (
             "preview_plan",
             [
                 py,
