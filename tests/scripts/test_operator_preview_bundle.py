@@ -38,9 +38,9 @@ def test_operator_preview_bundle_safe_demo_json() -> None:
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["mode"] == "demo"
-    assert len(payload["steps"]) == 6
-    assert payload["summary"]["steps_total"] == 6
-    assert payload["summary"]["steps_passed"] == 6
+    assert len(payload["steps"]) == 7
+    assert payload["summary"]["steps_total"] == 7
+    assert payload["summary"]["steps_passed"] == 7
     assert payload["summary"]["real_orders_submitted"] is False
     assert payload["summary"]["exchange_io"] == "disabled"
     assert payload["summary"]["api_keys_required"] is False
@@ -63,6 +63,21 @@ def test_operator_preview_bundle_safe_demo_json() -> None:
     assert readiness["api_keys_required"] is False
     assert readiness["runtime_loop_started"] is False
     assert readiness["live_mode_allowed"] is False
+    credential_step = payload["steps"][3]
+    assert credential_step["name"] == "credential_reference_readiness"
+    assert credential_step["status"] == "ok"
+    assert credential_step["payload"]["status"] == "ok"
+    credential_readiness = credential_step["payload"]["credential_reference_readiness"]
+    assert credential_readiness["static_only"] is True
+    assert credential_readiness["secrets_read"] is False
+    assert credential_readiness["keychain_read"] is False
+    assert credential_readiness["env_values_read"] is False
+    assert credential_readiness["credential_values_read"] is False
+    assert credential_readiness["api_keys_required"] is False
+    assert credential_readiness["exchange_io"] == "disabled"
+    assert credential_readiness["order_submission"] == "disabled"
+    assert credential_readiness["runtime_loop_started"] is False
+    assert credential_readiness["live_mode_allowed"] is False
     assert payload["safety_contract_version"] == "operator_preview_bundle.v1"
 
 
@@ -102,6 +117,7 @@ def test_operator_preview_bundle_child_payload_sanity() -> None:
         "demo_paper_precheck",
         "paper_adapter_readiness",
         "sandbox_testnet_readiness",
+        "credential_reference_readiness",
         "preview_plan",
         "mock_runtime_preview",
         "controller_mock_preview",
@@ -128,19 +144,20 @@ def test_operator_preview_bundle_controller_blocked_stops_chain() -> None:
     payload = json.loads(result.stdout)
 
     assert payload["failed_step"] == "controller_mock_preview"
-    assert len(payload["steps"]) == 6
-    assert payload["summary"]["steps_passed"] == 5
+    assert len(payload["steps"]) == 7
+    assert payload["summary"]["steps_passed"] == 6
     assert any("step_failed:controller_mock_preview" in issue for issue in payload["issues"])
-    assert [step["name"] for step in payload["steps"][:5]] == [
+    assert [step["name"] for step in payload["steps"][:6]] == [
         "demo_paper_precheck",
         "paper_adapter_readiness",
         "sandbox_testnet_readiness",
+        "credential_reference_readiness",
         "preview_plan",
         "mock_runtime_preview",
     ]
-    assert all(step["exit_code"] == 0 for step in payload["steps"][:5])
-    assert payload["steps"][5]["name"] == "controller_mock_preview"
-    assert payload["steps"][5]["exit_code"] == 2
+    assert all(step["exit_code"] == 0 for step in payload["steps"][:6])
+    assert payload["steps"][6]["name"] == "controller_mock_preview"
+    assert payload["steps"][6]["exit_code"] == 2
 
 
 def test_operator_preview_bundle_mock_duration_blocked_stops_before_controller() -> None:
@@ -163,10 +180,36 @@ def test_operator_preview_bundle_mock_duration_blocked_stops_before_controller()
         "demo_paper_precheck",
         "paper_adapter_readiness",
         "sandbox_testnet_readiness",
+        "credential_reference_readiness",
         "preview_plan",
         "mock_runtime_preview",
     ]
-    assert payload["summary"]["steps_passed"] == 4
+    assert payload["summary"]["steps_passed"] == 5
+
+
+def test_operator_preview_bundle_inline_secret_blocked_at_credential_step(tmp_path: Path) -> None:
+    inline_config = tmp_path / "inline_secret_demo_paper.yml"
+    config_payload = yaml.safe_load(SAFE_CONFIG.read_text(encoding="utf-8"))
+    config_payload.setdefault("credentials", {})["api_key"] = "REAL_VALUE_SHOULD_NOT_BE_INLINE"
+    inline_config.write_text(yaml.safe_dump(config_payload, sort_keys=False), encoding="utf-8")
+
+    result = _run("--mode", "demo", "--config", str(inline_config), "--json")
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+
+    assert payload["status"] == "blocked"
+    assert payload["failed_step"] == "credential_reference_readiness"
+    assert len(payload["steps"]) == 4
+    assert [step["name"] for step in payload["steps"][:3]] == [
+        "demo_paper_precheck",
+        "paper_adapter_readiness",
+        "sandbox_testnet_readiness",
+    ]
+    assert all(step["exit_code"] == 0 for step in payload["steps"][:3])
+    assert payload["steps"][3]["name"] == "credential_reference_readiness"
+    assert payload["steps"][3]["exit_code"] == 2
+    assert payload["summary"]["steps_passed"] == 3
+    assert any("step_failed:credential_reference_readiness" in issue for issue in payload["issues"])
 
 
 def test_operator_preview_bundle_no_api_keys_required(monkeypatch) -> None:
