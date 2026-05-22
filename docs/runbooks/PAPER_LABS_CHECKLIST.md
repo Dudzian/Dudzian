@@ -173,6 +173,16 @@ python scripts/sandbox_testnet_readiness.py --config config/e2e/demo_paper.yml -
 Static/config-only gate: no exchange/API I/O, no API keys, no secrets read, no order submission, no runtime loop.
 This is not sandbox/testnet trading; it is only a readiness gate before future sandbox/testnet stages.
 
+## Credential reference static readiness preflight
+
+```bash
+python scripts/credential_reference_readiness.py --config config/e2e/demo_paper.yml --environment binance_paper --json
+```
+
+Static/config-only guard: no secret reads, no keychain reads, no env secret value reads, no exchange/API I/O,
+no API keys required, no order submission, no runtime loop. This does not prove real credentials are valid; it
+only checks config safety and absence of inline secret values before future sandbox/testnet work.
+
 ## One-command operator preview bundle
 
 ```bash
