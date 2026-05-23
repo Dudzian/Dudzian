@@ -17,7 +17,7 @@ _EXPECTED_RULES: tuple[tuple[str, Any], ...] = (
 )
 
 _DEFAULT_DURATION_SECONDS = 5
-_MAX_DURATION_SECONDS = 30
+_MAX_DURATION_SECONDS = 300
 
 
 def _get_nested_mapping_value(payload: Mapping[str, Any], dotted_path: str) -> Any:

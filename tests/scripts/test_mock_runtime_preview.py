@@ -108,6 +108,42 @@ def test_mock_runtime_preview_rejects_duration_above_bound() -> None:
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["reason"] == "duration_out_of_bounds"
+    assert payload["max_duration_seconds"] == 300
+
+
+def test_mock_runtime_preview_allows_duration_300() -> None:
+    result = _run(
+        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "300", "--json"
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["bounded_duration_seconds"] == 300
+    assert payload["simulated_lifecycle_max_sleep_seconds"] == 1
+
+
+def test_mock_runtime_preview_rejects_duration_600() -> None:
+    result = _run(
+        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "600", "--json"
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "duration_out_of_bounds"
+    assert payload["max_duration_seconds"] == 300
+    assert payload["bounded_duration_seconds"] == 600
+
+
+def test_mock_runtime_preview_rejects_duration_999() -> None:
+    result = _run(
+        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "999", "--json"
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "duration_out_of_bounds"
+    assert payload["max_duration_seconds"] == 300
+    assert payload["bounded_duration_seconds"] == 999
 
 
 def test_mock_runtime_preview_no_api_keys_required_without_secrets() -> None:
@@ -117,3 +153,20 @@ def test_mock_runtime_preview_no_api_keys_required_without_secrets() -> None:
     assert result.returncode == 0
     payload = json.loads(result.stdout)
     assert payload["api_keys_required"] is False
+
+
+def test_mock_runtime_preview_source_safety_contract() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    forbidden = (
+        "ccxt",
+        "create_order",
+        "fetch_balance",
+        "load_markets",
+        "get_secret",
+        "keychain",
+        "os.environ",
+        "getenv",
+        "shell=True",
+    )
+    for token in forbidden:
+        assert token not in source
