@@ -160,14 +160,14 @@ def test_operator_preview_bundle_controller_blocked_stops_chain() -> None:
     assert payload["steps"][6]["exit_code"] == 2
 
 
-def test_operator_preview_bundle_mock_duration_blocked_stops_before_controller() -> None:
+def test_operator_preview_bundle_mock_duration_3600_blocked_stops_before_controller() -> None:
     result = _run(
         "--mode",
         "demo",
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "999",
+        "3600",
         "--max-signals",
         "1",
         "--json",
@@ -185,6 +185,10 @@ def test_operator_preview_bundle_mock_duration_blocked_stops_before_controller()
         "mock_runtime_preview",
     ]
     assert payload["summary"]["steps_passed"] == 5
+    child_payload = payload["steps"][5]["payload"]
+    assert child_payload["reason"] == "duration_out_of_bounds"
+    assert child_payload["bounded_duration_seconds"] == 3600
+    assert child_payload["max_duration_seconds"] == 1800
 
 
 def test_operator_preview_bundle_inline_secret_blocked_at_credential_step(tmp_path: Path) -> None:
