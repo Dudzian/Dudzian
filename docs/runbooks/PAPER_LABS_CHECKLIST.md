@@ -210,3 +210,14 @@ No live mode, no real API keys, no secret/keychain/env secret value reads, no ex
 no real order submission, no production runtime loop.
 This is not real paper trading and not sandbox/testnet trading.
 `paper_runtime_dry_run.py` is a bounded standalone command. Do not nest it into `operator_preview_bundle.py` unless shared `preview-plan` / `mock_runtime_preview` / `controller_mock_preview` steps are split first; otherwise those steps would run twice.
+
+## Controlled paper runtime validation
+
+```bash
+python scripts/controlled_paper_runtime_validation.py --mode demo --config config/e2e/demo_paper.yml --duration-seconds 5 --max-signals 1 --json
+```
+
+Bounded validation wrapper runs preview-plan + mock runtime preview + controller mock preview and adds shutdown/thread/journal/event summary.
+No live mode, no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
+This is not real paper trading and not sandbox/testnet trading; journal visibility may be limited when mock preview does not expose journal export.
+
