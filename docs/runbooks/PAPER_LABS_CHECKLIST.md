@@ -220,4 +220,4 @@ python scripts/controlled_paper_runtime_validation.py --mode demo --config confi
 Bounded validation wrapper runs preview-plan + mock runtime preview + controller mock preview and adds shutdown/thread/journal/event summary.
 No live mode, no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
 This is not real paper trading and not sandbox/testnet trading; journal visibility may be limited when mock preview does not expose journal export.
-
+`controlled_paper_runtime_validation.py` can optionally persist the full JSON session report via `--report-path`, which is intended for comparing bounded validation runs before mini-soak.
