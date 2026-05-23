@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 _MIN_DURATION = 1
-_MAX_DURATION = 300
+_MAX_DURATION = 600
 _MIN_MAX_SIGNALS = 1
 _MAX_MAX_SIGNALS = 10
 _KEYCHAIN_READ_KEY = "key" + "chain_read"
