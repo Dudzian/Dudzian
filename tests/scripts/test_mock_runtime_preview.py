@@ -103,12 +103,12 @@ def test_mock_runtime_preview_rejects_disabled_force_paper_when_offline(tmp_path
 
 def test_mock_runtime_preview_rejects_duration_above_bound() -> None:
     result = _run(
-        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "999", "--json"
+        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "1801", "--json"
     )
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["reason"] == "duration_out_of_bounds"
-    assert payload["max_duration_seconds"] == 600
+    assert payload["max_duration_seconds"] == 1800
 
 
 def test_mock_runtime_preview_allows_duration_300() -> None:
@@ -122,27 +122,27 @@ def test_mock_runtime_preview_allows_duration_300() -> None:
     assert payload["simulated_lifecycle_max_sleep_seconds"] == 1
 
 
-def test_mock_runtime_preview_allows_duration_600() -> None:
+def test_mock_runtime_preview_allows_duration_1800() -> None:
     result = _run(
-        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "600", "--json"
+        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "1800", "--json"
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
-    assert payload["bounded_duration_seconds"] == 600
+    assert payload["bounded_duration_seconds"] == 1800
     assert payload["simulated_lifecycle_max_sleep_seconds"] == 1
 
 
-def test_mock_runtime_preview_rejects_duration_999() -> None:
+def test_mock_runtime_preview_rejects_duration_1801() -> None:
     result = _run(
-        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "999", "--json"
+        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "1801", "--json"
     )
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["status"] == "blocked"
     assert payload["reason"] == "duration_out_of_bounds"
-    assert payload["max_duration_seconds"] == 600
-    assert payload["bounded_duration_seconds"] == 999
+    assert payload["max_duration_seconds"] == 1800
+    assert payload["bounded_duration_seconds"] == 1801
 
 
 def test_mock_runtime_preview_no_api_keys_required_without_secrets() -> None:

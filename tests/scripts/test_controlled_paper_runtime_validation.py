@@ -165,34 +165,34 @@ def test_controlled_paper_runtime_validation_duration_300_allowed(monkeypatch, c
     assert len(commands) == 3
 
 
-def test_controlled_paper_runtime_validation_duration_600_allowed() -> None:
+def test_controlled_paper_runtime_validation_duration_1800_allowed() -> None:
     result = _run(
         "--mode",
         "demo",
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "600",
+        "1800",
         "--run-id",
-        "duration-600-allowed",
+        "duration-1800-allowed",
         "--json",
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
-    assert payload["run_id"] == "duration-600-allowed"
-    assert payload["duration_seconds"] == 600
+    assert payload["run_id"] == "duration-1800-allowed"
+    assert payload["duration_seconds"] == 1800
     assert len(payload["steps"]) == 3
 
 
-def test_controlled_paper_runtime_validation_invalid_duration_high() -> None:
+def test_controlled_paper_runtime_validation_invalid_duration_1801() -> None:
     result = _run(
         "--mode",
         "demo",
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "999",
+        "1801",
         "--run-id",
         "invalid-duration-high",
         "--json",
@@ -306,7 +306,7 @@ def test_controlled_paper_runtime_validation_invalid_duration_report_written(
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "999",
+        "1801",
         "--run-id",
         "report-invalid-duration",
         "--report-path",
