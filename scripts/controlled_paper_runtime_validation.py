@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import subprocess
 import sys
 import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +29,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config", default="config/e2e/demo_paper.yml")
     parser.add_argument("--duration-seconds", type=int, default=5)
     parser.add_argument("--max-signals", type=int, default=1)
+    parser.add_argument("--run-id")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
@@ -81,7 +85,30 @@ def _run_json_command(command: list[str], *, timeout_seconds: int) -> tuple[int,
     return result.returncode, payload
 
 
-def _blocked_payload(args: argparse.Namespace, reason: str, issues: list[str]) -> dict[str, Any]:
+def _iso_utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _session_fields(*, run_id: str, started_at: str, started_perf: float) -> dict[str, Any]:
+    ended_at = _iso_utc_now()
+    elapsed_seconds = round(max(0.0, time.perf_counter() - started_perf), 6)
+    return {
+        "run_id": run_id,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "elapsed_seconds": elapsed_seconds,
+    }
+
+
+def _blocked_payload(
+    args: argparse.Namespace,
+    reason: str,
+    issues: list[str],
+    *,
+    run_id: str,
+    started_at: str,
+    started_perf: float,
+) -> dict[str, Any]:
     return {
         "status": "blocked",
         "reason": reason,
@@ -93,6 +120,7 @@ def _blocked_payload(args: argparse.Namespace, reason: str, issues: list[str]) -
         "child_commands": [],
         "issues": issues,
         "safety_contract_version": "controlled_paper_runtime_validation.v1",
+        **_session_fields(run_id=run_id, started_at=started_at, started_perf=started_perf),
     }
 
 
@@ -106,6 +134,9 @@ def _active_non_daemon_threads() -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    run_id = str(args.run_id).strip() if args.run_id else str(uuid.uuid4())
+    started_at = _iso_utc_now()
+    started_perf = time.perf_counter()
 
     if args.mode == "live":
         _emit(
@@ -113,6 +144,9 @@ def main(argv: list[str] | None = None) -> int:
                 args,
                 reason="controlled_paper_runtime_validation_forbids_live_mode",
                 issues=["live_mode_not_allowed"],
+                run_id=run_id,
+                started_at=started_at,
+                started_perf=started_perf,
             ),
             args.json,
         )
@@ -124,6 +158,9 @@ def main(argv: list[str] | None = None) -> int:
                 args,
                 reason="controlled_paper_runtime_validation_invalid_duration",
                 issues=["invalid_duration_seconds"],
+                run_id=run_id,
+                started_at=started_at,
+                started_perf=started_perf,
             ),
             args.json,
         )
@@ -135,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
                 args,
                 reason="controlled_paper_runtime_validation_invalid_max_signals",
                 issues=["invalid_max_signals"],
+                run_id=run_id,
+                started_at=started_at,
+                started_perf=started_perf,
             ),
             args.json,
         )
@@ -205,6 +245,8 @@ def main(argv: list[str] | None = None) -> int:
             non_daemon_after = _active_non_daemon_threads()
             result = {
                 "status": status,
+                "run_id": run_id,
+                "started_at": started_at,
                 "mode": args.mode,
                 "config": str(Path(args.config)),
                 "duration_seconds": args.duration_seconds,
@@ -215,6 +257,8 @@ def main(argv: list[str] | None = None) -> int:
                 "summary": {
                     "steps_total": len(commands),
                     "steps_passed": sum(1 for s in steps if s["exit_code"] == 0),
+                    "run_id": run_id,
+                    "started_at": started_at,
                     "bounded_validation_loop": True,
                     "production_runtime_loop_started": False,
                     "runtime_loop_started": False,
@@ -230,16 +274,24 @@ def main(argv: list[str] | None = None) -> int:
                     "real_orders_submitted": False,
                     "order_execution": "mocked_or_disabled",
                     "controller_backed_preview": False,
+                    "timeout_triggered": f"step_timeout:{name}" in issues,
+                    "timeout_step": name if f"step_timeout:{name}" in issues else None,
+                    "order_events_count": 0,
+                    "order_events_available": True,
                     "events_observed_count": None,
-                    "simulated_orders_count": None,
+                    "simulated_orders_count": 0,
                     "journal_events_count": None,
+                    "journal_events_available": False,
                     "journal_visibility": "not_available_in_mock_preview",
                     "errors_count": 1,
                     "warnings_count": 0,
                 },
                 "issues": issues,
                 "safety_contract_version": "controlled_paper_runtime_validation.v1",
+                **_session_fields(run_id=run_id, started_at=started_at, started_perf=started_perf),
             }
+            result["summary"]["ended_at"] = result["ended_at"]
+            result["summary"]["elapsed_seconds"] = result["elapsed_seconds"]
             _emit(result, args.json)
             return 2 if status == "blocked" else exit_code
 
@@ -254,9 +306,14 @@ def main(argv: list[str] | None = None) -> int:
         or mock_payload.get("order_intents_count")
     )
     journal_events_count = controller_payload.get("journal_events_count")
+    journal_events_available = isinstance(journal_events_count, int)
     journal_visibility = (
-        "available" if isinstance(journal_events_count, int) else "not_available_in_mock_preview"
+        "available" if journal_events_available else "not_available_in_mock_preview"
     )
+    events_observed_count = controller_payload.get("events_observed_count")
+    order_events_count = events_observed_count if isinstance(events_observed_count, int) else 0
+    if not isinstance(simulated_orders_count, int):
+        simulated_orders_count = 0
 
     active_threads_after = len(threading.enumerate())
     non_daemon_after = _active_non_daemon_threads()
@@ -264,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "status": "ok",
+        "run_id": run_id,
+        "started_at": started_at,
         "mode": args.mode,
         "config": str(Path(args.config)),
         "duration_seconds": args.duration_seconds,
@@ -273,6 +332,8 @@ def main(argv: list[str] | None = None) -> int:
         "summary": {
             "steps_total": len(commands),
             "steps_passed": len(steps),
+            "run_id": run_id,
+            "started_at": started_at,
             "bounded_validation_loop": True,
             "production_runtime_loop_started": False,
             "runtime_loop_started": False,
@@ -290,16 +351,24 @@ def main(argv: list[str] | None = None) -> int:
             "controller_backed_preview": bool(
                 controller_payload.get("controller_backed_preview_started", False)
             ),
-            "events_observed_count": controller_payload.get("events_observed_count"),
+            "timeout_triggered": False,
+            "timeout_step": None,
+            "events_observed_count": events_observed_count,
+            "order_events_count": order_events_count,
+            "order_events_available": True,
             "simulated_orders_count": simulated_orders_count,
             "journal_events_count": journal_events_count,
+            "journal_events_available": journal_events_available,
             "journal_visibility": journal_visibility,
             "errors_count": 0,
             "warnings_count": 0,
         },
         "issues": issues,
         "safety_contract_version": "controlled_paper_runtime_validation.v1",
+        **_session_fields(run_id=run_id, started_at=started_at, started_perf=started_perf),
     }
+    result["summary"]["ended_at"] = result["ended_at"]
+    result["summary"]["elapsed_seconds"] = result["elapsed_seconds"]
     _emit(result, args.json)
     return 0
 
