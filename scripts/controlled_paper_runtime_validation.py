@@ -30,6 +30,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--duration-seconds", type=int, default=5)
     parser.add_argument("--max-signals", type=int, default=1)
     parser.add_argument("--run-id")
+    parser.add_argument("--report-path")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
@@ -124,6 +125,41 @@ def _blocked_payload(
     }
 
 
+def _write_report(payload: dict[str, Any], report_path: Path) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _finalize_payload(
+    payload: dict[str, Any], args: argparse.Namespace
+) -> tuple[int, dict[str, Any]]:
+    report_path_value = str(args.report_path) if args.report_path else None
+    payload["report_path"] = report_path_value
+    if not args.report_path:
+        return 0, payload
+    report_path = Path(args.report_path)
+    try:
+        _write_report(payload, report_path)
+    except OSError as exc:
+        fallback = {
+            "status": "error",
+            "reason": "controlled_paper_runtime_validation_report_write_failed",
+            "issues": ["report_write_failed"],
+            "report_path": str(report_path),
+            "error": str(exc),
+            **payload,
+        }
+        fallback["status"] = "error"
+        fallback["reason"] = "controlled_paper_runtime_validation_report_write_failed"
+        fallback["issues"] = sorted(set([*payload.get("issues", []), "report_write_failed"]))
+        fallback["report_path"] = str(report_path)
+        return 1, fallback
+    return 0, payload
+
+
 def _active_non_daemon_threads() -> list[str]:
     return [
         thread.name
@@ -139,46 +175,43 @@ def main(argv: list[str] | None = None) -> int:
     started_perf = time.perf_counter()
 
     if args.mode == "live":
-        _emit(
-            _blocked_payload(
-                args,
-                reason="controlled_paper_runtime_validation_forbids_live_mode",
-                issues=["live_mode_not_allowed"],
-                run_id=run_id,
-                started_at=started_at,
-                started_perf=started_perf,
-            ),
-            args.json,
+        blocked = _blocked_payload(
+            args,
+            reason="controlled_paper_runtime_validation_forbids_live_mode",
+            issues=["live_mode_not_allowed"],
+            run_id=run_id,
+            started_at=started_at,
+            started_perf=started_perf,
         )
-        return 2
+        status_code, final_payload = _finalize_payload(blocked, args)
+        _emit(final_payload, args.json)
+        return 2 if status_code == 0 else status_code
 
     if not (_MIN_DURATION <= args.duration_seconds <= _MAX_DURATION):
-        _emit(
-            _blocked_payload(
-                args,
-                reason="controlled_paper_runtime_validation_invalid_duration",
-                issues=["invalid_duration_seconds"],
-                run_id=run_id,
-                started_at=started_at,
-                started_perf=started_perf,
-            ),
-            args.json,
+        blocked = _blocked_payload(
+            args,
+            reason="controlled_paper_runtime_validation_invalid_duration",
+            issues=["invalid_duration_seconds"],
+            run_id=run_id,
+            started_at=started_at,
+            started_perf=started_perf,
         )
-        return 2
+        status_code, final_payload = _finalize_payload(blocked, args)
+        _emit(final_payload, args.json)
+        return 2 if status_code == 0 else status_code
 
     if not (_MIN_MAX_SIGNALS <= args.max_signals <= _MAX_MAX_SIGNALS):
-        _emit(
-            _blocked_payload(
-                args,
-                reason="controlled_paper_runtime_validation_invalid_max_signals",
-                issues=["invalid_max_signals"],
-                run_id=run_id,
-                started_at=started_at,
-                started_perf=started_perf,
-            ),
-            args.json,
+        blocked = _blocked_payload(
+            args,
+            reason="controlled_paper_runtime_validation_invalid_max_signals",
+            issues=["invalid_max_signals"],
+            run_id=run_id,
+            started_at=started_at,
+            started_perf=started_perf,
         )
-        return 2
+        status_code, final_payload = _finalize_payload(blocked, args)
+        _emit(final_payload, args.json)
+        return 2 if status_code == 0 else status_code
 
     py = sys.executable
     commands: list[tuple[str, list[str]]] = [
@@ -292,7 +325,10 @@ def main(argv: list[str] | None = None) -> int:
             }
             result["summary"]["ended_at"] = result["ended_at"]
             result["summary"]["elapsed_seconds"] = result["elapsed_seconds"]
-            _emit(result, args.json)
+            status_code, final_payload = _finalize_payload(result, args)
+            _emit(final_payload, args.json)
+            if status_code != 0:
+                return status_code
             return 2 if status == "blocked" else exit_code
 
     controller_payload = steps[-1]["payload"] if steps else {}
@@ -369,8 +405,9 @@ def main(argv: list[str] | None = None) -> int:
     }
     result["summary"]["ended_at"] = result["ended_at"]
     result["summary"]["elapsed_seconds"] = result["elapsed_seconds"]
-    _emit(result, args.json)
-    return 0
+    status_code, final_payload = _finalize_payload(result, args)
+    _emit(final_payload, args.json)
+    return status_code if status_code != 0 else 0
 
 
 if __name__ == "__main__":

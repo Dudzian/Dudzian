@@ -39,6 +39,7 @@ def test_controlled_paper_runtime_validation_happy_path_json() -> None:
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
+    assert payload["report_path"] is None
     assert payload["run_id"] == "test-run-001"
     assert isinstance(payload["started_at"], str)
     assert isinstance(payload["ended_at"], str)
@@ -95,6 +96,7 @@ def test_controlled_paper_runtime_validation_live_blocked() -> None:
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["status"] == "blocked"
+    assert payload["report_path"] is None
     assert payload["run_id"] == "live-blocked-run"
     assert isinstance(payload["started_at"], str)
     assert isinstance(payload["ended_at"], str)
@@ -185,6 +187,83 @@ def test_controlled_paper_runtime_validation_invalid_max_signals_high() -> None:
     assert payload["child_commands"] == []
 
 
+def test_controlled_paper_runtime_validation_happy_path_report_written(tmp_path: Path) -> None:
+    report_path = tmp_path / "reports" / "controlled.json"
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "5",
+        "--max-signals",
+        "1",
+        "--run-id",
+        "report-happy",
+        "--report-path",
+        str(report_path),
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["run_id"] == "report-happy"
+    assert payload["report_path"] == str(report_path)
+    assert report_path.exists()
+    file_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert file_payload == payload
+
+
+def test_controlled_paper_runtime_validation_live_blocked_report_written(tmp_path: Path) -> None:
+    report_path = tmp_path / "reports" / "live_blocked.json"
+    result = _run(
+        "--mode",
+        "live",
+        "--config",
+        str(SAFE_CONFIG),
+        "--run-id",
+        "report-live-blocked",
+        "--report-path",
+        str(report_path),
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "controlled_paper_runtime_validation_forbids_live_mode"
+    assert payload["steps"] == []
+    assert payload["child_commands"] == []
+    assert payload["report_path"] == str(report_path)
+    assert report_path.exists()
+    assert json.loads(report_path.read_text(encoding="utf-8")) == payload
+
+
+def test_controlled_paper_runtime_validation_invalid_duration_report_written(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "reports" / "invalid_duration.json"
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "999",
+        "--run-id",
+        "report-invalid-duration",
+        "--report-path",
+        str(report_path),
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "controlled_paper_runtime_validation_invalid_duration"
+    assert payload["report_path"] == str(report_path)
+    assert report_path.exists()
+    assert json.loads(report_path.read_text(encoding="utf-8")) == payload
+
+
 def test_controlled_paper_runtime_validation_no_api_keys_required(monkeypatch) -> None:
     for key in ("API_KEY", "API_SECRET", "BINANCE_API_KEY", "BINANCE_API_SECRET"):
         monkeypatch.delenv(key, raising=False)
@@ -194,6 +273,23 @@ def test_controlled_paper_runtime_validation_no_api_keys_required(monkeypatch) -
 
 def test_controlled_paper_runtime_validation_output_cp1252_safe() -> None:
     result = _run("--mode", "demo", "--config", str(SAFE_CONFIG), "--json")
+    assert result.returncode == 0, result.stderr
+    result.stdout.encode("cp1252")
+
+
+def test_controlled_paper_runtime_validation_output_cp1252_safe_with_report_path(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "reports" / "cp1252_report.json"
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--report-path",
+        str(report_path),
+        "--json",
+    )
     assert result.returncode == 0, result.stderr
     result.stdout.encode("cp1252")
 
@@ -231,6 +327,7 @@ def test_controlled_paper_runtime_validation_child_commands_contract() -> None:
 
 def test_controlled_paper_runtime_validation_timeout_propagation(monkeypatch, capsys) -> None:
     calls = {"count": 0}
+    report_path = REPO_ROOT / "tmp" / "timeout-report.json"
 
     def _fake_run(*args, **kwargs):
         calls["count"] += 1
@@ -265,11 +362,14 @@ def test_controlled_paper_runtime_validation_timeout_propagation(monkeypatch, ca
             "1",
             "--run-id",
             "timeout-run-001",
+            "--report-path",
+            str(report_path),
             "--json",
         ]
     )
     assert code == 2
     payload = json.loads(capsys.readouterr().out)
+    assert payload["report_path"] == str(report_path)
     assert payload["status"] == "blocked"
     assert payload["run_id"] == "timeout-run-001"
     assert isinstance(payload["started_at"], str)
@@ -288,3 +388,46 @@ def test_controlled_paper_runtime_validation_timeout_propagation(monkeypatch, ca
     assert payload["summary"]["timeout_triggered"] is True
     assert payload["summary"]["timeout_step"] == "mock_runtime_preview"
     assert payload["safety_contract_version"] == "controlled_paper_runtime_validation.v1"
+    assert report_path.exists()
+    assert json.loads(report_path.read_text(encoding="utf-8")) == payload
+
+
+def test_controlled_paper_runtime_validation_report_write_failure_is_controlled(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    report_path = tmp_path / "report.json"
+
+    def _raise_write_error(payload, path):  # noqa: ANN001
+        raise OSError("disk full")
+
+    monkeypatch.setattr(target_module, "_write_report", _raise_write_error)
+    code = target_module.main(
+        [
+            "--mode",
+            "demo",
+            "--config",
+            str(SAFE_CONFIG),
+            "--duration-seconds",
+            "5",
+            "--max-signals",
+            "1",
+            "--run-id",
+            "report-write-failed",
+            "--report-path",
+            str(report_path),
+            "--json",
+        ]
+    )
+    assert code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "error"
+    assert payload["reason"] == "controlled_paper_runtime_validation_report_write_failed"
+    assert "report_write_failed" in payload["issues"]
+    assert payload["report_path"] == str(report_path)
+    assert payload["run_id"] == "report-write-failed"
+    assert isinstance(payload["started_at"], str)
+    assert isinstance(payload["ended_at"], str)
+    assert payload["elapsed_seconds"] >= 0
+    if "summary" in payload:
+        assert payload["summary"]["run_id"] == "report-write-failed"
+    json.dumps(payload)
