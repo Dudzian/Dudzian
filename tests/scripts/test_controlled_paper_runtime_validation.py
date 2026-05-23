@@ -32,11 +32,18 @@ def test_controlled_paper_runtime_validation_happy_path_json() -> None:
         "5",
         "--max-signals",
         "1",
+        "--run-id",
+        "test-run-001",
         "--json",
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
+    assert payload["run_id"] == "test-run-001"
+    assert isinstance(payload["started_at"], str)
+    assert isinstance(payload["ended_at"], str)
+    assert isinstance(payload["elapsed_seconds"], int | float)
+    assert payload["elapsed_seconds"] >= 0
     assert payload["mode"] == "demo"
     assert len(payload["steps"]) == 3
     assert [step["name"] for step in payload["steps"]] == [
@@ -48,6 +55,10 @@ def test_controlled_paper_runtime_validation_happy_path_json() -> None:
     summary = payload["summary"]
     assert summary["steps_total"] == 3
     assert summary["steps_passed"] == 3
+    assert summary["run_id"] == "test-run-001"
+    assert summary["started_at"] == payload["started_at"]
+    assert summary["ended_at"] == payload["ended_at"]
+    assert summary["elapsed_seconds"] == payload["elapsed_seconds"]
     assert summary["bounded_validation_loop"] is True
     assert summary["production_runtime_loop_started"] is False
     assert summary["runtime_loop_started"] is False
@@ -63,6 +74,12 @@ def test_controlled_paper_runtime_validation_happy_path_json() -> None:
     assert summary["real_orders_submitted"] is False
     assert summary["order_execution"] == "mocked_or_disabled"
     assert summary["controller_backed_preview"] is True
+    assert summary["timeout_triggered"] is False
+    assert summary["timeout_step"] is None
+    assert "order_events_count" in summary
+    assert "simulated_orders_count" in summary
+    assert "journal_events_count" in summary
+    assert "journal_events_available" in summary
     assert summary["journal_events_count"] is None or isinstance(
         summary["journal_events_count"], int
     )
@@ -72,10 +89,16 @@ def test_controlled_paper_runtime_validation_happy_path_json() -> None:
 
 
 def test_controlled_paper_runtime_validation_live_blocked() -> None:
-    result = _run("--mode", "live", "--config", str(SAFE_CONFIG), "--json")
+    result = _run(
+        "--mode", "live", "--config", str(SAFE_CONFIG), "--run-id", "live-blocked-run", "--json"
+    )
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["status"] == "blocked"
+    assert payload["run_id"] == "live-blocked-run"
+    assert isinstance(payload["started_at"], str)
+    assert isinstance(payload["ended_at"], str)
+    assert payload["elapsed_seconds"] >= 0
     assert payload["reason"] == "controlled_paper_runtime_validation_forbids_live_mode"
     assert payload["steps"] == []
     assert payload["child_commands"] == []
@@ -84,40 +107,80 @@ def test_controlled_paper_runtime_validation_live_blocked() -> None:
 
 def test_controlled_paper_runtime_validation_invalid_duration_low() -> None:
     result = _run(
-        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "0", "--json"
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "0",
+        "--run-id",
+        "invalid-duration-low",
+        "--json",
     )
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["reason"] == "controlled_paper_runtime_validation_invalid_duration"
+    assert payload["run_id"] == "invalid-duration-low"
     assert payload["steps"] == []
     assert payload["child_commands"] == []
 
 
 def test_controlled_paper_runtime_validation_invalid_duration_high() -> None:
     result = _run(
-        "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "999", "--json"
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "999",
+        "--run-id",
+        "invalid-duration-high",
+        "--json",
     )
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["reason"] == "controlled_paper_runtime_validation_invalid_duration"
+    assert payload["run_id"] == "invalid-duration-high"
     assert payload["steps"] == []
     assert payload["child_commands"] == []
 
 
 def test_controlled_paper_runtime_validation_invalid_max_signals_low() -> None:
-    result = _run("--mode", "demo", "--config", str(SAFE_CONFIG), "--max-signals", "0", "--json")
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--max-signals",
+        "0",
+        "--run-id",
+        "invalid-max-signals-low",
+        "--json",
+    )
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["reason"] == "controlled_paper_runtime_validation_invalid_max_signals"
+    assert payload["run_id"] == "invalid-max-signals-low"
     assert payload["steps"] == []
     assert payload["child_commands"] == []
 
 
 def test_controlled_paper_runtime_validation_invalid_max_signals_high() -> None:
-    result = _run("--mode", "demo", "--config", str(SAFE_CONFIG), "--max-signals", "999", "--json")
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--max-signals",
+        "999",
+        "--run-id",
+        "invalid-max-signals-high",
+        "--json",
+    )
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["reason"] == "controlled_paper_runtime_validation_invalid_max_signals"
+    assert payload["run_id"] == "invalid-max-signals-high"
     assert payload["steps"] == []
     assert payload["child_commands"] == []
 
@@ -153,6 +216,8 @@ def test_controlled_paper_runtime_validation_source_safety() -> None:
     for token in forbidden:
         assert token not in source
     assert "timeout=" in source
+    assert "uuid" in source
+    assert "time.perf_counter" in source
 
 
 def test_controlled_paper_runtime_validation_child_commands_contract() -> None:
@@ -198,12 +263,18 @@ def test_controlled_paper_runtime_validation_timeout_propagation(monkeypatch, ca
             "5",
             "--max-signals",
             "1",
+            "--run-id",
+            "timeout-run-001",
             "--json",
         ]
     )
     assert code == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "blocked"
+    assert payload["run_id"] == "timeout-run-001"
+    assert isinstance(payload["started_at"], str)
+    assert isinstance(payload["ended_at"], str)
+    assert payload["elapsed_seconds"] >= 0
     assert payload["failed_step"] == "mock_runtime_preview"
     failed_payload = payload["steps"][1]["payload"]
     assert failed_payload["reason"] == "controlled_paper_runtime_validation_child_timeout"
@@ -214,4 +285,6 @@ def test_controlled_paper_runtime_validation_timeout_propagation(monkeypatch, ca
     assert "step_failed:mock_runtime_preview" in payload["issues"]
     assert payload["summary"]["shutdown_completed"] is False
     assert payload["summary"]["errors_count"] == 1
+    assert payload["summary"]["timeout_triggered"] is True
+    assert payload["summary"]["timeout_step"] == "mock_runtime_preview"
     assert payload["safety_contract_version"] == "controlled_paper_runtime_validation.v1"
