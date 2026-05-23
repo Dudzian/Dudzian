@@ -108,7 +108,7 @@ def test_mock_runtime_preview_rejects_duration_above_bound() -> None:
     assert result.returncode == 2
     payload = json.loads(result.stdout)
     assert payload["reason"] == "duration_out_of_bounds"
-    assert payload["max_duration_seconds"] == 300
+    assert payload["max_duration_seconds"] == 600
 
 
 def test_mock_runtime_preview_allows_duration_300() -> None:
@@ -122,16 +122,15 @@ def test_mock_runtime_preview_allows_duration_300() -> None:
     assert payload["simulated_lifecycle_max_sleep_seconds"] == 1
 
 
-def test_mock_runtime_preview_rejects_duration_600() -> None:
+def test_mock_runtime_preview_allows_duration_600() -> None:
     result = _run(
         "--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "600", "--json"
     )
-    assert result.returncode == 2
+    assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["status"] == "blocked"
-    assert payload["reason"] == "duration_out_of_bounds"
-    assert payload["max_duration_seconds"] == 300
+    assert payload["status"] == "ok"
     assert payload["bounded_duration_seconds"] == 600
+    assert payload["simulated_lifecycle_max_sleep_seconds"] == 1
 
 
 def test_mock_runtime_preview_rejects_duration_999() -> None:
@@ -142,7 +141,7 @@ def test_mock_runtime_preview_rejects_duration_999() -> None:
     payload = json.loads(result.stdout)
     assert payload["status"] == "blocked"
     assert payload["reason"] == "duration_out_of_bounds"
-    assert payload["max_duration_seconds"] == 300
+    assert payload["max_duration_seconds"] == 600
     assert payload["bounded_duration_seconds"] == 999
 
 

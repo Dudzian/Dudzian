@@ -165,7 +165,7 @@ def test_controlled_paper_runtime_validation_duration_300_allowed(monkeypatch, c
     assert len(commands) == 3
 
 
-def test_controlled_paper_runtime_validation_invalid_duration_600_blocked() -> None:
+def test_controlled_paper_runtime_validation_duration_600_allowed() -> None:
     result = _run(
         "--mode",
         "demo",
@@ -174,15 +174,15 @@ def test_controlled_paper_runtime_validation_invalid_duration_600_blocked() -> N
         "--duration-seconds",
         "600",
         "--run-id",
-        "invalid-duration-600",
+        "duration-600-allowed",
         "--json",
     )
-    assert result.returncode == 2
+    assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["reason"] == "controlled_paper_runtime_validation_invalid_duration"
-    assert payload["run_id"] == "invalid-duration-600"
-    assert payload["steps"] == []
-    assert payload["child_commands"] == []
+    assert payload["status"] == "ok"
+    assert payload["run_id"] == "duration-600-allowed"
+    assert payload["duration_seconds"] == 600
+    assert len(payload["steps"]) == 3
 
 
 def test_controlled_paper_runtime_validation_invalid_duration_high() -> None:

@@ -221,6 +221,6 @@ Bounded validation wrapper runs preview-plan + mock runtime preview + controller
 No live mode, no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
 This is not real paper trading and not sandbox/testnet trading; journal visibility may be limited when mock preview does not expose journal export.
 `controlled_paper_runtime_validation.py` can optionally persist the full JSON session report via `--report-path`, which is intended for comparing bounded validation runs before mini-soak.
-Current bounded mode is intentionally conservative and valid only within the script's configured duration guard (now explicitly allowing up to 300 seconds for controlled validation).
-A 5-minute controlled validation run (300 seconds) is explicitly allowed after this patch, but 10-minute / 600-second mini-soak still requires a separate duration-bound patch and seal.
+Current bounded mode is intentionally conservative and valid only within the script's configured duration guard (after CPR-10, explicitly allowing up to 600 seconds for controlled validation).
+A 5-minute / 300-second and 10-minute / 600-second controlled validation run are allowed by the current guard; longer runs (for example 30m/24h/72h) still require separate duration-bound patches and seals.
 Non-live boundary remains unchanged: no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
