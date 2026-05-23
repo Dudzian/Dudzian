@@ -127,6 +127,64 @@ def test_controlled_paper_runtime_validation_invalid_duration_low() -> None:
     assert payload["child_commands"] == []
 
 
+def test_controlled_paper_runtime_validation_duration_300_allowed(monkeypatch, capsys) -> None:
+    commands: list[list[str]] = []
+
+    def _fake_run(command, **kwargs):  # noqa: ANN001
+        commands.append(command)
+
+        class _Result:
+            def __init__(self) -> None:
+                self.stdout = json.dumps({"status": "ok"})
+                self.stderr = ""
+                self.returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(target_module.subprocess, "run", _fake_run)
+    code = target_module.main(
+        [
+            "--mode",
+            "demo",
+            "--config",
+            str(SAFE_CONFIG),
+            "--duration-seconds",
+            "300",
+            "--max-signals",
+            "1",
+            "--run-id",
+            "duration-300-allowed",
+            "--json",
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ok"
+    assert payload["duration_seconds"] == 300
+    assert payload["run_id"] == "duration-300-allowed"
+    assert len(commands) == 3
+
+
+def test_controlled_paper_runtime_validation_invalid_duration_600_blocked() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "600",
+        "--run-id",
+        "invalid-duration-600",
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["reason"] == "controlled_paper_runtime_validation_invalid_duration"
+    assert payload["run_id"] == "invalid-duration-600"
+    assert payload["steps"] == []
+    assert payload["child_commands"] == []
+
+
 def test_controlled_paper_runtime_validation_invalid_duration_high() -> None:
     result = _run(
         "--mode",
