@@ -165,34 +165,50 @@ def test_controlled_paper_runtime_validation_duration_300_allowed(monkeypatch, c
     assert len(commands) == 3
 
 
-def test_controlled_paper_runtime_validation_duration_1800_allowed() -> None:
-    result = _run(
-        "--mode",
-        "demo",
-        "--config",
-        str(SAFE_CONFIG),
-        "--duration-seconds",
-        "1800",
-        "--run-id",
-        "duration-1800-allowed",
-        "--json",
+def test_controlled_paper_runtime_validation_duration_3600_allowed(monkeypatch, capsys) -> None:
+    commands: list[list[str]] = []
+
+    def _fake_run(command, **kwargs):  # noqa: ANN001
+        commands.append(command)
+
+        class _Result:
+            def __init__(self) -> None:
+                self.stdout = json.dumps({"status": "ok"})
+                self.stderr = ""
+                self.returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(target_module.subprocess, "run", _fake_run)
+    code = target_module.main(
+        [
+            "--mode",
+            "demo",
+            "--config",
+            str(SAFE_CONFIG),
+            "--duration-seconds",
+            "3600",
+            "--run-id",
+            "duration-3600-allowed",
+            "--json",
+        ]
     )
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "ok"
-    assert payload["run_id"] == "duration-1800-allowed"
-    assert payload["duration_seconds"] == 1800
-    assert len(payload["steps"]) == 3
+    assert payload["run_id"] == "duration-3600-allowed"
+    assert payload["duration_seconds"] == 3600
+    assert len(commands) == 3
 
 
-def test_controlled_paper_runtime_validation_invalid_duration_1801() -> None:
+def test_controlled_paper_runtime_validation_invalid_duration_3601() -> None:
     result = _run(
         "--mode",
         "demo",
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "1801",
+        "3601",
         "--run-id",
         "invalid-duration-high",
         "--json",
@@ -306,7 +322,7 @@ def test_controlled_paper_runtime_validation_invalid_duration_report_written(
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "1801",
+        "3601",
         "--run-id",
         "report-invalid-duration",
         "--report-path",
@@ -320,6 +336,52 @@ def test_controlled_paper_runtime_validation_invalid_duration_report_written(
     assert payload["report_path"] == str(report_path)
     assert report_path.exists()
     assert json.loads(report_path.read_text(encoding="utf-8")) == payload
+
+
+def test_controlled_paper_runtime_validation_invalid_duration_86400() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "86400",
+        "--run-id",
+        "invalid-duration-86400",
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "controlled_paper_runtime_validation_invalid_duration"
+    assert payload["steps"] == []
+    assert payload["child_commands"] == []
+
+
+def test_controlled_paper_runtime_validation_invalid_duration_259200() -> None:
+    result = _run(
+        "--mode",
+        "demo",
+        "--config",
+        str(SAFE_CONFIG),
+        "--duration-seconds",
+        "259200",
+        "--run-id",
+        "invalid-duration-259200",
+        "--json",
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "controlled_paper_runtime_validation_invalid_duration"
+    assert payload["steps"] == []
+    assert payload["child_commands"] == []
+
+
+def test_controlled_paper_runtime_validation_child_timeout_policy_for_3600() -> None:
+    assert target_module._child_timeout_seconds("mock_runtime_preview", 3600) == 3630
+    assert target_module._child_timeout_seconds("preview_plan", 3600) == 30
+    assert target_module._child_timeout_seconds("controller_mock_preview", 3600) == 30
 
 
 def test_controlled_paper_runtime_validation_no_api_keys_required(monkeypatch) -> None:
