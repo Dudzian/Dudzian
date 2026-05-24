@@ -160,7 +160,7 @@ def test_operator_preview_bundle_controller_blocked_stops_chain() -> None:
     assert payload["steps"][6]["exit_code"] == 2
 
 
-def test_operator_preview_bundle_mock_duration_3600_blocked_stops_before_controller() -> None:
+def test_operator_preview_bundle_mock_duration_3600_allowed() -> None:
     result = _run(
         "--mode",
         "demo",
@@ -172,11 +172,11 @@ def test_operator_preview_bundle_mock_duration_3600_blocked_stops_before_control
         "1",
         "--json",
     )
-    assert result.returncode == 2
+    assert result.returncode == 0
     payload = json.loads(result.stdout)
 
-    assert payload["failed_step"] == "mock_runtime_preview"
-    assert [step["name"] for step in payload["steps"]] == [
+    assert payload["status"] == "ok"
+    assert [step["name"] for step in payload["steps"][:6]] == [
         "demo_paper_precheck",
         "paper_adapter_readiness",
         "sandbox_testnet_readiness",
@@ -184,11 +184,13 @@ def test_operator_preview_bundle_mock_duration_3600_blocked_stops_before_control
         "preview_plan",
         "mock_runtime_preview",
     ]
-    assert payload["summary"]["steps_passed"] == 5
+    assert all(step["exit_code"] == 0 for step in payload["steps"][:6])
+    assert payload["steps"][6]["name"] == "controller_mock_preview"
+    assert payload["steps"][6]["exit_code"] == 0
+    assert payload["summary"]["steps_passed"] == 7
     child_payload = payload["steps"][5]["payload"]
-    assert child_payload["reason"] == "duration_out_of_bounds"
+    assert child_payload["status"] == "ok"
     assert child_payload["bounded_duration_seconds"] == 3600
-    assert child_payload["max_duration_seconds"] == 1800
 
 
 def test_operator_preview_bundle_inline_secret_blocked_at_credential_step(tmp_path: Path) -> None:
