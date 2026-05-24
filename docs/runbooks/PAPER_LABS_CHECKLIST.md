@@ -229,4 +229,6 @@ Longer runs (for example 24h/72h soak such as 86400/259200 seconds) still requir
 Non-live boundary remains unchanged: no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
 Before any 24h stage, keep the long-run health/resource/report guard enabled in controlled validation summary (`health_summary`, `process_resource_summary`, `progress_summary`, `artifact_summary`).
 CPR-25 adds these summary/guard fields but does not raise duration to 86400; `long_run_ready=false` means bounded runs can be OK while 24h remains blocked.
+CPR-27 adds a lightweight checkpoint/heartbeat/progress summary in controlled validation (`heartbeat_mode=step_boundary`) for deterministic step-boundary progress visibility.
+CPR-27 does not unlock 24h; `long_run_ready=false` remains expected while duration guard stays below 86400 seconds.
 24h/72h still require separate duration patches/seals, and no-live/no-exchange/no-real-orders boundary remains unchanged.
