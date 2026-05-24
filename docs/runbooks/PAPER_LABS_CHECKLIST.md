@@ -227,3 +227,6 @@ After CPR-21.1, the child `mock_runtime_preview.py` duration guard is aligned to
 This guard update does not execute a 3600-second target run in-place; the 1h target run is handled in a separate stage.
 Longer runs (for example 24h/72h soak such as 86400/259200 seconds) still require separate duration-bound patches, seals, and explicit runbook stages.
 Non-live boundary remains unchanged: no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
+Before any 24h stage, keep the long-run health/resource/report guard enabled in controlled validation summary (`health_summary`, `process_resource_summary`, `progress_summary`, `artifact_summary`).
+CPR-25 adds these summary/guard fields but does not raise duration to 86400; `long_run_ready=false` means bounded runs can be OK while 24h remains blocked.
+24h/72h still require separate duration patches/seals, and no-live/no-exchange/no-real-orders boundary remains unchanged.
