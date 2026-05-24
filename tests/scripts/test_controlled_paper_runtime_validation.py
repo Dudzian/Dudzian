@@ -30,8 +30,13 @@ def _assert_health_resource_summaries(payload: dict[str, object]) -> None:
     assert health["status"] in {"ok", "warning", "unavailable"}
     assert health["long_run_ready"] is False
     assert "duration_guard_below_24h" in health["long_run_blockers"]
+    assert "checkpoint_heartbeat_not_enabled" not in health["long_run_blockers"]
     assert isinstance(health["checkpoint_policy"], dict)
+    assert health["checkpoint_policy"]["enabled"] is True
+    assert health["checkpoint_policy"]["mode"] == "step_boundary"
     assert isinstance(health["heartbeat_policy"], dict)
+    assert health["heartbeat_policy"]["enabled"] is True
+    assert health["heartbeat_policy"]["mode"] == "step_boundary"
     assert isinstance(health["artifact_policy"], dict)
 
     resources = summary["process_resource_summary"]
@@ -51,10 +56,14 @@ def _assert_health_resource_summaries(payload: dict[str, object]) -> None:
     assert isinstance(resources["resource_warnings"], list)
 
     progress = summary["progress_summary"]
-    assert "checkpoint_count" in progress
-    assert "heartbeat_count" in progress
-    assert "progress_observations_count" in progress
-    assert "heartbeat_interval_seconds" in progress
+    assert progress["checkpoints_enabled"] is True
+    assert progress["checkpoint_count"] >= 2
+    assert progress["heartbeat_count"] >= 1
+    assert progress["progress_observations_count"] >= progress["checkpoint_count"]
+    assert progress["heartbeat_interval_seconds"] is None
+    assert progress["heartbeat_mode"] == "step_boundary"
+    assert progress["progress_observations_available"] is True
+    assert isinstance(progress["checkpoint_labels"], list)
 
     artifact = summary["artifact_summary"]
     assert isinstance(artifact["artifact_warnings"], list)
@@ -125,6 +134,16 @@ def test_controlled_paper_runtime_validation_happy_path_json() -> None:
         summary["journal_events_count"], int
     )
     assert summary["journal_visibility"] in {"not_available_in_mock_preview", "available"}
+    progress = summary["progress_summary"]
+    labels = progress.get("checkpoint_labels", [])
+    assert "session_started" in labels
+    assert "before_step:preview_plan" in labels
+    assert "after_step:preview_plan" in labels
+    assert "before_step:mock_runtime_preview" in labels
+    assert "after_step:mock_runtime_preview" in labels
+    assert "before_step:controller_mock_preview" in labels
+    assert "after_step:controller_mock_preview" in labels
+    assert "session_finished" in labels
     _assert_health_resource_summaries(payload)
     assert payload["issues"] == []
     assert payload["safety_contract_version"] == "controlled_paper_runtime_validation.v1"
@@ -167,6 +186,9 @@ def test_controlled_paper_runtime_validation_invalid_duration_low() -> None:
     assert payload["run_id"] == "invalid-duration-low"
     assert payload["steps"] == []
     assert payload["child_commands"] == []
+    progress = payload["summary"]["progress_summary"]
+    assert progress["checkpoint_count"] >= 1
+    assert payload["summary"]["health_summary"]["long_run_ready"] is False
 
 
 def test_controlled_paper_runtime_validation_duration_300_allowed(monkeypatch, capsys) -> None:
@@ -576,6 +598,8 @@ def test_controlled_paper_runtime_validation_timeout_propagation(monkeypatch, ca
     assert payload["summary"]["errors_count"] == 1
     assert payload["summary"]["timeout_triggered"] is True
     assert payload["summary"]["timeout_step"] == "mock_runtime_preview"
+    progress = payload["summary"]["progress_summary"]
+    assert progress["checkpoint_count"] > 0
     assert payload["safety_contract_version"] == "controlled_paper_runtime_validation.v1"
     assert report_path.exists()
     assert json.loads(report_path.read_text(encoding="utf-8")) == payload

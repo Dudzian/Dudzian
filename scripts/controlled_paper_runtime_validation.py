@@ -27,6 +27,32 @@ _MAX_LOG_SIZE_BYTES: int | None = None
 _KEYCHAIN_READ_KEY = "key" + "chain_read"
 
 
+class _ProgressTracker:
+    def __init__(self) -> None:
+        self._checkpoint_labels: list[str] = []
+        self._heartbeat_count = 0
+        self._last_heartbeat_at: str | None = None
+
+    def checkpoint(self, label: str) -> None:
+        self._checkpoint_labels.append(label)
+        self._heartbeat_count += 1
+        self._last_heartbeat_at = _iso_utc_now()
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "checkpoints_enabled": True,
+            "checkpoint_count": len(self._checkpoint_labels),
+            "checkpoint_labels": list(self._checkpoint_labels),
+            "heartbeat_count": self._heartbeat_count,
+            "heartbeat_interval_seconds": None,
+            "heartbeat_mode": "step_boundary",
+            "progress_observations_count": len(self._checkpoint_labels),
+            "progress_observations_available": True,
+            "last_checkpoint": self._checkpoint_labels[-1] if self._checkpoint_labels else None,
+            "last_heartbeat_at": self._last_heartbeat_at,
+        }
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -143,18 +169,20 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
 
 
 def _build_health_summary() -> dict[str, Any]:
-    long_run_blockers = ["duration_guard_below_24h", "checkpoint_heartbeat_not_enabled"]
+    long_run_blockers = ["duration_guard_below_24h"]
     return {
         "enabled": True,
         "status": "ok",
         "long_run_ready": False,
         "long_run_blockers": long_run_blockers,
         "checkpoint_policy": {
-            "enabled": False,
+            "enabled": True,
+            "mode": "step_boundary",
             "target_duration_seconds": _TARGET_LONG_RUN_DURATION_SECONDS,
         },
         "heartbeat_policy": {
-            "enabled": False,
+            "enabled": True,
+            "mode": "step_boundary",
             "interval_seconds": None,
             "target_duration_seconds": _TARGET_LONG_RUN_DURATION_SECONDS,
         },
@@ -205,16 +233,6 @@ def _build_resource_summary(*, cpu_start: float, memory_start: int | None) -> di
     }
 
 
-def _build_progress_summary() -> dict[str, Any]:
-    return {
-        "checkpoints_enabled": False,
-        "checkpoint_count": 0,
-        "heartbeat_count": 0,
-        "heartbeat_interval_seconds": None,
-        "progress_observations_count": 0,
-    }
-
-
 def _build_artifact_summary(report_path: str | None) -> dict[str, Any]:
     return {
         "report_path": report_path,
@@ -229,23 +247,37 @@ def _build_artifact_summary(report_path: str | None) -> dict[str, Any]:
 
 
 def _attach_guard_summaries(
-    payload: dict[str, Any], *, cpu_start: float, memory_start: int | None, report_path: str | None
+    payload: dict[str, Any],
+    *,
+    cpu_start: float,
+    memory_start: int | None,
+    report_path: str | None,
+    progress_tracker: _ProgressTracker,
 ) -> None:
     summary = payload.setdefault("summary", {})
     summary["health_summary"] = _build_health_summary()
     summary["process_resource_summary"] = _build_resource_summary(
         cpu_start=cpu_start, memory_start=memory_start
     )
-    summary["progress_summary"] = _build_progress_summary()
+    summary["progress_summary"] = progress_tracker.summary()
     summary["artifact_summary"] = _build_artifact_summary(report_path)
 
 
 def _finalize_payload(
-    payload: dict[str, Any], args: argparse.Namespace, *, cpu_start: float, memory_start: int | None
+    payload: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    cpu_start: float,
+    memory_start: int | None,
+    progress_tracker: _ProgressTracker,
 ) -> tuple[int, dict[str, Any]]:
     report_path_value = str(args.report_path) if args.report_path else None
     _attach_guard_summaries(
-        payload, cpu_start=cpu_start, memory_start=memory_start, report_path=report_path_value
+        payload,
+        cpu_start=cpu_start,
+        memory_start=memory_start,
+        report_path=report_path_value,
+        progress_tracker=progress_tracker,
     )
     payload["report_path"] = report_path_value
     if not args.report_path:
@@ -299,8 +331,11 @@ def main(argv: list[str] | None = None) -> int:
     memory_available_start, memory_start, _ = _collect_memory_rss_bytes()
     if not memory_available_start:
         memory_start = None
+    progress_tracker = _ProgressTracker()
+    progress_tracker.checkpoint("session_started")
 
     if args.mode == "live":
+        progress_tracker.checkpoint("session_blocked")
         blocked = _blocked_payload(
             args,
             reason="controlled_paper_runtime_validation_forbids_live_mode",
@@ -310,12 +345,17 @@ def main(argv: list[str] | None = None) -> int:
             started_perf=started_perf,
         )
         status_code, final_payload = _finalize_payload(
-            blocked, args, cpu_start=cpu_start, memory_start=memory_start
+            blocked,
+            args,
+            cpu_start=cpu_start,
+            memory_start=memory_start,
+            progress_tracker=progress_tracker,
         )
         _emit(final_payload, args.json)
         return 2 if status_code == 0 else status_code
 
     if not (_MIN_DURATION <= args.duration_seconds <= _MAX_DURATION):
+        progress_tracker.checkpoint("session_blocked")
         blocked = _blocked_payload(
             args,
             reason="controlled_paper_runtime_validation_invalid_duration",
@@ -325,12 +365,17 @@ def main(argv: list[str] | None = None) -> int:
             started_perf=started_perf,
         )
         status_code, final_payload = _finalize_payload(
-            blocked, args, cpu_start=cpu_start, memory_start=memory_start
+            blocked,
+            args,
+            cpu_start=cpu_start,
+            memory_start=memory_start,
+            progress_tracker=progress_tracker,
         )
         _emit(final_payload, args.json)
         return 2 if status_code == 0 else status_code
 
     if not (_MIN_MAX_SIGNALS <= args.max_signals <= _MAX_MAX_SIGNALS):
+        progress_tracker.checkpoint("session_blocked")
         blocked = _blocked_payload(
             args,
             reason="controlled_paper_runtime_validation_invalid_max_signals",
@@ -340,7 +385,11 @@ def main(argv: list[str] | None = None) -> int:
             started_perf=started_perf,
         )
         status_code, final_payload = _finalize_payload(
-            blocked, args, cpu_start=cpu_start, memory_start=memory_start
+            blocked,
+            args,
+            cpu_start=cpu_start,
+            memory_start=memory_start,
+            progress_tracker=progress_tracker,
         )
         _emit(final_payload, args.json)
         return 2 if status_code == 0 else status_code
@@ -395,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     child_commands = [cmd for _, cmd in commands]
 
     for name, command in commands:
+        progress_tracker.checkpoint(f"before_step:{name}")
         timeout_seconds = _child_timeout_seconds(name, args.duration_seconds)
         exit_code, payload = _run_json_command(command, timeout_seconds=timeout_seconds)
         step_status = str(payload.get("status", "error"))
@@ -402,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
             {"name": name, "exit_code": exit_code, "status": step_status, "payload": payload}
         )
         if exit_code != 0:
+            progress_tracker.checkpoint("session_failed")
             issues.append(f"step_failed:{name}")
             if payload.get("reason") == "controlled_paper_runtime_validation_child_timeout":
                 issues.append(f"step_timeout:{name}")
@@ -458,12 +509,17 @@ def main(argv: list[str] | None = None) -> int:
             result["summary"]["ended_at"] = result["ended_at"]
             result["summary"]["elapsed_seconds"] = result["elapsed_seconds"]
             status_code, final_payload = _finalize_payload(
-                result, args, cpu_start=cpu_start, memory_start=memory_start
+                result,
+                args,
+                cpu_start=cpu_start,
+                memory_start=memory_start,
+                progress_tracker=progress_tracker,
             )
             _emit(final_payload, args.json)
             if status_code != 0:
                 return status_code
             return 2 if status == "blocked" else exit_code
+        progress_tracker.checkpoint(f"after_step:{name}")
 
     controller_payload = steps[-1]["payload"] if steps else {}
     mock_payload = steps[1]["payload"] if len(steps) >= 2 else {}
@@ -539,8 +595,13 @@ def main(argv: list[str] | None = None) -> int:
     }
     result["summary"]["ended_at"] = result["ended_at"]
     result["summary"]["elapsed_seconds"] = result["elapsed_seconds"]
+    progress_tracker.checkpoint("session_finished")
     status_code, final_payload = _finalize_payload(
-        result, args, cpu_start=cpu_start, memory_start=memory_start
+        result,
+        args,
+        cpu_start=cpu_start,
+        memory_start=memory_start,
+        progress_tracker=progress_tracker,
     )
     _emit(final_payload, args.json)
     return status_code if status_code != 0 else 0
