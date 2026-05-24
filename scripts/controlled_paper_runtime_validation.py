@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -11,10 +12,18 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+try:
+    import resource as _resource
+except ModuleNotFoundError:
+    _resource = None
+
 _MIN_DURATION = 1
 _MAX_DURATION = 3600
+_TARGET_LONG_RUN_DURATION_SECONDS = 86400
 _MIN_MAX_SIGNALS = 1
 _MAX_MAX_SIGNALS = 10
+_MAX_REPORT_SIZE_BYTES = 512 * 1024
+_MAX_LOG_SIZE_BYTES: int | None = None
 _KEYCHAIN_READ_KEY = "key" + "chain_read"
 
 
@@ -133,15 +142,128 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
     )
 
 
+def _build_health_summary() -> dict[str, Any]:
+    long_run_blockers = ["duration_guard_below_24h", "checkpoint_heartbeat_not_enabled"]
+    return {
+        "enabled": True,
+        "status": "ok",
+        "long_run_ready": False,
+        "long_run_blockers": long_run_blockers,
+        "checkpoint_policy": {
+            "enabled": False,
+            "target_duration_seconds": _TARGET_LONG_RUN_DURATION_SECONDS,
+        },
+        "heartbeat_policy": {
+            "enabled": False,
+            "interval_seconds": None,
+            "target_duration_seconds": _TARGET_LONG_RUN_DURATION_SECONDS,
+        },
+        "artifact_policy": {
+            "max_report_size_bytes": _MAX_REPORT_SIZE_BYTES,
+            "max_log_size_bytes": _MAX_LOG_SIZE_BYTES,
+        },
+    }
+
+
+def _collect_memory_rss_bytes() -> tuple[bool, int | None, list[str]]:
+    warnings: list[str] = []
+    if _resource is None:
+        return False, None, ["memory_rss_unavailable"]
+    try:
+        usage = _resource.getrusage(_resource.RUSAGE_SELF)
+    except Exception:
+        return False, None, ["memory_rss_unavailable"]
+    rss = int(usage.ru_maxrss)
+    if sys.platform == "darwin":
+        return True, rss, warnings
+    return True, rss * 1024, warnings
+
+
+def _build_resource_summary(*, cpu_start: float, memory_start: int | None) -> dict[str, Any]:
+    cpu_end = time.process_time()
+    cpu_delta = round(max(0.0, cpu_end - cpu_start), 6)
+    memory_available, memory_end, memory_warnings = _collect_memory_rss_bytes()
+    if not memory_available or memory_start is None or memory_end is None:
+        memory_start = None
+        memory_end = None
+        memory_delta = None
+    else:
+        memory_delta = memory_end - memory_start
+    return {
+        "enabled": True,
+        "collector": "stdlib",
+        "cpu_process_time_start_seconds": cpu_start,
+        "cpu_process_time_end_seconds": cpu_end,
+        "cpu_process_time_delta_seconds": cpu_delta,
+        "memory_rss_start_bytes": memory_start,
+        "memory_rss_end_bytes": memory_end,
+        "memory_rss_delta_bytes": memory_delta,
+        "memory_rss_available": memory_available
+        and memory_start is not None
+        and memory_end is not None,
+        "resource_warnings": memory_warnings,
+    }
+
+
+def _build_progress_summary() -> dict[str, Any]:
+    return {
+        "checkpoints_enabled": False,
+        "checkpoint_count": 0,
+        "heartbeat_count": 0,
+        "heartbeat_interval_seconds": None,
+        "progress_observations_count": 0,
+    }
+
+
+def _build_artifact_summary(report_path: str | None) -> dict[str, Any]:
+    return {
+        "report_path": report_path,
+        "report_size_bytes": None,
+        "report_size_available": False,
+        "log_size_bytes": None,
+        "log_size_available": False,
+        "max_report_size_bytes": _MAX_REPORT_SIZE_BYTES,
+        "max_log_size_bytes": _MAX_LOG_SIZE_BYTES,
+        "artifact_warnings": [],
+    }
+
+
+def _attach_guard_summaries(
+    payload: dict[str, Any], *, cpu_start: float, memory_start: int | None, report_path: str | None
+) -> None:
+    summary = payload.setdefault("summary", {})
+    summary["health_summary"] = _build_health_summary()
+    summary["process_resource_summary"] = _build_resource_summary(
+        cpu_start=cpu_start, memory_start=memory_start
+    )
+    summary["progress_summary"] = _build_progress_summary()
+    summary["artifact_summary"] = _build_artifact_summary(report_path)
+
+
 def _finalize_payload(
-    payload: dict[str, Any], args: argparse.Namespace
+    payload: dict[str, Any], args: argparse.Namespace, *, cpu_start: float, memory_start: int | None
 ) -> tuple[int, dict[str, Any]]:
     report_path_value = str(args.report_path) if args.report_path else None
+    _attach_guard_summaries(
+        payload, cpu_start=cpu_start, memory_start=memory_start, report_path=report_path_value
+    )
     payload["report_path"] = report_path_value
     if not args.report_path:
         return 0, payload
     report_path = Path(args.report_path)
     try:
+        _write_report(payload, report_path)
+        report_size = os.path.getsize(report_path)
+        artifact_summary = payload["summary"]["artifact_summary"]
+        artifact_summary["report_size_bytes"] = report_size
+        artifact_summary["report_size_available"] = True
+        warnings = list(artifact_summary["artifact_warnings"])
+        if report_size > _MAX_REPORT_SIZE_BYTES:
+            warnings.append("report_size_exceeds_policy")
+            payload["summary"]["warnings_count"] = (
+                int(payload["summary"].get("warnings_count", 0)) + 1
+            )
+        artifact_summary["artifact_warnings"] = warnings
         _write_report(payload, report_path)
     except OSError as exc:
         fallback = {
@@ -173,6 +295,10 @@ def main(argv: list[str] | None = None) -> int:
     run_id = str(args.run_id).strip() if args.run_id else str(uuid.uuid4())
     started_at = _iso_utc_now()
     started_perf = time.perf_counter()
+    cpu_start = time.process_time()
+    memory_available_start, memory_start, _ = _collect_memory_rss_bytes()
+    if not memory_available_start:
+        memory_start = None
 
     if args.mode == "live":
         blocked = _blocked_payload(
@@ -183,7 +309,9 @@ def main(argv: list[str] | None = None) -> int:
             started_at=started_at,
             started_perf=started_perf,
         )
-        status_code, final_payload = _finalize_payload(blocked, args)
+        status_code, final_payload = _finalize_payload(
+            blocked, args, cpu_start=cpu_start, memory_start=memory_start
+        )
         _emit(final_payload, args.json)
         return 2 if status_code == 0 else status_code
 
@@ -196,7 +324,9 @@ def main(argv: list[str] | None = None) -> int:
             started_at=started_at,
             started_perf=started_perf,
         )
-        status_code, final_payload = _finalize_payload(blocked, args)
+        status_code, final_payload = _finalize_payload(
+            blocked, args, cpu_start=cpu_start, memory_start=memory_start
+        )
         _emit(final_payload, args.json)
         return 2 if status_code == 0 else status_code
 
@@ -209,7 +339,9 @@ def main(argv: list[str] | None = None) -> int:
             started_at=started_at,
             started_perf=started_perf,
         )
-        status_code, final_payload = _finalize_payload(blocked, args)
+        status_code, final_payload = _finalize_payload(
+            blocked, args, cpu_start=cpu_start, memory_start=memory_start
+        )
         _emit(final_payload, args.json)
         return 2 if status_code == 0 else status_code
 
@@ -325,7 +457,9 @@ def main(argv: list[str] | None = None) -> int:
             }
             result["summary"]["ended_at"] = result["ended_at"]
             result["summary"]["elapsed_seconds"] = result["elapsed_seconds"]
-            status_code, final_payload = _finalize_payload(result, args)
+            status_code, final_payload = _finalize_payload(
+                result, args, cpu_start=cpu_start, memory_start=memory_start
+            )
             _emit(final_payload, args.json)
             if status_code != 0:
                 return status_code
@@ -405,7 +539,9 @@ def main(argv: list[str] | None = None) -> int:
     }
     result["summary"]["ended_at"] = result["ended_at"]
     result["summary"]["elapsed_seconds"] = result["elapsed_seconds"]
-    status_code, final_payload = _finalize_payload(result, args)
+    status_code, final_payload = _finalize_payload(
+        result, args, cpu_start=cpu_start, memory_start=memory_start
+    )
     _emit(final_payload, args.json)
     return status_code if status_code != 0 else 0
 

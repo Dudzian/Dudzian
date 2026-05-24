@@ -22,6 +22,46 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _assert_health_resource_summaries(payload: dict[str, object]) -> None:
+    summary = payload["summary"]
+    assert isinstance(summary, dict)
+    health = summary["health_summary"]
+    assert health["enabled"] is True
+    assert health["status"] in {"ok", "warning", "unavailable"}
+    assert health["long_run_ready"] is False
+    assert "duration_guard_below_24h" in health["long_run_blockers"]
+    assert isinstance(health["checkpoint_policy"], dict)
+    assert isinstance(health["heartbeat_policy"], dict)
+    assert isinstance(health["artifact_policy"], dict)
+
+    resources = summary["process_resource_summary"]
+    assert resources["enabled"] is True
+    assert isinstance(resources["cpu_process_time_start_seconds"], int | float)
+    assert isinstance(resources["cpu_process_time_end_seconds"], int | float)
+    assert resources["cpu_process_time_delta_seconds"] >= 0
+    assert isinstance(resources["memory_rss_available"], bool)
+    if resources["memory_rss_available"]:
+        assert isinstance(resources["memory_rss_start_bytes"], int)
+        assert isinstance(resources["memory_rss_end_bytes"], int)
+        assert isinstance(resources["memory_rss_delta_bytes"], int)
+    else:
+        assert resources["memory_rss_start_bytes"] is None
+        assert resources["memory_rss_end_bytes"] is None
+        assert resources["memory_rss_delta_bytes"] is None
+    assert isinstance(resources["resource_warnings"], list)
+
+    progress = summary["progress_summary"]
+    assert "checkpoint_count" in progress
+    assert "heartbeat_count" in progress
+    assert "progress_observations_count" in progress
+    assert "heartbeat_interval_seconds" in progress
+
+    artifact = summary["artifact_summary"]
+    assert isinstance(artifact["artifact_warnings"], list)
+    assert artifact["log_size_available"] is False
+    assert artifact["log_size_bytes"] is None
+
+
 def test_controlled_paper_runtime_validation_happy_path_json() -> None:
     result = _run(
         "--mode",
@@ -85,6 +125,7 @@ def test_controlled_paper_runtime_validation_happy_path_json() -> None:
         summary["journal_events_count"], int
     )
     assert summary["journal_visibility"] in {"not_available_in_mock_preview", "available"}
+    _assert_health_resource_summaries(payload)
     assert payload["issues"] == []
     assert payload["safety_contract_version"] == "controlled_paper_runtime_validation.v1"
 
@@ -104,6 +145,7 @@ def test_controlled_paper_runtime_validation_live_blocked() -> None:
     assert payload["reason"] == "controlled_paper_runtime_validation_forbids_live_mode"
     assert payload["steps"] == []
     assert payload["child_commands"] == []
+    _assert_health_resource_summaries(payload)
     assert "live_mode_not_allowed" in payload["issues"]
 
 
@@ -286,6 +328,14 @@ def test_controlled_paper_runtime_validation_happy_path_report_written(tmp_path:
     assert report_path.exists()
     file_payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert file_payload == payload
+    _assert_health_resource_summaries(payload)
+    artifact = payload["summary"]["artifact_summary"]
+    assert artifact["report_path"] == str(report_path)
+    assert artifact["report_size_available"] is True
+    assert isinstance(artifact["report_size_bytes"], int)
+    assert artifact["report_size_bytes"] > 0
+    assert isinstance(artifact["max_report_size_bytes"], int)
+    assert artifact["max_report_size_bytes"] > artifact["report_size_bytes"]
 
 
 def test_controlled_paper_runtime_validation_live_blocked_report_written(tmp_path: Path) -> None:
@@ -310,6 +360,7 @@ def test_controlled_paper_runtime_validation_live_blocked_report_written(tmp_pat
     assert payload["report_path"] == str(report_path)
     assert report_path.exists()
     assert json.loads(report_path.read_text(encoding="utf-8")) == payload
+    _assert_health_resource_summaries(payload)
 
 
 def test_controlled_paper_runtime_validation_invalid_duration_report_written(
@@ -336,6 +387,7 @@ def test_controlled_paper_runtime_validation_invalid_duration_report_written(
     assert payload["report_path"] == str(report_path)
     assert report_path.exists()
     assert json.loads(report_path.read_text(encoding="utf-8")) == payload
+    _assert_health_resource_summaries(payload)
 
 
 def test_controlled_paper_runtime_validation_invalid_duration_86400() -> None:
@@ -389,6 +441,23 @@ def test_controlled_paper_runtime_validation_no_api_keys_required(monkeypatch) -
         monkeypatch.delenv(key, raising=False)
     result = _run("--mode", "demo", "--config", str(SAFE_CONFIG), "--json")
     assert result.returncode == 0, result.stderr
+
+
+def test_controlled_paper_runtime_validation_memory_rss_fallback_without_resource(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(target_module, "_resource", None)
+    code = target_module.main(
+        ["--mode", "demo", "--config", str(SAFE_CONFIG), "--duration-seconds", "1", "--json"]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    resources = payload["summary"]["process_resource_summary"]
+    assert resources["memory_rss_available"] is False
+    assert resources["memory_rss_start_bytes"] is None
+    assert resources["memory_rss_end_bytes"] is None
+    assert resources["memory_rss_delta_bytes"] is None
+    assert "memory_rss_unavailable" in resources["resource_warnings"]
 
 
 def test_controlled_paper_runtime_validation_output_cp1252_safe() -> None:
