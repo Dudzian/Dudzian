@@ -18,7 +18,7 @@ except ModuleNotFoundError:
     _resource = None
 
 _MIN_DURATION = 1
-_MAX_DURATION = 3600
+_MAX_DURATION = 86400
 _TARGET_LONG_RUN_DURATION_SECONDS = 86400
 _MIN_MAX_SIGNALS = 1
 _MAX_MAX_SIGNALS = 10
@@ -169,11 +169,11 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
 
 
 def _build_health_summary() -> dict[str, Any]:
-    long_run_blockers = ["duration_guard_below_24h"]
+    long_run_blockers: list[str] = []
     return {
         "enabled": True,
         "status": "ok",
-        "long_run_ready": False,
+        "long_run_ready": len(long_run_blockers) == 0,
         "long_run_blockers": long_run_blockers,
         "checkpoint_policy": {
             "enabled": True,
