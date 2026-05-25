@@ -285,7 +285,7 @@ def test_controlled_paper_runtime_validation_duration_86400_allowed(monkeypatch,
     assert len(commands) == 3
 
 
-def test_controlled_paper_runtime_validation_invalid_duration_86401_primary() -> None:
+def test_controlled_paper_runtime_validation_duration_86401_allowed_primary() -> None:
     result = _run(
         "--mode",
         "demo",
@@ -294,15 +294,14 @@ def test_controlled_paper_runtime_validation_invalid_duration_86401_primary() ->
         "--duration-seconds",
         "86401",
         "--run-id",
-        "invalid-duration-high",
+        "duration-86401-allowed",
         "--json",
     )
-    assert result.returncode == 2
+    assert result.returncode == 0
     payload = json.loads(result.stdout)
-    assert payload["reason"] == "controlled_paper_runtime_validation_invalid_duration"
-    assert payload["run_id"] == "invalid-duration-high"
-    assert payload["steps"] == []
-    assert payload["child_commands"] == []
+    assert payload["status"] == "ok"
+    assert payload["run_id"] == "duration-86401-allowed"
+    assert payload["duration_seconds"] == 86401
 
 
 def test_controlled_paper_runtime_validation_invalid_max_signals_low() -> None:
@@ -415,7 +414,7 @@ def test_controlled_paper_runtime_validation_invalid_duration_report_written(
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "86401",
+        "259201",
         "--run-id",
         "report-invalid-duration",
         "--report-path",
@@ -432,16 +431,16 @@ def test_controlled_paper_runtime_validation_invalid_duration_report_written(
     _assert_health_resource_summaries(payload)
 
 
-def test_controlled_paper_runtime_validation_invalid_duration_86401() -> None:
+def test_controlled_paper_runtime_validation_invalid_duration_259201_duplicate() -> None:
     result = _run(
         "--mode",
         "demo",
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "86401",
+        "259201",
         "--run-id",
-        "invalid-duration-86401",
+        "invalid-duration-259201-dup",
         "--json",
     )
     assert result.returncode == 2
@@ -452,16 +451,58 @@ def test_controlled_paper_runtime_validation_invalid_duration_86401() -> None:
     assert payload["child_commands"] == []
 
 
-def test_controlled_paper_runtime_validation_invalid_duration_259200() -> None:
+def test_controlled_paper_runtime_validation_duration_259200_allowed(monkeypatch, capsys) -> None:
+    commands: list[list[str]] = []
+
+    def _fake_run(command, **kwargs):  # noqa: ANN001
+        commands.append(command)
+
+        class _Result:
+            def __init__(self) -> None:
+                self.stdout = json.dumps({"status": "ok"})
+                self.stderr = ""
+                self.returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(target_module.subprocess, "run", _fake_run)
+    code = target_module.main(
+        [
+            "--mode",
+            "demo",
+            "--config",
+            str(SAFE_CONFIG),
+            "--duration-seconds",
+            "259200",
+            "--max-signals",
+            "1",
+            "--run-id",
+            "duration-259200-allowed",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 0
+    assert payload["status"] == "ok"
+    assert payload["run_id"] == "duration-259200-allowed"
+    assert payload["duration_seconds"] == 259200
+    assert len(payload["child_commands"]) == 3
+    assert "resource_health_summary" in payload["summary"]
+    assert len(payload["steps"]) == 3
+    assert len(payload["child_commands"]) == 3
+
+
+def test_controlled_paper_runtime_validation_invalid_duration_259201() -> None:
     result = _run(
         "--mode",
         "demo",
         "--config",
         str(SAFE_CONFIG),
         "--duration-seconds",
-        "259200",
+        "259201",
         "--run-id",
-        "invalid-duration-259200",
+        "invalid-duration-259201",
         "--json",
     )
     assert result.returncode == 2

@@ -221,11 +221,11 @@ Bounded validation wrapper runs preview-plan + mock runtime preview + controller
 No live mode, no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
 This is not real paper trading and not sandbox/testnet trading; journal visibility may be limited when mock preview does not expose journal export.
 `controlled_paper_runtime_validation.py` can optionally persist the full JSON session report via `--report-path`, which is intended for comparing bounded validation runs before mini-soak.
-Current bounded mode is intentionally conservative and valid only within the script's configured duration guard (after CPR-20, explicitly allowing up to 86400 seconds / 24h for controlled validation (CPR-29)).
-A 5-minute / 300-second, 10-minute / 600-second, 30-minute / 1800-second, 60-minute / 3600-second and 24-hour / 86400-second controlled validation runs are allowed by the current guard.
-After CPR-21.1, the child `mock_runtime_preview.py` duration guard is aligned to the same 86400-second upper bound used by `controlled_paper_runtime_validation.py`.
+Current bounded mode is intentionally conservative and valid only within the script's configured duration guard (after CPR-35, explicitly allowing up to 259200 seconds / 72h for controlled validation).
+A 5-minute / 300-second, 10-minute / 600-second, 30-minute / 1800-second, 60-minute / 3600-second, 24-hour / 86400-second and 72-hour / 259200-second controlled validation durations are allowed by guard eligibility.
+After CPR-35, the child `mock_runtime_preview.py` duration guard is aligned to the same 259200-second upper bound used by `controlled_paper_runtime_validation.py`.
 This guard update does not execute a 86400-second target run in-place; the 24h target run is handled in a separate stage.
-CPR-29 only raises guard eligibility; 72h/259200 still requires a separate patch/seal and explicit runbook stage.
+CPR-35 raises guard eligibility to include 72h/259200, but does not execute a 72h target run in-place; the target run remains a separate stage.
 Non-live boundary remains unchanged: no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
 Before any 24h stage, keep the long-run health/resource/report guard enabled in controlled validation summary (`health_summary`, `process_resource_summary`, `progress_summary`, `artifact_summary`).
 CPR-29 raises the duration guard to 86400 without executing the 24h target run; the actual 24h run is a separate stage.
