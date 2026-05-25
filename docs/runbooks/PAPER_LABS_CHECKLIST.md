@@ -236,3 +236,15 @@ After CPR-29 guard update, `long_run_ready=true` is expected when no blockers ar
 Resource health summary is report-only and non-live; fields may be unavailable/null where safe cross-platform sampling is not available.
 `long_run_ready` and `long_run_blockers` are tracked under `summary.health_summary.*`.
 24h/72h still require separate duration patches/seals, and no-live/no-exchange/no-real-orders boundary remains unchanged.
+
+## Installer fingerprint readiness contract (PACKAGING-READINESS-2)
+
+Dostępna jest komenda local-only: `python scripts/installer_fingerprint_readiness.py --json`.
+Kontrakt ma charakter bezpiecznego readiness check dla instalatora/first-run UX:
+- nie aktywuje licencji,
+- nie czyta sekretów/keychain/env values,
+- nie wymaga API keys,
+- nie wykonuje exchange/API I/O,
+- nie uruchamia runtime loop,
+- nie eksponuje raw machine identifiers (tylko ewentualny masked preview).
+
