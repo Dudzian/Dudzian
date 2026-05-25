@@ -28,6 +28,25 @@ def test_happy_path_demo_paper() -> None:
     assert readiness["live_mode_enabled"] is False
     assert readiness["paper_mode_enabled"] is True
     assert readiness["credentials_onboarding_separate_from_install"] is True
+    assert readiness["artifact_hygiene_checked"] is True
+    assert readiness["artifact_exclude_policy_present"] is True
+    assert readiness["artifact_exclude_policy_version"] == "security_packaging_artifact_policy.v1"
+    assert set(
+        (
+            ".env",
+            "trading.db",
+            "bot_core/logs",
+            "logs",
+            "reports",
+            "test-results",
+            "var/security",
+            "*api_key*",
+            "*api_secret*",
+            "*secret*",
+            "*token*",
+            "*keychain*",
+        )
+    ).issubset(set(readiness["denied_artifact_patterns"]))
     assert readiness["api_keys_bundled"] is False
     assert readiness["env_file_bundled"] is False
     assert readiness["local_db_bundled"] is False
@@ -35,6 +54,9 @@ def test_happy_path_demo_paper() -> None:
     assert readiness["reports_bundled"] is False
     assert readiness["tmp_artifacts_bundled"] is False
     assert readiness["test_secrets_bundled"] is False
+    assert readiness["cache_artifacts_bundled"] is False
+    assert readiness["local_user_data_bundled"] is False
+    assert readiness["keychain_artifacts_bundled"] is False
     assert readiness["secrets_read"] is False
     assert readiness["keychain_read"] is False
     assert readiness["env_values_read"] is False
@@ -96,6 +118,8 @@ def test_source_safety() -> None:
         "write_bytes",
         "build_installer",
         "pyinstaller",
+        "open(",
+        "path.home()",
     ]
     for token in forbidden:
         assert token not in source
@@ -105,6 +129,16 @@ def test_cp1252_safe_output() -> None:
     result = _run("--config", "config/e2e/demo_paper.yml")
     assert result.returncode == 0
     result.stdout.encode("cp1252")
+
+
+def test_release_partial_is_preserved() -> None:
+    result = _run("--config", "config/e2e/demo_paper.yml")
+    payload = json.loads(result.stdout)
+    readiness = payload["security_packaging_readiness"]
+    assert readiness["release_integrity_status"] == "partial"
+    assert readiness["release_signing_ready"] is False
+    assert payload["status"] in {"warning", "blocked"}
+    assert "release_integrity_partial" in payload["issues"]
 
 
 def test_modes_and_invalid_mode() -> None:

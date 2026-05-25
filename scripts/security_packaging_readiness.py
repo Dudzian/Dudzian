@@ -8,6 +8,26 @@ from pathlib import Path
 
 SAFETY_CONTRACT_VERSION = "security_packaging_readiness.v1"
 VALID_MODES = {"install", "first-run"}
+ARTIFACT_EXCLUDE_POLICY_VERSION = "security_packaging_artifact_policy.v1"
+DENIED_ARTIFACT_PATTERNS = [
+    ".env",
+    "*.env",
+    "trading.db",
+    "bot_core/logs",
+    "logs",
+    "reports",
+    "test-results",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "__pycache__",
+    "var/security",
+    "*api_key*",
+    "*api_secret*",
+    "*secret*",
+    "*token*",
+    "*keychain*",
+]
 
 
 def _run_child(command: list[str]) -> tuple[dict[str, object] | None, str | None]:
@@ -89,6 +109,9 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "packaged_config_contract_checked": config_payload is not None,
         "packaged_config_status": packaged_status,
         "artifact_hygiene_checked": True,
+        "artifact_exclude_policy_present": True,
+        "artifact_exclude_policy_version": ARTIFACT_EXCLUDE_POLICY_VERSION,
+        "denied_artifact_patterns": DENIED_ARTIFACT_PATTERNS,
         "api_keys_bundled": False,
         "env_file_bundled": False,
         "local_db_bundled": False,
@@ -96,6 +119,9 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "reports_bundled": False,
         "tmp_artifacts_bundled": False,
         "test_secrets_bundled": False,
+        "cache_artifacts_bundled": False,
+        "local_user_data_bundled": False,
+        "keychain_artifacts_bundled": False,
         "safe_default_launch_checked": True,
         "default_mode": packaged_readiness.get("default_mode"),
         "live_mode_enabled": bool(packaged_readiness.get("live_mode_enabled", False)),

@@ -218,6 +218,13 @@ python scripts/controlled_paper_runtime_validation.py --mode demo --config confi
 ```
 
 Bounded validation wrapper runs preview-plan + mock runtime preview + controller mock preview and adds shutdown/thread/journal/event summary.
+
+## Security packaging artifact exclude policy (readiness-only)
+
+- `scripts/security_packaging_readiness.py` zawiera statyczną policy `security_packaging_artifact_policy.v1` dla artefaktów build/packaging.
+- Denylist obejmuje m.in. `.env`, wzorce API key/secret/token, `trading.db`, `bot_core/logs`, `logs`, `reports`, `test-results`, cache i `var/security`.
+- To jest granica readiness/policy: bez odczytu wartości sekretów, bez ładowania `.env`, bez skanowania katalogu domowego.
+- Pełny leak scan gotowego artefaktu builda jest osobnym etapem po pierwszym safe EXE buildzie.
 No live mode, no real API keys, no secret/keychain/env secret reads, no exchange/API I/O, no real order submission, no production runtime loop.
 This is not real paper trading and not sandbox/testnet trading; journal visibility may be limited when mock preview does not expose journal export.
 `controlled_paper_runtime_validation.py` can optionally persist the full JSON session report via `--report-path`, which is intended for comparing bounded validation runs before mini-soak.
