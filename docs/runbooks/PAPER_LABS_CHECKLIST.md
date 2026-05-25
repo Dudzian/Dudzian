@@ -248,3 +248,11 @@ Kontrakt ma charakter bezpiecznego readiness check dla instalatora/first-run UX:
 - nie uruchamia runtime loop,
 - nie eksponuje raw machine identifiers (tylko ewentualny masked preview).
 
+
+
+## Packaged config readiness (PACKAGING-READINESS-3)
+
+Uruchom: `python scripts/packaged_config_readiness.py --config config/e2e/demo_paper.yml --json`.
+Kontrakt jest static/config-only: nie czyta sekretów, keychain ani wartości env, nie wymaga API keys do instalacji, nie wykonuje exchange/API I/O i nie uruchamia runtime loop.
+Bezpieczny domyślny tryb po instalacji to demo/paper/offline; onboarding credentiali jest oddzielony od sukcesu instalacji.
+Packaging nie powinien bundle'ować: `.env`, lokalnej DB (`trading.db`), logów ani raportów.
