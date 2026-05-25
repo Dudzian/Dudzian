@@ -241,3 +241,18 @@ def test_modes_and_invalid_mode() -> None:
         check=False,
     )
     assert invalid.returncode != 0
+
+
+def test_release_hash_manifest_fields_propagated() -> None:
+    result = _run("--config", "config/e2e/demo_paper.yml")
+    payload = json.loads(result.stdout)
+    readiness = payload["security_packaging_readiness"]
+    contract = payload["contracts"]["release_integrity_readiness"]["release_integrity_readiness"]
+
+    assert readiness["release_hash_manifest_ready"] == contract["hash_manifest_ready"]
+    assert readiness["release_hash_manifest_algorithm"] in {"sha256", "sha384", "sha512", None}
+    assert isinstance(readiness["release_hash_manifest_policy_present"], bool)
+    assert readiness["release_hash_manifest_generation_performed"] is False
+    assert "hash_manifest_algorithm" in contract
+    assert "release_signing_not_ready" in payload["issues"]
+    assert "artifact_scan_not_performed" in payload["issues"]
