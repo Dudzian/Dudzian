@@ -256,3 +256,19 @@ def test_release_hash_manifest_fields_propagated() -> None:
     assert "hash_manifest_algorithm" in contract
     assert "release_signing_not_ready" in payload["issues"]
     assert "artifact_scan_not_performed" in payload["issues"]
+
+
+def test_release_channel_policy_fields_propagated() -> None:
+    payload = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+    readiness = payload["security_packaging_readiness"]
+    contract = payload["contracts"]["release_integrity_readiness"]["release_integrity_readiness"]
+    assert readiness["release_channel_policy_present"] == contract["release_channel_policy_present"]
+    assert readiness["release_channel_policy_version"] == contract["release_channel_policy_version"]
+    assert readiness["supported_release_channels"] == contract["supported_release_channels"]
+    assert readiness["default_release_channel"] == contract["default_release_channel"]
+    assert readiness["release_channel_gate_performed"] is False
+    assert readiness["release_channel_gate_result"] == "not_performed"
+    assert "release_channel_gate_not_performed" in payload["issues"]
+    assert "ga_release_not_ready" in payload["issues"]
+    assert "release_signing_not_ready" in payload["issues"]
+    assert "artifact_scan_not_performed" in payload["issues"]

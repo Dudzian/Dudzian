@@ -176,6 +176,16 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "release_hash_manifest_algorithm": release_hash_manifest_algorithm,
         "release_hash_manifest_policy_present": release_hash_manifest_policy_present,
         "release_hash_manifest_generation_performed": release_hash_manifest_generation_performed,
+        "release_channel_policy_present": bool(
+            release_readiness.get("release_channel_policy_present", False)
+        ),
+        "release_channel_policy_version": release_readiness.get("release_channel_policy_version"),
+        "supported_release_channels": release_readiness.get("supported_release_channels", []),
+        "default_release_channel": release_readiness.get("default_release_channel"),
+        "release_channel_gate_performed": bool(
+            release_readiness.get("release_channel_gate_performed", False)
+        ),
+        "release_channel_gate_result": release_readiness.get("release_channel_gate_result"),
         "release_integrity_status": release_integrity_status,
         "secrets_read": False,
         "keychain_read": False,
