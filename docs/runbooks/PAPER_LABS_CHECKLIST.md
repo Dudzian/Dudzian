@@ -278,3 +278,10 @@ Uruchom: `python scripts/security_packaging_readiness.py --config config/e2e/dem
 Manifest agreguje `installer_fingerprint_readiness` + `packaged_config_readiness` i zwraca machine-readable status sekcji: contracts, artifact hygiene, safe default launch, release integrity.
 Komenda nie buduje EXE/installera, nie czyta sekretów/keychain/env values, nie wymaga API keys, nie wykonuje exchange/API I/O i nie uruchamia runtime loop.
 Sekcje artifact hygiene i release integrity są readiness summary; pełne leak/exclude tests pozostają osobnym etapem.
+
+## Release integrity readiness contract (static/local-only)
+
+- Dostępny jest osobny kontrakt: `python scripts/release_integrity_readiness.py --json` (`release_integrity_readiness.v1`).
+- Kontrakt jest statyczny i local-only: nie podpisuje release, nie wykonuje codesign/notarization, nie buduje artefaktu i nie generuje hash manifestu.
+- Kontrakt raportuje readiness/not-ready dla: release signing, hash manifest policy (prebuild/readiness) i artifact scan.
+- Pełna integralność release (final artifact hash scan + podpisy) wymaga osobnego etapu po safe buildzie.

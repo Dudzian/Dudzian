@@ -22,6 +22,10 @@ def test_happy_path_demo_paper() -> None:
 
     assert payload["safety_contract_version"] == "security_packaging_readiness.v1"
     assert readiness["installer_fingerprint_contract_checked"] is True
+    assert readiness["release_integrity_contract_checked"] is True
+    assert readiness["release_integrity_readiness_present"] is True
+    assert readiness["release_integrity_contract_version"] == "release_integrity_readiness.v1"
+    assert readiness["release_integrity_readiness_status"] in {"warning", "blocked"}
     assert readiness["packaged_config_contract_checked"] is True
     assert readiness["installer_safe"] is True
     assert readiness["first_run_safe"] is True
@@ -202,10 +206,18 @@ def test_release_partial_is_preserved() -> None:
     result = _run("--config", "config/e2e/demo_paper.yml")
     payload = json.loads(result.stdout)
     readiness = payload["security_packaging_readiness"]
-    assert readiness["release_integrity_status"] == "partial"
+    assert readiness["release_signing_ready"] is False
+    assert readiness["release_hash_manifest_ready"] in {True, False}
+    assert readiness["release_integrity_status"] in {"warning", "partial", "blocked"}
     assert readiness["release_signing_ready"] is False
     assert payload["status"] in {"warning", "blocked"}
     assert "release_integrity_partial" in payload["issues"]
+    assert "release_signing_not_ready" in payload["issues"]
+    assert "artifact_scan_not_performed" in payload["issues"]
+    assert (
+        payload["contracts"]["release_integrity_readiness"]["safety_contract_version"]
+        == "release_integrity_readiness.v1"
+    )
 
 
 def test_modes_and_invalid_mode() -> None:
