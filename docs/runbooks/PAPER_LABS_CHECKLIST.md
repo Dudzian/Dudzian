@@ -231,4 +231,8 @@ Before any 24h stage, keep the long-run health/resource/report guard enabled in 
 CPR-29 raises the duration guard to 86400 without executing the 24h target run; the actual 24h run is a separate stage.
 CPR-27 adds a lightweight checkpoint/heartbeat/progress summary in controlled validation (`heartbeat_mode=step_boundary`) for deterministic step-boundary progress visibility.
 After CPR-29 guard update, `long_run_ready=true` is expected when no blockers are present in bounded sanity.
+24h controlled validation milestone is closed after two successful 86400s controlled validation runs (CPR-30 and CPR-31).
+72h escalation remains a separate stage and requires resource health summary validation before any 259200 guard change.
+Resource health summary is report-only and non-live; fields may be unavailable/null where safe cross-platform sampling is not available.
+`long_run_ready` and `long_run_blockers` are tracked under `summary.health_summary.*`.
 24h/72h still require separate duration patches/seals, and no-live/no-exchange/no-real-orders boundary remains unchanged.
