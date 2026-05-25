@@ -101,6 +101,13 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     )
     release_signing_ready = bool(release_readiness.get("release_signing_ready", False))
     release_hash_manifest_ready = bool(release_readiness.get("hash_manifest_ready", False))
+    release_hash_manifest_algorithm = release_readiness.get("hash_manifest_algorithm")
+    release_hash_manifest_policy_present = bool(
+        release_readiness.get("hash_manifest_policy_present", False)
+    )
+    release_hash_manifest_generation_performed = bool(
+        release_readiness.get("hash_manifest_generation_performed", False)
+    )
 
     if status == "ok":
         status = "warning"
@@ -166,6 +173,9 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "release_integrity_checked": True,
         "release_signing_ready": release_signing_ready,
         "release_hash_manifest_ready": release_hash_manifest_ready,
+        "release_hash_manifest_algorithm": release_hash_manifest_algorithm,
+        "release_hash_manifest_policy_present": release_hash_manifest_policy_present,
+        "release_hash_manifest_generation_performed": release_hash_manifest_generation_performed,
         "release_integrity_status": release_integrity_status,
         "secrets_read": False,
         "keychain_read": False,
@@ -203,6 +213,7 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
             "release_integrity_readiness": {
                 "status": release_status,
                 "safety_contract_version": (release_payload or {}).get("safety_contract_version"),
+                "release_integrity_readiness": release_readiness,
             },
         },
         "checks": {

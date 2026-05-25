@@ -98,3 +98,33 @@ def test_mode_contract() -> None:
         check=False,
     )
     assert invalid.returncode != 0
+
+
+def test_hash_manifest_readiness_fields() -> None:
+    payload = json.loads(_run().stdout)
+    readiness = payload["release_integrity_readiness"]
+    assert isinstance(readiness["hash_manifest_policy_present"], bool)
+    assert readiness["hash_manifest_algorithm"] in {"sha256", "sha384", "sha512", None}
+    assert isinstance(readiness["hash_manifest_ready"], bool)
+    assert readiness["hash_manifest_required_for_release"] is True
+    assert readiness["hash_manifest_generation_performed"] is False
+    assert readiness["hash_manifest_artifact_path"] is None
+    assert readiness["hash_manifest_artifact_exists"] is False
+    assert readiness["hash_manifest_includes_source_commit"] is True
+    assert readiness["hash_manifest_includes_build_id"] is True
+    assert readiness["hash_manifest_includes_artifact_size"] is True
+    assert readiness["hash_manifest_includes_artifact_sha"] is True
+    assert readiness["hash_manifest_is_prebuild_policy_only"] is True
+    assert readiness["hash_manifest_final_artifact_scan_required"] is True
+    assert readiness["hash_manifest_final_artifact_scan_performed"] is False
+
+
+def test_release_issues_visible_and_warning_status() -> None:
+    payload = json.loads(_run().stdout)
+    assert payload["status"] == "warning"
+    assert "release_signing_not_ready" in payload["issues"]
+    assert "artifact_scan_not_performed" in payload["issues"]
+    assert any(
+        issue in payload["issues"]
+        for issue in ("hash_manifest_not_generated", "final_artifact_scan_not_performed")
+    )

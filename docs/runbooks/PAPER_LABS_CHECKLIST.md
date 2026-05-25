@@ -285,3 +285,8 @@ Sekcje artifact hygiene i release integrity są readiness summary; pełne leak/e
 - Kontrakt jest statyczny i local-only: nie podpisuje release, nie wykonuje codesign/notarization, nie buduje artefaktu i nie generuje hash manifestu.
 - Kontrakt raportuje readiness/not-ready dla: release signing, hash manifest policy (prebuild/readiness) i artifact scan.
 - Pełna integralność release (final artifact hash scan + podpisy) wymaga osobnego etapu po safe buildzie.
+
+## Release hash manifest readiness (static/prebuild)
+
+`release_integrity_readiness` sprawdza tylko politykę prebuild/static: wymagane pola manifestu obejmują source commit, build id, artifact size i artifact SHA.
+Finalny hash manifest jest generowany dopiero po bezpiecznym buildzie artefaktu, a generowanie/skan finalnego artefaktu to osobny etap release.
