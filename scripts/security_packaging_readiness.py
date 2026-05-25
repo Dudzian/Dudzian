@@ -10,6 +10,7 @@ SAFETY_CONTRACT_VERSION = "security_packaging_readiness.v1"
 VALID_MODES = {"install", "first-run"}
 ARTIFACT_EXCLUDE_POLICY_VERSION = "security_packaging_artifact_policy.v1"
 SAFE_LAUNCH_POLICY_VERSION = "security_packaging_safe_launch_policy.v1"
+RELEASE_INTEGRITY_CONTRACT_VERSION = "release_integrity_readiness.v1"
 DENIED_ARTIFACT_PATTERNS = [
     ".env",
     "*.env",
@@ -62,21 +63,27 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
             "--json",
         ]
     )
+    release_payload, release_error = _run_child(
+        [sys.executable, "scripts/release_integrity_readiness.py", "--json"]
+    )
 
     installer_status = (
         "blocked" if installer_error else str(installer_payload.get("status", "blocked"))
     )
     packaged_status = "blocked" if config_error else str(config_payload.get("status", "blocked"))
+    release_status = "blocked" if release_error else str(release_payload.get("status", "blocked"))
 
     if installer_error:
         issues.append(f"installer_fingerprint_contract_error:{installer_error}")
     if config_error:
         issues.append(f"packaged_config_contract_error:{config_error}")
+    if release_error:
+        issues.append(f"release_integrity_contract_error:{release_error}")
 
-    if installer_status == "blocked" or packaged_status == "blocked":
+    if "blocked" in {installer_status, packaged_status, release_status}:
         status = "blocked"
         issues.append("child_contract_failed")
-    elif installer_status == "warning" or packaged_status == "warning":
+    elif "warning" in {installer_status, packaged_status, release_status}:
         status = "warning"
 
     if packaged_payload := config_payload:
@@ -84,9 +91,17 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
             if isinstance(issue, str) and issue.startswith("unsafe_config:"):
                 issues.append(issue)
 
-    release_integrity_status = "partial"
-    release_signing_ready = False
-    release_hash_manifest_ready = True
+    release_readiness = (release_payload or {}).get("release_integrity_readiness", {})
+    for issue in (release_payload or {}).get("issues", []):
+        if isinstance(issue, str):
+            issues.append(issue)
+
+    release_integrity_status = (
+        str(release_payload.get("status", "warning")) if release_payload else "partial"
+    )
+    release_signing_ready = bool(release_readiness.get("release_signing_ready", False))
+    release_hash_manifest_ready = bool(release_readiness.get("hash_manifest_ready", False))
+
     if status == "ok":
         status = "warning"
     issues.append("release_integrity_partial")
@@ -109,6 +124,12 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "installer_fingerprint_status": installer_status,
         "packaged_config_contract_checked": config_payload is not None,
         "packaged_config_status": packaged_status,
+        "release_integrity_contract_checked": release_payload is not None,
+        "release_integrity_contract_version": release_readiness.get(
+            "release_integrity_contract_version", RELEASE_INTEGRITY_CONTRACT_VERSION
+        ),
+        "release_integrity_readiness_present": release_payload is not None,
+        "release_integrity_readiness_status": release_status,
         "artifact_hygiene_checked": True,
         "artifact_exclude_policy_present": True,
         "artifact_exclude_policy_version": ARTIFACT_EXCLUDE_POLICY_VERSION,
@@ -179,10 +200,15 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
                 "status": packaged_status,
                 "safety_contract_version": (config_payload or {}).get("safety_contract_version"),
             },
+            "release_integrity_readiness": {
+                "status": release_status,
+                "safety_contract_version": (release_payload or {}).get("safety_contract_version"),
+            },
         },
         "checks": {
             "mode_supported": mode in VALID_MODES,
             "contracts_checked": installer_payload is not None and config_payload is not None,
+            "release_integrity_contract_checked": release_payload is not None,
             "safe_default_launch": readiness["preview_or_demo_default"]
             and not readiness["live_mode_enabled"],
             "artifact_hygiene_summary_present": True,
