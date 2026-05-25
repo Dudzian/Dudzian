@@ -56,6 +56,25 @@ def _assert_health_resource_summaries(payload: dict[str, object]) -> None:
         assert resources["memory_rss_delta_bytes"] is None
     assert isinstance(resources["resource_warnings"], list)
 
+    resource_health = summary["resource_health_summary"]
+    assert isinstance(resource_health["resource_health_available"], bool)
+    assert isinstance(resource_health["resource_samples_count"], int)
+    assert resource_health["resource_samples_count"] >= 0
+    assert resource_health["resource_health_status"] in {"ok", "unknown", "warning"}
+    assert isinstance(resource_health["resource_warnings"], list)
+    for key in (
+        "rss_mb_start",
+        "rss_mb_end",
+        "rss_mb_delta",
+        "rss_mb_peak",
+        "cpu_seconds_start",
+        "cpu_seconds_end",
+        "cpu_seconds_delta",
+        "resource_sample_interval_seconds",
+    ):
+        assert key in resource_health
+        assert resource_health[key] is None or isinstance(resource_health[key], int | float)
+
     progress = summary["progress_summary"]
     assert progress["checkpoints_enabled"] is True
     assert progress["checkpoint_count"] >= 2
@@ -599,6 +618,7 @@ def test_controlled_paper_runtime_validation_timeout_propagation(monkeypatch, ca
     assert payload["summary"]["errors_count"] == 1
     assert payload["summary"]["timeout_triggered"] is True
     assert payload["summary"]["timeout_step"] == "mock_runtime_preview"
+    _assert_health_resource_summaries(payload)
     progress = payload["summary"]["progress_summary"]
     assert progress["checkpoint_count"] > 0
     assert payload["safety_contract_version"] == "controlled_paper_runtime_validation.v1"

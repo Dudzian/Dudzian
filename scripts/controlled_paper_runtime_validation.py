@@ -233,6 +233,55 @@ def _build_resource_summary(*, cpu_start: float, memory_start: int | None) -> di
     }
 
 
+def _build_resource_health_summary(
+    process_resource_summary: dict[str, Any],
+) -> dict[str, Any]:
+    cpu_start = process_resource_summary.get("cpu_process_time_start_seconds")
+    cpu_end = process_resource_summary.get("cpu_process_time_end_seconds")
+    cpu_delta = process_resource_summary.get("cpu_process_time_delta_seconds")
+    rss_start_bytes = process_resource_summary.get("memory_rss_start_bytes")
+    rss_end_bytes = process_resource_summary.get("memory_rss_end_bytes")
+    resource_warnings = list(process_resource_summary.get("resource_warnings") or [])
+    available = bool(process_resource_summary.get("memory_rss_available")) and all(
+        isinstance(value, int | float) for value in (cpu_start, cpu_end, cpu_delta)
+    )
+
+    rss_mb_start = (
+        round(float(rss_start_bytes) / (1024 * 1024), 6)
+        if isinstance(rss_start_bytes, int | float)
+        else None
+    )
+    rss_mb_end = (
+        round(float(rss_end_bytes) / (1024 * 1024), 6)
+        if isinstance(rss_end_bytes, int | float)
+        else None
+    )
+    rss_mb_delta = (
+        round(rss_mb_end - rss_mb_start, 6)
+        if isinstance(rss_mb_start, int | float) and isinstance(rss_mb_end, int | float)
+        else None
+    )
+    rss_mb_peak = rss_mb_end if isinstance(rss_mb_end, int | float) else None
+    status = "ok" if available and not resource_warnings else "unknown"
+    if resource_warnings:
+        status = "warning" if available else "unknown"
+
+    return {
+        "resource_health_available": available,
+        "resource_samples_count": 2 if available else 0,
+        "resource_sample_interval_seconds": None,
+        "rss_mb_start": rss_mb_start,
+        "rss_mb_end": rss_mb_end,
+        "rss_mb_delta": rss_mb_delta,
+        "rss_mb_peak": rss_mb_peak,
+        "cpu_seconds_start": cpu_start if isinstance(cpu_start, int | float) else None,
+        "cpu_seconds_end": cpu_end if isinstance(cpu_end, int | float) else None,
+        "cpu_seconds_delta": cpu_delta if isinstance(cpu_delta, int | float) else None,
+        "resource_warnings": resource_warnings,
+        "resource_health_status": status,
+    }
+
+
 def _build_artifact_summary(report_path: str | None) -> dict[str, Any]:
     return {
         "report_path": report_path,
@@ -256,9 +305,11 @@ def _attach_guard_summaries(
 ) -> None:
     summary = payload.setdefault("summary", {})
     summary["health_summary"] = _build_health_summary()
-    summary["process_resource_summary"] = _build_resource_summary(
+    process_resource_summary = _build_resource_summary(
         cpu_start=cpu_start, memory_start=memory_start
     )
+    summary["process_resource_summary"] = process_resource_summary
+    summary["resource_health_summary"] = _build_resource_health_summary(process_resource_summary)
     summary["progress_summary"] = progress_tracker.summary()
     summary["artifact_summary"] = _build_artifact_summary(report_path)
 
