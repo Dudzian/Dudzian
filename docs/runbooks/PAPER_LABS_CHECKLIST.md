@@ -256,3 +256,11 @@ Uruchom: `python scripts/packaged_config_readiness.py --config config/e2e/demo_p
 Kontrakt jest static/config-only: nie czyta sekretów, keychain ani wartości env, nie wymaga API keys do instalacji, nie wykonuje exchange/API I/O i nie uruchamia runtime loop.
 Bezpieczny domyślny tryb po instalacji to demo/paper/offline; onboarding credentiali jest oddzielony od sukcesu instalacji.
 Packaging nie powinien bundle'ować: `.env`, lokalnej DB (`trading.db`), logów ani raportów.
+
+
+## Security packaging readiness manifest (SECURITY-PACKAGING-2)
+
+Uruchom: `python scripts/security_packaging_readiness.py --config config/e2e/demo_paper.yml --json`.
+Manifest agreguje `installer_fingerprint_readiness` + `packaged_config_readiness` i zwraca machine-readable status sekcji: contracts, artifact hygiene, safe default launch, release integrity.
+Komenda nie buduje EXE/installera, nie czyta sekretów/keychain/env values, nie wymaga API keys, nie wykonuje exchange/API I/O i nie uruchamia runtime loop.
+Sekcje artifact hygiene i release integrity są readiness summary; pełne leak/exclude tests pozostają osobnym etapem.
