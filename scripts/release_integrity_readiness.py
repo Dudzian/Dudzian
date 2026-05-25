@@ -18,7 +18,9 @@ def _read_text_if_exists(path: Path) -> str:
 def build_payload(mode: str) -> tuple[dict[str, object], int]:
     issues: list[str] = []
     release_process_docs_present = RELEASE_PROCESS_DOC.exists()
-    release_process_docs_path = str(RELEASE_PROCESS_DOC) if release_process_docs_present else None
+    release_process_docs_path = (
+        RELEASE_PROCESS_DOC.as_posix() if release_process_docs_present else None
+    )
     release_process_text = _read_text_if_exists(RELEASE_PROCESS_DOC)
 
     release_channel_policy_present = all(
