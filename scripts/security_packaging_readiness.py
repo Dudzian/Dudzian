@@ -9,6 +9,7 @@ from pathlib import Path
 SAFETY_CONTRACT_VERSION = "security_packaging_readiness.v1"
 VALID_MODES = {"install", "first-run"}
 ARTIFACT_EXCLUDE_POLICY_VERSION = "security_packaging_artifact_policy.v1"
+SAFE_LAUNCH_POLICY_VERSION = "security_packaging_safe_launch_policy.v1"
 DENIED_ARTIFACT_PATTERNS = [
     ".env",
     "*.env",
@@ -123,7 +124,10 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "local_user_data_bundled": False,
         "keychain_artifacts_bundled": False,
         "safe_default_launch_checked": True,
+        "safe_default_launch_policy_present": True,
+        "safe_default_launch_policy_version": SAFE_LAUNCH_POLICY_VERSION,
         "default_mode": packaged_readiness.get("default_mode"),
+        "default_launch_mode": packaged_readiness.get("default_mode"),
         "live_mode_enabled": bool(packaged_readiness.get("live_mode_enabled", False)),
         "paper_mode_enabled": bool(packaged_readiness.get("paper_mode_enabled", False)),
         "force_paper_when_offline": bool(packaged_readiness.get("force_paper_when_offline", False)),
@@ -146,10 +150,19 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "keychain_read": False,
         "env_values_read": False,
         "api_keys_required": False,
+        "api_keys_required_for_launch": False,
         "exchange_io": "disabled",
         "order_submission": "disabled",
+        "real_orders_submitted": False,
         "runtime_loop_started": False,
         "production_runtime_loop_started": False,
+        "live_launch_requires_explicit_reconfiguration": True,
+        "live_launch_blocked_by_default": True,
+        "packaged_shortcut_live_target_allowed": False,
+        "packaged_shortcut_preview_target_allowed": True,
+        "packaged_shortcut_demo_target_allowed": True,
+        "packaged_shortcut_default_args": ["--mode", "demo", "--preview-plan"],
+        "unsafe_launch_modes_blocked": ["live"],
     }
 
     payload = {

@@ -64,6 +64,73 @@ def test_happy_path_demo_paper() -> None:
     assert readiness["order_submission"] == "disabled"
     assert readiness["runtime_loop_started"] is False
     assert readiness["production_runtime_loop_started"] is False
+    assert readiness["safe_default_launch_checked"] is True
+    assert readiness["safe_default_launch_policy_present"] is True
+    assert (
+        readiness["safe_default_launch_policy_version"]
+        == "security_packaging_safe_launch_policy.v1"
+    )
+    assert readiness["preview_or_demo_default"] is True
+    assert readiness["api_keys_required"] is False
+    assert readiness["api_keys_required_for_launch"] is False
+    assert readiness["real_orders_submitted"] is False
+    assert readiness["live_launch_requires_explicit_reconfiguration"] is True
+    assert readiness["live_launch_blocked_by_default"] is True
+    assert readiness["packaged_shortcut_live_target_allowed"] is False
+    assert readiness["packaged_shortcut_preview_target_allowed"] is True
+    assert readiness["packaged_shortcut_demo_target_allowed"] is True
+    assert "live" in readiness["unsafe_launch_modes_blocked"]
+
+
+def test_default_args_safety() -> None:
+    result = _run("--config", "config/e2e/demo_paper.yml")
+    readiness = json.loads(result.stdout)["security_packaging_readiness"]
+    default_args = readiness["packaged_shortcut_default_args"]
+    assert isinstance(default_args, list)
+    lowered = [str(item).lower() for item in default_args]
+    joined = " ".join(lowered)
+    assert "live" not in lowered
+    assert any(token in joined for token in ("demo", "preview", "paper"))
+    for forbidden in ("api_key", "api_secret", "secret", ".env", "binance", "bybit", "okx"):
+        assert forbidden not in joined
+
+
+def test_existing_live_blocked_sanity() -> None:
+    run_local = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_local_bot.py",
+            "--mode",
+            "live",
+            "--config",
+            "config/e2e/demo_paper.yml",
+            "--preview-plan",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run_local.returncode != 0
+
+    operator_bundle = subprocess.run(
+        [
+            sys.executable,
+            "scripts/operator_preview_bundle.py",
+            "--mode",
+            "live",
+            "--config",
+            "config/e2e/demo_paper.yml",
+            "--duration-seconds",
+            "5",
+            "--max-signals",
+            "1",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert operator_bundle.returncode != 0
 
 
 def test_aggregates_contract_versions() -> None:
