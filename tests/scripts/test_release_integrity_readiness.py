@@ -128,3 +128,39 @@ def test_release_issues_visible_and_warning_status() -> None:
         issue in payload["issues"]
         for issue in ("hash_manifest_not_generated", "final_artifact_scan_not_performed")
     )
+
+
+def test_release_channel_policy_fields_and_issues() -> None:
+    payload = json.loads(_run().stdout)
+    readiness = payload["release_integrity_readiness"]
+    assert isinstance(readiness["release_channel_policy_present"], bool)
+    assert readiness["release_channel_policy_version"] == "release_channel_policy.v1"
+    channels = readiness["supported_release_channels"]
+    assert set(("dev", "test", "rc", "ga")).issubset(set(channels))
+    assert readiness["default_release_channel"] in channels
+    assert (
+        readiness["current_release_channel"] is None
+        or readiness["current_release_channel"] in channels
+    )
+    assert readiness["dev_channel_allowed_without_signing"] is True
+    assert readiness["test_channel_allowed_without_signing"] is True
+    assert readiness["rc_channel_requires_hash_manifest"] is True
+    assert readiness["rc_channel_requires_artifact_scan"] is True
+    assert readiness["rc_channel_requires_signing_decision"] is True
+    assert readiness["ga_channel_requires_hash_manifest"] is True
+    assert readiness["ga_channel_requires_artifact_scan"] is True
+    assert readiness["ga_channel_requires_signing"] is True
+    assert readiness["ga_channel_requires_release_notes"] is True
+    assert readiness["ga_channel_requires_source_commit"] is True
+    assert readiness["ga_channel_requires_build_id"] is True
+    assert isinstance(readiness["promotion_policy_present"], bool)
+    assert readiness["rc_to_ga_promotion_requires_clean_security_manifest"] is True
+    assert readiness["rc_to_ga_promotion_requires_no_known_blockers"] is True
+    assert readiness["release_channel_gate_performed"] is False
+    assert readiness["release_channel_gate_result"] == "not_performed"
+    assert readiness["release_channel_is_prebuild_policy_only"] is True
+    assert "release_channel_gate_not_performed" in payload["issues"]
+    assert "ga_release_not_ready" in payload["issues"]
+    assert "release_signing_not_ready" in payload["issues"]
+    assert "artifact_scan_not_performed" in payload["issues"]
+    assert payload["status"] == "warning"

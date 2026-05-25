@@ -290,3 +290,13 @@ Sekcje artifact hygiene i release integrity są readiness summary; pełne leak/e
 
 `release_integrity_readiness` sprawdza tylko politykę prebuild/static: wymagane pola manifestu obejmują source commit, build id, artifact size i artifact SHA.
 Finalny hash manifest jest generowany dopiero po bezpiecznym buildzie artefaktu, a generowanie/skan finalnego artefaktu to osobny etap release.
+
+
+## Release channel readiness policy (prebuild/static)
+
+- Polityka kanałów release to kontrakt statyczny/prebuild readiness (nie realny release).
+- Kanały `dev` i `test` mogą istnieć bez signingu.
+- Kanały `rc` i `ga` wymagają mocniejszych bramek bezpieczeństwa.
+- `ga` wymaga: signing + artifact scan + hash manifest + source commit + build id.
+- W tym etapie gate release channel nie jest wykonywany (`not_performed`).
+- Realna promocja `rc` -> `ga` to osobny etap operacyjny.
