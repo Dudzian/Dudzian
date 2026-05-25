@@ -219,6 +219,13 @@ python scripts/controlled_paper_runtime_validation.py --mode demo --config confi
 
 Bounded validation wrapper runs preview-plan + mock runtime preview + controller mock preview and adds shutdown/thread/journal/event summary.
 
+## Security packaging safe default launch policy
+
+`security_packaging_readiness.v1` obejmuje statyczny kontrakt `security_packaging_safe_launch_policy.v1`.
+Domyślny launch po instalacji ma pozostać w trybie demo/preview/paper/offline (nigdy live), a przyszły shortcut/EXE ma wskazywać bezpieczny target.
+Tryb live jest blokowany domyślnie i wymaga osobnej, jawnej rekonfiguracji oraz gate.
+Ta polityka nie buduje EXE/installera i nie uruchamia produkcyjnej pętli runtime.
+
 ## Security packaging artifact exclude policy (readiness-only)
 
 - `scripts/security_packaging_readiness.py` zawiera statyczną policy `security_packaging_artifact_policy.v1` dla artefaktów build/packaging.
