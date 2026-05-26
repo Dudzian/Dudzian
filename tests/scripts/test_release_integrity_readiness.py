@@ -164,3 +164,31 @@ def test_release_channel_policy_fields_and_issues() -> None:
     assert "release_signing_not_ready" in payload["issues"]
     assert "artifact_scan_not_performed" in payload["issues"]
     assert payload["status"] == "warning"
+
+
+def test_release_promotion_gate_policy_fields_and_issues() -> None:
+    payload = json.loads(_run().stdout)
+    readiness = payload["release_integrity_readiness"]
+    assert readiness["promotion_gate_policy_present"] is True
+    assert readiness["promotion_gate_policy_version"] == "release_promotion_gate_policy.v1"
+    assert readiness["promotion_gate_performed"] is False
+    assert readiness["promotion_gate_result"] == "not_performed"
+    assert readiness["rc_to_ga_promotion_performed"] is False
+    assert readiness["rc_to_ga_promotion_ready"] is False
+    assert isinstance(readiness["rc_to_ga_blockers"], list)
+    assert readiness["rc_to_ga_blockers"]
+    assert readiness["rc_to_ga_requires_clean_security_manifest"] is True
+    assert readiness["rc_to_ga_requires_no_known_blockers"] is True
+    assert readiness["rc_to_ga_requires_hash_manifest"] is True
+    assert readiness["rc_to_ga_requires_final_artifact_scan"] is True
+    assert readiness["rc_to_ga_requires_signing"] is True
+    assert readiness["rc_to_ga_requires_release_notes"] is True
+    assert readiness["rc_to_ga_requires_source_commit"] is True
+    assert readiness["rc_to_ga_requires_build_id"] is True
+    assert readiness["rc_to_ga_requires_reproducible_build_record"] is True
+    assert readiness["rc_to_ga_is_prebuild_policy_only"] is True
+    assert "promotion_gate_not_performed" in payload["issues"]
+    assert "rc_to_ga_promotion_not_ready" in payload["issues"]
+    assert "release_signing_not_ready" in payload["issues"]
+    assert "artifact_scan_not_performed" in payload["issues"]
+    assert payload["status"] == "warning"

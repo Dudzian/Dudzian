@@ -186,6 +186,17 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
             release_readiness.get("release_channel_gate_performed", False)
         ),
         "release_channel_gate_result": release_readiness.get("release_channel_gate_result"),
+        "promotion_gate_policy_present": bool(
+            release_readiness.get("promotion_gate_policy_present", False)
+        ),
+        "promotion_gate_policy_version": release_readiness.get("promotion_gate_policy_version"),
+        "promotion_gate_performed": bool(release_readiness.get("promotion_gate_performed", False)),
+        "promotion_gate_result": release_readiness.get("promotion_gate_result"),
+        "rc_to_ga_promotion_ready": bool(release_readiness.get("rc_to_ga_promotion_ready", False)),
+        "rc_to_ga_promotion_performed": bool(
+            release_readiness.get("rc_to_ga_promotion_performed", False)
+        ),
+        "rc_to_ga_blockers": release_readiness.get("rc_to_ga_blockers", []),
         "release_integrity_status": release_integrity_status,
         "secrets_read": False,
         "keychain_read": False,
