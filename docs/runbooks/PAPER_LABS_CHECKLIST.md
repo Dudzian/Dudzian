@@ -307,3 +307,12 @@ Finalny hash manifest jest generowany dopiero po bezpiecznym buildzie artefaktu,
 - W tym etapie nie jest wykonywana realna promocja `rc` -> `ga`.
 - GA promotion wymaga: clean security manifest, brak known blockers, hash manifest, final artifact scan, signing, release notes, source commit, build id oraz reproducible build record.
 - Realna promocja jest oddzielnym etapem po build/signing/scan.
+
+## Safe EXE preview readiness contract
+
+Komenda: `python scripts/safe_exe_preview_readiness.py --json`.
+To jest wyłącznie readiness-only: nie buduje EXE i nie buduje installera.
+Kontrakt nie uruchamia PyInstaller ani Briefcase build.
+Pierwszy dozwolony entrypoint preview to `scripts/run_local_bot.py --mode demo --preview-plan`.
+Tryb live jest niedozwolony.
+Artefakty i dane wrażliwe (`.env`, DB, logi, reports, `var/security`, secret/token/keychain patterns) są denylisted.
