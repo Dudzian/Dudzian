@@ -316,3 +316,15 @@ Kontrakt nie uruchamia PyInstaller ani Briefcase build.
 Pierwszy dozwolony entrypoint preview to `scripts/run_local_bot.py --mode demo --preview-plan`.
 Tryb live jest niedozwolony.
 Artefakty i dane wrażliwe (`.env`, DB, logi, reports, `var/security`, secret/token/keychain patterns) są denylisted.
+
+## Safe EXE preview build plan contract
+
+Komenda: `python scripts/safe_exe_preview_build_plan.py --json`.
+Kontrakt: `safe_exe_preview_build_plan.v1`.
+To jest wyłącznie readiness-only / build-plan-only: nie buduje EXE i nie buduje installera.
+`build_command_preview` to tylko dane planu (preview), a nie wykonanie komendy.
+`build_command_execution_allowed=false` i `build_command_executed=false`.
+Pierwszy dozwolony entrypoint preview to `scripts/run_local_bot.py --mode demo --preview-plan`.
+Tryb live jest niedozwolony.
+Realny EXE build, PyInstaller, Briefcase, installer build, signing, release upload i promotion są osobnymi późniejszymi etapami.
+Denylista artefaktów obejmuje `.env`, lokalną DB (`trading.db`), logi, reports, `var/security` oraz wzorce secret/token/keychain.
