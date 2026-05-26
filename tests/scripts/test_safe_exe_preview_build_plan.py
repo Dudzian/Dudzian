@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 SCRIPT = Path("scripts/safe_exe_preview_build_plan.py")
@@ -99,6 +100,10 @@ def test_security_boundaries_and_preview_command_data() -> None:
     assert checks["release_boundary_not_performed"] is True
     assert checks["runtime_boundary_not_started"] is True
     assert checks["exchange_or_order_disabled"] is True
+    assert checks["preview_build_profiles_present"] is True
+    assert readiness["preview_build_profiles_exist"]["windows"] is True
+    assert readiness["preview_build_profiles_exist"]["linux"] is True
+    assert readiness["preview_build_profiles_exist"]["macos"] is True
 
 
 def test_cp1252_safe_output() -> None:
@@ -140,3 +145,50 @@ def test_source_safety() -> None:
     ]
     for token in forbidden:
         assert token not in source
+
+
+def test_preview_profiles_path_contract_and_safety() -> None:
+    profiles = {
+        "linux": Path("deploy/packaging/profiles/preview/linux.toml"),
+        "macos": Path("deploy/packaging/profiles/preview/macos.toml"),
+        "windows": Path("deploy/packaging/profiles/preview/windows.toml"),
+    }
+    repo_root = Path.cwd()
+    sensitive_tokens = (".env", "api_key", "api_secret", "secret", "token", "keychain")
+    home_tokens = ("/home/", "\\Users\\", "~/", "%USERPROFILE%")
+
+    for platform, profile_path in profiles.items():
+        profile = tomllib.loads(profile_path.read_text(encoding="utf-8"))
+        assert profile["platform"] == platform
+
+        pyinstaller = profile["pyinstaller"]
+        briefcase = profile["briefcase"]
+
+        entry_raw = pyinstaller["entrypoint"]
+        entry_resolved = (profile_path.parent / entry_raw.replace("\\", "/")).resolve()
+        assert entry_resolved.exists()
+        assert entry_resolved.relative_to(repo_root).as_posix() == "scripts/run_local_bot.py"
+        assert pyinstaller["runtime_name"] == "dudzian-bot-preview"
+
+        dist_resolved = (profile_path.parent / pyinstaller["dist_dir"].replace("\\", "/")).resolve()
+        work_resolved = (profile_path.parent / pyinstaller["work_dir"].replace("\\", "/")).resolve()
+        briefcase_project_resolved = (
+            profile_path.parent / briefcase["project"].replace("\\", "/")
+        ).resolve()
+        briefcase_out_resolved = (
+            profile_path.parent / briefcase["output_dir"].replace("\\", "/")
+        ).resolve()
+
+        assert str(dist_resolved.relative_to(repo_root)).startswith("dist/preview/")
+        assert str(work_resolved.relative_to(repo_root)).startswith("var/build/preview/")
+        assert briefcase_project_resolved.relative_to(repo_root).as_posix() == "ui/briefcase"
+        assert str(briefcase_out_resolved.relative_to(repo_root)).startswith("dist/preview/")
+
+        raw_blob = json.dumps(profile).lower()
+        assert "live" not in raw_blob
+        for token in sensitive_tokens:
+            assert token not in raw_blob
+        for token in home_tokens:
+            assert token.lower() not in raw_blob
+        assert "pyinstaller --" not in raw_blob
+        assert "briefcase build" not in raw_blob

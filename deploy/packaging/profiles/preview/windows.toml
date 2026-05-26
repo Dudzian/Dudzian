@@ -1,0 +1,17 @@
+platform = "windows"
+
+[pyinstaller]
+entrypoint = "..\\..\\..\\..\\scripts\\run_local_bot.py"
+runtime_name = "dudzian-bot-preview"
+hidden_imports = [
+  "bot_core.runtime.bootstrap",
+  "bot_core.runtime.pipeline",
+  "bot_core.runtime.config",
+]
+dist_dir = "..\\..\\..\\..\\dist\\preview\\windows"
+work_dir = "..\\..\\..\\..\\var\\build\\preview\\pyinstaller\\windows"
+
+[briefcase]
+project = "..\\..\\..\\..\\ui\\briefcase"
+app = "BotTradingShell"
+output_dir = "..\\..\\..\\..\\dist\\preview\\briefcase\\windows"
