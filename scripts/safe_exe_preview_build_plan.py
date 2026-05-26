@@ -29,6 +29,14 @@ def _build_payload(mode: str) -> dict[str, object]:
     issues: list[str] = []
     allowed_entrypoint = "scripts/run_local_bot.py"
     optional_entrypoint = "scripts/operator_preview_bundle.py"
+    preview_profile_candidates = {
+        "windows": "deploy/packaging/profiles/preview/windows.toml",
+        "linux": "deploy/packaging/profiles/preview/linux.toml",
+        "macos": "deploy/packaging/profiles/preview/macos.toml",
+    }
+    preview_profiles_exist = {
+        platform: Path(path).exists() for platform, path in preview_profile_candidates.items()
+    }
 
     checks = {
         "entrypoint_allowlisted": Path(allowed_entrypoint).exists(),
@@ -39,9 +47,12 @@ def _build_payload(mode: str) -> dict[str, object]:
         "release_boundary_not_performed": True,
         "runtime_boundary_not_started": True,
         "exchange_or_order_disabled": True,
+        "preview_build_profiles_present": all(preview_profiles_exist.values()),
     }
     if not checks["entrypoint_allowlisted"]:
         issues.append("allowed_entrypoint_missing")
+    if not checks["preview_build_profiles_present"]:
+        issues.append("preview_build_profile_missing")
 
     build_tool_candidates = ["pyinstaller", "briefcase"]
     selected_build_tool = "pyinstaller" if "pyinstaller" in build_tool_candidates else "undecided"
@@ -68,6 +79,8 @@ def _build_payload(mode: str) -> dict[str, object]:
         "build_tool_candidates": build_tool_candidates,
         "selected_build_tool": selected_build_tool,
         "selected_build_tool_reason": "pyproject optional desktop dependencies list pyinstaller/briefcase",
+        "preview_build_profile_candidates": preview_profile_candidates,
+        "preview_build_profiles_exist": preview_profiles_exist,
         "build_command_preview": [
             "pyinstaller",
             "--noconfirm",
