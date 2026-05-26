@@ -300,3 +300,10 @@ Finalny hash manifest jest generowany dopiero po bezpiecznym buildzie artefaktu,
 - `ga` wymaga: signing + artifact scan + hash manifest + source commit + build id.
 - W tym etapie gate release channel nie jest wykonywany (`not_performed`).
 - Realna promocja `rc` -> `ga` to osobny etap operacyjny.
+
+## RC->GA promotion gate readiness (prebuild/static)
+
+- Promotion gate to wyłącznie statyczny kontrakt readiness/prebuild (`release_promotion_gate_policy.v1`).
+- W tym etapie nie jest wykonywana realna promocja `rc` -> `ga`.
+- GA promotion wymaga: clean security manifest, brak known blockers, hash manifest, final artifact scan, signing, release notes, source commit, build id oraz reproducible build record.
+- Realna promocja jest oddzielnym etapem po build/signing/scan.

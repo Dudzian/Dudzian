@@ -272,3 +272,18 @@ def test_release_channel_policy_fields_propagated() -> None:
     assert "ga_release_not_ready" in payload["issues"]
     assert "release_signing_not_ready" in payload["issues"]
     assert "artifact_scan_not_performed" in payload["issues"]
+
+
+def test_release_promotion_gate_fields_propagated() -> None:
+    payload = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+    readiness = payload["security_packaging_readiness"]
+    contract = payload["contracts"]["release_integrity_readiness"]["release_integrity_readiness"]
+    assert readiness["promotion_gate_policy_present"] == contract["promotion_gate_policy_present"]
+    assert readiness["promotion_gate_policy_version"] == contract["promotion_gate_policy_version"]
+    assert readiness["promotion_gate_performed"] is False
+    assert readiness["promotion_gate_result"] == "not_performed"
+    assert readiness["rc_to_ga_promotion_ready"] is False
+    assert readiness["rc_to_ga_promotion_performed"] is False
+    assert readiness["rc_to_ga_blockers"] == contract["rc_to_ga_blockers"]
+    assert "promotion_gate_not_performed" in payload["issues"]
+    assert "rc_to_ga_promotion_not_ready" in payload["issues"]
