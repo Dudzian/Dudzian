@@ -275,7 +275,7 @@ Packaging nie powinien bundle'ować: `.env`, lokalnej DB (`trading.db`), logów 
 ## Security packaging readiness manifest (SECURITY-PACKAGING-2)
 
 Uruchom: `python scripts/security_packaging_readiness.py --config config/e2e/demo_paper.yml --json`.
-Manifest agreguje `installer_fingerprint_readiness` + `packaged_config_readiness` i zwraca machine-readable status sekcji: contracts, artifact hygiene, safe default launch, release integrity.
+Manifest agreguje `installer_fingerprint_readiness` + `packaged_config_readiness` i zwraca machine-readable status sekcji: contracts, artifact hygiene, safe default launch, release integrity. Agreguje też `safe_exe_preview_readiness.v1` jako gate przed preview-only EXE build planning (bez wykonywania builda).
 Komenda nie buduje EXE/installera, nie czyta sekretów/keychain/env values, nie wymaga API keys, nie wykonuje exchange/API I/O i nie uruchamia runtime loop.
 Sekcje artifact hygiene i release integrity są readiness summary; pełne leak/exclude tests pozostają osobnym etapem.
 
