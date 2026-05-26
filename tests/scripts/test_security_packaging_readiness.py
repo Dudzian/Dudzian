@@ -185,10 +185,11 @@ def test_source_safety() -> None:
         "httpx.",
         "urllib.",
         "shell=true",
+        "pyinstaller.__main__",
+        "briefcase build",
         "write_text",
         "write_bytes",
         "build_installer",
-        "pyinstaller",
         "open(",
         "path.home()",
     ]
@@ -287,3 +288,184 @@ def test_release_promotion_gate_fields_propagated() -> None:
     assert readiness["rc_to_ga_blockers"] == contract["rc_to_ga_blockers"]
     assert "promotion_gate_not_performed" in payload["issues"]
     assert "rc_to_ga_promotion_not_ready" in payload["issues"]
+
+
+def test_safe_exe_preview_fields_propagated() -> None:
+    payload = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+    readiness = payload["security_packaging_readiness"]
+    checks = payload["checks"]
+    contract = payload["contracts"]["safe_exe_preview_readiness"]
+
+    assert contract["safety_contract_version"] == "safe_exe_preview_readiness.v1"
+    assert readiness["safe_exe_preview_contract_checked"] is True
+    assert readiness["safe_exe_preview_contract_version"] == "safe_exe_preview_readiness.v1"
+    assert readiness["safe_exe_preview_ready"] is True
+    assert readiness["safe_exe_preview_status"] == "ok"
+    assert readiness["safe_exe_preview_allowed_entrypoint"] == "scripts/run_local_bot.py"
+    assert readiness["safe_exe_preview_allowed_default_args"] == [
+        "--mode",
+        "demo",
+        "--preview-plan",
+    ]
+    assert readiness["safe_exe_preview_live_mode_allowed"] is False
+    assert readiness["safe_exe_preview_build_performed"] is False
+    assert readiness["safe_exe_preview_exe_build_performed"] is False
+    assert readiness["safe_exe_preview_installer_build_performed"] is False
+    assert readiness["safe_exe_preview_pyinstaller_build_performed"] is False
+    assert readiness["safe_exe_preview_briefcase_build_performed"] is False
+    assert readiness["safe_exe_preview_release_upload_performed"] is False
+    assert readiness["safe_exe_preview_promotion_performed"] is False
+    assert readiness["safe_exe_preview_final_artifact_scan_performed"] is False
+    assert readiness["safe_exe_preview_final_hash_manifest_generated"] is False
+    assert readiness["safe_exe_preview_exchange_io"] == "disabled"
+    assert readiness["safe_exe_preview_order_submission"] == "disabled"
+    assert readiness["safe_exe_preview_runtime_loop_started"] is False
+    assert readiness["safe_exe_preview_production_runtime_loop_started"] is False
+
+    assert checks["safe_exe_preview_contract_referenced"] is True
+    assert checks["safe_exe_preview_entrypoint_allowlisted"] is True
+    assert checks["safe_exe_preview_default_args_safe"] is True
+    assert checks["safe_exe_preview_live_blocked_by_policy"] is True
+    assert checks["safe_exe_preview_build_not_performed"] is True
+    assert checks["safe_exe_preview_contract_checked"] is True
+    assert checks["safe_exe_preview_contract_version_ok"] is True
+    assert checks["safe_exe_preview_release_boundary_not_performed"] is True
+    assert checks["safe_exe_preview_runtime_boundary_not_started"] is True
+
+
+def test_safe_exe_preview_warning_propagation(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real_run_child = spr._run_child
+    payload_ok = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+
+    def fake_run_child(command: list[str]):
+        if command[1].endswith("safe_exe_preview_readiness.py"):
+            warning_payload = {
+                "status": "warning",
+                "safety_contract_version": "safe_exe_preview_readiness.v1",
+                "safe_exe_preview_readiness": payload_ok["contracts"]["safe_exe_preview_readiness"][
+                    "safe_exe_preview_readiness"
+                ],
+                "issues": ["simulated_warning"],
+            }
+            return warning_payload, None
+        return real_run_child(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake_run_child)
+    payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    assert payload["security_packaging_readiness"]["safe_exe_preview_ready"] is False
+    assert "safe_exe_preview_readiness_not_ok" in payload["issues"]
+
+
+def test_safe_exe_preview_blocked_child_blocks_aggregator(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real_run_child = spr._run_child
+    payload_ok = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+
+    def fake_run_child(command: list[str]):
+        if command[1].endswith("safe_exe_preview_readiness.py"):
+            blocked_payload = {
+                "status": "blocked",
+                "safety_contract_version": "safe_exe_preview_readiness.v1",
+                "safe_exe_preview_readiness": payload_ok["contracts"]["safe_exe_preview_readiness"][
+                    "safe_exe_preview_readiness"
+                ],
+                "issues": ["simulated_blocked"],
+            }
+            return blocked_payload, None
+        return real_run_child(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake_run_child)
+    payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    assert payload["status"] == "blocked"
+    assert "child_contract_failed" in payload["issues"]
+    assert "safe_exe_preview_readiness_not_ok" in payload["issues"]
+
+
+def test_safe_exe_preview_invalid_json_error_propagation(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real_run_child = spr._run_child
+
+    def fake_run_child(command: list[str]):
+        if command[1].endswith("safe_exe_preview_readiness.py"):
+            return None, "child_payload_invalid_json"
+        return real_run_child(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake_run_child)
+    payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    readiness = payload["security_packaging_readiness"]
+    assert readiness["safe_exe_preview_contract_checked"] is False
+    assert readiness["safe_exe_preview_ready"] is False
+    assert readiness["safe_exe_preview_contract_version"] is None
+    assert "safe_exe_preview_contract_error:child_payload_invalid_json" in payload["issues"]
+    assert "safe_exe_preview_contract_missing" in payload["issues"]
+
+
+def test_safe_exe_preview_version_and_entrypoint_mismatch(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real_run_child = spr._run_child
+    payload_ok = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+    bad = payload_ok["contracts"]["safe_exe_preview_readiness"]["safe_exe_preview_readiness"].copy()
+    bad["allowed_entrypoint"] = "scripts/live_runner.py"
+    bad["allowed_default_args"] = ["--mode", "live"]
+
+    def fake_run_child(command: list[str]):
+        if command[1].endswith("safe_exe_preview_readiness.py"):
+            return {
+                "status": "ok",
+                "safety_contract_version": "safe_exe_preview_readiness.v0",
+                "safe_exe_preview_readiness": bad,
+                "issues": [],
+            }, None
+        return real_run_child(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake_run_child)
+    payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    checks = payload["checks"]
+    assert payload["security_packaging_readiness"]["safe_exe_preview_ready"] is False
+    assert checks["safe_exe_preview_contract_version_ok"] is False
+    assert checks["safe_exe_preview_entrypoint_allowlisted"] is False
+    assert checks["safe_exe_preview_default_args_safe"] is False
+    assert "safe_exe_preview_contract_version_mismatch" in payload["issues"]
+    assert "safe_exe_preview_entrypoint_not_allowlisted" in payload["issues"]
+    assert "safe_exe_preview_default_args_unsafe" in payload["issues"]
+
+
+def test_safe_exe_preview_build_runtime_exchange_mismatch(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real_run_child = spr._run_child
+    payload_ok = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+    bad = payload_ok["contracts"]["safe_exe_preview_readiness"]["safe_exe_preview_readiness"].copy()
+    bad["build_performed"] = True
+    bad["pyinstaller_build_performed"] = True
+    bad["release_upload_performed"] = True
+    bad["runtime_loop_started"] = True
+    bad["exchange_io"] = "enabled"
+    bad["order_submission"] = "enabled"
+
+    def fake_run_child(command: list[str]):
+        if command[1].endswith("safe_exe_preview_readiness.py"):
+            return {
+                "status": "ok",
+                "safety_contract_version": "safe_exe_preview_readiness.v1",
+                "safe_exe_preview_readiness": bad,
+                "issues": [],
+            }, None
+        return real_run_child(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake_run_child)
+    payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    checks = payload["checks"]
+    assert payload["status"] == "blocked"
+    assert checks["safe_exe_preview_build_not_performed"] is False
+    assert checks["safe_exe_preview_release_boundary_not_performed"] is False
+    assert checks["safe_exe_preview_runtime_boundary_not_started"] is False
+    assert "safe_exe_preview_build_performed" in payload["issues"]
+    assert "safe_exe_preview_release_boundary_performed" in payload["issues"]
+    assert "safe_exe_preview_runtime_boundary_started" in payload["issues"]
+    assert "safe_exe_preview_exchange_or_order_enabled" in payload["issues"]

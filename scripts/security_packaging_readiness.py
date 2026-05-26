@@ -11,6 +11,9 @@ VALID_MODES = {"install", "first-run"}
 ARTIFACT_EXCLUDE_POLICY_VERSION = "security_packaging_artifact_policy.v1"
 SAFE_LAUNCH_POLICY_VERSION = "security_packaging_safe_launch_policy.v1"
 RELEASE_INTEGRITY_CONTRACT_VERSION = "release_integrity_readiness.v1"
+SAFE_EXE_PREVIEW_CONTRACT_VERSION = "safe_exe_preview_readiness.v1"
+SAFE_EXE_PREVIEW_ALLOWED_ENTRYPOINT = "scripts/run_local_bot.py"
+SAFE_EXE_PREVIEW_ALLOWED_DEFAULT_ARGS = ["--mode", "demo", "--preview-plan"]
 DENIED_ARTIFACT_PATTERNS = [
     ".env",
     "*.env",
@@ -66,6 +69,9 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     release_payload, release_error = _run_child(
         [sys.executable, "scripts/release_integrity_readiness.py", "--json"]
     )
+    safe_exe_payload, safe_exe_error = _run_child(
+        [sys.executable, "scripts/safe_exe_preview_readiness.py", "--json"]
+    )
 
     installer_status = (
         "blocked" if installer_error else str(installer_payload.get("status", "blocked"))
@@ -80,10 +86,16 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     if release_error:
         issues.append(f"release_integrity_contract_error:{release_error}")
 
-    if "blocked" in {installer_status, packaged_status, release_status}:
+    safe_exe_status = (
+        "blocked" if safe_exe_error else str(safe_exe_payload.get("status", "blocked"))
+    )
+    if safe_exe_error:
+        issues.append(f"safe_exe_preview_contract_error:{safe_exe_error}")
+
+    if "blocked" in {installer_status, packaged_status, release_status, safe_exe_status}:
         status = "blocked"
         issues.append("child_contract_failed")
-    elif "warning" in {installer_status, packaged_status, release_status}:
+    elif "warning" in {installer_status, packaged_status, release_status, safe_exe_status}:
         status = "warning"
 
     if packaged_payload := config_payload:
@@ -91,6 +103,107 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
             if isinstance(issue, str) and issue.startswith("unsafe_config:"):
                 issues.append(issue)
 
+    safe_exe_readiness = (safe_exe_payload or {}).get("safe_exe_preview_readiness", {})
+    safe_exe_contract_checked = safe_exe_payload is not None
+    safe_exe_contract_version = (safe_exe_payload or {}).get("safety_contract_version")
+    safe_exe_contract_version_ok = safe_exe_contract_version == SAFE_EXE_PREVIEW_CONTRACT_VERSION
+    safe_exe_allowed_entrypoint = safe_exe_readiness.get("allowed_entrypoint")
+    safe_exe_allowed_default_args = safe_exe_readiness.get("allowed_default_args")
+    safe_exe_live_mode_allowed = safe_exe_readiness.get("live_mode_allowed")
+    safe_exe_build_performed = bool(safe_exe_readiness.get("build_performed", True))
+    safe_exe_exe_build_performed = bool(safe_exe_readiness.get("exe_build_performed", True))
+    safe_exe_installer_build_performed = bool(
+        safe_exe_readiness.get("installer_build_performed", True)
+    )
+    safe_exe_pyinstaller_build_performed = bool(
+        safe_exe_readiness.get("pyinstaller_build_performed", True)
+    )
+    safe_exe_briefcase_build_performed = bool(
+        safe_exe_readiness.get("briefcase_build_performed", True)
+    )
+    safe_exe_release_upload_performed = bool(
+        safe_exe_readiness.get("release_upload_performed", True)
+    )
+    safe_exe_promotion_performed = bool(safe_exe_readiness.get("promotion_performed", True))
+    safe_exe_final_artifact_scan_performed = bool(
+        safe_exe_readiness.get("final_artifact_scan_performed", True)
+    )
+    safe_exe_final_hash_manifest_generated = bool(
+        safe_exe_readiness.get("final_hash_manifest_generated", True)
+    )
+    safe_exe_exchange_io = safe_exe_readiness.get("exchange_io")
+    safe_exe_order_submission = safe_exe_readiness.get("order_submission")
+    safe_exe_runtime_loop_started = bool(safe_exe_readiness.get("runtime_loop_started", True))
+    safe_exe_production_runtime_loop_started = bool(
+        safe_exe_readiness.get("production_runtime_loop_started", True)
+    )
+    safe_exe_entrypoint_allowlisted = (
+        safe_exe_allowed_entrypoint == SAFE_EXE_PREVIEW_ALLOWED_ENTRYPOINT
+    )
+    safe_exe_default_args_safe = (
+        safe_exe_allowed_default_args == SAFE_EXE_PREVIEW_ALLOWED_DEFAULT_ARGS
+    )
+    safe_exe_live_blocked_by_policy = safe_exe_live_mode_allowed is False
+    safe_exe_build_not_performed = not any(
+        [
+            safe_exe_build_performed,
+            safe_exe_exe_build_performed,
+            safe_exe_installer_build_performed,
+            safe_exe_pyinstaller_build_performed,
+            safe_exe_briefcase_build_performed,
+        ]
+    )
+    safe_exe_release_boundary_not_performed = not any(
+        [
+            safe_exe_release_upload_performed,
+            safe_exe_promotion_performed,
+            safe_exe_final_artifact_scan_performed,
+            safe_exe_final_hash_manifest_generated,
+        ]
+    )
+    safe_exe_runtime_boundary_not_started = not any(
+        [safe_exe_runtime_loop_started, safe_exe_production_runtime_loop_started]
+    )
+    safe_exe_exchange_or_order_disabled = (
+        safe_exe_exchange_io == "disabled" and safe_exe_order_submission == "disabled"
+    )
+    safe_exe_readiness_ok = all(
+        [
+            safe_exe_contract_checked,
+            safe_exe_status == "ok",
+            safe_exe_contract_version_ok,
+            safe_exe_entrypoint_allowlisted,
+            safe_exe_default_args_safe,
+            safe_exe_live_blocked_by_policy,
+            safe_exe_build_not_performed,
+            safe_exe_release_boundary_not_performed,
+            safe_exe_runtime_boundary_not_started,
+            safe_exe_exchange_or_order_disabled,
+        ]
+    )
+
+    if not safe_exe_contract_checked:
+        issues.append("safe_exe_preview_contract_missing")
+    if safe_exe_status != "ok":
+        issues.append("safe_exe_preview_readiness_not_ok")
+    if not safe_exe_contract_version_ok:
+        issues.append("safe_exe_preview_contract_version_mismatch")
+    if not safe_exe_entrypoint_allowlisted:
+        issues.append("safe_exe_preview_entrypoint_not_allowlisted")
+    if not safe_exe_default_args_safe:
+        issues.append("safe_exe_preview_default_args_unsafe")
+    if not safe_exe_live_blocked_by_policy:
+        issues.append("safe_exe_preview_live_mode_allowed")
+    if not safe_exe_build_not_performed:
+        issues.append("safe_exe_preview_build_performed")
+    if not safe_exe_release_boundary_not_performed:
+        issues.append("safe_exe_preview_release_boundary_performed")
+    if not safe_exe_runtime_boundary_not_started:
+        issues.append("safe_exe_preview_runtime_boundary_started")
+    if not safe_exe_exchange_or_order_disabled:
+        issues.append("safe_exe_preview_exchange_or_order_enabled")
+    if not safe_exe_readiness_ok:
+        status = "blocked"
     release_readiness = (release_payload or {}).get("release_integrity_readiness", {})
     for issue in (release_payload or {}).get("issues", []):
         if isinstance(issue, str):
@@ -198,6 +311,26 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         ),
         "rc_to_ga_blockers": release_readiness.get("rc_to_ga_blockers", []),
         "release_integrity_status": release_integrity_status,
+        "safe_exe_preview_contract_checked": safe_exe_contract_checked,
+        "safe_exe_preview_contract_version": safe_exe_contract_version,
+        "safe_exe_preview_ready": safe_exe_readiness_ok,
+        "safe_exe_preview_status": safe_exe_status,
+        "safe_exe_preview_allowed_entrypoint": safe_exe_allowed_entrypoint,
+        "safe_exe_preview_allowed_default_args": safe_exe_allowed_default_args,
+        "safe_exe_preview_live_mode_allowed": safe_exe_live_mode_allowed,
+        "safe_exe_preview_build_performed": safe_exe_build_performed,
+        "safe_exe_preview_exe_build_performed": safe_exe_exe_build_performed,
+        "safe_exe_preview_installer_build_performed": safe_exe_installer_build_performed,
+        "safe_exe_preview_pyinstaller_build_performed": safe_exe_pyinstaller_build_performed,
+        "safe_exe_preview_briefcase_build_performed": safe_exe_briefcase_build_performed,
+        "safe_exe_preview_release_upload_performed": safe_exe_release_upload_performed,
+        "safe_exe_preview_promotion_performed": safe_exe_promotion_performed,
+        "safe_exe_preview_final_artifact_scan_performed": safe_exe_final_artifact_scan_performed,
+        "safe_exe_preview_final_hash_manifest_generated": safe_exe_final_hash_manifest_generated,
+        "safe_exe_preview_exchange_io": safe_exe_exchange_io,
+        "safe_exe_preview_order_submission": safe_exe_order_submission,
+        "safe_exe_preview_runtime_loop_started": safe_exe_runtime_loop_started,
+        "safe_exe_preview_production_runtime_loop_started": safe_exe_production_runtime_loop_started,
         "secrets_read": False,
         "keychain_read": False,
         "env_values_read": False,
@@ -231,6 +364,12 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
                 "status": packaged_status,
                 "safety_contract_version": (config_payload or {}).get("safety_contract_version"),
             },
+            "safe_exe_preview_readiness": {
+                "status": safe_exe_status,
+                "safety_contract_version": (safe_exe_payload or {}).get("safety_contract_version"),
+                "safe_exe_preview_readiness": safe_exe_readiness,
+                "issues": (safe_exe_payload or {}).get("issues", []),
+            },
             "release_integrity_readiness": {
                 "status": release_status,
                 "safety_contract_version": (release_payload or {}).get("safety_contract_version"),
@@ -239,12 +378,25 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         },
         "checks": {
             "mode_supported": mode in VALID_MODES,
-            "contracts_checked": installer_payload is not None and config_payload is not None,
+            "contracts_checked": (
+                installer_payload is not None
+                and config_payload is not None
+                and safe_exe_contract_checked
+            ),
             "release_integrity_contract_checked": release_payload is not None,
             "safe_default_launch": readiness["preview_or_demo_default"]
             and not readiness["live_mode_enabled"],
             "artifact_hygiene_summary_present": True,
             "release_integrity_summary_present": True,
+            "safe_exe_preview_contract_checked": safe_exe_contract_checked,
+            "safe_exe_preview_contract_version_ok": safe_exe_contract_version_ok,
+            "safe_exe_preview_contract_referenced": safe_exe_contract_checked,
+            "safe_exe_preview_entrypoint_allowlisted": safe_exe_entrypoint_allowlisted,
+            "safe_exe_preview_default_args_safe": safe_exe_default_args_safe,
+            "safe_exe_preview_live_blocked_by_policy": safe_exe_live_blocked_by_policy,
+            "safe_exe_preview_build_not_performed": safe_exe_build_not_performed,
+            "safe_exe_preview_release_boundary_not_performed": safe_exe_release_boundary_not_performed,
+            "safe_exe_preview_runtime_boundary_not_started": safe_exe_runtime_boundary_not_started,
         },
         "issues": sorted(set(issues)),
         "safety_contract_version": SAFETY_CONTRACT_VERSION,
