@@ -328,3 +328,13 @@ Pierwszy dozwolony entrypoint preview to `scripts/run_local_bot.py --mode demo -
 Tryb live jest niedozwolony.
 Realny EXE build, PyInstaller, Briefcase, installer build, signing, release upload i promotion są osobnymi późniejszymi etapami.
 Denylista artefaktów obejmuje `.env`, lokalną DB (`trading.db`), logi, reports, `var/security` oraz wzorce secret/token/keychain.
+
+
+## Safe EXE preview profile validator
+
+- Komenda: `python scripts/safe_exe_preview_profile_validator.py --json`.
+- Kontrakt: `safe_exe_preview_profile_validator.v1`.
+- Validator jest profile-only (TOML) i read-only; nie wykonuje builda.
+- Nie uruchamia PyInstaller ani Briefcase.
+- Tryb live jest niedozwolony (`--mode preview` only).
+- Profile muszą wskazywać `scripts/run_local_bot.py` oraz ścieżki pod `dist/preview` i `var/build/preview`.
