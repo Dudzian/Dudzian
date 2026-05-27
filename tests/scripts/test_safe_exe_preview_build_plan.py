@@ -148,6 +148,9 @@ def test_source_safety() -> None:
 
 
 def test_preview_profiles_path_contract_and_safety() -> None:
+    def _relative_posix(path: Path, root: Path) -> str:
+        return path.relative_to(root).as_posix()
+
     profiles = {
         "linux": Path("deploy/packaging/profiles/preview/linux.toml"),
         "macos": Path("deploy/packaging/profiles/preview/macos.toml"),
@@ -179,10 +182,15 @@ def test_preview_profiles_path_contract_and_safety() -> None:
             profile_path.parent / briefcase["output_dir"].replace("\\", "/")
         ).resolve()
 
-        assert str(dist_resolved.relative_to(repo_root)).startswith("dist/preview/")
-        assert str(work_resolved.relative_to(repo_root)).startswith("var/build/preview/")
-        assert briefcase_project_resolved.relative_to(repo_root).as_posix() == "ui/briefcase"
-        assert str(briefcase_out_resolved.relative_to(repo_root)).startswith("dist/preview/")
+        dist_relative = _relative_posix(dist_resolved, repo_root)
+        work_relative = _relative_posix(work_resolved, repo_root)
+        briefcase_project_relative = _relative_posix(briefcase_project_resolved, repo_root)
+        briefcase_out_relative = _relative_posix(briefcase_out_resolved, repo_root)
+
+        assert dist_relative.startswith("dist/preview/")
+        assert work_relative.startswith("var/build/preview/")
+        assert briefcase_project_relative == "ui/briefcase"
+        assert briefcase_out_relative.startswith("dist/preview/")
 
         raw_blob = json.dumps(profile).lower()
         assert "live" not in raw_blob
