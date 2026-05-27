@@ -135,7 +135,6 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     if "blocked" in {
         installer_status,
         packaged_status,
-        release_status,
         safe_exe_status,
         safe_exe_build_plan_status,
         safe_exe_profile_validator_status,
@@ -146,7 +145,6 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     elif "warning" in {
         installer_status,
         packaged_status,
-        release_status,
         safe_exe_status,
         safe_exe_build_plan_status,
         safe_exe_profile_validator_status,

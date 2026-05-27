@@ -84,6 +84,11 @@ def test_happy_path_demo_paper() -> None:
     assert readiness["packaged_shortcut_preview_target_allowed"] is True
     assert readiness["packaged_shortcut_demo_target_allowed"] is True
     assert "live" in readiness["unsafe_launch_modes_blocked"]
+    assert payload["status"] in {"ok", "warning"}
+    assert "release_integrity_partial" in payload["issues"]
+    assert "child_contract_failed" not in payload["issues"]
+    assert readiness["safe_exe_preview_command_renderer_ready"] is True
+    assert payload["checks"]["contracts_checked"] is True
 
 
 def test_default_args_safety() -> None:
@@ -650,6 +655,42 @@ def test_safe_exe_command_renderer_child_error_blocks(monkeypatch) -> None:
         in payload["issues"]
     )
     assert "safe_exe_preview_command_renderer_contract_missing" in payload["issues"]
+
+
+def test_safe_exe_command_renderer_unsafe_boundary_blocks(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real = spr._run_child
+    base = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)["contracts"][
+        "safe_exe_preview_command_renderer"
+    ]["safe_exe_preview_command_renderer"]
+    unsafe = dict(base)
+    unsafe["command_execution_allowed"] = True
+    unsafe["command_executed"] = True
+
+    def fake(command: list[str]):
+        if command[1].endswith("safe_exe_preview_command_renderer.py"):
+            return {
+                "status": "ok",
+                "safety_contract_version": "safe_exe_preview_command_renderer.v1",
+                "safe_exe_preview_command_renderer": unsafe,
+                "checks": {
+                    "all_profiles_present": True,
+                    "all_commands_rendered": True,
+                    "all_entrypoints_allowlisted": True,
+                    "all_output_paths_preview_scoped": True,
+                    "all_work_paths_preview_scoped": True,
+                    "no_forbidden_tokens": True,
+                },
+                "issues": [],
+            }, None
+        return real(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake)
+    payload, code = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    assert code == 2
+    assert payload["status"] == "blocked"
+    assert "safe_exe_preview_command_execution_enabled" in payload["issues"]
 
 
 def test_safe_exe_command_renderer_issues_present_blocks(monkeypatch) -> None:
