@@ -99,7 +99,7 @@ def _validate_profile(
         data = tomllib.loads(raw_text)
     except tomllib.TOMLDecodeError:
         summary["toml_valid"] = False
-        summary["forbidden_tokens_detected"] = forbidden_hits
+        summary["profile_forbidden_tokens_detected"] = forbidden_hits
         issues.append(f"preview_profile_invalid_toml:{platform}")
         return summary, issues
 
@@ -155,7 +155,7 @@ def _validate_profile(
             "briefcase_output_dir_resolved": briefcase_output_dir,
             "briefcase_output_dir_preview_scoped": bool(output_in_scope and briefcase_output_dir)
             and briefcase_output_dir.startswith(f"dist/preview/briefcase/{platform}"),
-            "forbidden_tokens_detected": forbidden_hits,
+            "profile_forbidden_tokens_detected": forbidden_hits,
         }
     )
 
@@ -180,7 +180,7 @@ def _validate_profile(
     if not summary["briefcase_output_dir_preview_scoped"]:
         issues.append(f"preview_profile_briefcase_output_out_of_scope:{platform}")
     if forbidden_hits:
-        issues.append(f"preview_profile_hidden_import_forbidden:{platform}")
+        issues.append(f"preview_profile_forbidden_token_present:{platform}")
 
     return summary, issues
 
@@ -209,9 +209,27 @@ def _build_payload(mode: str) -> dict[str, object]:
     all_work_paths_preview_scoped = all(
         bool(profiles[p].get("work_dir_preview_scoped")) for p in EXPECTED_PLATFORMS
     )
-    forbidden_tokens_present = any(
-        bool(profiles[p].get("forbidden_tokens_detected")) for p in EXPECTED_PLATFORMS
+    all_toml_valid = all(bool(profiles[p].get("toml_valid")) for p in EXPECTED_PLATFORMS)
+    all_runtime_names_ok = all(bool(profiles[p].get("runtime_name_ok")) for p in EXPECTED_PLATFORMS)
+    all_hidden_imports_ok = all(
+        bool(profiles[p].get("hidden_imports_ok")) for p in EXPECTED_PLATFORMS
     )
+    no_hidden_import_forbidden = all(
+        not bool(profiles[p].get("hidden_import_forbidden")) for p in EXPECTED_PLATFORMS
+    )
+    all_briefcase_projects_ok = all(
+        bool(profiles[p].get("briefcase_project_ok")) for p in EXPECTED_PLATFORMS
+    )
+    all_briefcase_apps_ok = all(
+        bool(profiles[p].get("briefcase_app_ok")) for p in EXPECTED_PLATFORMS
+    )
+    all_briefcase_outputs_preview_scoped = all(
+        bool(profiles[p].get("briefcase_output_dir_preview_scoped")) for p in EXPECTED_PLATFORMS
+    )
+    forbidden_tokens_present = any(
+        bool(profiles[p].get("profile_forbidden_tokens_detected")) for p in EXPECTED_PLATFORMS
+    )
+    no_profile_forbidden_tokens = not forbidden_tokens_present
 
     validator = {
         "profiles_checked": True,
@@ -224,7 +242,15 @@ def _build_payload(mode: str) -> dict[str, object]:
         "all_entrypoints_allowlisted": all_entrypoints_allowlisted,
         "all_output_paths_preview_scoped": all_output_paths_preview_scoped,
         "all_work_paths_preview_scoped": all_work_paths_preview_scoped,
+        "all_toml_valid": all_toml_valid,
+        "all_runtime_names_ok": all_runtime_names_ok,
+        "all_hidden_imports_ok": all_hidden_imports_ok,
+        "no_hidden_import_forbidden": no_hidden_import_forbidden,
+        "all_briefcase_projects_ok": all_briefcase_projects_ok,
+        "all_briefcase_apps_ok": all_briefcase_apps_ok,
+        "all_briefcase_outputs_preview_scoped": all_briefcase_outputs_preview_scoped,
         "forbidden_tokens_present": forbidden_tokens_present,
+        "no_profile_forbidden_tokens": no_profile_forbidden_tokens,
         "build_not_performed": True,
         "pyinstaller_build_performed": False,
         "briefcase_build_performed": False,
