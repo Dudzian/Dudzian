@@ -13,6 +13,7 @@ SAFE_LAUNCH_POLICY_VERSION = "security_packaging_safe_launch_policy.v1"
 RELEASE_INTEGRITY_CONTRACT_VERSION = "release_integrity_readiness.v1"
 SAFE_EXE_PREVIEW_CONTRACT_VERSION = "safe_exe_preview_readiness.v1"
 SAFE_EXE_PREVIEW_BUILD_PLAN_CONTRACT_VERSION = "safe_exe_preview_build_plan.v1"
+SAFE_EXE_PREVIEW_COMMAND_RENDERER_CONTRACT_VERSION = "safe_exe_preview_command_renderer.v1"
 
 SAFE_EXE_PREVIEW_PROFILE_VALIDATOR_CONTRACT_VERSION = "safe_exe_preview_profile_validator.v1"
 SAFE_EXE_PREVIEW_ALLOWED_ENTRYPOINT = "scripts/run_local_bot.py"
@@ -81,6 +82,9 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     safe_exe_profile_validator_payload, safe_exe_profile_validator_error = _run_child(
         [sys.executable, "scripts/safe_exe_preview_profile_validator.py", "--json"]
     )
+    safe_exe_command_renderer_payload, safe_exe_command_renderer_error = _run_child(
+        [sys.executable, "scripts/safe_exe_preview_command_renderer.py", "--json"]
+    )
 
     installer_status = (
         "blocked" if installer_error else str(installer_payload.get("status", "blocked"))
@@ -118,6 +122,15 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         issues.append(
             f"safe_exe_preview_profile_validator_contract_error:{safe_exe_profile_validator_error}"
         )
+    safe_exe_command_renderer_status = (
+        "blocked"
+        if safe_exe_command_renderer_error
+        else str(safe_exe_command_renderer_payload.get("status", "blocked"))
+    )
+    if safe_exe_command_renderer_error:
+        issues.append(
+            f"safe_exe_preview_command_renderer_contract_error:{safe_exe_command_renderer_error}"
+        )
 
     if "blocked" in {
         installer_status,
@@ -126,6 +139,7 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         safe_exe_status,
         safe_exe_build_plan_status,
         safe_exe_profile_validator_status,
+        safe_exe_command_renderer_status,
     }:
         status = "blocked"
         issues.append("child_contract_failed")
@@ -136,6 +150,7 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         safe_exe_status,
         safe_exe_build_plan_status,
         safe_exe_profile_validator_status,
+        safe_exe_command_renderer_status,
     }:
         status = "warning"
 
@@ -306,6 +321,168 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     if safe_exe_preview_profile_issues:
         issues.append("safe_exe_preview_profile_validator_child_issues_present")
     if not safe_exe_profile_validator_ready:
+        status = "blocked"
+    safe_exe_command_renderer = (safe_exe_command_renderer_payload or {}).get(
+        "safe_exe_preview_command_renderer", {}
+    )
+    safe_exe_command_renderer_contract_checked = safe_exe_command_renderer_payload is not None
+    safe_exe_command_renderer_contract_version = (safe_exe_command_renderer_payload or {}).get(
+        "safety_contract_version"
+    )
+    safe_exe_command_renderer_contract_version_ok = (
+        safe_exe_command_renderer_contract_version
+        == SAFE_EXE_PREVIEW_COMMAND_RENDERER_CONTRACT_VERSION
+    )
+    safe_exe_command_renderer_issues = list(
+        (safe_exe_command_renderer_payload or {}).get("issues", [])
+    )
+    renderer_checks = (safe_exe_command_renderer_payload or {}).get("checks", {})
+    renderer_platforms = safe_exe_command_renderer.get("platforms", {})
+    forbidden_tokens = [
+        "live",
+        "api_key",
+        "api_secret",
+        "secret",
+        "token",
+        "keychain",
+        ".env",
+        "trading.db",
+        "home",
+        ";",
+        "&&",
+        "||",
+    ]
+
+    def _platform_ok(platform: str) -> bool:
+        entry = renderer_platforms.get(platform, {})
+        py_cmd = entry.get("pyinstaller_command_preview")
+        briefcase_cmd = entry.get("briefcase_command_preview")
+        if entry.get("command_renderable") is not True:
+            return False
+        if not isinstance(py_cmd, list) or not all(isinstance(i, str) for i in py_cmd):
+            return False
+        if not isinstance(briefcase_cmd, list) or not all(
+            isinstance(i, str) for i in briefcase_cmd
+        ):
+            return False
+        if entry.get("entrypoint") != SAFE_EXE_PREVIEW_ALLOWED_ENTRYPOINT:
+            return False
+        if entry.get("allowed_default_args") != SAFE_EXE_PREVIEW_ALLOWED_DEFAULT_ARGS:
+            return False
+        if not str(entry.get("dist_dir", "")).startswith(f"dist/preview/{platform}"):
+            return False
+        if not str(entry.get("work_dir", "")).startswith(
+            f"var/build/preview/pyinstaller/{platform}"
+        ):
+            return False
+        lowered = " ".join([*py_cmd, *briefcase_cmd]).lower()
+        return not any(token in lowered for token in forbidden_tokens)
+
+    safe_exe_renderer_platforms_ok = all(_platform_ok(p) for p in ("linux", "macos", "windows"))
+    safe_exe_preview_command_renderer_ready = all(
+        [
+            safe_exe_command_renderer_contract_checked,
+            safe_exe_command_renderer_contract_version_ok,
+            safe_exe_command_renderer_status == "ok",
+            safe_exe_command_renderer.get("command_render_only") is True,
+            safe_exe_command_renderer.get("command_execution_allowed") is False,
+            safe_exe_command_renderer.get("command_executed") is False,
+            safe_exe_command_renderer.get("subprocess_invoked") is False,
+            safe_exe_command_renderer.get("shell_used") is False,
+            safe_exe_command_renderer.get("exe_build_performed") is False,
+            safe_exe_command_renderer.get("installer_build_performed") is False,
+            safe_exe_command_renderer.get("pyinstaller_build_performed") is False,
+            safe_exe_command_renderer.get("briefcase_build_performed") is False,
+            safe_exe_command_renderer.get("signing_performed") is False,
+            safe_exe_command_renderer.get("codesign_performed") is False,
+            safe_exe_command_renderer.get("notarization_performed") is False,
+            safe_exe_command_renderer.get("release_upload_performed") is False,
+            safe_exe_command_renderer.get("promotion_performed") is False,
+            safe_exe_command_renderer.get("runtime_loop_started") is False,
+            safe_exe_command_renderer.get("production_runtime_loop_started") is False,
+            safe_exe_command_renderer.get("exchange_io") == "disabled",
+            safe_exe_command_renderer.get("order_submission") == "disabled",
+            safe_exe_command_renderer.get("real_orders_submitted") is False,
+            safe_exe_command_renderer.get("api_keys_required") is False,
+            safe_exe_command_renderer.get("secrets_read") is False,
+            safe_exe_command_renderer.get("keychain_read") is False,
+            safe_exe_command_renderer.get("env_values_read") is False,
+            safe_exe_command_renderer.get("dot_env_read") is False,
+            safe_exe_command_renderer.get("home_directory_scanned") is False,
+            renderer_checks.get("all_profiles_present") is True,
+            renderer_checks.get("all_commands_rendered") is True,
+            renderer_checks.get("all_entrypoints_allowlisted") is True,
+            renderer_checks.get("all_output_paths_preview_scoped") is True,
+            renderer_checks.get("all_work_paths_preview_scoped") is True,
+            renderer_checks.get("no_forbidden_tokens") is True,
+            safe_exe_renderer_platforms_ok,
+            len(safe_exe_command_renderer_issues) == 0,
+        ]
+    )
+    if not safe_exe_command_renderer_contract_checked:
+        issues.append("safe_exe_preview_command_renderer_contract_missing")
+    if not safe_exe_command_renderer_contract_version_ok:
+        issues.append("safe_exe_preview_command_renderer_contract_version_mismatch")
+    if safe_exe_command_renderer_status != "ok":
+        issues.append("safe_exe_preview_command_renderer_not_ok")
+    if safe_exe_command_renderer_issues:
+        issues.append("safe_exe_preview_command_renderer_child_issues_present")
+    if (
+        safe_exe_command_renderer.get("command_execution_allowed") is True
+        or safe_exe_command_renderer.get("command_executed") is True
+    ):
+        issues.append("safe_exe_preview_command_execution_enabled")
+    if any(
+        safe_exe_command_renderer.get(k) is True
+        for k in (
+            "exe_build_performed",
+            "installer_build_performed",
+            "pyinstaller_build_performed",
+            "briefcase_build_performed",
+        )
+    ):
+        issues.append("safe_exe_preview_build_boundary_performed")
+    if any(
+        safe_exe_command_renderer.get(k) is True
+        for k in ("runtime_loop_started", "production_runtime_loop_started")
+    ):
+        issues.append("safe_exe_preview_runtime_boundary_started")
+    if any(
+        safe_exe_command_renderer.get(k) is True
+        for k in (
+            "signing_performed",
+            "codesign_performed",
+            "notarization_performed",
+            "release_upload_performed",
+            "promotion_performed",
+        )
+    ):
+        issues.append("safe_exe_preview_release_boundary_performed")
+    if not (
+        safe_exe_command_renderer.get("exchange_io") == "disabled"
+        and safe_exe_command_renderer.get("order_submission") == "disabled"
+    ):
+        issues.append("safe_exe_preview_exchange_or_order_enabled")
+    if renderer_checks.get("all_commands_rendered") is not True:
+        issues.append("safe_exe_preview_commands_not_rendered")
+    if not (
+        renderer_checks.get("all_entrypoints_allowlisted") is True
+        and safe_exe_renderer_platforms_ok
+    ):
+        issues.append("safe_exe_preview_command_entrypoints_invalid")
+    if not (
+        renderer_checks.get("all_output_paths_preview_scoped") is True
+        and renderer_checks.get("all_work_paths_preview_scoped") is True
+    ):
+        issues.append("safe_exe_preview_command_paths_out_of_scope")
+    if renderer_checks.get("no_forbidden_tokens") is not True or not safe_exe_renderer_platforms_ok:
+        issues.append("safe_exe_preview_command_forbidden_tokens_present")
+    if (
+        safe_exe_command_renderer.get("subprocess_invoked") is True
+        or safe_exe_command_renderer.get("shell_used") is True
+    ):
+        issues.append("safe_exe_preview_no_subprocess_or_shell_violated")
+    if not safe_exe_preview_command_renderer_ready:
         status = "blocked"
 
     safe_exe_build_plan_readiness = (safe_exe_build_plan_payload or {}).get(
@@ -572,6 +749,31 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "safe_exe_preview_profiles_count": safe_exe_preview_profiles_count,
         "safe_exe_preview_profile_issues": safe_exe_preview_profile_issues,
         "safe_exe_preview_build_plan_contract_checked": safe_exe_build_plan_contract_checked,
+        "safe_exe_preview_command_renderer_contract_checked": safe_exe_command_renderer_contract_checked,
+        "safe_exe_preview_command_renderer_contract_version": safe_exe_command_renderer_contract_version,
+        "safe_exe_preview_command_renderer_ready": safe_exe_preview_command_renderer_ready,
+        "safe_exe_preview_command_renderer_status": safe_exe_command_renderer_status,
+        "safe_exe_preview_commands_render_only": safe_exe_command_renderer.get(
+            "command_render_only"
+        ),
+        "safe_exe_preview_command_execution_allowed": safe_exe_command_renderer.get(
+            "command_execution_allowed"
+        ),
+        "safe_exe_preview_command_executed": safe_exe_command_renderer.get("command_executed"),
+        "safe_exe_preview_subprocess_invoked": safe_exe_command_renderer.get("subprocess_invoked"),
+        "safe_exe_preview_shell_used": safe_exe_command_renderer.get("shell_used"),
+        "safe_exe_preview_all_commands_rendered": renderer_checks.get("all_commands_rendered"),
+        "safe_exe_preview_all_entrypoints_allowlisted": renderer_checks.get(
+            "all_entrypoints_allowlisted"
+        ),
+        "safe_exe_preview_all_output_paths_preview_scoped": renderer_checks.get(
+            "all_output_paths_preview_scoped"
+        ),
+        "safe_exe_preview_all_work_paths_preview_scoped": renderer_checks.get(
+            "all_work_paths_preview_scoped"
+        ),
+        "safe_exe_preview_no_forbidden_command_tokens": renderer_checks.get("no_forbidden_tokens"),
+        "safe_exe_preview_command_renderer_issues": safe_exe_command_renderer_issues,
         "safe_exe_preview_build_plan_contract_version": safe_exe_build_plan_contract_version,
         "safe_exe_preview_build_plan_ready": safe_exe_build_plan_ready,
         "safe_exe_preview_build_plan_status": safe_exe_build_plan_status,
@@ -666,6 +868,12 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
                 "safe_exe_preview_build_plan": safe_exe_build_plan_readiness,
                 "issues": (safe_exe_build_plan_payload or {}).get("issues", []),
             },
+            "safe_exe_preview_command_renderer": {
+                "status": safe_exe_command_renderer_status,
+                "safety_contract_version": safe_exe_command_renderer_contract_version,
+                "safe_exe_preview_command_renderer": safe_exe_command_renderer,
+                "issues": safe_exe_command_renderer_issues,
+            },
             "release_integrity_readiness": {
                 "status": release_status,
                 "safety_contract_version": (release_payload or {}).get("safety_contract_version"),
@@ -680,6 +888,7 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
                 and safe_exe_contract_checked
                 and safe_exe_build_plan_contract_checked
                 and safe_exe_profile_validator_contract_checked
+                and safe_exe_command_renderer_contract_checked
             ),
             "release_integrity_contract_checked": release_payload is not None,
             "safe_default_launch": readiness["preview_or_demo_default"]
@@ -689,6 +898,35 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
             "safe_exe_preview_contract_checked": safe_exe_contract_checked,
             "safe_exe_preview_build_plan_contract_checked": safe_exe_build_plan_contract_checked,
             "safe_exe_preview_profile_validator_contract_checked": safe_exe_profile_validator_contract_checked,
+            "safe_exe_preview_command_renderer_contract_checked": safe_exe_command_renderer_contract_checked,
+            "safe_exe_preview_command_renderer_contract_version_ok": safe_exe_command_renderer_contract_version_ok,
+            "safe_exe_preview_command_renderer_ready": safe_exe_preview_command_renderer_ready,
+            "safe_exe_preview_commands_render_only": safe_exe_command_renderer.get(
+                "command_render_only"
+            )
+            is True,
+            "safe_exe_preview_command_execution_blocked": (
+                safe_exe_command_renderer.get("command_execution_allowed") is False
+                and safe_exe_command_renderer.get("command_executed") is False
+            ),
+            "safe_exe_preview_no_subprocess_or_shell": (
+                safe_exe_command_renderer.get("subprocess_invoked") is False
+                and safe_exe_command_renderer.get("shell_used") is False
+            ),
+            "safe_exe_preview_all_commands_rendered": renderer_checks.get("all_commands_rendered")
+            is True,
+            "safe_exe_preview_all_entrypoints_allowlisted": (
+                renderer_checks.get("all_entrypoints_allowlisted") is True
+                and safe_exe_renderer_platforms_ok
+            ),
+            "safe_exe_preview_all_paths_preview_scoped": (
+                renderer_checks.get("all_output_paths_preview_scoped") is True
+                and renderer_checks.get("all_work_paths_preview_scoped") is True
+            ),
+            "safe_exe_preview_no_forbidden_command_tokens": (
+                renderer_checks.get("no_forbidden_tokens") is True
+                and safe_exe_renderer_platforms_ok
+            ),
             "safe_exe_preview_profile_validator_contract_version_ok": safe_exe_profile_validator_contract_version_ok,
             "safe_exe_preview_profiles_valid": safe_exe_preview_profiles_valid,
             "safe_exe_preview_profiles_complete": safe_exe_preview_profiles_complete,
