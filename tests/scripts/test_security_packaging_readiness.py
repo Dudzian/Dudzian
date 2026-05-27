@@ -502,3 +502,81 @@ def test_safe_exe_preview_build_plan_warning_propagation(monkeypatch) -> None:
     payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
     assert payload["status"] == "blocked"
     assert "safe_exe_preview_build_plan_readiness_not_ok" in payload["issues"]
+
+
+def test_safe_exe_profile_validator_fields_propagated() -> None:
+    payload = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+    readiness = payload["security_packaging_readiness"]
+    checks = payload["checks"]
+    contracts = payload["contracts"]
+    assert "safe_exe_preview_profile_validator" in contracts
+    assert readiness["safe_exe_preview_profile_validator_contract_checked"] is True
+    assert (
+        readiness["safe_exe_preview_profile_validator_contract_version"]
+        == "safe_exe_preview_profile_validator.v1"
+    )
+    assert checks["safe_exe_preview_profile_validator_contract_version_ok"] is True
+    assert checks["safe_exe_preview_profiles_valid"] is True
+    assert checks["safe_exe_preview_profiles_complete"] is True
+    assert checks["safe_exe_preview_profile_validator_ready"] is True
+    assert checks["contracts_checked"] is True
+
+
+def test_safe_exe_profile_validator_failure_propagation(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real = spr._run_child
+
+    def fake(command: list[str]):
+        if command[1].endswith("safe_exe_preview_profile_validator.py"):
+            return {
+                "status": "blocked",
+                "safety_contract_version": "safe_exe_preview_profile_validator.v0",
+                "safe_exe_preview_profile_validator": {
+                    "profile_count": 3,
+                    "forbidden_tokens_present": True,
+                    "all_profiles_exist": False,
+                    "all_platforms_match": True,
+                    "all_entrypoints_allowlisted": True,
+                    "all_output_paths_preview_scoped": True,
+                    "all_work_paths_preview_scoped": True,
+                },
+                "issues": ["x"],
+            }, None
+        return real(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake)
+    payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    assert payload["status"] == "blocked"
+    assert "safe_exe_preview_profile_validator_contract_version_mismatch" in payload["issues"]
+    assert "safe_exe_preview_profile_validator_not_ok" in payload["issues"]
+    assert "safe_exe_preview_profiles_invalid" in payload["issues"]
+    assert "safe_exe_preview_profiles_incomplete" in payload["issues"]
+    assert "safe_exe_preview_profile_validator_child_issues_present" in payload["issues"]
+
+
+def test_safe_exe_profile_validator_ok_with_child_issues_blocks(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real = spr._run_child
+    payload_ok = json.loads(_run("--config", "config/e2e/demo_paper.yml").stdout)
+    validator_ok = payload_ok["contracts"]["safe_exe_preview_profile_validator"][
+        "safe_exe_preview_profile_validator"
+    ]
+
+    def fake(command: list[str]):
+        if command[1].endswith("safe_exe_preview_profile_validator.py"):
+            return {
+                "status": "ok",
+                "safety_contract_version": "safe_exe_preview_profile_validator.v1",
+                "safe_exe_preview_profile_validator": validator_ok,
+                "issues": ["simulated_profile_issue"],
+            }, None
+        return real(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake)
+    payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    readiness = payload["security_packaging_readiness"]
+    assert payload["status"] == "blocked"
+    assert readiness["safe_exe_preview_profile_validator_ready"] is False
+    assert "safe_exe_preview_profile_validator_child_issues_present" in payload["issues"]

@@ -13,6 +13,8 @@ SAFE_LAUNCH_POLICY_VERSION = "security_packaging_safe_launch_policy.v1"
 RELEASE_INTEGRITY_CONTRACT_VERSION = "release_integrity_readiness.v1"
 SAFE_EXE_PREVIEW_CONTRACT_VERSION = "safe_exe_preview_readiness.v1"
 SAFE_EXE_PREVIEW_BUILD_PLAN_CONTRACT_VERSION = "safe_exe_preview_build_plan.v1"
+
+SAFE_EXE_PREVIEW_PROFILE_VALIDATOR_CONTRACT_VERSION = "safe_exe_preview_profile_validator.v1"
 SAFE_EXE_PREVIEW_ALLOWED_ENTRYPOINT = "scripts/run_local_bot.py"
 SAFE_EXE_PREVIEW_ALLOWED_DEFAULT_ARGS = ["--mode", "demo", "--preview-plan"]
 DENIED_ARTIFACT_PATTERNS = [
@@ -76,6 +78,9 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     safe_exe_build_plan_payload, safe_exe_build_plan_error = _run_child(
         [sys.executable, "scripts/safe_exe_preview_build_plan.py", "--json"]
     )
+    safe_exe_profile_validator_payload, safe_exe_profile_validator_error = _run_child(
+        [sys.executable, "scripts/safe_exe_preview_profile_validator.py", "--json"]
+    )
 
     installer_status = (
         "blocked" if installer_error else str(installer_payload.get("status", "blocked"))
@@ -104,12 +109,23 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     if safe_exe_build_plan_error:
         issues.append(f"safe_exe_preview_build_plan_contract_error:{safe_exe_build_plan_error}")
 
+    safe_exe_profile_validator_status = (
+        "blocked"
+        if safe_exe_profile_validator_error
+        else str(safe_exe_profile_validator_payload.get("status", "blocked"))
+    )
+    if safe_exe_profile_validator_error:
+        issues.append(
+            f"safe_exe_preview_profile_validator_contract_error:{safe_exe_profile_validator_error}"
+        )
+
     if "blocked" in {
         installer_status,
         packaged_status,
         release_status,
         safe_exe_status,
         safe_exe_build_plan_status,
+        safe_exe_profile_validator_status,
     }:
         status = "blocked"
         issues.append("child_contract_failed")
@@ -119,6 +135,7 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         release_status,
         safe_exe_status,
         safe_exe_build_plan_status,
+        safe_exe_profile_validator_status,
     }:
         status = "warning"
 
@@ -227,6 +244,68 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     if not safe_exe_exchange_or_order_disabled:
         issues.append("safe_exe_preview_exchange_or_order_enabled")
     if not safe_exe_readiness_ok:
+        status = "blocked"
+
+    safe_exe_profile_validator = (safe_exe_profile_validator_payload or {}).get(
+        "safe_exe_preview_profile_validator", {}
+    )
+    safe_exe_profile_validator_contract_checked = safe_exe_profile_validator_payload is not None
+    safe_exe_profile_validator_contract_version = (safe_exe_profile_validator_payload or {}).get(
+        "safety_contract_version"
+    )
+    safe_exe_profile_validator_contract_version_ok = (
+        safe_exe_profile_validator_contract_version
+        == SAFE_EXE_PREVIEW_PROFILE_VALIDATOR_CONTRACT_VERSION
+    )
+    safe_exe_preview_profiles_valid = all(
+        [
+            safe_exe_profile_validator.get("all_toml_valid") is True,
+            safe_exe_profile_validator.get("all_runtime_names_ok") is True,
+            safe_exe_profile_validator.get("all_hidden_imports_ok") is True,
+            safe_exe_profile_validator.get("no_hidden_import_forbidden") is True,
+            safe_exe_profile_validator.get("all_briefcase_projects_ok") is True,
+            safe_exe_profile_validator.get("all_briefcase_apps_ok") is True,
+            safe_exe_profile_validator.get("all_briefcase_outputs_preview_scoped") is True,
+            safe_exe_profile_validator.get("no_profile_forbidden_tokens") is True,
+        ]
+    )
+    safe_exe_preview_profiles_complete = all(
+        [
+            bool(safe_exe_profile_validator.get("all_profiles_exist", False)),
+            bool(safe_exe_profile_validator.get("all_platforms_match", False)),
+            bool(safe_exe_profile_validator.get("all_entrypoints_allowlisted", False)),
+            bool(safe_exe_profile_validator.get("all_output_paths_preview_scoped", False)),
+            bool(safe_exe_profile_validator.get("all_work_paths_preview_scoped", False)),
+        ]
+    )
+    safe_exe_preview_profiles_count = int(safe_exe_profile_validator.get("profile_count", 0) or 0)
+    safe_exe_preview_profile_issues = list(
+        (safe_exe_profile_validator_payload or {}).get("issues", [])
+    )
+    safe_exe_profile_validator_ready = all(
+        [
+            safe_exe_profile_validator_contract_checked,
+            safe_exe_profile_validator_status == "ok",
+            safe_exe_profile_validator_contract_version_ok,
+            safe_exe_preview_profiles_valid,
+            safe_exe_preview_profiles_complete,
+            len(safe_exe_preview_profile_issues) == 0,
+        ]
+    )
+
+    if not safe_exe_profile_validator_contract_checked:
+        issues.append("safe_exe_preview_profile_validator_contract_missing")
+    if not safe_exe_profile_validator_contract_version_ok:
+        issues.append("safe_exe_preview_profile_validator_contract_version_mismatch")
+    if safe_exe_profile_validator_status != "ok":
+        issues.append("safe_exe_preview_profile_validator_not_ok")
+    if not safe_exe_preview_profiles_valid:
+        issues.append("safe_exe_preview_profiles_invalid")
+    if not safe_exe_preview_profiles_complete:
+        issues.append("safe_exe_preview_profiles_incomplete")
+    if safe_exe_preview_profile_issues:
+        issues.append("safe_exe_preview_profile_validator_child_issues_present")
+    if not safe_exe_profile_validator_ready:
         status = "blocked"
 
     safe_exe_build_plan_readiness = (safe_exe_build_plan_payload or {}).get(
@@ -484,6 +563,14 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "rc_to_ga_blockers": release_readiness.get("rc_to_ga_blockers", []),
         "release_integrity_status": release_integrity_status,
         "safe_exe_preview_contract_checked": safe_exe_contract_checked,
+        "safe_exe_preview_profile_validator_contract_checked": safe_exe_profile_validator_contract_checked,
+        "safe_exe_preview_profile_validator_contract_version": safe_exe_profile_validator_contract_version,
+        "safe_exe_preview_profile_validator_ready": safe_exe_profile_validator_ready,
+        "safe_exe_preview_profile_validator_status": safe_exe_profile_validator_status,
+        "safe_exe_preview_profiles_valid": safe_exe_preview_profiles_valid,
+        "safe_exe_preview_profiles_complete": safe_exe_preview_profiles_complete,
+        "safe_exe_preview_profiles_count": safe_exe_preview_profiles_count,
+        "safe_exe_preview_profile_issues": safe_exe_preview_profile_issues,
         "safe_exe_preview_build_plan_contract_checked": safe_exe_build_plan_contract_checked,
         "safe_exe_preview_build_plan_contract_version": safe_exe_build_plan_contract_version,
         "safe_exe_preview_build_plan_ready": safe_exe_build_plan_ready,
@@ -565,6 +652,12 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
                 "safe_exe_preview_readiness": safe_exe_readiness,
                 "issues": (safe_exe_payload or {}).get("issues", []),
             },
+            "safe_exe_preview_profile_validator": {
+                "status": safe_exe_profile_validator_status,
+                "safety_contract_version": safe_exe_profile_validator_contract_version,
+                "safe_exe_preview_profile_validator": safe_exe_profile_validator,
+                "issues": safe_exe_preview_profile_issues,
+            },
             "safe_exe_preview_build_plan": {
                 "status": safe_exe_build_plan_status,
                 "safety_contract_version": (safe_exe_build_plan_payload or {}).get(
@@ -585,6 +678,8 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
                 installer_payload is not None
                 and config_payload is not None
                 and safe_exe_contract_checked
+                and safe_exe_build_plan_contract_checked
+                and safe_exe_profile_validator_contract_checked
             ),
             "release_integrity_contract_checked": release_payload is not None,
             "safe_default_launch": readiness["preview_or_demo_default"]
@@ -593,6 +688,11 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
             "release_integrity_summary_present": True,
             "safe_exe_preview_contract_checked": safe_exe_contract_checked,
             "safe_exe_preview_build_plan_contract_checked": safe_exe_build_plan_contract_checked,
+            "safe_exe_preview_profile_validator_contract_checked": safe_exe_profile_validator_contract_checked,
+            "safe_exe_preview_profile_validator_contract_version_ok": safe_exe_profile_validator_contract_version_ok,
+            "safe_exe_preview_profiles_valid": safe_exe_preview_profiles_valid,
+            "safe_exe_preview_profiles_complete": safe_exe_preview_profiles_complete,
+            "safe_exe_preview_profile_validator_ready": safe_exe_profile_validator_ready,
             "safe_exe_preview_build_plan_contract_version_ok": safe_exe_build_plan_contract_version_ok,
             "safe_exe_preview_build_plan_ready": safe_exe_build_plan_ready,
             "safe_exe_preview_build_plan_entrypoint_allowlisted": (

@@ -31,6 +31,14 @@ def test_happy_path() -> None:
     assert validator["all_output_paths_preview_scoped"] is True
     assert validator["all_work_paths_preview_scoped"] is True
     assert validator["forbidden_tokens_present"] is False
+    assert validator["all_toml_valid"] is True
+    assert validator["all_runtime_names_ok"] is True
+    assert validator["all_hidden_imports_ok"] is True
+    assert validator["no_hidden_import_forbidden"] is True
+    assert validator["all_briefcase_projects_ok"] is True
+    assert validator["all_briefcase_apps_ok"] is True
+    assert validator["all_briefcase_outputs_preview_scoped"] is True
+    assert validator["no_profile_forbidden_tokens"] is True
     assert validator["build_not_performed"] is True
     assert validator["pyinstaller_build_performed"] is False
     assert validator["briefcase_build_performed"] is False
@@ -192,4 +200,31 @@ def test_blocked_path_escape_and_hidden_import_forbidden(monkeypatch) -> None:
     assert "preview_profile_work_dir_out_of_scope:linux" in payload["issues"]
     assert "preview_profile_briefcase_project_invalid:linux" in payload["issues"]
     assert "preview_profile_briefcase_output_out_of_scope:linux" in payload["issues"]
+    assert "preview_profile_hidden_import_forbidden:linux" in payload["issues"]
+
+
+def test_forbidden_token_issue_semantics(monkeypatch, tmp_path: Path) -> None:
+    import scripts.safe_exe_preview_profile_validator as validator
+
+    profile = tmp_path / "linux.toml"
+    profile.write_text(
+        """
+platform = "linux"
+[pyinstaller]
+entrypoint = "../../../etc/passwd"
+runtime_name = "dudzian-bot-preview"
+dist_dir = "../../../tmp"
+work_dir = "../../../tmp"
+hidden_imports = ["bot_core.runtime.bootstrap", "bot_core.runtime.pipeline", "bot_core.runtime.config", "live.exchange"]
+[briefcase]
+project = "ui/briefcase"
+app = "BotTradingShell"
+output_dir = "dist/preview/briefcase/linux"
+note = "api_key"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(validator.PROFILE_PATHS, "linux", str(profile))
+    payload = validator._build_payload("preview")
+    assert "preview_profile_forbidden_token_present:linux" in payload["issues"]
     assert "preview_profile_hidden_import_forbidden:linux" in payload["issues"]
