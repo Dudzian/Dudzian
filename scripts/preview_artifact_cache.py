@@ -31,7 +31,7 @@ FORBIDDEN_GLOBS = (
     "*keychain*",
 )
 FORBIDDEN_SEGMENTS = ("bot_core/logs", "logs", "reports", "test-results", "var/security")
-STAGE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+STAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 
 
 def _parse_args() -> argparse.Namespace:

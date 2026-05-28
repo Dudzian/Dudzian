@@ -152,7 +152,16 @@ def test_locate_non_executable_cache_blocked(tmp_path: Path) -> None:
 def test_invalid_stage_rejected(tmp_path: Path) -> None:
     src = _make_source(tmp_path)
     ev = _make_evidence(tmp_path)
-    for bad in ("../evil", "foo/bar"):
+    invalid_stages = (
+        "",
+        "../evil",
+        "foo/bar",
+        r"foo\bar",
+        "/tmp/cache",
+        "C:/tmp/cache",
+        "evil.stage",
+    )
+    for bad in invalid_stages:
         code, payload = _run(
             "--root",
             str(tmp_path / "cache"),
@@ -165,6 +174,7 @@ def test_invalid_stage_rejected(tmp_path: Path) -> None:
             "--store",
         )
         assert code == 2 and payload["status"] == "error"
+        assert payload["errors"] == ["invalid_stage"]
 
 
 def test_valid_stage_accepted(tmp_path: Path) -> None:
@@ -175,6 +185,23 @@ def test_valid_stage_accepted(tmp_path: Path) -> None:
         str(tmp_path / "cache"),
         "--stage",
         "EXE-PREVIEW-14_12",
+        "--source",
+        str(src),
+        "--evidence-dir",
+        str(ev),
+        "--store",
+    )
+    assert code == 0 and payload["cache_complete"] is True
+
+
+def test_valid_stage_with_hyphen_accepted(tmp_path: Path) -> None:
+    src = _make_source(tmp_path)
+    ev = _make_evidence(tmp_path)
+    code, payload = _run(
+        "--root",
+        str(tmp_path / "cache"),
+        "--stage",
+        "EXE-PREVIEW-14-12",
         "--source",
         str(src),
         "--evidence-dir",
