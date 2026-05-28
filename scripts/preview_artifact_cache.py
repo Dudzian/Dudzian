@@ -105,13 +105,20 @@ def _is_windows_platform() -> bool:
     return os.name == "nt"
 
 
+def _has_execute_bit(path: Path) -> bool:
+    return bool(path.stat().st_mode & 0o111)
+
+
+def _is_windows_executable_suffix(path: Path) -> bool:
+    return path.suffix.lower() in {".exe", ".bat", ".cmd", ".ps1"}
+
+
 def _is_executable_file(path: Path) -> bool:
     if not path.is_file():
         return False
     if _is_windows_platform():
-        return True
-    mode = path.stat().st_mode
-    return bool(mode & 0o111) and os.access(path, os.X_OK)
+        return _is_windows_executable_suffix(path) or _has_execute_bit(path)
+    return _has_execute_bit(path) and os.access(path, os.X_OK)
 
 
 def _check_complete(cache_dir: Path) -> tuple[bool, list[str]]:
