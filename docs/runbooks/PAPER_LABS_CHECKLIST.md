@@ -338,3 +338,21 @@ Denylista artefaktów obejmuje `.env`, lokalną DB (`trading.db`), logi, reports
 - Nie uruchamia PyInstaller ani Briefcase.
 - Tryb live jest niedozwolony (`--mode preview` only).
 - Profile muszą wskazywać `scripts/run_local_bot.py` oraz ścieżki pod `dist/preview` i `var/build/preview`.
+
+## Preview EXE artifact lifecycle/persistence (EXE-PREVIEW-14.12)
+- Preview EXE artifacts (np. `dist/preview/...`) są generated/local i nie podlegają commitowaniu.
+- Evidence (`seal/hash/triage`) w `var/tmp/exe14_x/` jest generated/local evidence.
+- Reuse artifacts jest dozwolony tylko gdy istnieje pełny komplet wymaganych plików.
+- Gdy artifacts są missing w kolejnej sesji, etap musi jawnie wybrać `STOP` albo `CONTROLLED_REBUILD_REQUIRED`.
+- Rootowy plik `.spec` z PyInstaller traktujemy jako disposable generated artifact, chyba że osobny dedykowany etap jawnie doda tracked spec.
+
+## Local preview artifact retention cache
+- Artefakty EXE preview są generated/local/ephemeral i nie są commitowane.
+- Domyślny katalog cache: `var/artifacts/exe_preview/` (lokalny, ignorowany przez git).
+- Domyślny TTL: 24h.
+- Cleanup: `python scripts/cleanup_expired_artifacts.py --root var/artifacts/exe_preview --ttl-hours 24 --json`.
+- Etapy recapture mogą najpierw szukać aktualnego artefaktu w cache, a dopiero potem wykonywać controlled rebuild.
+- Ten cache nie zastępuje release artifact storage ani CI artifacts.
+- W cache nie wolno trzymać `.env`, API keys, lokalnych DB ani secretów.
+
+- Recapture flow: (a) cleanup expired cache, (b) locate latest complete cache, (c) przy cache hit użyć cached artifact, (d) przy cache miss wybrać `CONTROLLED_REBUILD_REQUIRED`, (e) po controlled rebuild zapisać komplet artefaktów do cache.
