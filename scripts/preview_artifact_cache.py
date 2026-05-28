@@ -104,6 +104,8 @@ def _inside(root: Path, child: Path) -> bool:
 def _is_executable_file(path: Path) -> bool:
     if not path.is_file():
         return False
+    if os.name == "nt":
+        return True
     mode = path.stat().st_mode
     has_exec_bit = bool(mode & 0o111)
     return has_exec_bit and os.access(path, os.X_OK)
