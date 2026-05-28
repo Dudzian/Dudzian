@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import stat
@@ -9,6 +10,14 @@ import time
 from pathlib import Path
 
 SCRIPT = Path("scripts/preview_artifact_cache.py")
+
+
+def _load_preview_artifact_cache_module():
+    spec = importlib.util.spec_from_file_location("preview_artifact_cache", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run(*args: str) -> tuple[int, dict[str, object]]:
@@ -147,6 +156,30 @@ def test_locate_non_executable_cache_blocked(tmp_path: Path) -> None:
     code, payload = _run("--root", str(root), "--locate-latest", "--ttl-hours", "24")
     assert code == 2 and payload["cache_hit"] is False
     assert "executable_not_executable" in payload["missing_files"]
+
+
+def test_windows_executable_check_accepts_preview_without_posix_bit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    exe = tmp_path / "dudzian-bot-preview"
+    exe.write_text("x", encoding="utf-8")
+    exe.chmod(exe.stat().st_mode & ~0o111)
+
+    monkeypatch.setattr(preview_cache.os, "name", "nt")
+
+    assert preview_cache._is_executable_file(exe) is True
+
+
+def test_posix_executable_check_requires_execute_bit(tmp_path: Path, monkeypatch) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    exe = tmp_path / "dudzian-bot-preview"
+    exe.write_text("x", encoding="utf-8")
+    exe.chmod(exe.stat().st_mode & ~0o111)
+
+    monkeypatch.setattr(preview_cache.os, "name", "posix")
+
+    assert preview_cache._is_executable_file(exe) is False
 
 
 def test_invalid_stage_rejected(tmp_path: Path) -> None:
