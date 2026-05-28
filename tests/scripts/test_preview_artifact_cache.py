@@ -158,11 +158,37 @@ def test_locate_non_executable_cache_blocked(tmp_path: Path) -> None:
     assert "executable_not_executable" in payload["missing_files"]
 
 
-def test_windows_executable_check_accepts_preview_without_posix_bit(
+def test_windows_executable_check_accepts_preview_with_posix_bit(
     tmp_path: Path, monkeypatch
 ) -> None:
     preview_cache = _load_preview_artifact_cache_module()
     exe = tmp_path / "dudzian-bot-preview"
+    exe.write_text("x", encoding="utf-8")
+    exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
+
+    assert preview_cache._is_executable_file(exe) is True
+
+
+def test_windows_executable_check_rejects_preview_without_posix_bit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    exe = tmp_path / "dudzian-bot-preview"
+    exe.write_text("x", encoding="utf-8")
+    exe.chmod(exe.stat().st_mode & ~0o111)
+
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
+
+    assert preview_cache._is_executable_file(exe) is False
+
+
+def test_windows_executable_check_accepts_exe_suffix_without_posix_bit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    exe = tmp_path / "dudzian-bot-preview.exe"
     exe.write_text("x", encoding="utf-8")
     exe.chmod(exe.stat().st_mode & ~0o111)
 
