@@ -166,7 +166,7 @@ def test_windows_executable_check_accepts_preview_without_posix_bit(
     exe.write_text("x", encoding="utf-8")
     exe.chmod(exe.stat().st_mode & ~0o111)
 
-    monkeypatch.setattr(preview_cache.os, "name", "nt")
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
 
     assert preview_cache._is_executable_file(exe) is True
 
@@ -177,7 +177,7 @@ def test_posix_executable_check_requires_execute_bit(tmp_path: Path, monkeypatch
     exe.write_text("x", encoding="utf-8")
     exe.chmod(exe.stat().st_mode & ~0o111)
 
-    monkeypatch.setattr(preview_cache.os, "name", "posix")
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: False)
 
     assert preview_cache._is_executable_file(exe) is False
 

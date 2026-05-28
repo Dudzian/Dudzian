@@ -101,14 +101,17 @@ def _inside(root: Path, child: Path) -> bool:
         return False
 
 
+def _is_windows_platform() -> bool:
+    return os.name == "nt"
+
+
 def _is_executable_file(path: Path) -> bool:
     if not path.is_file():
         return False
-    if os.name == "nt":
+    if _is_windows_platform():
         return True
     mode = path.stat().st_mode
-    has_exec_bit = bool(mode & 0o111)
-    return has_exec_bit and os.access(path, os.X_OK)
+    return bool(mode & 0o111) and os.access(path, os.X_OK)
 
 
 def _check_complete(cache_dir: Path) -> tuple[bool, list[str]]:
