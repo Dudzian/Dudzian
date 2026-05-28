@@ -356,3 +356,16 @@ Denylista artefaktów obejmuje `.env`, lokalną DB (`trading.db`), logi, reports
 - W cache nie wolno trzymać `.env`, API keys, lokalnych DB ani secretów.
 
 - Recapture flow: (a) cleanup expired cache, (b) locate latest complete cache, (c) przy cache hit użyć cached artifact, (d) przy cache miss wybrać `CONTROLLED_REBUILD_REQUIRED`, (e) po controlled rebuild zapisać komplet artefaktów do cache.
+
+## Preview artifact recapture gate (EXE-PREVIEW-14C)
+
+- Komenda: `python scripts/preview_artifact_recapture_gate.py --root var/artifacts/exe_preview --ttl-hours 24 --json`.
+- Oczekiwane decyzje:
+  - `USE_CACHED_ARTIFACT` — istnieje najnowszy świeży, kompletny i bezpieczny cache.
+  - `CONTROLLED_REBUILD_REQUIRED` — brak świeżego kompletnego cache; kolejny etap musi wykonać kontrolowany rebuild zamiast zgadywać ścieżki artefaktów.
+- Flow kolejnych etapów EXE-PREVIEW 14.x:
+  1. Uruchom recapture gate.
+  2. Jeśli jest hit: wykonaj smoke/hash/leak recapture na cache.
+  3. Jeśli jest miss: wykonaj controlled rebuild.
+  4. Po rebuild: zapisz artefakt przez `preview_artifact_cache --store`.
+  5. Na początku kolejnych etapów wykonaj cleanup TTL.
