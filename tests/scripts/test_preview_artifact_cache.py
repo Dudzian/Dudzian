@@ -195,7 +195,7 @@ def test_source_trading_db_blocks_store(tmp_path: Path) -> None:
 
 
 def test_non_executable_main_binary_blocks_store(tmp_path: Path) -> None:
-    src = _make_source(tmp_path, executable=False)
+    src = _make_source(tmp_path, executable=False, binary_name="dudzian-bot-preview")
     ev = _make_evidence(tmp_path)
     code, payload = _run(
         "--root",
@@ -214,7 +214,7 @@ def test_non_executable_main_binary_blocks_store(tmp_path: Path) -> None:
 
 def test_locate_non_executable_cache_blocked(tmp_path: Path) -> None:
     root = tmp_path / "cache"
-    _mk_complete(root, "run_bad", executable=False)
+    _mk_complete(root, "run_bad", executable=False, binary_name="dudzian-bot-preview")
     code, payload = _run("--root", str(root), "--locate-latest", "--ttl-hours", "24")
     assert code == 2 and payload["cache_hit"] is False
     assert "executable_not_executable" in payload["missing_files"]
