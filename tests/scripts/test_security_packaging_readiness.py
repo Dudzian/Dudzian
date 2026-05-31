@@ -715,3 +715,191 @@ def test_safe_exe_command_renderer_issues_present_blocks(monkeypatch) -> None:
     payload, _ = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
     assert payload["status"] == "blocked"
     assert "safe_exe_preview_command_renderer_child_issues_present" in payload["issues"]
+
+
+def _ready_launch_plan_payload() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "safety_contract_version": "preview_artifact_launch_plan.v1",
+        "artifact_found": True,
+        "executable_valid": True,
+        "evidence_required": True,
+        "evidence_present": True,
+        "seal_evidence_present": True,
+        "hash_evidence_present": True,
+        "leak_triage_evidence_present": True,
+        "artifact_verified": True,
+        "launch_plan_ready": True,
+        "launch_command_preview": [
+            "/repo/dist/preview/linux/dudzian-bot-preview/dudzian-bot-preview",
+            "--mode",
+            "demo",
+            "--preview-plan",
+        ],
+        "preview_plan": True,
+        "command_execution_allowed": False,
+        "command_executed": False,
+        "subprocess_invoked": False,
+        "shell_used": False,
+        "live_mode_allowed": False,
+        "exchange_io": "disabled",
+        "order_submission": "disabled",
+        "runtime_loop_started": False,
+        "production_runtime_loop_started": False,
+        "secrets_read": False,
+        "keychain_read": False,
+        "env_values_read": False,
+        "dot_env_read": False,
+        "home_directory_scanned": False,
+        "issues": [],
+    }
+
+
+def test_preview_artifact_launch_plan_actual_machine_not_ready_contract() -> None:
+    result = _run("--config", "config/e2e/demo_paper.yml")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    readiness = payload["security_packaging_readiness"]
+    checks = payload["checks"]
+    contract = payload["contracts"]["preview_artifact_launch_plan"]
+
+    assert payload["status"] in {"ok", "warning"}
+    assert readiness["preview_artifact_launch_plan_contract_checked"] is True
+    assert (
+        readiness["preview_artifact_launch_plan_contract_version"]
+        == "preview_artifact_launch_plan.v1"
+    )
+    assert contract["safety_contract_version"] == "preview_artifact_launch_plan.v1"
+    assert "child_contract_failed" not in payload["issues"]
+    assert checks["contracts_checked"] is True
+    assert readiness["preview_artifact_launch_plan_command_execution_allowed"] is False
+    assert readiness["preview_artifact_launch_plan_command_executed"] is False
+    assert readiness["preview_artifact_launch_plan_subprocess_invoked"] is False
+    assert readiness["preview_artifact_launch_plan_shell_used"] is False
+    assert readiness["preview_artifact_launch_plan_live_mode_allowed"] is False
+    assert readiness["preview_artifact_launch_plan_exchange_io"] == "disabled"
+    assert readiness["preview_artifact_launch_plan_order_submission"] == "disabled"
+    assert readiness["preview_artifact_launch_plan_runtime_loop_started"] is False
+    assert readiness["preview_artifact_launch_plan_production_runtime_loop_started"] is False
+
+
+def test_preview_artifact_launch_plan_ready_child(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real = spr._run_child
+
+    def fake(command: list[str]):
+        if command[1].endswith("preview_artifact_launch_plan.py"):
+            return _ready_launch_plan_payload(), None
+        return real(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake)
+    payload, code = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    readiness = payload["security_packaging_readiness"]
+    checks = payload["checks"]
+    assert code == 0
+    assert payload["status"] != "blocked"
+    assert readiness["preview_artifact_launch_plan_ready"] is True
+    assert checks["preview_artifact_launch_plan_ready"] is True
+    assert checks["preview_artifact_launch_plan_contract_version_ok"] is True
+
+
+def test_preview_artifact_launch_plan_evidence_missing_child(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real = spr._run_child
+    missing = _ready_launch_plan_payload()
+    missing.update(
+        {
+            "status": "blocked",
+            "evidence_present": False,
+            "artifact_verified": False,
+            "launch_plan_ready": False,
+            "launch_command_preview": [],
+            "issues": ["preview_artifact_evidence_missing"],
+        }
+    )
+
+    def fake(command: list[str]):
+        if command[1].endswith("preview_artifact_launch_plan.py"):
+            return missing, None
+        return real(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake)
+    payload, code = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    assert code == 0
+    assert payload["status"] == "warning"
+    assert "child_contract_failed" not in payload["issues"]
+    assert "preview_artifact_launch_plan_evidence_missing" in payload["issues"]
+    assert "preview_artifact_launch_plan_not_ready" in payload["issues"]
+
+
+def test_preview_artifact_launch_plan_root_out_of_scope_child_blocks(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real = spr._run_child
+    bad = _ready_launch_plan_payload()
+    bad.update(
+        {
+            "status": "blocked",
+            "artifact_found": False,
+            "executable_valid": False,
+            "artifact_verified": False,
+            "launch_plan_ready": False,
+            "launch_command_preview": [],
+            "issues": ["preview_artifact_root_out_of_scope"],
+        }
+    )
+
+    def fake(command: list[str]):
+        if command[1].endswith("preview_artifact_launch_plan.py"):
+            return bad, None
+        return real(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake)
+    payload, code = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    assert code == 2
+    assert payload["status"] == "blocked"
+    assert "preview_artifact_launch_plan_root_out_of_scope" in payload["issues"]
+
+
+def test_preview_artifact_launch_plan_unsafe_boundary_blocks(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real = spr._run_child
+    unsafe = _ready_launch_plan_payload()
+    unsafe["command_execution_allowed"] = True
+    unsafe["subprocess_invoked"] = True
+
+    def fake(command: list[str]):
+        if command[1].endswith("preview_artifact_launch_plan.py"):
+            return unsafe, None
+        return real(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake)
+    payload, code = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    assert code == 2
+    assert payload["status"] == "blocked"
+    assert "preview_artifact_launch_plan_unsafe_boundary" in payload["issues"]
+
+
+def test_preview_artifact_launch_plan_child_error_blocks(monkeypatch) -> None:
+    import scripts.security_packaging_readiness as spr
+
+    real = spr._run_child
+
+    def fake(command: list[str]):
+        if command[1].endswith("preview_artifact_launch_plan.py"):
+            return None, "child_payload_invalid_json"
+        return real(command)
+
+    monkeypatch.setattr(spr, "_run_child", fake)
+    payload, code = spr.build_payload("first-run", Path("config/e2e/demo_paper.yml"))
+    assert code == 2
+    assert payload["status"] == "blocked"
+    assert (
+        "preview_artifact_launch_plan_contract_error:child_payload_invalid_json"
+        in payload["issues"]
+    )
+    assert "preview_artifact_launch_plan_contract_missing" in payload["issues"]
+    assert "child_contract_failed" in payload["issues"]

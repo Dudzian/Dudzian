@@ -14,6 +14,7 @@ RELEASE_INTEGRITY_CONTRACT_VERSION = "release_integrity_readiness.v1"
 SAFE_EXE_PREVIEW_CONTRACT_VERSION = "safe_exe_preview_readiness.v1"
 SAFE_EXE_PREVIEW_BUILD_PLAN_CONTRACT_VERSION = "safe_exe_preview_build_plan.v1"
 SAFE_EXE_PREVIEW_COMMAND_RENDERER_CONTRACT_VERSION = "safe_exe_preview_command_renderer.v1"
+SAFE_EXE_PREVIEW_LAUNCH_PLAN_CONTRACT_VERSION = "preview_artifact_launch_plan.v1"
 
 SAFE_EXE_PREVIEW_PROFILE_VALIDATOR_CONTRACT_VERSION = "safe_exe_preview_profile_validator.v1"
 SAFE_EXE_PREVIEW_ALLOWED_ENTRYPOINT = "scripts/run_local_bot.py"
@@ -85,6 +86,9 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     safe_exe_command_renderer_payload, safe_exe_command_renderer_error = _run_child(
         [sys.executable, "scripts/safe_exe_preview_command_renderer.py", "--json"]
     )
+    preview_artifact_launch_plan_payload, preview_artifact_launch_plan_error = _run_child(
+        [sys.executable, "scripts/preview_artifact_launch_plan.py", "--json"]
+    )
 
     installer_status = (
         "blocked" if installer_error else str(installer_payload.get("status", "blocked"))
@@ -130,6 +134,16 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
     if safe_exe_command_renderer_error:
         issues.append(
             f"safe_exe_preview_command_renderer_contract_error:{safe_exe_command_renderer_error}"
+        )
+
+    preview_artifact_launch_plan_status = (
+        "blocked"
+        if preview_artifact_launch_plan_error
+        else str(preview_artifact_launch_plan_payload.get("status", "blocked"))
+    )
+    if preview_artifact_launch_plan_error:
+        issues.append(
+            f"preview_artifact_launch_plan_contract_error:{preview_artifact_launch_plan_error}"
         )
 
     if "blocked" in {
@@ -630,6 +644,167 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         issues.append("safe_exe_preview_build_plan_default_args_unsafe")
     if not safe_exe_build_plan_ready:
         status = "blocked"
+    preview_artifact_launch_plan = preview_artifact_launch_plan_payload or {}
+    preview_artifact_launch_plan_contract_checked = preview_artifact_launch_plan_payload is not None
+    preview_artifact_launch_plan_contract_version = preview_artifact_launch_plan.get(
+        "safety_contract_version"
+    )
+    preview_artifact_launch_plan_contract_version_ok = (
+        preview_artifact_launch_plan_contract_version
+        == SAFE_EXE_PREVIEW_LAUNCH_PLAN_CONTRACT_VERSION
+    )
+    preview_artifact_launch_plan_issues = [
+        issue for issue in preview_artifact_launch_plan.get("issues", []) if isinstance(issue, str)
+    ]
+    preview_artifact_launch_plan_ready = (
+        preview_artifact_launch_plan.get("launch_plan_ready") is True
+    )
+    preview_artifact_launch_plan_artifact_found = (
+        preview_artifact_launch_plan.get("artifact_found") is True
+    )
+    preview_artifact_launch_plan_executable_valid = (
+        preview_artifact_launch_plan.get("executable_valid") is True
+    )
+    preview_artifact_launch_plan_evidence_required = (
+        preview_artifact_launch_plan.get("evidence_required") is True
+    )
+    preview_artifact_launch_plan_evidence_present = (
+        preview_artifact_launch_plan.get("evidence_present") is True
+    )
+    preview_artifact_launch_plan_seal_evidence_present = (
+        preview_artifact_launch_plan.get("seal_evidence_present") is True
+    )
+    preview_artifact_launch_plan_hash_evidence_present = (
+        preview_artifact_launch_plan.get("hash_evidence_present") is True
+    )
+    preview_artifact_launch_plan_leak_triage_evidence_present = (
+        preview_artifact_launch_plan.get("leak_triage_evidence_present") is True
+    )
+    preview_artifact_launch_plan_artifact_verified = (
+        preview_artifact_launch_plan.get("artifact_verified") is True
+    )
+    preview_artifact_launch_plan_launch_command_preview = preview_artifact_launch_plan.get(
+        "launch_command_preview", []
+    )
+    preview_artifact_launch_plan_command_execution_allowed = (
+        preview_artifact_launch_plan.get("command_execution_allowed") is True
+    )
+    preview_artifact_launch_plan_command_executed = (
+        preview_artifact_launch_plan.get("command_executed") is True
+    )
+    preview_artifact_launch_plan_subprocess_invoked = (
+        preview_artifact_launch_plan.get("subprocess_invoked") is True
+    )
+    preview_artifact_launch_plan_shell_used = preview_artifact_launch_plan.get("shell_used") is True
+    preview_artifact_launch_plan_live_mode_allowed = (
+        preview_artifact_launch_plan.get("live_mode_allowed") is True
+    )
+    preview_artifact_launch_plan_exchange_io = preview_artifact_launch_plan.get("exchange_io")
+    preview_artifact_launch_plan_order_submission = preview_artifact_launch_plan.get(
+        "order_submission"
+    )
+    preview_artifact_launch_plan_runtime_loop_started = (
+        preview_artifact_launch_plan.get("runtime_loop_started") is True
+    )
+    preview_artifact_launch_plan_production_runtime_loop_started = (
+        preview_artifact_launch_plan.get("production_runtime_loop_started") is True
+    )
+    preview_artifact_launch_plan_no_secrets_read = not any(
+        preview_artifact_launch_plan.get(key) is True
+        for key in (
+            "secrets_read",
+            "keychain_read",
+            "env_values_read",
+            "dot_env_read",
+            "home_directory_scanned",
+        )
+    )
+    preview_artifact_launch_plan_plan_only = (
+        preview_artifact_launch_plan.get("preview_plan") is True
+        and not preview_artifact_launch_plan_command_execution_allowed
+        and not preview_artifact_launch_plan_command_executed
+    )
+    preview_artifact_launch_plan_command_execution_blocked = (
+        not preview_artifact_launch_plan_command_execution_allowed
+        and not preview_artifact_launch_plan_command_executed
+    )
+    preview_artifact_launch_plan_no_subprocess_or_shell = (
+        not preview_artifact_launch_plan_subprocess_invoked
+        and not preview_artifact_launch_plan_shell_used
+    )
+    preview_artifact_launch_plan_live_blocked = not preview_artifact_launch_plan_live_mode_allowed
+    preview_artifact_launch_plan_runtime_not_started = not any(
+        [
+            preview_artifact_launch_plan_runtime_loop_started,
+            preview_artifact_launch_plan_production_runtime_loop_started,
+        ]
+    )
+    preview_artifact_launch_plan_exchange_or_order_disabled = (
+        preview_artifact_launch_plan_exchange_io == "disabled"
+        and preview_artifact_launch_plan_order_submission == "disabled"
+    )
+    preview_artifact_launch_plan_unsafe_boundary = not all(
+        [
+            preview_artifact_launch_plan_command_execution_blocked,
+            preview_artifact_launch_plan_no_subprocess_or_shell,
+            preview_artifact_launch_plan_live_blocked,
+            preview_artifact_launch_plan_runtime_not_started,
+            preview_artifact_launch_plan_exchange_or_order_disabled,
+            preview_artifact_launch_plan_no_secrets_read,
+        ]
+    )
+    preview_artifact_launch_plan_expected_not_ready_issues = {
+        "preview_artifact_missing",
+        "preview_artifact_executable_invalid",
+        "preview_artifact_evidence_missing",
+    }
+    preview_artifact_launch_plan_expected_not_ready = (
+        preview_artifact_launch_plan_status == "blocked"
+        and bool(preview_artifact_launch_plan_issues)
+        and set(preview_artifact_launch_plan_issues).issubset(
+            preview_artifact_launch_plan_expected_not_ready_issues
+        )
+    )
+    preview_artifact_launch_plan_root_out_of_scope = (
+        "preview_artifact_root_out_of_scope" in preview_artifact_launch_plan_issues
+    )
+
+    if not preview_artifact_launch_plan_contract_checked:
+        issues.append("preview_artifact_launch_plan_contract_missing")
+    if not preview_artifact_launch_plan_contract_version_ok:
+        issues.append("preview_artifact_launch_plan_contract_version_mismatch")
+    if preview_artifact_launch_plan_root_out_of_scope:
+        issues.append("preview_artifact_launch_plan_root_out_of_scope")
+    if preview_artifact_launch_plan_unsafe_boundary:
+        issues.append("preview_artifact_launch_plan_unsafe_boundary")
+    if (
+        "preview_artifact_missing" in preview_artifact_launch_plan_issues
+        or "preview_artifact_executable_invalid" in preview_artifact_launch_plan_issues
+    ):
+        issues.append("preview_artifact_launch_plan_artifact_missing")
+    if "preview_artifact_evidence_missing" in preview_artifact_launch_plan_issues:
+        issues.append("preview_artifact_launch_plan_evidence_missing")
+    if preview_artifact_launch_plan_expected_not_ready:
+        issues.append("preview_artifact_launch_plan_not_ready")
+    if (
+        preview_artifact_launch_plan_error
+        or not preview_artifact_launch_plan_contract_checked
+        or not preview_artifact_launch_plan_contract_version_ok
+        or preview_artifact_launch_plan_root_out_of_scope
+        or preview_artifact_launch_plan_unsafe_boundary
+    ):
+        status = "blocked"
+        issues.append("child_contract_failed")
+    elif preview_artifact_launch_plan_status == "blocked":
+        if preview_artifact_launch_plan_expected_not_ready:
+            if status == "ok":
+                status = "warning"
+        else:
+            status = "blocked"
+            issues.append("child_contract_failed")
+    elif preview_artifact_launch_plan_status == "warning" and status == "ok":
+        status = "warning"
+
     release_readiness = (release_payload or {}).get("release_integrity_readiness", {})
     for issue in (release_payload or {}).get("issues", []):
         if isinstance(issue, str):
@@ -813,6 +988,29 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
         "safe_exe_preview_order_submission": safe_exe_order_submission,
         "safe_exe_preview_runtime_loop_started": safe_exe_runtime_loop_started,
         "safe_exe_preview_production_runtime_loop_started": safe_exe_production_runtime_loop_started,
+        "preview_artifact_launch_plan_contract_checked": preview_artifact_launch_plan_contract_checked,
+        "preview_artifact_launch_plan_contract_version": preview_artifact_launch_plan_contract_version,
+        "preview_artifact_launch_plan_ready": preview_artifact_launch_plan_ready,
+        "preview_artifact_launch_plan_status": preview_artifact_launch_plan_status,
+        "preview_artifact_launch_plan_artifact_found": preview_artifact_launch_plan_artifact_found,
+        "preview_artifact_launch_plan_executable_valid": preview_artifact_launch_plan_executable_valid,
+        "preview_artifact_launch_plan_evidence_required": preview_artifact_launch_plan_evidence_required,
+        "preview_artifact_launch_plan_evidence_present": preview_artifact_launch_plan_evidence_present,
+        "preview_artifact_launch_plan_seal_evidence_present": preview_artifact_launch_plan_seal_evidence_present,
+        "preview_artifact_launch_plan_hash_evidence_present": preview_artifact_launch_plan_hash_evidence_present,
+        "preview_artifact_launch_plan_leak_triage_evidence_present": preview_artifact_launch_plan_leak_triage_evidence_present,
+        "preview_artifact_launch_plan_artifact_verified": preview_artifact_launch_plan_artifact_verified,
+        "preview_artifact_launch_plan_launch_command_preview": preview_artifact_launch_plan_launch_command_preview,
+        "preview_artifact_launch_plan_command_execution_allowed": preview_artifact_launch_plan_command_execution_allowed,
+        "preview_artifact_launch_plan_command_executed": preview_artifact_launch_plan_command_executed,
+        "preview_artifact_launch_plan_subprocess_invoked": preview_artifact_launch_plan_subprocess_invoked,
+        "preview_artifact_launch_plan_shell_used": preview_artifact_launch_plan_shell_used,
+        "preview_artifact_launch_plan_live_mode_allowed": preview_artifact_launch_plan_live_mode_allowed,
+        "preview_artifact_launch_plan_exchange_io": preview_artifact_launch_plan_exchange_io,
+        "preview_artifact_launch_plan_order_submission": preview_artifact_launch_plan_order_submission,
+        "preview_artifact_launch_plan_runtime_loop_started": preview_artifact_launch_plan_runtime_loop_started,
+        "preview_artifact_launch_plan_production_runtime_loop_started": preview_artifact_launch_plan_production_runtime_loop_started,
+        "preview_artifact_launch_plan_issues": preview_artifact_launch_plan_issues,
         "secrets_read": False,
         "keychain_read": False,
         "env_values_read": False,
@@ -872,6 +1070,12 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
                 "safe_exe_preview_command_renderer": safe_exe_command_renderer,
                 "issues": safe_exe_command_renderer_issues,
             },
+            "preview_artifact_launch_plan": {
+                "status": preview_artifact_launch_plan_status,
+                "safety_contract_version": preview_artifact_launch_plan_contract_version,
+                "preview_artifact_launch_plan": preview_artifact_launch_plan,
+                "issues": preview_artifact_launch_plan_issues,
+            },
             "release_integrity_readiness": {
                 "status": release_status,
                 "safety_contract_version": (release_payload or {}).get("safety_contract_version"),
@@ -887,6 +1091,7 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
                 and safe_exe_build_plan_contract_checked
                 and safe_exe_profile_validator_contract_checked
                 and safe_exe_command_renderer_contract_checked
+                and preview_artifact_launch_plan_contract_checked
             ),
             "release_integrity_contract_checked": release_payload is not None,
             "safe_default_launch": readiness["preview_or_demo_default"]
@@ -897,6 +1102,16 @@ def build_payload(mode: str, config_path: Path) -> tuple[dict[str, object], int]
             "safe_exe_preview_build_plan_contract_checked": safe_exe_build_plan_contract_checked,
             "safe_exe_preview_profile_validator_contract_checked": safe_exe_profile_validator_contract_checked,
             "safe_exe_preview_command_renderer_contract_checked": safe_exe_command_renderer_contract_checked,
+            "preview_artifact_launch_plan_contract_checked": preview_artifact_launch_plan_contract_checked,
+            "preview_artifact_launch_plan_contract_version_ok": preview_artifact_launch_plan_contract_version_ok,
+            "preview_artifact_launch_plan_ready": preview_artifact_launch_plan_ready,
+            "preview_artifact_launch_plan_plan_only": preview_artifact_launch_plan_plan_only,
+            "preview_artifact_launch_plan_command_execution_blocked": preview_artifact_launch_plan_command_execution_blocked,
+            "preview_artifact_launch_plan_no_subprocess_or_shell": preview_artifact_launch_plan_no_subprocess_or_shell,
+            "preview_artifact_launch_plan_live_blocked": preview_artifact_launch_plan_live_blocked,
+            "preview_artifact_launch_plan_runtime_not_started": preview_artifact_launch_plan_runtime_not_started,
+            "preview_artifact_launch_plan_exchange_or_order_disabled": preview_artifact_launch_plan_exchange_or_order_disabled,
+            "preview_artifact_launch_plan_no_secrets_read": preview_artifact_launch_plan_no_secrets_read,
             "safe_exe_preview_command_renderer_contract_version_ok": safe_exe_command_renderer_contract_version_ok,
             "safe_exe_preview_command_renderer_ready": safe_exe_preview_command_renderer_ready,
             "safe_exe_preview_commands_render_only": safe_exe_command_renderer.get(
