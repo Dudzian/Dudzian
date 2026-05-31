@@ -14,7 +14,9 @@ from scripts.preview_artifact_cache import (
     DEFAULT_TTL_HOURS,
     REQUIRED_EVIDENCE,
     _contains_forbidden_name,
+    _find_main_executable,
     _is_executable_file,
+    _main_executable_names,
 )
 
 CONTRACT_VERSION = "preview_artifact_recapture_gate.v1"
@@ -23,7 +25,20 @@ DECISION_REBUILD = "CONTROLLED_REBUILD_REQUIRED"
 DECISION_BLOCKED = "BLOCKED_CACHE_ERROR"
 DIST_DIR = Path("dist/preview/linux/dudzian-bot-preview")
 MAIN_EXE = DIST_DIR / "dudzian-bot-preview"
-REQUIRED_FILES = [str(DIST_DIR), str(MAIN_EXE), *[f"evidence/{name}" for name in REQUIRED_EVIDENCE]]
+MAIN_EXE_REQUIREMENT = f"{DIST_DIR.as_posix()}/<main_executable_candidate>"
+MAIN_EXE_MISSING = "main_executable_candidate_missing"
+
+
+def _main_executable_candidate_paths() -> tuple[str, ...]:
+    return tuple((DIST_DIR / name).as_posix() for name in _main_executable_names())
+
+
+def _required_files() -> list[str]:
+    return [
+        DIST_DIR.as_posix(),
+        MAIN_EXE_REQUIREMENT,
+        *[f"evidence/{name}" for name in REQUIRED_EVIDENCE],
+    ]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -81,7 +96,8 @@ def _base_payload(args: argparse.Namespace) -> dict[str, object]:
         "selected_cache_dir": None,
         "selected_executable": None,
         "selected_evidence_dir": None,
-        "required_files": REQUIRED_FILES,
+        "required_files": _required_files(),
+        "required_main_executable_candidates": _main_executable_candidate_paths(),
         "missing_files": [],
         "candidates": [],
         "stale_candidates": [],
@@ -198,33 +214,44 @@ def _manifest_diagnostics(cache_dir: Path) -> list[str]:
         if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
             diagnostics.append("manifest_required_files_invalid")
         else:
-            missing_from_manifest = sorted(set(REQUIRED_FILES) - set(required))
+            main_markers = {
+                MAIN_EXE_REQUIREMENT,
+                MAIN_EXE.as_posix(),
+                *_main_executable_candidate_paths(),
+            }
+            required_non_main = set(_required_files()) - {MAIN_EXE_REQUIREMENT}
+            missing_from_manifest = sorted(required_non_main - set(required))
             for rel in missing_from_manifest:
                 diagnostics.append(f"manifest_missing_required:{rel}")
+            if not any(rel in main_markers for rel in required):
+                diagnostics.append(f"manifest_missing_required:{MAIN_EXE_REQUIREMENT}")
             for rel in required:
                 if ".." in Path(rel).parts:
                     diagnostics.append(f"manifest_path_traversal:{rel}")
+                    continue
+                if rel in main_markers:
                     continue
                 if not (cache_dir / rel).exists():
                     diagnostics.append(f"manifest_file_missing:{rel}")
     return diagnostics
 
 
-def _check_complete_secure(root: Path, cache_dir: Path) -> tuple[bool, list[str], list[str]]:
+def _check_complete_secure(
+    root: Path, cache_dir: Path
+) -> tuple[bool, list[str], list[str], Path | None]:
     missing: list[str] = []
     errors: list[str] = []
     root_resolved = root.resolve(strict=False)
     cache_resolved = cache_dir.resolve(strict=False)
     if not _is_under(root_resolved, cache_resolved):
-        return False, ["cache_dir_outside_root"], ["cache_dir_outside_root"]
+        return False, ["cache_dir_outside_root"], ["cache_dir_outside_root"], None
     if cache_dir.is_symlink():
-        return False, ["cache_dir_symlink"], ["cache_dir_symlink"]
+        return False, ["cache_dir_symlink"], ["cache_dir_symlink"], None
     dist_dir = cache_dir / DIST_DIR
-    exe = cache_dir / MAIN_EXE
+    exe = _find_main_executable(cache_dir)
     evidence_dir = cache_dir / "evidence"
     for rel_path, required_type in (
         (DIST_DIR, "dir"),
-        (MAIN_EXE, "file"),
         (Path("evidence"), "dir"),
     ):
         path = cache_dir / rel_path
@@ -233,10 +260,18 @@ def _check_complete_secure(root: Path, cache_dir: Path) -> tuple[bool, list[str]
             errors.append(f"required_path_outside_root:{rel_path.as_posix()}")
         if required_type == "dir" and not path.is_dir():
             missing.append(rel_path.as_posix())
-        if required_type == "file" and not path.is_file():
-            missing.append(rel_path.as_posix())
-    if exe.is_file() and not _is_executable_file(exe):
-        missing.append("executable_not_executable")
+    if exe is None:
+        missing.append(MAIN_EXE_MISSING)
+    else:
+        exe_resolved = exe.resolve(strict=False)
+        try:
+            exe_rel = exe.relative_to(cache_dir).as_posix()
+        except ValueError:
+            exe_rel = MAIN_EXE_REQUIREMENT
+        if exe.is_symlink() or not _is_under(root_resolved, exe_resolved):
+            errors.append(f"required_path_outside_root:{exe_rel}")
+        if not _is_executable_file(exe):
+            missing.append("executable_not_executable")
     for name in REQUIRED_EVIDENCE:
         rel = Path("evidence") / name
         ev_path = cache_dir / rel
@@ -249,7 +284,7 @@ def _check_complete_secure(root: Path, cache_dir: Path) -> tuple[bool, list[str]
         errors.extend(_scan_cache_tree(root, cache_dir))
     errors.extend(_manifest_diagnostics(cache_dir))
     complete = not missing and not errors
-    return complete, missing, errors
+    return complete, missing, errors, exe
 
 
 def _locate_latest(root: Path, root_arg: str, ttl_hours: float) -> dict[str, Any]:
@@ -287,12 +322,13 @@ def _locate_latest(root: Path, root_arg: str, ttl_hours: float) -> dict[str, Any
         if not fresh:
             result["stale_candidates"].append(label)
             continue
-        complete, missing, diagnostics = _check_complete_secure(root, candidate)
-        if complete:
+        complete, missing, diagnostics, exe = _check_complete_secure(root, candidate)
+        if complete and exe is not None:
+            selected_executable = Path(label) / exe.relative_to(candidate)
             result.update(
                 {
                     "selected_cache_dir": label,
-                    "selected_executable": str(Path(label) / MAIN_EXE),
+                    "selected_executable": str(selected_executable),
                     "selected_evidence_dir": str(Path(label) / "evidence"),
                     "missing_files": [],
                     "cache_hit": True,
