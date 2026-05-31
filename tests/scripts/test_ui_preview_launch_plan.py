@@ -77,6 +77,15 @@ def test_launch_plan_command_is_render_only_source_entrypoint() -> None:
         "--config",
         "ui/config/example.yaml",
     ]
+    assert payload["ui_smoke_command_preview"] == [
+        sys.executable,
+        "-m",
+        "ui.pyside_app",
+        "--config",
+        "ui/config/example.yaml",
+        "--smoke",
+        "--offscreen",
+    ]
     assert payload["issues"] == []
 
 

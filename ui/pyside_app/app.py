@@ -7,15 +7,16 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtCore import QObject
-from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtCore import QUrl
+if TYPE_CHECKING:
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtQml import QQmlApplicationEngine
 
-from .config import UiAppConfig, load_ui_app_config
-from .qml_bridge import QmlContextBridge
+    from .config import UiAppConfig
+    from .qml_bridge import QmlContextBridge
+
+from .config import load_ui_app_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +30,8 @@ class AppOptions:
     enable_cloud_runtime: bool = False
     qml_path: Path | None = None
     log_level: str = "INFO"
+    smoke: bool = False
+    offscreen: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "config_path", Path(self.config_path).expanduser().resolve())
@@ -63,6 +66,16 @@ class AppOptions:
             default="INFO",
             help="Poziom logowania PySide6 UI",
         )
+        parser.add_argument(
+            "--smoke",
+            action="store_true",
+            help="Bezpiecznie ładuje QML raz i kończy bez pętli runtime",
+        )
+        parser.add_argument(
+            "--offscreen",
+            action="store_true",
+            help="Ustawia Qt offscreen wyłącznie dla trybu --smoke",
+        )
         return parser
 
     @classmethod
@@ -82,6 +95,8 @@ class AppOptions:
             enable_cloud_runtime=args.enable_cloud_runtime,
             qml_path=Path(args.qml) if args.qml else None,
             log_level=args.log_level,
+            smoke=args.smoke,
+            offscreen=args.offscreen,
         )
 
     def validate(self) -> None:
@@ -116,6 +131,8 @@ class BotPysideApplication:
         return self._engine
 
     def _ensure_qt_app(self) -> QGuiApplication:
+        from PySide6.QtGui import QGuiApplication
+
         instance = QGuiApplication.instance()
         if instance is not None:
             return instance  # pragma: no cover - wykorzystywane w testach, gdy istnieje globalna instancja
@@ -124,6 +141,11 @@ class BotPysideApplication:
 
     def load(self, warning_sink: Callable[[str], None] | None = None) -> QQmlApplicationEngine:
         """Buduje silnik QML wraz z kontekstem."""
+
+        from PySide6.QtCore import QObject, QUrl
+        from PySide6.QtQml import QQmlApplicationEngine
+
+        from .qml_bridge import QmlContextBridge
 
         app = self._ensure_qt_app()
         _LOGGER.debug("QGuiApplication instance: %s", app)
@@ -213,6 +235,8 @@ class BotPysideApplication:
         engine = self.load()
         if not engine.rootObjects():  # pragma: no cover - zabezpieczenie
             return 1
+        from PySide6.QtGui import QGuiApplication
+
         qt_app = QGuiApplication.instance()
         if qt_app is None:
             raise RuntimeError("Brak instancji QGuiApplication po zainicjowaniu UI")
@@ -223,6 +247,10 @@ class BotPysideApplication:
 def main(argv: list[str] | None = None) -> int:
     options = AppOptions.parse(argv)
     logging.basicConfig(level=options.logging_level)
+    if options.smoke:
+        from .smoke import run_smoke
+
+        return run_smoke(options, output=sys.stdout, force_offscreen=options.offscreen)
     app = BotPysideApplication(options)
     return app.run()
 
