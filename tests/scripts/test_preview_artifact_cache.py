@@ -13,6 +13,9 @@ from types import SimpleNamespace
 import pytest
 
 SCRIPT = Path("scripts/preview_artifact_cache.py")
+POSIX_EXECUTE_BIT_SKIP = pytest.mark.skipif(
+    os.name == "nt", reason="POSIX execute-bit semantics require a POSIX host"
+)
 
 
 def _load_preview_artifact_cache_module():
@@ -399,6 +402,7 @@ def test_windows_store_blocks_suffixless_candidate_with_posix_bit(
     assert "executable_not_executable" in payload["missing_files"]
 
 
+@POSIX_EXECUTE_BIT_SKIP
 def test_posix_store_accepts_suffixless_candidate_with_execute_bit(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -412,6 +416,7 @@ def test_posix_store_accepts_suffixless_candidate_with_execute_bit(
     assert code == 0 and payload["cache_complete"] is True
 
 
+@POSIX_EXECUTE_BIT_SKIP
 def test_posix_store_blocks_suffixless_candidate_without_execute_bit(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -424,6 +429,18 @@ def test_posix_store_blocks_suffixless_candidate_without_execute_bit(
 
     assert code == 2 and payload["status"] == "blocked"
     assert "executable_not_executable" in payload["missing_files"]
+
+
+def test_posix_candidate_lookup_uses_suffixless_name_without_execute_validation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: False)
+    candidate = tmp_path / "dudzian-bot-preview"
+    candidate.write_text("x", encoding="utf-8")
+
+    assert preview_cache._main_executable_names() == ("dudzian-bot-preview",)
+    assert preview_cache._find_main_executable_in_dir(tmp_path) == candidate
 
 
 @pytest.mark.parametrize("suffix", (".exe", ".cmd", ".bat", ".ps1"))
