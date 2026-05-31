@@ -32,6 +32,7 @@ FORBIDDEN_GLOBS = (
 )
 FORBIDDEN_SEGMENTS = ("bot_core/logs", "logs", "reports", "test-results", "var/security")
 STAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
+WINDOWS_EXECUTABLE_SUFFIXES = {".exe", ".bat", ".cmd", ".ps1"}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -110,23 +111,48 @@ def _has_execute_bit(path: Path) -> bool:
 
 
 def _is_windows_executable_suffix(path: Path) -> bool:
-    return path.suffix.lower() in {".exe", ".bat", ".cmd", ".ps1"}
+    return path.suffix.lower() in WINDOWS_EXECUTABLE_SUFFIXES
 
 
 def _is_executable_file(path: Path) -> bool:
     if not path.is_file():
         return False
     if _is_windows_platform():
-        return _is_windows_executable_suffix(path) or _has_execute_bit(path)
+        return _is_windows_executable_suffix(path)
     return _has_execute_bit(path) and os.access(path, os.X_OK)
+
+
+def _main_executable_names() -> tuple[str, ...]:
+    if _is_windows_platform():
+        return (
+            "dudzian-bot-preview.exe",
+            "dudzian-bot-preview.cmd",
+            "dudzian-bot-preview.bat",
+            "dudzian-bot-preview.ps1",
+            "dudzian-bot-preview",
+        )
+    return ("dudzian-bot-preview",)
+
+
+def _find_main_executable_in_dir(binary_dir: Path) -> Path | None:
+    for name in _main_executable_names():
+        candidate = binary_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _find_main_executable(root: Path) -> Path | None:
+    binary_dir = root / "dist/preview/linux/dudzian-bot-preview"
+    return _find_main_executable_in_dir(binary_dir)
 
 
 def _check_complete(cache_dir: Path) -> tuple[bool, list[str]]:
     missing: list[str] = []
     if not (cache_dir / "dist/preview/linux/dudzian-bot-preview").is_dir():
         missing.append("dist/preview/linux/dudzian-bot-preview")
-    exe = cache_dir / "dist/preview/linux/dudzian-bot-preview/dudzian-bot-preview"
-    if not exe.is_file():
+    exe = _find_main_executable(cache_dir)
+    if exe is None:
         missing.append("dist/preview/linux/dudzian-bot-preview/dudzian-bot-preview")
     elif not _is_executable_file(exe):
         missing.append("executable_not_executable")
@@ -178,8 +204,8 @@ def _do_store(args: argparse.Namespace, payload: dict[str, object]) -> int:
     missing: list[str] = []
     if not src.is_dir():
         missing.append("dist/preview/linux/dudzian-bot-preview")
-    main_exe = src / "dudzian-bot-preview"
-    if not main_exe.is_file():
+    main_exe = _find_main_executable_in_dir(src)
+    if main_exe is None:
         missing.append("dist/preview/linux/dudzian-bot-preview/dudzian-bot-preview")
     elif not _is_executable_file(main_exe):
         missing.append("executable_not_executable")
