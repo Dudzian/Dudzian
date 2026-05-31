@@ -85,11 +85,46 @@ def _mk_complete(
     return run
 
 
+def _safe_utime(path: Path, ts: float) -> None:
+    try:
+        os.utime(path, (ts, ts), follow_symlinks=False)
+    except (NotImplementedError, TypeError):
+        if path.is_symlink():
+            return
+        os.utime(path, (ts, ts))
+
+
 def _age(path: Path, hours: float) -> None:
     ts = time.time() - hours * 3600
     for item in sorted(path.rglob("*"), reverse=True):
-        os.utime(item, (ts, ts), follow_symlinks=False)
-    os.utime(path, (ts, ts), follow_symlinks=False)
+        _safe_utime(item, ts)
+    _safe_utime(path, ts)
+
+
+def test_age_falls_back_when_utime_no_follow_is_unsupported(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "cache"
+    child = root / "child.txt"
+    child.parent.mkdir()
+    child.write_text("cache", encoding="utf-8")
+    calls: list[tuple[Path, bool]] = []
+    real_utime = os.utime
+
+    def unsupported_no_follow(
+        path: Path, times: tuple[float, float], *, follow_symlinks: bool = True
+    ) -> None:
+        calls.append((Path(path), follow_symlinks))
+        if follow_symlinks is False:
+            raise NotImplementedError("follow_symlinks unavailable")
+        real_utime(path, times)
+
+    monkeypatch.setattr(os, "utime", unsupported_no_follow)
+
+    _age(root, 48)
+
+    assert (child, False) in calls
+    assert (child, True) in calls
+    assert (root, False) in calls
+    assert (root, True) in calls
 
 
 def test_root_missing_controlled_rebuild_without_crash(tmp_path: Path) -> None:
