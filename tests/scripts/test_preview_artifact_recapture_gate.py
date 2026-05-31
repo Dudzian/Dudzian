@@ -30,11 +30,20 @@ def _run(*args: str) -> tuple[int, dict[str, object]]:
     return proc.returncode, json.loads(proc.stdout.strip())
 
 
-def _mk_complete(root: Path, name: str, executable: bool = True) -> Path:
+def _host_main_binary_name() -> str:
+    return "dudzian-bot-preview.exe" if os.name == "nt" else "dudzian-bot-preview"
+
+
+def _mk_complete(
+    root: Path,
+    name: str,
+    executable: bool = True,
+    binary_name: str | None = None,
+) -> Path:
     run = root / name
     dist = run / "dist/preview/linux/dudzian-bot-preview"
     dist.mkdir(parents=True)
-    exe = dist / "dudzian-bot-preview"
+    exe = dist / (binary_name or _host_main_binary_name())
     exe.write_text("exe", encoding="utf-8")
     if executable:
         exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
@@ -72,9 +81,24 @@ def test_fresh_complete_cache_uses_cached_artifact(tmp_path: Path) -> None:
     assert payload["cache_fresh"] is True
     assert payload["selected_cache_dir"] == str(run)
     assert payload["selected_executable"] == str(
-        run / "dist/preview/linux/dudzian-bot-preview/dudzian-bot-preview"
+        run / "dist/preview/linux/dudzian-bot-preview" / _host_main_binary_name()
     )
     assert payload["selected_evidence_dir"] == str(run / "evidence")
+
+
+def test_mk_complete_default_uses_host_compatible_main_binary(tmp_path: Path) -> None:
+    root = tmp_path / "cache"
+    run = _mk_complete(root, "run_fresh")
+    expected = run / "dist/preview/linux/dudzian-bot-preview" / _host_main_binary_name()
+
+    assert expected.is_file()
+    assert (expected.name.endswith(".exe")) is (os.name == "nt")
+
+    code, payload = _run("--root", str(root), "--ttl-hours", "24")
+
+    assert code == 0
+    assert payload["decision"] == "USE_CACHED_ARTIFACT"
+    assert payload["cache_hit"] is True
 
 
 def test_stale_complete_cache_requires_rebuild_with_diagnostic(tmp_path: Path) -> None:
@@ -102,7 +126,7 @@ def test_incomplete_cache_requires_rebuild_with_diagnostic(tmp_path: Path) -> No
 
 def test_non_executable_executable_file_is_incomplete_candidate(tmp_path: Path) -> None:
     root = tmp_path / "cache"
-    _mk_complete(root, "run_bad_mode", executable=False)
+    _mk_complete(root, "run_bad_mode", executable=False, binary_name="dudzian-bot-preview")
     code, payload = _run("--root", str(root), "--ttl-hours", "24")
     assert code == 2
     assert payload["cache_hit"] is False
