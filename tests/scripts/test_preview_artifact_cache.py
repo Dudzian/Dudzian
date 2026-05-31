@@ -406,6 +406,8 @@ def test_windows_store_blocks_suffixless_candidate_with_posix_bit(
 def test_posix_store_accepts_suffixless_candidate_with_execute_bit(
     tmp_path: Path, monkeypatch
 ) -> None:
+    if os.name == "nt":
+        pytest.skip("POSIX execute-bit semantics require a POSIX host")
     preview_cache = _load_preview_artifact_cache_module()
     monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: False)
     src = _make_source(tmp_path, executable=True, binary_name="dudzian-bot-preview")
@@ -420,6 +422,8 @@ def test_posix_store_accepts_suffixless_candidate_with_execute_bit(
 def test_posix_store_blocks_suffixless_candidate_without_execute_bit(
     tmp_path: Path, monkeypatch
 ) -> None:
+    if os.name == "nt":
+        pytest.skip("POSIX execute-bit semantics require a POSIX host")
     preview_cache = _load_preview_artifact_cache_module()
     monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: False)
     src = _make_source(tmp_path, executable=False, binary_name="dudzian-bot-preview")
