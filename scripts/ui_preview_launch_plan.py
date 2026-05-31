@@ -40,6 +40,20 @@ def _build_command_preview(entrypoint_found: bool, config_found: bool) -> list[s
     ]
 
 
+def _build_smoke_command_preview(entrypoint_found: bool, config_found: bool) -> list[str]:
+    if not entrypoint_found or not config_found:
+        return []
+    return [
+        sys.executable,
+        "-m",
+        "ui.pyside_app",
+        "--config",
+        _relative(DEFAULT_CONFIG),
+        "--smoke",
+        "--offscreen",
+    ]
+
+
 def build_launch_plan() -> dict[str, Any]:
     """Return the UI preview safety contract as plain data."""
 
@@ -77,6 +91,7 @@ def build_launch_plan() -> dict[str, Any]:
         "runtime_loop_started": False,
         "production_runtime_loop_started": False,
         "ui_launch_command_preview": _build_command_preview(entrypoint_found, config_found),
+        "ui_smoke_command_preview": _build_smoke_command_preview(entrypoint_found, config_found),
         "command_execution_allowed": False,
         "command_executed": False,
         "subprocess_invoked": False,
