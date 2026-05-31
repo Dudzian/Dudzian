@@ -35,14 +35,18 @@ def _run(*args: str) -> tuple[int, dict[str, object]]:
     return proc.returncode, json.loads(proc.stdout.strip())
 
 
+def _host_main_binary_name() -> str:
+    return "dudzian-bot-preview.exe" if os.name == "nt" else "dudzian-bot-preview"
+
+
 def _make_source(
     root: Path,
     executable: bool = True,
-    binary_name: str = "dudzian-bot-preview",
+    binary_name: str | None = None,
 ) -> Path:
     src = root / "src"
     src.mkdir()
-    exe = src / binary_name
+    exe = src / (binary_name or _host_main_binary_name())
     exe.write_text("x", encoding="utf-8")
     if executable:
         exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
@@ -69,12 +73,12 @@ def _mk_complete(
     root: Path,
     name: str,
     executable: bool = True,
-    binary_name: str = "dudzian-bot-preview",
+    binary_name: str | None = None,
 ) -> Path:
     run = root / name
     exe = run / "dist/preview/linux/dudzian-bot-preview"
     exe.mkdir(parents=True)
-    main = exe / binary_name
+    main = exe / (binary_name or _host_main_binary_name())
     main.write_text("x", encoding="utf-8")
     if executable:
         main.chmod(main.stat().st_mode | stat.S_IXUSR)
@@ -312,6 +316,28 @@ def test_valid_stage_accepted(tmp_path: Path) -> None:
     assert code == 0 and payload["cache_complete"] is True
 
 
+def test_make_source_default_uses_host_compatible_store_binary(tmp_path: Path) -> None:
+    src = _make_source(tmp_path)
+    expected = src / _host_main_binary_name()
+
+    assert expected.is_file()
+    assert (expected.name.endswith(".exe")) is (os.name == "nt")
+
+    ev = _make_evidence(tmp_path)
+    code, payload = _run(
+        "--root",
+        str(tmp_path / "cache"),
+        "--stage",
+        "EXE-PREVIEW-14_12",
+        "--source",
+        str(src),
+        "--evidence-dir",
+        str(ev),
+        "--store",
+    )
+    assert code == 0 and payload["cache_complete"] is True
+
+
 def test_valid_stage_with_hyphen_accepted(tmp_path: Path) -> None:
     src = _make_source(tmp_path)
     ev = _make_evidence(tmp_path)
@@ -364,7 +390,7 @@ def test_windows_store_blocks_suffixless_candidate_with_posix_bit(
 ) -> None:
     preview_cache = _load_preview_artifact_cache_module()
     monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
-    src = _make_source(tmp_path, executable=True)
+    src = _make_source(tmp_path, executable=True, binary_name="dudzian-bot-preview")
     ev = _make_evidence(tmp_path)
 
     code, payload = _run_loaded_store(preview_cache, tmp_path / "cache", src, ev)
@@ -378,7 +404,7 @@ def test_posix_store_accepts_suffixless_candidate_with_execute_bit(
 ) -> None:
     preview_cache = _load_preview_artifact_cache_module()
     monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: False)
-    src = _make_source(tmp_path, executable=True)
+    src = _make_source(tmp_path, executable=True, binary_name="dudzian-bot-preview")
     ev = _make_evidence(tmp_path)
 
     code, payload = _run_loaded_store(preview_cache, tmp_path / "cache", src, ev)
@@ -391,7 +417,7 @@ def test_posix_store_blocks_suffixless_candidate_without_execute_bit(
 ) -> None:
     preview_cache = _load_preview_artifact_cache_module()
     monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: False)
-    src = _make_source(tmp_path, executable=False)
+    src = _make_source(tmp_path, executable=False, binary_name="dudzian-bot-preview")
     ev = _make_evidence(tmp_path)
 
     code, payload = _run_loaded_store(preview_cache, tmp_path / "cache", src, ev)
@@ -440,7 +466,7 @@ def test_windows_locate_latest_blocks_suffixless_candidate_with_posix_bit(
     preview_cache = _load_preview_artifact_cache_module()
     monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
     root = tmp_path / "cache"
-    _mk_complete(root, "run_bad", executable=True)
+    _mk_complete(root, "run_bad", executable=True, binary_name="dudzian-bot-preview")
 
     code, payload = _run_loaded_locate(preview_cache, root)
 
