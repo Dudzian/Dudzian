@@ -8,6 +8,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 SCRIPT = Path("scripts/preview_artifact_cache.py")
 
@@ -32,13 +35,19 @@ def _run(*args: str) -> tuple[int, dict[str, object]]:
     return proc.returncode, json.loads(proc.stdout.strip())
 
 
-def _make_source(root: Path, executable: bool = True) -> Path:
+def _make_source(
+    root: Path,
+    executable: bool = True,
+    binary_name: str = "dudzian-bot-preview",
+) -> Path:
     src = root / "src"
     src.mkdir()
-    exe = src / "dudzian-bot-preview"
+    exe = src / binary_name
     exe.write_text("x", encoding="utf-8")
     if executable:
         exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+    else:
+        exe.chmod(exe.stat().st_mode & ~0o111)
     return src
 
 
@@ -56,14 +65,21 @@ def _make_evidence(root: Path) -> Path:
     return ev
 
 
-def _mk_complete(root: Path, name: str, executable: bool = True) -> Path:
+def _mk_complete(
+    root: Path,
+    name: str,
+    executable: bool = True,
+    binary_name: str = "dudzian-bot-preview",
+) -> Path:
     run = root / name
     exe = run / "dist/preview/linux/dudzian-bot-preview"
     exe.mkdir(parents=True)
-    main = exe / "dudzian-bot-preview"
+    main = exe / binary_name
     main.write_text("x", encoding="utf-8")
     if executable:
         main.chmod(main.stat().st_mode | stat.S_IXUSR)
+    else:
+        main.chmod(main.stat().st_mode & ~0o111)
     ev = run / "evidence"
     ev.mkdir(parents=True)
     for f in [
@@ -75,6 +91,48 @@ def _mk_complete(root: Path, name: str, executable: bool = True) -> Path:
     ]:
         (ev / f).write_text("x", encoding="utf-8")
     return run
+
+
+def _module_args(**overrides: object) -> SimpleNamespace:
+    values = {
+        "root": "",
+        "ttl_hours": 24,
+        "stage": "",
+        "source": "",
+        "evidence_dir": "",
+        "store": False,
+        "locate_latest": False,
+        "dry_run": False,
+        "json": True,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _run_loaded_store(
+    preview_cache,
+    root: Path,
+    src: Path,
+    evidence: Path,
+    stage: str = "EXE-PREVIEW-14_12",
+) -> tuple[int, dict[str, object]]:
+    args = _module_args(
+        root=str(root),
+        stage=stage,
+        source=str(src),
+        evidence_dir=str(evidence),
+        store=True,
+    )
+    payload = preview_cache._base_payload(args)
+    return preview_cache._do_store(args, payload), payload
+
+
+def _run_loaded_locate(
+    preview_cache, root: Path, ttl_hours: float = 24
+) -> tuple[int, dict[str, object]]:
+    args = _module_args(root=str(root), ttl_hours=ttl_hours, locate_latest=True)
+    payload = preview_cache._base_payload(args)
+    return preview_cache._do_locate(args, payload), payload
 
 
 def test_source_env_blocks_store(tmp_path: Path) -> None:
@@ -158,7 +216,7 @@ def test_locate_non_executable_cache_blocked(tmp_path: Path) -> None:
     assert "executable_not_executable" in payload["missing_files"]
 
 
-def test_windows_executable_check_accepts_preview_with_posix_bit(
+def test_windows_executable_check_rejects_suffixless_preview_with_posix_bit(
     tmp_path: Path, monkeypatch
 ) -> None:
     preview_cache = _load_preview_artifact_cache_module()
@@ -168,7 +226,7 @@ def test_windows_executable_check_accepts_preview_with_posix_bit(
 
     monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
 
-    assert preview_cache._is_executable_file(exe) is True
+    assert preview_cache._is_executable_file(exe) is False
 
 
 def test_windows_executable_check_rejects_preview_without_posix_bit(
@@ -184,17 +242,18 @@ def test_windows_executable_check_rejects_preview_without_posix_bit(
     assert preview_cache._is_executable_file(exe) is False
 
 
-def test_windows_executable_check_accepts_exe_suffix_without_posix_bit(
+def test_windows_executable_check_accepts_windows_suffixes_without_posix_bit(
     tmp_path: Path, monkeypatch
 ) -> None:
     preview_cache = _load_preview_artifact_cache_module()
-    exe = tmp_path / "dudzian-bot-preview.exe"
-    exe.write_text("x", encoding="utf-8")
-    exe.chmod(exe.stat().st_mode & ~0o111)
-
     monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
 
-    assert preview_cache._is_executable_file(exe) is True
+    for suffix in (".exe", ".bat", ".cmd", ".ps1", ".EXE"):
+        exe = tmp_path / f"dudzian-bot-preview{suffix}"
+        exe.write_text("x", encoding="utf-8")
+        exe.chmod(exe.stat().st_mode & ~0o111)
+
+        assert preview_cache._is_executable_file(exe) is True
 
 
 def test_posix_executable_check_requires_execute_bit(tmp_path: Path, monkeypatch) -> None:
@@ -268,6 +327,125 @@ def test_valid_stage_with_hyphen_accepted(tmp_path: Path) -> None:
         "--store",
     )
     assert code == 0 and payload["cache_complete"] is True
+
+
+@pytest.mark.parametrize("suffix", (".exe", ".cmd", ".bat", ".ps1"))
+def test_windows_store_accepts_executable_suffix_candidates_without_posix_bit(
+    tmp_path: Path, monkeypatch, suffix: str
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
+    src = _make_source(tmp_path, executable=False, binary_name=f"dudzian-bot-preview{suffix}")
+    ev = _make_evidence(tmp_path)
+
+    code, payload = _run_loaded_store(preview_cache, tmp_path / "cache", src, ev)
+
+    assert code == 0 and payload["cache_complete"] is True
+
+
+def test_windows_store_prefers_exe_candidate_over_suffixless_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
+    src = _make_source(tmp_path, executable=False, binary_name="dudzian-bot-preview.exe")
+    suffixless = src / "dudzian-bot-preview"
+    suffixless.write_text("x", encoding="utf-8")
+    suffixless.chmod(suffixless.stat().st_mode | stat.S_IXUSR)
+    ev = _make_evidence(tmp_path)
+
+    code, payload = _run_loaded_store(preview_cache, tmp_path / "cache", src, ev)
+
+    assert code == 0 and payload["cache_complete"] is True
+
+
+def test_windows_store_blocks_suffixless_candidate_with_posix_bit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
+    src = _make_source(tmp_path, executable=True)
+    ev = _make_evidence(tmp_path)
+
+    code, payload = _run_loaded_store(preview_cache, tmp_path / "cache", src, ev)
+
+    assert code == 2 and payload["status"] == "blocked"
+    assert "executable_not_executable" in payload["missing_files"]
+
+
+def test_posix_store_accepts_suffixless_candidate_with_execute_bit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: False)
+    src = _make_source(tmp_path, executable=True)
+    ev = _make_evidence(tmp_path)
+
+    code, payload = _run_loaded_store(preview_cache, tmp_path / "cache", src, ev)
+
+    assert code == 0 and payload["cache_complete"] is True
+
+
+def test_posix_store_blocks_suffixless_candidate_without_execute_bit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: False)
+    src = _make_source(tmp_path, executable=False)
+    ev = _make_evidence(tmp_path)
+
+    code, payload = _run_loaded_store(preview_cache, tmp_path / "cache", src, ev)
+
+    assert code == 2 and payload["status"] == "blocked"
+    assert "executable_not_executable" in payload["missing_files"]
+
+
+@pytest.mark.parametrize("suffix", (".exe", ".cmd", ".bat", ".ps1"))
+def test_windows_locate_latest_accepts_executable_suffix_candidates_without_posix_bit(
+    tmp_path: Path, monkeypatch, suffix: str
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
+    root = tmp_path / "cache"
+    run = _mk_complete(
+        root, "run_good", executable=False, binary_name=f"dudzian-bot-preview{suffix}"
+    )
+
+    code, payload = _run_loaded_locate(preview_cache, root)
+
+    assert code == 0 and payload["cache_hit"] is True
+    assert payload["selected_cache_dir"] == str(run)
+
+
+def test_windows_locate_latest_prefers_exe_candidate_over_suffixless_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
+    root = tmp_path / "cache"
+    run = _mk_complete(root, "run_good", executable=False, binary_name="dudzian-bot-preview.exe")
+    suffixless = run / "dist/preview/linux/dudzian-bot-preview/dudzian-bot-preview"
+    suffixless.write_text("x", encoding="utf-8")
+    suffixless.chmod(suffixless.stat().st_mode | stat.S_IXUSR)
+
+    code, payload = _run_loaded_locate(preview_cache, root)
+
+    assert code == 0 and payload["cache_hit"] is True
+    assert payload["selected_cache_dir"] == str(run)
+
+
+def test_windows_locate_latest_blocks_suffixless_candidate_with_posix_bit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    preview_cache = _load_preview_artifact_cache_module()
+    monkeypatch.setattr(preview_cache, "_is_windows_platform", lambda: True)
+    root = tmp_path / "cache"
+    _mk_complete(root, "run_bad", executable=True)
+
+    code, payload = _run_loaded_locate(preview_cache, root)
+
+    assert code == 2 and payload["cache_hit"] is False
+    assert "executable_not_executable" in payload["missing_files"]
 
 
 def test_dry_run_forbidden_still_blocked(tmp_path: Path) -> None:
