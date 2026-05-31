@@ -369,3 +369,14 @@ Denylista artefaktów obejmuje `.env`, lokalną DB (`trading.db`), logi, reports
   3. Jeśli jest miss: wykonaj controlled rebuild.
   4. Po rebuild: zapisz artefakt przez `preview_artifact_cache --store`.
   5. Na początku kolejnych etapów wykonaj cleanup TTL.
+
+## Preview artifact launch plan boundary (EXE-PREVIEW-17)
+
+- Komenda: `python scripts/preview_artifact_launch_plan.py --json`.
+- Kontrakt: `preview_artifact_launch_plan.v1`.
+- To jest wyłącznie plan-only / no execution: `launch_command_preview` to dane planu, a nie wykonanie komendy.
+- Kontrakt musi raportować `command_execution_allowed=false` i `command_executed=false`; nie wolno uruchamiać executable w tym etapie.
+- Launch plan wymaga valid executable oraz kompletnego evidence (`seal`, hash evidence i leak triage evidence).
+- Brak artefaktu lub brak evidence na dev/prebuild machine to expected not-ready / controlled blocked path, a nie powód do zgadywania ścieżek albo budowania EXE.
+- Root spoza dozwolonego preview artifact scope, execution boundary, live mode, sekrety, keychain, exchange/API I/O, signing, release upload i promotion są hard block.
+- Realny smoke/execution exact executable jest osobnym późniejszym etapem po tym seal.
