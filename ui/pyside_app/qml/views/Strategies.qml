@@ -7,137 +7,59 @@ Components.StyledScrollView {
     id: root
     objectName: "strategiesPreviewPanel"
     property var runtimeService
-
     property var demoStrategies: [
-        ({ id: "btc-shadow-momentum", name: qsTr("BTC Shadow Momentum"), mode: "demo/offline", profile: "balanced", params: ({ max_position_usd: 2500, confidence_floor: 0.72, cooldown_sec: 90 }) }),
-        ({ id: "btc-range-guard", name: qsTr("BTC Range Guard"), mode: "preview", profile: "defensive", params: ({ max_drawdown_pct: 2.5, stop_loss_pct: 1.1, take_profit_pct: 1.8 }) })
+        ({ name: qsTr("Momentum Guard"), enabled: true, floor: "0.72", cooldown: "90s", maxPosition: "$2,500", source: "trend/momentum preview", safety: qsTr("advisory only • no live execution") }),
+        ({ name: qsTr("Range Guard"), enabled: true, floor: "0.68", cooldown: "120s", maxPosition: "$1,800", source: "range/risk preview", safety: qsTr("risk governor locked") }),
+        ({ name: qsTr("Volatility Breakout Preview"), enabled: false, floor: "0.80", cooldown: "180s", maxPosition: "$1,200", source: "breakout preview", safety: qsTr("execution guard blocks live") })
     ]
-    property var strategyModel: runtimeService && runtimeService.strategyConfigs && runtimeService.strategyConfigs.length > 0
-                                ? runtimeService.strategyConfigs
-                                : demoStrategies
+    contentWidth: availableWidth
+    clip: true
 
     ColumnLayout {
         width: root.availableWidth
         spacing: 16
-
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 6
-            Label {
-                objectName: "strategiesPreviewTitle"
-                text: qsTr("Strategie i parametry")
-                font.bold: true
-                font.pixelSize: 22
-                color: designSystem.color("textPrimary")
-                Layout.fillWidth: true
-            }
-            Label {
-                text: qsTr("Panel preview używa bezpiecznych parametrów demo/offline. Live trading disabled, exchange/order disabled, API keys not required.")
-                wrapMode: Text.WordWrap
-                color: designSystem.color("textSecondary")
-                Layout.fillWidth: true
-            }
-        }
+        Label { objectName: "strategiesPreviewTitle"; text: qsTr("Strategie"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
+        Label { text: qsTr("Final strategy configuration module in safe demo/offline preview. No runtime write / no live execution / Order submission disabled."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
 
         RowLayout {
             Layout.fillWidth: true
             spacing: 12
-            Components.PreviewCard {
-                designSystem: root.designSystem
-                title: qsTr("Status konfiguracji")
-                description: runtimeService && runtimeService.strategyConfigs && runtimeService.strategyConfigs.length > 0
-                             ? qsTr("Załadowano lokalne konfiguracje strategii z preview bridge.")
-                             : qsTr("Brak konfiguracji runtime — pokazuję statyczny demo/offline empty state.")
-                Layout.fillWidth: true
-            }
-            Components.PreviewCard {
-                designSystem: root.designSystem
-                title: qsTr("Runtime policy")
-                description: qsTr("Runtime loop not started. Zapis w preview aktualizuje tylko lokalny kontroler UI, bez zleceń.")
-                Layout.fillWidth: true
-            }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Active strategies summary"); description: qsTr("Momentum Guard + Range Guard enabled preview; Volatility Breakout Preview disabled until safety review."); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Preview-only save state"); description: qsTr("Save Preview updates UI label only; no runtime write and no live config mutation."); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Execution policy"); description: qsTr("Live trading disabled • Exchange I/O disabled • Order submission disabled"); Layout.fillWidth: true }
         }
 
         Repeater {
-            model: root.strategyModel
+            model: root.demoStrategies
             delegate: Components.PreviewCard {
+                required property var modelData
                 designSystem: root.designSystem
-                title: (modelData.name || modelData.id) + qsTr(" • profil %1").arg(modelData.profile || "balanced")
-                description: qsTr("Tryb: %1. Formularz ma jawne kolory i nie używa surowych natywnych pól Windows.").arg(modelData.mode || "preview")
-                property var workingCopy: JSON.parse(JSON.stringify(modelData))
-
-                Repeater {
-                    model: Object.keys(workingCopy.params || {})
-                    delegate: RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-                        Label {
-                            text: modelData
-                            color: root.designSystem.color("textSecondary")
-                            Layout.preferredWidth: 180
-                            elide: Text.ElideRight
-                        }
-                        Components.StyledTextField {
-                            designSystem: root.designSystem
-                            text: String((workingCopy.params || {})[modelData])
-                            Layout.fillWidth: true
-                            onEditingFinished: {
-                                var asNumber = Number(text)
-                                workingCopy.params[modelData] = isNaN(asNumber) ? text : asNumber
-                            }
-                        }
-                    }
-                }
-
+                title: modelData.name
+                description: qsTr("Strategy card with styled controls. Source: %1. Safety: %2").arg(modelData.source).arg(modelData.safety)
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
-                    Components.IconButton {
-                        designSystem: root.designSystem
-                        text: qsTr("Zapisz preview")
-                        iconName: "copy"
-                        onClicked: {
-                            if (runtimeService && runtimeService.saveStrategyConfig) {
-                                const result = runtimeService.saveStrategyConfig(workingCopy.id, workingCopy)
-                                statusLabel.text = result && result.message ? result.message : qsTr("Zapisano w preview")
-                            } else {
-                                statusLabel.text = qsTr("Demo/offline — brak zapisu do runtime")
-                            }
-                        }
-                    }
-                    Components.IconButton {
-                        designSystem: root.designSystem
-                        text: qsTr("Reset widoku")
-                        iconName: "refresh"
-                        subtle: true
-                        onClicked: statusLabel.text = qsTr("Parametry demo pozostają lokalne")
-                    }
-                    Label {
-                        id: statusLabel
-                        text: qsTr("Gotowe do podglądu")
-                        color: root.designSystem.color("textSecondary")
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                    }
+                    Label { text: qsTr("Enabled preview toggle"); color: root.designSystem.color("textPrimary"); Layout.fillWidth: true }
+                    Components.StyledSwitch { designSystem: root.designSystem; checked: modelData.enabled }
                 }
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-            Components.IconButton {
-                designSystem: root.designSystem
-                text: qsTr("Odśwież strategie")
-                iconName: "refresh"
-                subtle: true
-                onClicked: runtimeService && runtimeService.loadStrategyConfigs()
-            }
-            Label {
-                text: qsTr("Safe demo/offline: brak live adapters, brak order execution.")
-                color: root.designSystem.color("textSecondary")
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    rowSpacing: 8
+                    columnSpacing: 12
+                    Label { text: qsTr("Confidence floor"); color: root.designSystem.color("textSecondary") }
+                    Components.StyledTextField { designSystem: root.designSystem; text: modelData.floor; Layout.fillWidth: true }
+                    Label { text: qsTr("Cooldown"); color: root.designSystem.color("textSecondary") }
+                    Components.StyledTextField { designSystem: root.designSystem; text: modelData.cooldown; Layout.fillWidth: true }
+                    Label { text: qsTr("Max position preview"); color: root.designSystem.color("textSecondary") }
+                    Components.StyledTextField { designSystem: root.designSystem; text: modelData.maxPosition; Layout.fillWidth: true }
+                    Label { text: qsTr("Safety label"); color: root.designSystem.color("textSecondary") }
+                    Label { text: modelData.safety; color: root.designSystem.color("textPrimary"); font.bold: true; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Components.IconButton { designSystem: root.designSystem; text: qsTr("Save Preview"); iconName: "copy"; onClicked: saveStatus.text = qsTr("Preview-only save state updated — no runtime write") }
+                    Label { id: saveStatus; text: qsTr("Local UI state ready"); color: root.designSystem.color("textSecondary"); Layout.fillWidth: true }
+                }
             }
         }
     }

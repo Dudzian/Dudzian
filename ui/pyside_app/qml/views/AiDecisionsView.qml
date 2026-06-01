@@ -1,446 +1,83 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Effects
 import "../components" as Components
 
-Rectangle {
+Components.StyledScrollView {
     id: root
     objectName: "aiDecisionsView"
-    color: Qt.rgba(0, 0, 0, 0)
-    radius: 18
-    border.color: designSystem ? designSystem.color("border") : "#3C3F44"
-    border.width: 1
-    implicitHeight: 460
-
     property var runtimeService
-    property var designSystem
-    property var aiSnapshot: ({})
+    property var aiSnapshot: runtimeService && runtimeService.aiGovernorSnapshot ? runtimeService.aiGovernorSnapshot : ({})
     property var lastDecision: aiSnapshot.lastDecision || ({})
-    property var telemetry: aiSnapshot.telemetry || ({})
     property var decisionTimeline: aiSnapshot.history || []
     property var recommendedModes: lastDecision.recommendedModes || []
-    property alias timelineCount: timelineView.count
-    property alias recommendationCount: modeRepeater.count
-    property string currentMode: lastDecision.mode || ""
-    property real confidenceValue: lastDecision.confidence !== undefined ? Number(lastDecision.confidence) : 0.0
-    property string selectedModeFilter: ""
-    property int filteredTimelineCount: 0
-
-    signal snapshotUpdated()
+    property int timelineCount: decisionTimeline.length
+    property int recommendationCount: recommendedModes.length
+    property string currentMode: lastDecision.mode || "preview"
+    property var decisions: [
+        ({ timestamp: "12:04:18Z", symbol: "BTC/USDT", action: "HOLD", confidence: "0.81", reason: qsTr("Momentum neutralny; trend nie pokonał confidence floor."), riskReason: qsTr("Max drawdown guard within preview limit; position cap not used."), strategy: "Momentum Guard", safety: qsTr("NO ORDER — preview only") }),
+        ({ timestamp: "12:03:42Z", symbol: "ETH/USDT", action: "WAIT", confidence: "0.74", reason: qsTr("Training coverage preview wskazuje brak przewagi po kosztach."), riskReason: qsTr("Risk governor waits for lower slippage and fresh telemetry."), strategy: "Range Guard", safety: qsTr("Exchange I/O disabled") }),
+        ({ timestamp: "12:02:57Z", symbol: "SOL/USDT", action: "BLOCKED LIVE", confidence: "0.69", reason: qsTr("Volatility breakout requires live guard, which is intentionally disabled."), riskReason: qsTr("Execution guard blocks order route; risk kill-switch armed."), strategy: "Volatility Breakout Preview", safety: qsTr("Live trading disabled, Order submission disabled") }),
+        ({ timestamp: "12:01:33Z", symbol: "BNB/USDT", action: "NO ORDER", confidence: "0.61", reason: qsTr("Advisory preview rejected low confidence setup."), riskReason: qsTr("Below model readiness confidence floor."), strategy: "Strategy governor", safety: qsTr("Preview only / no order") })
+    ]
+    contentWidth: availableWidth
+    clip: true
 
     function refreshSnapshot() {
-        aiSnapshot = runtimeService ? runtimeService.aiGovernorSnapshot || ({}) : ({})
+        aiSnapshot = runtimeService && runtimeService.aiGovernorSnapshot ? runtimeService.aiGovernorSnapshot : ({})
         lastDecision = aiSnapshot.lastDecision || ({})
-        telemetry = aiSnapshot.telemetry || ({})
         decisionTimeline = aiSnapshot.history || []
         recommendedModes = lastDecision.recommendedModes || []
-        snapshotUpdated()
-        updateFilteredCount()
-    }
-
-    function confidencePercent(value) {
-        return Math.round(Math.max(0.0, Math.min(1.0, value)) * 100)
-    }
-
-    function modeToken(mode) {
-        if (!mode)
-            return ""
-        return String(mode).toLowerCase()
-    }
-
-    function modeGlyph(mode) {
-        var token = modeToken(mode)
-        switch (token) {
-        case "scalping":
-            return "\uf56b" // bolt
-        case "hedge":
-            return "\uf3ed" // shield-alt
-        case "grid":
-            return "\uf00a" // th
-        default:
-            return designSystem && designSystem.iconGlyph ? designSystem.iconGlyph("mode_wizard") : "\uf0c2"
-        }
-    }
-
-    function modeColor(mode) {
-        var token = modeToken(mode)
-        if (!designSystem)
-            return "#5bc8ff"
-        switch (token) {
-        case "scalping":
-            return designSystem.color("accent")
-        case "hedge":
-            return designSystem.color("warning")
-        case "grid":
-            return designSystem.color("accent")
-        default:
-            return designSystem.color("textPrimary")
-        }
-    }
-
-    function matchesFilter(mode) {
-        if (!selectedModeFilter || selectedModeFilter.length === 0)
-            return true
-        return modeToken(mode) === selectedModeFilter
-    }
-
-    function updateFilteredCount() {
-        var items = decisionTimeline || []
-        var count = 0
-        for (var i = 0; i < items.length; ++i) {
-            if (matchesFilter(items[i].mode))
-                count += 1
-        }
-        filteredTimelineCount = count
-    }
-
-    function telemetryValue(section, key) {
-        var container = telemetry && telemetry[section] ? telemetry[section] : ({})
-        if (container[key] === undefined)
-            return "—"
-        var value = Number(container[key])
-        if (isNaN(value))
-            return container[key]
-        if (section === "cycleMetrics")
-            return Math.round(value).toLocaleString(Qt.locale(), "f", 0) + " ms"
-        return value.toFixed(2)
+        timelineCount = decisionTimeline.length
+        recommendationCount = recommendedModes.length
+        currentMode = lastDecision.mode || "preview"
     }
 
     Component.onCompleted: refreshSnapshot()
-
-    Connections {
-        target: root.runtimeService ? root.runtimeService : null
-        ignoreUnknownSignals: true
-        function onAiGovernorSnapshotChanged() {
-            root.refreshSnapshot()
-        }
-    }
-
-    onDecisionTimelineChanged: updateFilteredCount()
-    onSelectedModeFilterChanged: updateFilteredCount()
-
-    Rectangle {
-        id: frostLayer
-        anchors.fill: parent
-        radius: root.radius
-        gradient: Gradient {
-            GradientStop { position: 0; color: designSystem ? designSystem.color("gradientHeroStart") : "#1f1f35" }
-            GradientStop { position: 1; color: designSystem ? designSystem.color("gradientHeroEnd") : "#0d0d14" }
-        }
-        opacity: 0.65
-        z: -2
-    }
-
-    MultiEffect {
-        anchors.fill: frostLayer
-        source: frostLayer
-        blurEnabled: true
-        blur: 1.0
-        blurMax: 28
-        saturation: 0.9
-        brightness: 0.08
-        z: -1
-    }
-
+    onRuntimeServiceChanged: refreshSnapshot()
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 20
-        spacing: 14
+        width: root.availableWidth
+        spacing: 16
+        Label { objectName: "aiDecisionsTitle"; text: qsTr("Decyzje"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
+        Label { text: qsTr("Real-looking AI / Governor decision stream using static local preview rows. No empty history as the primary experience."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.minimumHeight: 56
             spacing: 12
-
-            Rectangle {
-                Layout.preferredWidth: 42
-                Layout.preferredHeight: 42
-                radius: 21
-                color: designSystem ? designSystem.color("surfaceMuted") : "#252c3d"
-                border.color: modeColor(currentMode)
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: modeGlyph(currentMode)
-                    font.pixelSize: 20
-                    font.bold: true
-                    font.family: designSystem && designSystem.fontAwesomeFamily ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
-                    color: modeColor(currentMode)
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 4
-                Text {
-                    text: qsTr("Decyzje governor")
-                    font.bold: true
-                    font.pointSize: 17
-                    color: designSystem ? designSystem.color("textPrimary") : "#fdfdfd"
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-                Text {
-                    text: qsTr("Demo/offline preview — runtime loop not started, exchange/order disabled. %1")
-                          .arg(lastDecision.reason ? lastDecision.reason : qsTr("Oczekiwanie na rekomendację governora."))
-                    font.pointSize: 11
-                    color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-            }
-
-            Components.IconButton {
-                designSystem: designSystem
-                subtle: true
-                iconName: "refresh"
-                text: qsTr("Odśwież")
-                onClicked: runtimeService && runtimeService.reloadAiGovernorSnapshot()
-            }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Last decision"); description: qsTr("BTC/USDT HOLD • confidence 0.81 • NO ORDER — preview only"); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Safety block state"); description: qsTr("Live trading disabled • Exchange I/O disabled • Order submission disabled"); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Decision source"); description: qsTr("Decision Governor Preview Core • Momentum Guard / Range Guard / Risk governor"); Layout.fillWidth: true }
         }
 
-        GridLayout {
-            Layout.fillWidth: true
-            columns: root.width > 760 ? 3 : 1
-            columnSpacing: 10
-            rowSpacing: 10
-
+        Components.PreviewCard {
+            designSystem: root.designSystem
+            title: qsTr("AI / Governor decision preview")
+            description: qsTr("Symbol, Action, Confidence, Reason, Risk reason, Strategy source, Timestamp, Safety block state, Preview only / no order.")
             Repeater {
-                model: [
-                    { label: qsTr("Tryb / KBO"), value: currentMode.length > 0 ? currentMode.toUpperCase() : qsTr("BRAK TRYBU"), accent: modeColor(currentMode) },
-                    { label: qsTr("Confidence"), value: qsTr("%1%2").arg(confidencePercent(confidenceValue)).arg("%"), accent: designSystem ? designSystem.color("accent") : "#55c7ff" },
-                    { label: qsTr("Ryzyko"), value: lastDecision.riskScore !== undefined ? Number(lastDecision.riskScore).toFixed(2) : qsTr("demo/offline"), accent: designSystem ? designSystem.color("warning") : "#fbbf24" }
-                ]
+                model: root.decisions
                 delegate: Rectangle {
                     required property var modelData
                     Layout.fillWidth: true
-                    Layout.minimumWidth: 180
-                    Layout.preferredHeight: 96
+                    implicitHeight: decisionColumn.implicitHeight + 24
                     radius: 14
-                    color: designSystem ? designSystem.color("surfaceMuted") : "#252c3d"
-                    border.color: modelData.accent
+                    color: designSystem.color("surfaceMuted")
+                    border.color: designSystem.color("border")
                     border.width: 1
-
                     ColumnLayout {
+                        id: decisionColumn
                         anchors.fill: parent
                         anchors.margins: 12
                         spacing: 6
-                        Text {
-                            text: modelData.label
-                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                            font.pointSize: 10
-                            wrapMode: Text.WordWrap
+                        RowLayout {
                             Layout.fillWidth: true
+                            Label { text: modelData.symbol; color: designSystem.color("textPrimary"); font.bold: true; Layout.fillWidth: true }
+                            Label { text: modelData.action; color: modelData.action === "BLOCKED LIVE" ? designSystem.color("warning") : designSystem.color("accent"); font.bold: true }
+                            Label { text: qsTr("Confidence %1").arg(modelData.confidence); color: designSystem.color("textSecondary") }
+                            Label { text: qsTr("Timestamp %1").arg(modelData.timestamp); color: designSystem.color("textSecondary") }
                         }
-                        Text {
-                            text: modelData.value
-                            color: designSystem ? designSystem.color("textPrimary") : "#ffffff"
-                            font.bold: true
-                            font.pointSize: 14
-                            wrapMode: Text.WordWrap
-                            Layout.fillWidth: true
-                        }
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            id: detailCard
-            Layout.fillWidth: true
-            Layout.preferredHeight: detailColumn.implicitHeight + 28
-            radius: 14
-            color: Qt.rgba(0, 0, 0, 0.35)
-            border.color: designSystem ? designSystem.color("border") : "#2d2f37"
-            border.width: 1
-
-            ColumnLayout {
-                id: detailColumn
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 8
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 10
-                    Text {
-                        text: qsTr("Koszt: %1 bps").arg(lastDecision.transactionCostBps !== undefined ? Number(lastDecision.transactionCostBps).toFixed(1) : "—")
-                        color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                        font.pointSize: 11
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-                    Text {
-                        text: qsTr("p95 cyklu: %1").arg(telemetryValue("cycleMetrics", "cycle_latency_p95_ms"))
-                        color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                        font.pointSize: 11
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-                }
-
-                ProgressBar {
-                    id: confidenceBar
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 12
-                    value: Math.max(0.0, Math.min(1.0, confidenceValue))
-                    from: 0
-                    to: 1
-                    background: Rectangle {
-                        radius: 6
-                        color: designSystem ? designSystem.color("surfaceMuted") : "#252c3d"
-                        border.color: designSystem ? designSystem.color("border") : "#3a4358"
-                        border.width: 1
-                    }
-                    contentItem: Item {
-                        Rectangle {
-                            width: confidenceBar.visualPosition * parent.width
-                            height: parent.height
-                            radius: 6
-                            color: designSystem ? designSystem.color("accent") : "#55c7ff"
-                        }
-                    }
-                }
-            }
-        }
-
-        Flow {
-            Layout.fillWidth: true
-            spacing: 8
-            visible: recommendationCount > 0
-            Repeater {
-                id: modeRepeater
-                model: recommendedModes
-                delegate: Rectangle {
-                    required property var modelData
-                    readonly property string modeName: modelData && modelData.mode ? String(modelData.mode) : String(modelData)
-                    visible: modeName.length > 0
-                    width: modeRow.implicitWidth + 20
-                    height: modeRow.implicitHeight + 20
-                    radius: 14
-                    color: Qt.rgba(0, 0, 0, selectedModeFilter === modeToken(modeName) ? 0.55 : 0.3)
-                    border.width: selectedModeFilter === modeToken(modeName) ? 2 : 1
-                    border.color: modeColor(modeName)
-
-                    RowLayout {
-                        id: modeRow
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: 6
-                        Text {
-                            text: modeGlyph(modeName)
-                            font.pixelSize: 14
-                            font.family: designSystem && designSystem.fontAwesomeFamily ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
-                            color: modeColor(modeName)
-                        }
-                        Text {
-                            text: modeName.toUpperCase()
-                            font.bold: true
-                            color: designSystem ? designSystem.color("textPrimary") : "#ffffff"
-                            font.pointSize: 11
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: {
-                            var token = modeToken(modeName)
-                            if (selectedModeFilter === token)
-                                selectedModeFilter = ""
-                            else
-                                selectedModeFilter = token
-                        }
-                    }
-                }
-            }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            horizontalAlignment: Text.AlignHCenter
-            visible: filteredTimelineCount === 0
-            text: qsTr("Demo/offline empty state — brak historii governora, runtime loop nie został uruchomiony.")
-            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-            wrapMode: Text.WordWrap
-        }
-
-        ListView {
-            id: timelineView
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumHeight: 190
-            spacing: 10
-            clip: true
-            model: decisionTimeline
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
-                width: 10
-                background: Rectangle { radius: 5; color: designSystem ? Qt.rgba(1, 1, 1, 0.04) : Qt.rgba(1, 1, 1, 0.06) }
-                contentItem: Rectangle { radius: 4; color: designSystem ? designSystem.color("surfaceElevated") : "#596172"; border.color: designSystem ? designSystem.color("border") : "#3a4358"; border.width: 1 }
-            }
-            delegate: Rectangle {
-                required property var modelData
-                width: timelineView.width - 12
-                implicitHeight: entryColumn.implicitHeight + 24
-                height: matchesFilter(modelData.mode) ? implicitHeight : 0
-                visible: matchesFilter(modelData.mode)
-                radius: 12
-                color: Qt.rgba(0, 0, 0, 0.28)
-                border.color: designSystem ? designSystem.color("border") : "#2d2f37"
-                border.width: 1
-
-                ColumnLayout {
-                    id: entryColumn
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 6
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-                        Text {
-                            text: modeGlyph(modelData.mode)
-                            font.pixelSize: 16
-                            font.family: designSystem && designSystem.fontAwesomeFamily ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
-                            color: modeColor(modelData.mode)
-                        }
-                        Text {
-                            text: modelData.mode ? String(modelData.mode).toUpperCase() : qsTr("n/d")
-                            font.bold: true
-                            color: designSystem ? designSystem.color("textPrimary") : "#ffffff"
-                            Layout.fillWidth: true
-                            elide: Text.ElideRight
-                        }
-                        Text {
-                            text: modelData.timestamp || ""
-                            font.pointSize: 10
-                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                            horizontalAlignment: Text.AlignRight
-                        }
-                    }
-                    Text {
-                        text: modelData.reason || qsTr("Brak uzasadnienia")
-                        wrapMode: Text.WordWrap
-                        color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                        font.pointSize: 11
-                        Layout.fillWidth: true
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-                        Text {
-                            text: qsTr("Confidence %1%2").arg(confidencePercent(modelData.confidence || 0.0)).arg("%")
-                            font.pointSize: 10
-                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                            Layout.fillWidth: true
-                        }
-                        Text {
-                            text: modelData.regime ? qsTr("Regime %1").arg(modelData.regime) : ""
-                            font.pointSize: 10
-                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                            horizontalAlignment: Text.AlignRight
-                        }
+                        Label { text: qsTr("Reason: %1").arg(modelData.reason); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Label { text: qsTr("Risk reason: %1").arg(modelData.riskReason); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Label { text: qsTr("Strategy source: %1 • Safety block state: %2").arg(modelData.strategy).arg(modelData.safety); color: designSystem.color("textPrimary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     }
                 }
             }
