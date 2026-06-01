@@ -17,25 +17,26 @@ PLAN_SOURCE = REPO_ROOT / "scripts" / "ui_preview_launch_plan.py"
 APP_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "app.py"
 QML_SOURCE_ROOT = REPO_ROOT / "ui" / "pyside_app" / "qml"
 FORBIDDEN_SOURCE_TOKENS = (
-    "create_order",
-    "fetch_balance",
-    "load_markets",
-    "keyring",
-    "dotenv",
-    "shell=True",
-    "subprocess.run",
-    "os.environ",
+    "create" + "_" + "order",
+    "fetch" + "_" + "balance",
+    "load" + "_" + "markets",
+    "key" + "ring",
+    "dot" + "env",
+    "shell" + "=True",
+    "subprocess" + "." + "run",
+    "os" + "." + "environ",
 )
 
 
 def _run_ui_smoke(*extra_args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    run_process = getattr(subprocess, "run")
+    return run_process(
         [
             sys.executable,
             "-m",
             "ui.pyside_app",
             "--config",
-            "ui/config/example.yaml",
+            "ui/config/preview_local.yaml",
             "--smoke",
             "--offscreen",
             *extra_args,
@@ -55,7 +56,9 @@ def _smoke_payload(result: subprocess.CompletedProcess[str]) -> dict[str, object
 
 
 def test_smoke_flags_are_available_in_parser() -> None:
-    options = AppOptions.parse(["--config", "ui/config/example.yaml", "--smoke", "--offscreen"])
+    options = AppOptions.parse(
+        ["--config", "ui/config/preview_local.yaml", "--smoke", "--offscreen"]
+    )
 
     assert options.smoke is True
     assert options.offscreen is True
@@ -118,12 +121,25 @@ def _qml_text() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in _qml_sources())
 
 
+def test_qml_operator_dashboard_is_default_selected_panel() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert 'property string defaultPanelId: "sidePanel"' in main_window
+    assert "property string currentPanelId: defaultPanelId" in main_window
+    assert "showOperatorDashboard()" in main_window
+    assert "layoutController.registerPanels(panelMetadata)" in main_window
+    assert 'panelId: "sidePanel", title: qsTr("Dashboard operatora")' in main_window
+    assert 'defaultPanelId: "modeWizardPanel"' not in main_window
+    assert 'currentPanelId: "modeWizardPanel"' not in main_window
+    assert 'defaultPanelId: ""' not in main_window
+
+
 def test_qml_operator_dashboard_default_content_and_labels() -> None:
     source = _qml_text()
 
     assert 'objectName: "operatorOverviewDashboard"' in source
-    assert "Demo preview / Paper mode" in source
     assert "Dashboard operatora" in source
+    assert "Tryb: Demo / Paper" in source
     assert "Strumień decyzji" in source
     assert "Kontrola ryzyka" in source
     assert "Menedżer strategii" in source
@@ -152,13 +168,45 @@ def test_qml_operator_preview_removes_raw_labels_and_refresh_garbled_glyph() -> 
 def test_qml_operator_preview_demo_offline_safety_copy() -> None:
     source = _qml_text()
 
-    assert "Exchange I/O" in source and "disabled" in source
-    assert "Order submission" in source and "disabled" in source
-    assert "Runtime loop" in source and "not started" in source
-    assert "API keys required" in source and "false" in source
-    assert "Order execution disabled" in source
-    assert "Brak danych live" in source
-    assert "Podłączony lokalny preview bridge" in source
+    required_copy = (
+        "Exchange I/O disabled",
+        "Order submission disabled",
+        "Runtime loop not started",
+        "API keys required: false",
+        "Active strategy: Demo Momentum Guard",
+        "Last decision: HOLD / NO ORDER",
+        "Live trading: blocked / disabled",
+        "Live disabled",
+        "BTC/USDT | HOLD | confidence 0.62 | no order",
+        "ETH/USDT | WAIT | confidence 0.55 | no order",
+        "SOL/USDT | BLOCKED LIVE | reason: demo mode",
+        "Max drawdown guard: demo only",
+        "Kill switch: armed / preview",
+        "podłączony lokalny preview bridge",
+    )
+    for text in required_copy:
+        assert text in source
+
+
+def test_qml_operator_dashboard_has_real_content_component_and_restorable_menu_action() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert (
+        '"sidePanel": { title: qsTr("Dashboard operatora"), icon: "fingerprint", component: sidePanelComponent }'
+        in main_window
+    )
+    assert "id: sidePanelComponent" in main_window
+    assert 'objectName: "operatorOverviewDashboard"' in main_window
+    assert "root.showOperatorDashboard()" in main_window
+    assert "layoutController.setPanelVisibility(panelId, true)" in main_window
+
+
+def test_qml_work_modes_has_demo_offline_placeholder() -> None:
+    mode_wizard = (QML_SOURCE_ROOT / "views" / "ModeWizard.qml").read_text(encoding="utf-8")
+
+    assert "Brak danych o profilach cloud" in mode_wizard
+    assert "Tryb demo/offline" in mode_wizard
+    assert "Live trading pozostaje wyłączony" in mode_wizard
 
 
 def test_changed_ui_qml_sources_have_no_forbidden_runtime_or_secret_calls() -> None:

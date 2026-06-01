@@ -19,6 +19,7 @@ Rectangle {
     border.color: designSystem ? designSystem.color("border") : Qt.rgba(1, 1, 1, 0.05)
     border.width: 1
     opacity: dragHandler.active ? 0.85 : 1
+    implicitHeight: Math.max(260, panelColumn.implicitHeight + 32)
 
     layer.enabled: true
     layer.effect: MultiEffect {
@@ -30,6 +31,7 @@ Rectangle {
     }
 
     ColumnLayout {
+        id: panelColumn
         anchors.fill: parent
         anchors.margins: 16
         spacing: 12
@@ -61,6 +63,7 @@ Rectangle {
         Loader {
             id: contentLoader
             Layout.fillWidth: true
+            Layout.fillHeight: true
             sourceComponent: contentComponent
             active: contentComponent !== null
         }

@@ -97,6 +97,8 @@ Item {
                     interactive: false
                     model: dockManager.columnPanels(columnHost.columnIndex)
                     delegate: LayoutParts.PanelPlaceholder {
+                        width: ListView.view ? ListView.view.width : parent.width
+                        height: implicitHeight
                         dockManager: dockManager
                         designSystem: dockManager.designSystem
                         panelId: modelData.panelId
