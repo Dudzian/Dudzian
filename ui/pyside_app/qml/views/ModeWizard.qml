@@ -6,6 +6,7 @@ import "../components" as Components
 
 Item {
     id: root
+    objectName: "modeWizardPreviewPanel"
     property var designSystem: null
     property var modeWizardController: null
     property var strategyManagementController: null
@@ -359,8 +360,9 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 8
-                            TextField {
+                            Components.StyledTextField {
                                 id: wizardPortfolioInput
+                                designSystem: root.designSystem
                                 Layout.fillWidth: true
                                 placeholderText: qsTr("ID portfela dla presetu")
                                 text: root.marketplacePortfolioId
@@ -462,8 +464,9 @@ Item {
                 }
             }
 
-            SpinBox {
+            Components.StyledSpinBox {
                 id: wizardStepper
+                designSystem: root.designSystem
                 visible: wizardPanel.currentMode && wizardPanel.currentMode.steps && wizardPanel.currentMode.steps.length > 0
                 from: 0
                 to: wizardPanel.currentMode && wizardPanel.currentMode.steps ? Math.max(0, wizardPanel.currentMode.steps.length - 1) : 0

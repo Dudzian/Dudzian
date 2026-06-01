@@ -3,82 +3,87 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components" as Components
 
-ColumnLayout {
+ScrollView {
     id: root
+    objectName: "strategiesPreviewPanel"
     property var runtimeService
     property var designSystem
+    contentWidth: availableWidth
+    clip: true
 
-    spacing: 12
+    property var demoStrategies: [
+        ({ id: "btc-shadow-momentum", name: qsTr("BTC Shadow Momentum"), mode: "demo/offline", profile: "balanced", params: ({ max_position_usd: 2500, confidence_floor: 0.72, cooldown_sec: 90 }) }),
+        ({ id: "btc-range-guard", name: qsTr("BTC Range Guard"), mode: "preview", profile: "defensive", params: ({ max_drawdown_pct: 2.5, stop_loss_pct: 1.1, take_profit_pct: 1.8 }) })
+    ]
+    property var strategyModel: runtimeService && runtimeService.strategyConfigs && runtimeService.strategyConfigs.length > 0
+                                ? runtimeService.strategyConfigs
+                                : demoStrategies
 
-    Label {
-        text: qsTr("Strategie i parametry")
-        font.bold: true
-        color: designSystem.color("textPrimary")
-    }
+    ColumnLayout {
+        width: root.availableWidth
+        spacing: 16
 
-    ListView {
-        id: strategyList
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        spacing: 12
-        clip: true
-        model: runtimeService ? runtimeService.strategyConfigs : []
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 6
+            Label {
+                objectName: "strategiesPreviewTitle"
+                text: qsTr("Strategie i parametry")
+                font.bold: true
+                font.pixelSize: 22
+                color: designSystem.color("textPrimary")
+                Layout.fillWidth: true
+            }
+            Label {
+                text: qsTr("Panel preview używa bezpiecznych parametrów demo/offline. Live trading disabled, exchange/order disabled, API keys not required.")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textSecondary")
+                Layout.fillWidth: true
+            }
+        }
 
-        delegate: Rectangle {
-            width: ListView.view.width
-            radius: 14
-            color: index % 2 === 0 ? designSystem.color("surface") : designSystem.color("surfaceMuted")
-            border.color: designSystem.color("border")
-            border.width: 1
-            opacity: 0.95
-            height: container.implicitHeight + 20
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Components.PreviewCard {
+                designSystem: root.designSystem
+                title: qsTr("Status konfiguracji")
+                description: runtimeService && runtimeService.strategyConfigs && runtimeService.strategyConfigs.length > 0
+                             ? qsTr("Załadowano lokalne konfiguracje strategii z preview bridge.")
+                             : qsTr("Brak konfiguracji runtime — pokazuję statyczny demo/offline empty state.")
+                Layout.fillWidth: true
+            }
+            Components.PreviewCard {
+                designSystem: root.designSystem
+                title: qsTr("Runtime policy")
+                description: qsTr("Runtime loop not started. Zapis w preview aktualizuje tylko lokalny kontroler UI, bez zleceń.")
+                Layout.fillWidth: true
+            }
+        }
 
-            property var workingCopy: JSON.parse(JSON.stringify(modelData))
-
-            ColumnLayout {
-                id: container
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
-
-                RowLayout {
-                    spacing: 8
-                    Label {
-                        text: workingCopy.name || workingCopy.id
-                        font.bold: true
-                        color: designSystem.color("textPrimary")
-                        Layout.fillWidth: true
-                    }
-                    Label {
-                        text: qsTr("Tryb: %1").arg(workingCopy.mode || "?")
-                        color: designSystem.color("textSecondary")
-                    }
-                    Label {
-                        text: qsTr("Profil: %1").arg(workingCopy.profile || "balanced")
-                        color: designSystem.color("textSecondary")
-                    }
-                }
+        Repeater {
+            model: root.strategyModel
+            delegate: Components.PreviewCard {
+                designSystem: root.designSystem
+                title: (modelData.name || modelData.id) + qsTr(" • profil %1").arg(modelData.profile || "balanced")
+                description: qsTr("Tryb: %1. Formularz ma jawne kolory i nie używa surowych natywnych pól Windows.").arg(modelData.mode || "preview")
+                property var workingCopy: JSON.parse(JSON.stringify(modelData))
 
                 Repeater {
                     model: Object.keys(workingCopy.params || {})
                     delegate: RowLayout {
-                        spacing: 6
+                        Layout.fillWidth: true
+                        spacing: 10
                         Label {
                             text: modelData
-                            color: designSystem.color("textSecondary")
-                            Layout.preferredWidth: 160
+                            color: root.designSystem.color("textSecondary")
+                            Layout.preferredWidth: 180
+                            elide: Text.ElideRight
                         }
-                        TextField {
-                            id: valueField
+                        Components.StyledTextField {
+                            designSystem: root.designSystem
                             text: String((workingCopy.params || {})[modelData])
                             Layout.fillWidth: true
-                            color: designSystem.color("textPrimary")
-                            background: Rectangle {
-                                implicitHeight: 36
-                                radius: 8
-                                color: designSystem.color("surface")
-                                border.color: designSystem.color("border")
-                            }
                             onEditingFinished: {
                                 var asNumber = Number(text)
                                 workingCopy.params[modelData] = isNaN(asNumber) ? text : asNumber
@@ -88,39 +93,55 @@ ColumnLayout {
                 }
 
                 RowLayout {
+                    Layout.fillWidth: true
                     spacing: 8
                     Components.IconButton {
-                        designSystem: designSystem
-                        text: qsTr("Zapisz zmiany")
+                        designSystem: root.designSystem
+                        text: qsTr("Zapisz preview")
                         iconName: "save"
                         onClicked: {
                             if (runtimeService && runtimeService.saveStrategyConfig) {
                                 const result = runtimeService.saveStrategyConfig(workingCopy.id, workingCopy)
-                                statusLabel.text = result && result.message ? result.message : qsTr("Zapisano")
+                                statusLabel.text = result && result.message ? result.message : qsTr("Zapisano w preview")
+                            } else {
+                                statusLabel.text = qsTr("Demo/offline — brak zapisu do runtime")
                             }
                         }
                     }
+                    Components.IconButton {
+                        designSystem: root.designSystem
+                        text: qsTr("Reset widoku")
+                        iconName: "refresh"
+                        subtle: true
+                        onClicked: statusLabel.text = qsTr("Parametry demo pozostają lokalne")
+                    }
                     Label {
                         id: statusLabel
-                        color: designSystem.color("textSecondary")
+                        text: qsTr("Gotowe do podglądu")
+                        color: root.designSystem.color("textSecondary")
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
                     }
                 }
             }
         }
-    }
 
-    Rectangle {
-        Layout.fillWidth: true
-        height: 1
-        color: designSystem.color("border")
-        opacity: 0.3
-    }
-
-    Components.IconButton {
-        designSystem: designSystem
-        text: qsTr("Odśwież strategie")
-        iconName: "refresh"
-        subtle: true
-        onClicked: runtimeService && runtimeService.loadStrategyConfigs()
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            Components.IconButton {
+                designSystem: root.designSystem
+                text: qsTr("Odśwież strategie")
+                iconName: "refresh"
+                subtle: true
+                onClicked: runtimeService && runtimeService.loadStrategyConfigs()
+            }
+            Label {
+                text: qsTr("Safe demo/offline: brak live adapters, brak order execution.")
+                color: root.designSystem.color("textSecondary")
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+        }
     }
 }

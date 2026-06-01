@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass, field
-from typing import TextIO
+from typing import Any, TextIO
 
 from .app import AppOptions, BotPysideApplication
 
@@ -32,12 +32,104 @@ class UiSmokeResult:
     operator_dashboard_visible: bool = False
     active_panel_id: str = ""
     central_content_empty: bool = True
+    panel_load_results: dict[str, dict[str, object]] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         """Render the smoke contract as deterministic CP1252-safe JSON."""
 
         return json.dumps(asdict(self), ensure_ascii=True, sort_keys=True)
+
+
+PANEL_AUDIT_IDS = (
+    "sidePanel",
+    "telemetryPanel",
+    "aiDecisionsPanel",
+    "diagnosticsPanel",
+    "chartView",
+    "strategyWorkbench",
+    "strategiesPanel",
+    "riskControlsPanel",
+    "modeWizardPanel",
+    "strategyManagerPanel",
+)
+
+
+def _process_events() -> None:
+    from PySide6.QtGui import QGuiApplication
+
+    qt_app = QGuiApplication.instance()
+    if qt_app is None:
+        return
+    for _ in range(3):
+        qt_app.processEvents()
+
+
+def _invoke_show_panel(root: Any, panel_id: str) -> None:
+    show_panel = getattr(root, "showPanel", None)
+    if callable(show_panel):
+        show_panel(panel_id)
+        return
+
+    from PySide6.QtCore import Q_ARG, QMetaObject, Qt
+
+    invoked = QMetaObject.invokeMethod(
+        root,
+        "showPanel",
+        Qt.ConnectionType.DirectConnection,
+        Q_ARG(str, panel_id),
+    )
+    if not invoked:
+        root.setProperty("currentPanelId", panel_id)
+
+
+def _number_property(item: Any, name: str) -> float:
+    value = item.property(name)
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _audit_panel_loads(root: Any) -> dict[str, dict[str, object]]:
+    from PySide6.QtCore import QObject
+
+    results: dict[str, dict[str, object]] = {}
+    central_loader = root.findChild(QObject, "centralContentLoader")
+    for panel_id in PANEL_AUDIT_IDS:
+        _invoke_show_panel(root, panel_id)
+        _process_events()
+        central_loader = root.findChild(QObject, "centralContentLoader")
+        loaded_item = central_loader.property("item") if central_loader is not None else None
+        object_name = (
+            str(loaded_item.property("objectName") or "") if loaded_item is not None else ""
+        )
+        width = _number_property(loaded_item, "width") if loaded_item is not None else 0.0
+        height = _number_property(loaded_item, "height") if loaded_item is not None else 0.0
+        implicit_width = (
+            _number_property(loaded_item, "implicitWidth") if loaded_item is not None else 0.0
+        )
+        implicit_height = (
+            _number_property(loaded_item, "implicitHeight") if loaded_item is not None else 0.0
+        )
+        visible = bool(loaded_item.property("visible")) if loaded_item is not None else False
+        empty = (
+            loaded_item is None
+            or not visible
+            or max(width, implicit_width) <= 0
+            or max(height, implicit_height) <= 0
+        )
+        results[panel_id] = {
+            "loaded": loaded_item is not None,
+            "empty": empty,
+            "objectName": object_name,
+            "visible": visible,
+            "width": width,
+            "height": height,
+            "implicitWidth": implicit_width,
+            "implicitHeight": implicit_height,
+        }
+    return results
 
 
 def _force_offscreen_platform() -> None:
@@ -60,10 +152,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         print(result.to_json(), file=output)
         return 2
 
-    issues: list[str] = []
+    qml_warnings: list[str] = []
+    audit_issues: list[str] = []
     app = BotPysideApplication(options)
     try:
-        engine = app.load(warning_sink=issues.append)
+        engine = app.load(warning_sink=qml_warnings.append)
         from PySide6.QtGui import QGuiApplication
 
         qt_app = QGuiApplication.instance()
@@ -75,6 +168,7 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         operator_dashboard_default = False
         active_panel_id = ""
         central_content_empty = True
+        panel_load_results: dict[str, dict[str, object]] = {}
         if qml_loaded:
             from PySide6.QtCore import QObject
 
@@ -91,8 +185,17 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 central_content_empty = loaded_item is None
             else:
                 central_content_empty = dashboard is None
+            panel_load_results = _audit_panel_loads(root)
+            failed_panels = [
+                panel_id
+                for panel_id, panel_result in panel_load_results.items()
+                if not panel_result["loaded"] or panel_result["empty"]
+            ]
+            if failed_panels:
+                audit_issues.extend(f"panel_load_failed:{panel_id}" for panel_id in failed_panels)
+        smoke_ok = qml_loaded and not audit_issues
         result = UiSmokeResult(
-            status="ok" if qml_loaded else "error",
+            status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
             qml_loaded=qml_loaded,
             operator_dashboard_present=operator_dashboard_present,
@@ -100,12 +203,13 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             operator_dashboard_visible=operator_dashboard_visible,
             active_panel_id=active_panel_id,
             central_content_empty=central_content_empty,
-            issues=[] if qml_loaded else issues or ["qml_root_objects_missing"],
+            panel_load_results=panel_load_results,
+            issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)
-        return 0 if qml_loaded else 1
+        return 0 if smoke_ok else 1
     except Exception as exc:  # pragma: no cover - exercised via CLI integration tests
         issue = f"{type(exc).__name__}: {exc}"
-        result = UiSmokeResult(status="error", issues=issues + [issue])
+        result = UiSmokeResult(status="error", issues=qml_warnings + audit_issues + [issue])
         print(result.to_json(), file=output)
         return 1
