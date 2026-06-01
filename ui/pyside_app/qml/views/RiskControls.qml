@@ -122,7 +122,7 @@ ColumnLayout {
     }
 
     GroupBox {
-        title: qsTr("Opportunity AI / Policy Runtime")
+        title: qsTr("Opportunity governor / Policy Runtime")
         Layout.fillWidth: true
 
         ColumnLayout {
@@ -131,7 +131,7 @@ ColumnLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                Label { text: qsTr("Opportunity AI enabled"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
+                Label { text: qsTr("Opportunity governor enabled"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
                 Rectangle {
                     width: 12
                     height: 12
@@ -165,7 +165,7 @@ ColumnLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                Label { text: qsTr("Env override: AI enabled"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
+                Label { text: qsTr("Env override: governor enabled"); Layout.fillWidth: true; color: designSystem.color("textSecondary") }
                 Rectangle {
                     width: 12
                     height: 12
@@ -231,7 +231,7 @@ ColumnLayout {
             Label {
                 Layout.fillWidth: true
                 color: designSystem.color("textSecondary")
-                text: qsTr("Uwaga: risk kill-switch ≠ opportunity AI manual kill-switch.")
+                text: qsTr("Uwaga: risk kill-switch ≠ opportunity governor manual kill-switch.")
             }
         }
     }

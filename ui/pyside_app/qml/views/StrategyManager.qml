@@ -267,7 +267,7 @@ Item {
                         Components.IconButton {
                             designSystem: designSystem
                             text: qsTr("Odśwież dane")
-                            iconName: "refresh"
+                            iconName: ""
                             subtle: true
                             onClicked: strategyManagementController.refreshMarketplace()
                         }
