@@ -19,6 +19,7 @@ REPO_ROOT: Final = Path(__file__).resolve().parents[1]
 DEFAULT_ENTRYPOINT: Final = REPO_ROOT / "ui" / "pyside_app" / "__main__.py"
 DEFAULT_QML_ENTRYPOINT: Final = REPO_ROOT / "ui" / "pyside_app" / "qml" / "MainWindow.qml"
 DEFAULT_CONFIG: Final = REPO_ROOT / "ui" / "config" / "example.yaml"
+VISIBLE_PREVIEW_CONFIG: Final = REPO_ROOT / "ui" / "config" / "preview_local.yaml"
 
 
 def _relative(path: Path) -> str:
@@ -36,7 +37,7 @@ def _build_command_preview(entrypoint_found: bool, config_found: bool) -> list[s
         "-m",
         "ui.pyside_app",
         "--config",
-        _relative(DEFAULT_CONFIG),
+        _relative(VISIBLE_PREVIEW_CONFIG),
     ]
 
 
@@ -60,6 +61,7 @@ def build_launch_plan() -> dict[str, Any]:
     entrypoint_found = DEFAULT_ENTRYPOINT.exists()
     qml_found = DEFAULT_QML_ENTRYPOINT.exists()
     config_found = DEFAULT_CONFIG.exists()
+    visible_config_found = VISIBLE_PREVIEW_CONFIG.exists()
     issues: list[str] = []
     if not entrypoint_found:
         issues.append("missing_ui_entrypoint:ui/pyside_app/__main__.py")
@@ -67,6 +69,8 @@ def build_launch_plan() -> dict[str, Any]:
         issues.append("missing_qml_entrypoint:ui/pyside_app/qml/MainWindow.qml")
     if not config_found:
         issues.append("missing_ui_config:ui/config/example.yaml")
+    if not visible_config_found:
+        issues.append("missing_visible_ui_config:ui/config/preview_local.yaml")
 
     return {
         "safety_contract_version": SAFETY_CONTRACT_VERSION,
@@ -77,6 +81,8 @@ def build_launch_plan() -> dict[str, Any]:
         "qml_entrypoint_path": _relative(DEFAULT_QML_ENTRYPOINT) if qml_found else "",
         "ui_config_found": config_found,
         "ui_config_path": _relative(DEFAULT_CONFIG) if config_found else "",
+        "visible_ui_config_found": visible_config_found,
+        "visible_ui_config_path": _relative(VISIBLE_PREVIEW_CONFIG) if visible_config_found else "",
         "ui_framework": "PySide6/QML" if entrypoint_found or qml_found else "unknown",
         "demo_mode_required": True,
         "live_mode_allowed": False,
@@ -90,7 +96,10 @@ def build_launch_plan() -> dict[str, Any]:
         "dot_env_read": False,
         "runtime_loop_started": False,
         "production_runtime_loop_started": False,
-        "ui_launch_command_preview": _build_command_preview(entrypoint_found, config_found),
+        "ui_launch_command_preview": _build_command_preview(entrypoint_found, visible_config_found),
+        "visible_ui_command_preview": _build_command_preview(
+            entrypoint_found, visible_config_found
+        ),
         "ui_smoke_command_preview": _build_smoke_command_preview(entrypoint_found, config_found),
         "command_execution_allowed": False,
         "command_executed": False,

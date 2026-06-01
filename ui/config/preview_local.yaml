@@ -1,0 +1,55 @@
+# Safe local configuration for manual PySide6/QML source UI preview.
+# This profile is intentionally offline/local and avoids TLS, mTLS,
+# secret-backed endpoints, and order-execution settings.
+endpoint: in-process
+
+transport:
+  mode: in-process
+  dataset: data/sample_ohlcv/trend.csv
+
+grpc:
+  tls:
+    enabled: false
+    root_cert: ""
+    client_cert: ""
+    client_key: ""
+    server_name: ""
+    pinned_sha256: ""
+    require_client_auth: false
+
+# Backward-compatible TLS keys are explicitly disabled for older UI readers.
+tls:
+  enabled: false
+  root_certificate: ""
+  client_certificate: ""
+  client_key: ""
+
+target_name_override: ""
+
+instrument:
+  exchange: PAPER
+  symbol: BTC/USDT
+  venue_symbol: BTCUSDT
+  quote_currency: USDT
+  base_currency: BTC
+  granularity: PT1M
+
+performance_guard:
+  fps_target: 120
+  reduce_motion_after_seconds: 0.6
+  jank_threshold_ms: 12.0
+  overlays:
+    max_overlays: 4
+    disable_secondary_when_fps_below: 55
+  max_overlay_count: 4
+
+telemetry:
+  metrics_endpoint: in-process
+  metrics_tag: desktop-shell-preview
+  metrics_auth_token: ""
+
+health:
+  endpoint: in-process
+
+history_limit: 800
+maximum_samples: 12000
