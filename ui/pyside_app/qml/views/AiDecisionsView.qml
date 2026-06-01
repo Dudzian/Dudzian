@@ -73,7 +73,7 @@ Rectangle {
         case "hedge":
             return designSystem.color("warning")
         case "grid":
-            return designSystem.color("success")
+            return designSystem.color("accent")
         default:
             return designSystem.color("textPrimary")
         }
@@ -110,7 +110,8 @@ Rectangle {
     Component.onCompleted: refreshSnapshot()
 
     Connections {
-        target: runtimeService
+        target: root.runtimeService ? root.runtimeService : null
+        ignoreUnknownSignals: true
         function onAiGovernorSnapshotChanged() {
             root.refreshSnapshot()
         }
@@ -149,29 +150,48 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.minimumHeight: 56
             spacing: 12
-            Text {
-                text: modeGlyph(currentMode)
-                font.pixelSize: 26
-                font.bold: true
-                font.family: designSystem && designSystem.fontAwesomeFamily ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
-                color: modeColor(currentMode)
+
+            Rectangle {
+                Layout.preferredWidth: 42
+                Layout.preferredHeight: 42
+                radius: 21
+                color: designSystem ? designSystem.color("surfaceMuted") : "#252c3d"
+                border.color: modeColor(currentMode)
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: modeGlyph(currentMode)
+                    font.pixelSize: 20
+                    font.bold: true
+                    font.family: designSystem && designSystem.fontAwesomeFamily ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
+                    color: modeColor(currentMode)
+                }
             }
+
             ColumnLayout {
                 Layout.fillWidth: true
+                spacing: 4
                 Text {
                     text: qsTr("Decyzje governor")
                     font.bold: true
                     font.pointSize: 17
                     color: designSystem ? designSystem.color("textPrimary") : "#fdfdfd"
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
                 }
                 Text {
-                    text: lastDecision.reason ? lastDecision.reason : qsTr("Oczekiwanie na rekomendację governora")
+                    text: qsTr("Demo/offline preview — runtime loop not started, exchange/order disabled. %1")
+                          .arg(lastDecision.reason ? lastDecision.reason : qsTr("Oczekiwanie na rekomendację governora."))
                     font.pointSize: 11
                     color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
                     wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
                 }
             }
+
             Components.IconButton {
                 designSystem: designSystem
                 subtle: true
@@ -181,68 +201,112 @@ Rectangle {
             }
         }
 
+        GridLayout {
+            Layout.fillWidth: true
+            columns: root.width > 760 ? 3 : 1
+            columnSpacing: 10
+            rowSpacing: 10
+
+            Repeater {
+                model: [
+                    { label: qsTr("Tryb / KBO"), value: currentMode.length > 0 ? currentMode.toUpperCase() : qsTr("BRAK TRYBU"), accent: modeColor(currentMode) },
+                    { label: qsTr("Confidence"), value: qsTr("%1%2").arg(confidencePercent(confidenceValue)).arg("%"), accent: designSystem ? designSystem.color("accent") : "#55c7ff" },
+                    { label: qsTr("Ryzyko"), value: lastDecision.riskScore !== undefined ? Number(lastDecision.riskScore).toFixed(2) : qsTr("demo/offline"), accent: designSystem ? designSystem.color("warning") : "#fbbf24" }
+                ]
+                delegate: Rectangle {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 180
+                    Layout.preferredHeight: 96
+                    radius: 14
+                    color: designSystem ? designSystem.color("surfaceMuted") : "#252c3d"
+                    border.color: modelData.accent
+                    border.width: 1
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 6
+                        Text {
+                            text: modelData.label
+                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
+                            font.pointSize: 10
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: modelData.value
+                            color: designSystem ? designSystem.color("textPrimary") : "#ffffff"
+                            font.bold: true
+                            font.pointSize: 14
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+            }
+        }
+
         Rectangle {
             id: detailCard
             Layout.fillWidth: true
-            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredHeight: detailColumn.implicitHeight + 28
             radius: 14
             color: Qt.rgba(0, 0, 0, 0.35)
             border.color: designSystem ? designSystem.color("border") : "#2d2f37"
             border.width: 1
 
             ColumnLayout {
+                id: detailColumn
                 anchors.fill: parent
-                anchors.margins: 16
+                anchors.margins: 14
                 spacing: 8
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
-                    Text {
-                        text: currentMode.length > 0 ? currentMode.toUpperCase() : qsTr("BRAK TRYBU")
-                        font.bold: true
-                        font.pointSize: 15
-                        color: designSystem ? designSystem.color("textPrimary") : "#ffffff"
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text {
-                        text: qsTr("Confidence %1%2").arg(confidencePercent(confidenceValue)).arg("%")
-                        color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                        font.pointSize: 11
-                    }
-                }
-
-                ProgressBar {
-                    Layout.fillWidth: true
-                    value: Math.max(0.0, Math.min(1.0, confidenceValue))
-                    from: 0
-                    to: 1
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 14
-                    Text {
-                        text: qsTr("Ryzyko: %1").arg(lastDecision.riskScore !== undefined ? Number(lastDecision.riskScore).toFixed(2) : "—")
-                        color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                        font.pointSize: 11
-                    }
+                    spacing: 10
                     Text {
                         text: qsTr("Koszt: %1 bps").arg(lastDecision.transactionCostBps !== undefined ? Number(lastDecision.transactionCostBps).toFixed(1) : "—")
                         color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
                         font.pointSize: 11
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
                     }
                     Text {
                         text: qsTr("p95 cyklu: %1").arg(telemetryValue("cycleMetrics", "cycle_latency_p95_ms"))
                         color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
                         font.pointSize: 11
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
                     }
-                    Item { Layout.fillWidth: true }
+                }
+
+                ProgressBar {
+                    id: confidenceBar
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 12
+                    value: Math.max(0.0, Math.min(1.0, confidenceValue))
+                    from: 0
+                    to: 1
+                    background: Rectangle {
+                        radius: 6
+                        color: designSystem ? designSystem.color("surfaceMuted") : "#252c3d"
+                        border.color: designSystem ? designSystem.color("border") : "#3a4358"
+                        border.width: 1
+                    }
+                    contentItem: Item {
+                        Rectangle {
+                            width: confidenceBar.visualPosition * parent.width
+                            height: parent.height
+                            radius: 6
+                            color: designSystem ? designSystem.color("accent") : "#55c7ff"
+                        }
+                    }
                 }
             }
         }
 
-        RowLayout {
+        Flow {
             Layout.fillWidth: true
             spacing: 8
             visible: recommendationCount > 0
@@ -253,8 +317,8 @@ Rectangle {
                     required property var modelData
                     readonly property string modeName: modelData && modelData.mode ? String(modelData.mode) : String(modelData)
                     visible: modeName.length > 0
-                    implicitWidth: modeRow.implicitWidth + 20
-                    implicitHeight: modeRow.implicitHeight + 20
+                    width: modeRow.implicitWidth + 20
+                    height: modeRow.implicitHeight + 20
                     radius: 14
                     color: Qt.rgba(0, 0, 0, selectedModeFilter === modeToken(modeName) ? 0.55 : 0.3)
                     border.width: selectedModeFilter === modeToken(modeName) ? 2 : 1
@@ -293,81 +357,93 @@ Rectangle {
             }
         }
 
-        ListView {
-            id: timelineView
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 10
-            clip: true
-            model: decisionTimeline
-            delegate: Item {
-                width: ListView.view.width
-                height: entryCard.implicitHeight + 10
-                visible: matchesFilter(modelData.mode)
-
-                Rectangle {
-                    id: entryCard
-                    anchors.fill: parent
-                    radius: 12
-                    color: Qt.rgba(0, 0, 0, 0.28)
-                    border.color: designSystem ? designSystem.color("border") : "#2d2f37"
-                    border.width: 1
-                    anchors.margins: 2
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 6
-                        RowLayout {
-                            spacing: 8
-                            Text {
-                                text: modeGlyph(modelData.mode)
-                                font.pixelSize: 16
-                                font.family: designSystem && designSystem.fontAwesomeFamily ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
-                                color: modeColor(modelData.mode)
-                            }
-                            Text {
-                                text: modelData.mode ? String(modelData.mode).toUpperCase() : qsTr("n/d")
-                                font.bold: true
-                                color: designSystem ? designSystem.color("textPrimary") : "#ffffff"
-                            }
-                            Item { Layout.fillWidth: true }
-                            Text {
-                                text: modelData.timestamp || ""
-                                font.pointSize: 10
-                                color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                            }
-                        }
-                        Text {
-                            text: modelData.reason || qsTr("Brak uzasadnienia")
-                            wrapMode: Text.WordWrap
-                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                            font.pointSize: 11
-                        }
-                        RowLayout {
-                            spacing: 10
-                            Text {
-                                text: qsTr("Confidence %1%2").arg(confidencePercent(modelData.confidence || 0.0)).arg("%")
-                                font.pointSize: 10
-                                color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                            }
-                            Text {
-                                text: modelData.regime ? qsTr("Regime %1").arg(modelData.regime) : ""
-                                font.pointSize: 10
-                                color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         Text {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             visible: filteredTimelineCount === 0
-            text: qsTr("Brak historii governora")
+            text: qsTr("Demo/offline empty state — brak historii governora, runtime loop nie został uruchomiony.")
             color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
+            wrapMode: Text.WordWrap
+        }
+
+        ListView {
+            id: timelineView
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 190
+            spacing: 10
+            clip: true
+            model: decisionTimeline
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                width: 10
+                background: Rectangle { radius: 5; color: designSystem ? Qt.rgba(1, 1, 1, 0.04) : Qt.rgba(1, 1, 1, 0.06) }
+                contentItem: Rectangle { radius: 4; color: designSystem ? designSystem.color("surfaceElevated") : "#596172"; border.color: designSystem ? designSystem.color("border") : "#3a4358"; border.width: 1 }
+            }
+            delegate: Rectangle {
+                required property var modelData
+                width: timelineView.width - 12
+                implicitHeight: entryColumn.implicitHeight + 24
+                height: matchesFilter(modelData.mode) ? implicitHeight : 0
+                visible: matchesFilter(modelData.mode)
+                radius: 12
+                color: Qt.rgba(0, 0, 0, 0.28)
+                border.color: designSystem ? designSystem.color("border") : "#2d2f37"
+                border.width: 1
+
+                ColumnLayout {
+                    id: entryColumn
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 6
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text {
+                            text: modeGlyph(modelData.mode)
+                            font.pixelSize: 16
+                            font.family: designSystem && designSystem.fontAwesomeFamily ? designSystem.fontAwesomeFamily() : "Font Awesome 6 Free"
+                            color: modeColor(modelData.mode)
+                        }
+                        Text {
+                            text: modelData.mode ? String(modelData.mode).toUpperCase() : qsTr("n/d")
+                            font.bold: true
+                            color: designSystem ? designSystem.color("textPrimary") : "#ffffff"
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            text: modelData.timestamp || ""
+                            font.pointSize: 10
+                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+                    Text {
+                        text: modelData.reason || qsTr("Brak uzasadnienia")
+                        wrapMode: Text.WordWrap
+                        color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
+                        font.pointSize: 11
+                        Layout.fillWidth: true
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text {
+                            text: qsTr("Confidence %1%2").arg(confidencePercent(modelData.confidence || 0.0)).arg("%")
+                            font.pointSize: 10
+                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: modelData.regime ? qsTr("Regime %1").arg(modelData.regime) : ""
+                            font.pointSize: 10
+                            color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+                }
+            }
         }
     }
 }

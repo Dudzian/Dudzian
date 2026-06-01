@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../components" as Components
 
 Item {
     id: root
@@ -10,6 +11,19 @@ Item {
     implicitWidth: 900
     implicitHeight: 620
 
+    function statusAccent(token) {
+        if (!root.designSystem)
+            return "#f5f7ff"
+        switch (token) {
+        case "accent":
+            return root.designSystem.color("accent")
+        case "warning":
+            return root.designSystem.color("warning")
+        default:
+            return root.designSystem.color("textPrimary")
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         radius: 24
@@ -18,8 +32,9 @@ Item {
         border.width: 1
     }
 
-    ScrollView {
+    Components.StyledScrollView {
         id: dashboardScroll
+        designSystem: root.designSystem
         anchors.fill: parent
         anchors.margins: 18
         clip: true
@@ -58,7 +73,7 @@ Item {
                     model: [
                         { title: qsTr("Tryb: Demo / Paper"), lines: [qsTr("Endpoint: in-process"), qsTr("Cloud runtime: wyłączony")], accent: "textPrimary" },
                         { title: qsTr("Exchange I/O disabled"), lines: [qsTr("Order submission disabled"), qsTr("Runtime loop not started")], accent: "warning" },
-                        { title: qsTr("API keys required: false"), lines: [qsTr("Active strategy: Demo Momentum Guard"), qsTr("Last decision: HOLD / NO ORDER")], accent: "success" },
+                        { title: qsTr("API keys required: false"), lines: [qsTr("Active strategy: Demo Momentum Guard"), qsTr("Last decision: HOLD / NO ORDER")], accent: "accent" },
                         { title: qsTr("Live trading: blocked / disabled"), lines: [qsTr("Live disabled"), qsTr("Kill switch: armed / preview")], accent: "warning" }
                     ]
                     delegate: Rectangle {
@@ -78,7 +93,7 @@ Item {
                                 text: modelData.title
                                 font.bold: true
                                 wrapMode: Text.WordWrap
-                                color: root.designSystem ? root.designSystem.color(modelData.accent) : "#fbbf24"
+                                color: root.statusAccent(modelData.accent)
                                 Layout.fillWidth: true
                             }
                             Repeater {
@@ -143,7 +158,7 @@ Item {
                     }
                     Label { text: qsTr("Live disabled"); color: root.designSystem ? root.designSystem.color("warning") : "#fbbf24" }
                     Label { text: qsTr("Max drawdown guard: demo only"); color: root.designSystem ? root.designSystem.color("textSecondary") : "#cbd5e1" }
-                    Label { text: qsTr("Kill switch: armed / preview"); color: root.designSystem ? root.designSystem.color("success") : "#22c55e" }
+                    Label { text: qsTr("Kill switch: armed / preview"); color: root.designSystem ? root.designSystem.color("accent") : "#22c55e" }
                 }
             }
         }

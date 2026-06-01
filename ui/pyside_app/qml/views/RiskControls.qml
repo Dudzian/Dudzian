@@ -3,11 +3,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components" as Components
 
-ScrollView {
+Components.StyledScrollView {
     id: root
     objectName: "riskControlsPreviewPanel"
     property var runtimeService
-    property var designSystem
     property var riskControls: runtimeService && runtimeService.riskControls ? runtimeService.riskControls : ({})
     property var opportunitySettings: runtimeService && runtimeService.opportunityRuntimeSettings
                                       ? runtimeService.opportunityRuntimeSettings : ({})
@@ -183,6 +182,24 @@ ScrollView {
                         verticalAlignment: Text.AlignVCenter
                         leftPadding: 12
                     }
+                    delegate: ItemDelegate {
+                        required property string modelData
+                        width: policyMode.width
+                        contentItem: Text {
+                            text: modelData
+                            color: root.designSystem.color("textPrimary")
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            color: highlighted ? root.designSystem.color("surfaceMuted") : root.designSystem.color("surfaceElevated")
+                        }
+                    }
+                    indicator: Text {
+                        x: policyMode.width - width - 12
+                        y: policyMode.topPadding + (policyMode.availableHeight - height) / 2
+                        text: "▾"
+                        color: root.designSystem.color("textSecondary")
+                    }
                     background: Rectangle {
                         radius: 10
                         color: root.designSystem.color("surfaceMuted")
@@ -210,7 +227,7 @@ ScrollView {
             Components.IconButton {
                 designSystem: root.designSystem
                 text: qsTr("Zapisz limity")
-                iconName: "save"
+                iconName: "copy"
                 onClicked: {
                     if (!runtimeService || !runtimeService.saveRiskControls) {
                         statusLabel.text = qsTr("Demo/offline — brak zapisu do runtime")
