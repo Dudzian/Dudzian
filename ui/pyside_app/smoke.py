@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, TextIO
 
@@ -33,12 +34,25 @@ class UiSmokeResult:
     active_panel_id: str = ""
     central_content_empty: bool = True
     panel_load_results: dict[str, dict[str, object]] = field(default_factory=dict)
+    final_preview_tabs_loaded: bool = False
+    paper_session_controls_present: bool = False
+    market_universe_controls_present: bool = False
+    ai_governor_controls_present: bool = False
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         """Render the smoke contract as deterministic CP1252-safe JSON."""
 
         return json.dumps(asdict(self), ensure_ascii=True, sort_keys=True)
+
+
+def _qml_preview_source() -> str:
+    qml_root = Path(__file__).resolve().parent / "qml"
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(qml_root.rglob("*.qml")))
+
+
+def _source_has_all(source: str, labels: tuple[str, ...]) -> bool:
+    return all(label in source for label in labels)
 
 
 PANEL_AUDIT_IDS = (
@@ -167,7 +181,39 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         active_panel_id = ""
         central_content_empty = True
         panel_load_results: dict[str, dict[str, object]] = {}
+        final_preview_tabs_loaded = False
+        paper_session_controls_present = False
+        market_universe_controls_present = False
+        ai_governor_controls_present = False
         if qml_loaded:
+            source = _qml_preview_source()
+            final_preview_tabs_loaded = _source_has_all(
+                source,
+                (
+                    "Dashboard",
+                    "AI Center",
+                    "Trading Universe",
+                    "Strategie",
+                    "Ryzyko",
+                    "Decyzje",
+                    "Telemetria",
+                    "Diagnostyka",
+                ),
+            )
+            paper_session_controls_present = _source_has_all(
+                source, ("Start Paper Preview", "Pause", "Stop", "Reset", "Generate Next Tick")
+            )
+            market_universe_controls_present = _source_has_all(
+                source, ("Import markets preview", "Search pair", "select all", "clear selected")
+            )
+            ai_governor_controls_present = _source_has_all(
+                source,
+                (
+                    "Generate governor recommendation",
+                    "Autonomy mode selector",
+                    "Training coverage %",
+                ),
+            )
             from PySide6.QtCore import QObject
 
             root = engine.rootObjects()[0]
@@ -202,6 +248,10 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             active_panel_id=active_panel_id,
             central_content_empty=central_content_empty,
             panel_load_results=panel_load_results,
+            final_preview_tabs_loaded=final_preview_tabs_loaded,
+            paper_session_controls_present=paper_session_controls_present,
+            market_universe_controls_present=market_universe_controls_present,
+            ai_governor_controls_present=ai_governor_controls_present,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)

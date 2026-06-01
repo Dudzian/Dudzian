@@ -501,3 +501,174 @@ def test_offscreen_smoke_audits_every_menu_panel_loads_non_empty() -> None:
         assert panel_result["visible"] is True
         assert panel_result["width"] > 0 or panel_result["implicitWidth"] > 0
         assert panel_result["height"] > 0 or panel_result["implicitHeight"] > 0
+
+
+def test_ui_preview_7_2_interactive_shell_source_contract() -> None:
+    source = _qml_text()
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert 'objectName: "productPreviewTabBar"' in main_window
+    assert "Flickable" in main_window
+    assert "flickableDirection: Flickable.HorizontalFlick" in main_window
+    assert "Menu {" not in main_window
+    assert "MenuItem {" not in main_window
+    for tab_label in (
+        "Dashboard",
+        "AI Center",
+        "Trading Universe",
+        "Strategie",
+        "Ryzyko",
+        "Decyzje",
+        "Telemetria",
+        "Diagnostyka",
+    ):
+        assert tab_label in source
+
+    for state_token in (
+        "property var selectedExchanges",
+        "property var selectedPairs",
+        "property var activeStrategies",
+        "property string paperSessionState",
+        "property int paperTicks",
+        "property var paperOrdersPreview",
+        "property string lastGovernorDecision",
+        "property string autonomyMode",
+        "property int modelReadiness",
+        "property int trainingCoverage",
+        "property bool riskLocked",
+        "property bool liveTradingDisabled: true",
+        "property bool exchangeIoDisabled: true",
+        "property bool orderSubmissionDisabled: true",
+        "property bool apiKeysRequired: false",
+        "property bool runtimeLoopStarted: false",
+    ):
+        assert state_token in main_window
+
+
+def test_ui_preview_7_2_dashboard_paper_cockpit_controls() -> None:
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
+
+    for label in (
+        "Paper session status",
+        "Start Paper Preview",
+        "Pause",
+        "Stop",
+        "Reset",
+        "Generate Next Tick",
+        "Run 10 mock ticks",
+        "Mock PnL / equity preview",
+        "Mock open paper positions",
+        "Mock closed paper trades",
+        "Mock paper orders list",
+        "simulated preview only",
+        "no real order",
+        "order submission disabled",
+    ):
+        assert label in dashboard
+
+
+def test_ui_preview_7_2_trading_universe_market_selector_contract() -> None:
+    source = (QML_SOURCE_ROOT / "views" / "TradingUniverse.qml").read_text(encoding="utf-8")
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    for label in (
+        "Import markets preview",
+        "Search pair",
+        "select all",
+        "clear selected",
+        "All",
+        "Selected",
+        "Top volume",
+        "AI candidates",
+        "Excluded",
+        "Whitelist preview state",
+        "Blacklist preview state",
+    ):
+        assert label in source
+
+    preview_pairs = re.findall(r'"[A-Z0-9]+/USDT"', main_window)
+    assert len(set(preview_pairs)) >= 25
+
+    for exchange in (
+        "Binance",
+        "Bybit",
+        "OKX",
+        "KuCoin",
+        "Coinbase",
+        "Kraken",
+        "Bitget",
+        "Gate.io",
+        "MEXC",
+        "Demo Exchange",
+    ):
+        assert exchange in main_window
+
+
+def test_ui_preview_7_2_ai_strategies_risk_decisions_telemetry_diagnostics_contract() -> None:
+    source = _qml_text()
+    strategies = (QML_SOURCE_ROOT / "views" / "Strategies.qml").read_text(encoding="utf-8")
+
+    for label in (
+        "Autonomy mode selector",
+        "Model readiness",
+        "Training coverage %",
+        "Data coverage %",
+        "Generate governor recommendation",
+        "Confidence threshold slider/styled control",
+        "Market scanner",
+        "Signal scorer",
+        "Strategy governor",
+        "Risk governor",
+        "Execution guard",
+        "Recovery monitor",
+        "Telemetry monitor",
+        "Kill-switch",
+    ):
+        assert label in source
+
+    for strategy_name in (
+        "Momentum Guard",
+        "Range Guard",
+        "Volatility Breakout Preview",
+        "Mean Reversion Preview",
+        "Trend Follow Preview",
+        "Liquidity Sweep Preview",
+    ):
+        assert strategy_name in strategies
+    assert strategies.count("Components.StyledSwitch") >= 1
+
+    for label in (
+        "Daily loss limit",
+        "Per-symbol exposure",
+        "Apply preview risk profile",
+        "Conservative",
+        "Balanced",
+        "Aggressive",
+        "Generate next decision",
+        "action:",
+        "confidence",
+        "reason:",
+        "Risk reason",
+        "Ping feed",
+        "Last heartbeat",
+        "Generate diagnostic bundle",
+        "Included",
+        "Excluded",
+        "secrets • .env • keychain • real env values",
+    ):
+        assert label in source
+
+
+def test_ui_preview_7_2_smoke_contract_fields_are_reported() -> None:
+    result = _run_ui_smoke()
+    payload = _smoke_payload(result)
+
+    if result.returncode != 0 and any("libGL.so.1" in issue for issue in payload["issues"]):
+        pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert payload["status"] == "ok"
+    assert payload["final_preview_tabs_loaded"] is True
+    assert payload["paper_session_controls_present"] is True
+    assert payload["market_universe_controls_present"] is True
+    assert payload["ai_governor_controls_present"] is True
