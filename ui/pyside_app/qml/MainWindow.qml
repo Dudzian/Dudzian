@@ -21,7 +21,7 @@ ApplicationWindow {
     property string currentPanelId: defaultPanelId
     readonly property var rootDesignSystem: designSystem
 
-    // UI-PREVIEW-7.4 local-only product preview state. Safe dry-run/paper preview only: live trading disabled, exchange route disabled, order submission disabled, API keys not required.
+    // UI-PREVIEW-7.5 local-only product preview state. Safe dry-run/paper preview only: live trading disabled, exchange route disabled, order submission disabled, API keys not required.
     property var selectedExchanges: ["Paper Preview Catalog"]
     property var selectedPairs: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
     property var whitelistPairs: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
@@ -56,7 +56,9 @@ ApplicationWindow {
     property int trainingCoverage: 68
     property int dataCoverage: 74
     property int confidenceThreshold: 75
-    property string decisionPolicyPreview: "Balanced policy"
+    property string decisionPolicyPreview: "Polityka zbalansowana"
+    property string activeGovernorEngine: "Dudzian Governor Ensemble"
+    property string modelVersionBuild: "preview-7.5 build local-2026.06"
     property bool riskLocked: true
     property string riskProfile: "Balanced"
     property string riskState: "guarded preview • kill-switch armed • live blocked"
@@ -67,6 +69,7 @@ ApplicationWindow {
     property string maxSlippage: "0.20%"
     property string maxDrawdown: "6.0%"
     property string dailyLossLimit: "1,200 USDT"
+    property string perSymbolExposure: "18% equity"
     property bool liveTradingDisabled: true
     property bool exchangeIoDisabled: true
     property bool orderSubmissionDisabled: true
@@ -123,6 +126,7 @@ ApplicationWindow {
         ({ timestamp: "12:03:58Z", message: "exchange route: disabled • paper bridge: not connected / planned" })
     ]
     property string diagnosticsBundleStatus: "Last bundle path/status: not generated"
+    property string lastStrategySaveStatus: "Brak lokalnego zapisu preview"
 
     function hasValue(list, value) {
         return list && list.indexOf(value) >= 0
@@ -165,6 +169,19 @@ ApplicationWindow {
         return out
     }
 
+
+    function visiblePairsCount() { return filteredMarketPairs().length }
+    function selectedPairsCount() { return selectedPairs.length }
+    function whitelistedPairsCount() { return whitelistPairs.length }
+    function blacklistedPairsCount() { return blacklistPairs.length }
+    function aiCandidatesCount() {
+        var count = 0
+        for (var i = 0; i < previewMarketPairs.length; ++i)
+            if (isAiCandidate(previewMarketPairs[i]))
+                count += 1
+        return count
+    }
+    function saveStrategyPreview(name) { lastStrategySaveStatus = "Zapisano lokalny preview strategii: " + name + " • runtime config write disabled • live execution disabled" }
     function toggleExchange(exchange) { selectedExchanges = toggledList(selectedExchanges, exchange) }
     function togglePair(pair) { selectedPairs = toggledList(selectedPairs, pair); whitelistPairs = selectedPairs.slice() }
     function toggleBlacklist(pair) { blacklistPairs = toggledList(blacklistPairs, pair) }
@@ -180,9 +197,9 @@ ApplicationWindow {
     function setConfidenceThreshold(value) { confidenceThreshold = value }
     function setRiskProfile(profile) {
         riskProfile = profile
-        if (profile === "Conservative") { maxPosition = "1,000 USDT"; maxOpenPositions = 2; stopLoss = "1.5%"; takeProfit = "3.0%"; maxSlippage = "0.10%"; maxDrawdown = "3.0%"; dailyLossLimit = "500 USDT" }
-        else if (profile === "Aggressive") { maxPosition = "5,000 USDT"; maxOpenPositions = 8; stopLoss = "4.0%"; takeProfit = "8.0%"; maxSlippage = "0.35%"; maxDrawdown = "10.0%"; dailyLossLimit = "2,500 USDT" }
-        else { maxPosition = "2,500 USDT"; maxOpenPositions = 4; stopLoss = "2.4%"; takeProfit = "4.8%"; maxSlippage = "0.20%"; maxDrawdown = "6.0%"; dailyLossLimit = "1,200 USDT" }
+        if (profile === "Conservative") { maxPosition = "1,000 USDT"; maxOpenPositions = 2; stopLoss = "1.5%"; takeProfit = "3.0%"; maxSlippage = "0.10%"; maxDrawdown = "3.0%"; dailyLossLimit = "500 USDT"; perSymbolExposure = "10% equity" }
+        else if (profile === "Aggressive") { maxPosition = "5,000 USDT"; maxOpenPositions = 8; stopLoss = "4.0%"; takeProfit = "8.0%"; maxSlippage = "0.35%"; maxDrawdown = "10.0%"; dailyLossLimit = "2,500 USDT"; perSymbolExposure = "28% equity" }
+        else { maxPosition = "2,500 USDT"; maxOpenPositions = 4; stopLoss = "2.4%"; takeProfit = "4.8%"; maxSlippage = "0.20%"; maxDrawdown = "6.0%"; dailyLossLimit = "1,200 USDT"; perSymbolExposure = "18% equity" }
         riskState = profile + " preview • daily loss limit active • live blocked"
         riskLocked = true
     }
@@ -275,7 +292,7 @@ ApplicationWindow {
         rows.unshift(({ timestamp: telemetryHeartbeat, message: messages[telemetryTick % messages.length] }))
         telemetryRows = rows.slice(0, 10)
     }
-    function generateDiagnosticBundle() { diagnosticsBundleStatus = "Last bundle path/status: var/tmp/preview-diagnostic-bundle-ui-only.zip • generated local diagnostic status • included UI smoke metadata • excluded secrets, env files, keychain and real exchange state" }
+    function generateDiagnosticBundle() { diagnosticsBundleStatus = "Last bundle path/status: var/tmp/preview-diagnostic-bundle-ui-only.zip • generated local diagnostic status • included: UI state, telemetry snapshot, governor rows, config preview metadata • excluded: secrets, env files, keychain, real environment values, exchange state" }
 
     function showPanel(panelId) {
         if (!panelId)
@@ -587,7 +604,7 @@ ApplicationWindow {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { objectName: "telemetryFeedPreviewTitle"; text: qsTr("Telemetria"); font.bold: true; font.pixelSize: 22; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                        Label { text: qsTr("Safe preview telemetry feed with heartbeat/tick source state, freshness status and bounded 8–12 visible rows."); wrapMode: Text.WordWrap; color: designSystem.color("textSecondary"); Layout.fillWidth: true }
+                        Label { text: qsTr("Lokalna telemetria preview: heartbeat/tick source state, freshness status i limitowana lista 8–12 wierszy. Zero real network/API calls."); wrapMode: Text.WordWrap; color: designSystem.color("textSecondary"); Layout.fillWidth: true }
                     }
                 }
                 GridLayout {
@@ -595,7 +612,7 @@ ApplicationWindow {
                     columns: width > 900 ? 4 : 2
                     rowSpacing: 10
                     columnSpacing: 10
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Feed status"); description: qsTr("feed: safe preview"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Feed status"); description: qsTr("feed: safe preview • zero real network/API calls"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("runtime loop"); description: qsTr("not started"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("exchange route"); description: qsTr("disabled"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("paper bridge"); description: qsTr("not connected / planned"); Layout.fillWidth: true }
@@ -607,7 +624,7 @@ ApplicationWindow {
                 Components.PreviewCard {
                     designSystem: rootDesignSystem
                     title: qsTr("Telemetry heartbeat feed")
-                    description: qsTr("Ping feed increments heartbeat/tick, appends varied rows, avoids duplicate timestamps and caps the visible feed.")
+                    description: qsTr("Ping feed zwiększa heartbeat/tick, dodaje różne wiersze, unika duplikacji timestamp i ogranicza scrollowalną listę.")
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
@@ -864,7 +881,7 @@ ApplicationWindow {
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Preview diagnostics readiness"); description: qsTr("ready for safe dry-run audit • UI-only bundle status"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Last bundle path/status"); description: root.diagnosticsBundleStatus; Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Safety boundary"); description: qsTr("Live trading disabled • Exchange route disabled • Order submission disabled • API keys not required"); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Included • included"); description: qsTr("UI smoke metadata • visible panel state • telemetry heartbeat • governor preview rows"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Included • included"); description: qsTr("UI state • telemetry snapshot • governor rows • config preview metadata"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Excluded • excluded"); description: qsTr("secrets • env files • keychain • real environment values • exchange state"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("generate local diagnostic status"); description: qsTr("local UI status only; no filesystem secret scan and no exchange connection"); Layout.fillWidth: true }
                 }

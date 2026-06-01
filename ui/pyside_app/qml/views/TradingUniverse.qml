@@ -22,14 +22,14 @@ Components.StyledScrollView {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { objectName: "tradingUniverseTitle"; text: qsTr("Trading Universe"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                Label { text: qsTr("Scalable market selector for Paper preview. The catalog imitates target exchange import UX with 100+ preview pairs, but no API call is made."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("Skalowalny selektor rynku dla Paper Preview. To local preview catalog z ponad 100 parami; bez real API calls, bez exchange route i bez order submission."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }
 
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("Exchange market import flow")
-            description: qsTr("Step 1: choose exchange • Step 2: connect API / sandbox key — disabled in preview • Step 3: import markets — preview-only local catalog • Step 4: AI scans all eligible pairs — preview-only • Step 5: paper/testserver trading — planned/disabled until safe bridge")
+            description: qsTr("choose exchange -> sandbox/testnet/API planned/disabled -> import markets preview -> AI scans eligible pairs -> paper/testserver route planned/disabled • paper/testserver trading planned/disabled • preview-only local catalog")
             GridLayout {
                 Layout.fillWidth: true
                 columns: width > 1100 ? 5 : 1
@@ -38,10 +38,10 @@ Components.StyledScrollView {
                 Repeater {
                     model: [
                         ({ step: "Step 1", title: "choose exchange", state: "UI-only" }),
-                        ({ step: "Step 2", title: "connect API / sandbox key", state: "disabled in preview" }),
-                        ({ step: "Step 3", title: "import markets", state: "preview-only local catalog" }),
+                        ({ step: "Step 2", title: "sandbox/testnet/API planned/disabled", state: "API keys not required" }),
+                        ({ step: "Step 3", title: "import markets preview", state: "local catalog, no API calls" }),
                         ({ step: "Step 4", title: "AI scans all eligible pairs", state: "preview-only" }),
-                        ({ step: "Step 5", title: "paper/testserver trading", state: "planned/disabled until safe bridge" })
+                        ({ step: "Step 5", title: "paper/testserver route planned/disabled", state: "order submission disabled" })
                     ]
                     delegate: Rectangle {
                         required property var modelData
@@ -65,7 +65,7 @@ Components.StyledScrollView {
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("Exchange selector • Market data status • API key status • Live trading status / Order route")
-            description: qsTr("All exchange cards are disconnected in safe preview. Live trading disabled • Exchange route disabled • API keys not required in preview.")
+            description: qsTr("Karty giełd są tylko lokalnym wyborem preview. Live trading disabled • Exchange route disabled • Order submission disabled • API keys not required.")
             Flow {
                 Layout.fillWidth: true
                 spacing: 10
@@ -74,8 +74,8 @@ Components.StyledScrollView {
                     delegate: Rectangle {
                         required property string modelData
                         readonly property bool selected: previewState.hasValue(previewState.selectedExchanges, modelData)
-                        width: 220
-                        height: 96
+                        width: 255
+                        height: 124
                         radius: 16
                         color: selected ? Qt.rgba(0.33, 0.78, 1.0, 0.18) : designSystem.color("surfaceMuted")
                         border.color: selected ? designSystem.color("accent") : designSystem.color("border")
@@ -89,8 +89,9 @@ Components.StyledScrollView {
                                 Label { text: modelData; color: designSystem.color("textPrimary"); font.bold: true; Layout.fillWidth: true }
                                 Components.StyledSwitch { designSystem: root.designSystem; checked: selected; onToggled: previewState.toggleExchange(modelData) }
                             }
-                            Label { text: selected ? qsTr("selected • preview-only") : qsTr("disconnected • preview-only"); color: designSystem.color("textSecondary"); font.pixelSize: 11; Layout.fillWidth: true }
-                            Label { text: qsTr("sandbox/testnet planned • exchange route disabled"); color: designSystem.color("textSecondary"); font.pixelSize: 11; Layout.fillWidth: true }
+                            Label { text: selected ? qsTr("wybrana • preview-only") : qsTr("rozłączona • preview-only"); color: designSystem.color("textSecondary"); font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Label { text: qsTr("sandbox/testnet/API planned/disabled"); color: designSystem.color("textSecondary"); font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Label { text: qsTr("exchange route disabled • no real API calls"); color: designSystem.color("textSecondary"); font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         MouseArea { anchors.fill: parent; onClicked: previewState.toggleExchange(modelData) }
                     }
@@ -128,22 +129,22 @@ Components.StyledScrollView {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Label { text: qsTr("Preview catalog pairs: %1 • visible: %2 • selected: %3 • whitelisted: %4 • blacklisted: %5").arg(previewState.previewMarketPairs.length).arg(previewState.filteredMarketPairs().length).arg(previewState.selectedPairs.length).arg(previewState.whitelistPairs.length).arg(previewState.blacklistPairs.length); color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Label { text: qsTr("total pairs: %1 • visible pairs: %2 • selected pairs: %3 • whitelisted: %4 • blacklisted: %5 • AI candidates: %6").arg(previewState.previewMarketPairs.length).arg(previewState.visiblePairsCount()).arg(previewState.selectedPairsCount()).arg(previewState.whitelistedPairsCount()).arg(previewState.blacklistedPairsCount()).arg(previewState.aiCandidatesCount()); color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
             GridView {
                 objectName: "tradingUniversePairsGrid"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 430
                 clip: true
-                cellWidth: 220
-                cellHeight: 76
+                cellWidth: 230
+                cellHeight: 82
                 model: previewState.filteredMarketPairs()
                 delegate: Rectangle {
                     required property string modelData
                     readonly property bool selected: previewState.hasValue(previewState.selectedPairs, modelData)
                     readonly property bool blacklisted: previewState.hasValue(previewState.blacklistPairs, modelData)
                     width: 210
-                    height: 66
+                    height: 72
                     radius: 14
                     color: selected ? Qt.rgba(0.33, 0.78, 1.0, 0.18) : (blacklisted ? Qt.rgba(1, 0.32, 0.32, 0.10) : designSystem.color("surfaceMuted"))
                     border.color: selected ? designSystem.color("accent") : (blacklisted ? designSystem.color("critical") : designSystem.color("border"))
@@ -157,7 +158,7 @@ Components.StyledScrollView {
                         }
                         Label { text: previewState.pairCategory(modelData) + " • " + (blacklisted ? qsTr("excluded/blacklist") : (selected ? qsTr("selected/whitelist") : qsTr("eligible"))); color: designSystem.color("textSecondary"); font.pixelSize: 11; Layout.fillWidth: true }
                     }
-                    MouseArea { anchors.fill: parent; onClicked: previewState.togglePair(modelData) }
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: function(mouse) { if (mouse.button === Qt.RightButton) previewState.toggleBlacklist(modelData); else previewState.togglePair(modelData) } }
                 }
             }
         }
