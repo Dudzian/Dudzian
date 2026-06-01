@@ -284,7 +284,8 @@ ApplicationWindow {
 
     Component {
         id: telemetryPanelComponent
-        ScrollView {
+        Components.StyledScrollView {
+            designSystem: rootDesignSystem
             objectName: "telemetryFeedPreviewPanel"
             contentWidth: availableWidth
             clip: true
@@ -370,7 +371,8 @@ ApplicationWindow {
 
     Component {
         id: chartViewComponent
-        ScrollView {
+        Components.StyledScrollView {
+            designSystem: rootDesignSystem
             objectName: "decisionStreamPreviewPanel"
             contentWidth: availableWidth
             clip: true
@@ -447,6 +449,12 @@ ApplicationWindow {
                         model: runtimeService ? runtimeService.decisions : []
                         clip: true
                         spacing: 8
+                        ScrollBar.vertical: ScrollBar {
+                            policy: ScrollBar.AsNeeded
+                            width: 10
+                            background: Rectangle { radius: 5; color: Qt.rgba(1, 1, 1, 0.04) }
+                            contentItem: Rectangle { radius: 4; color: designSystem.color("surfaceElevated"); border.color: designSystem.color("border"); border.width: 1 }
+                        }
                         delegate: Rectangle {
                             width: ListView.view.width
                             color: designSystem.color("surfaceMuted")
@@ -485,7 +493,8 @@ ApplicationWindow {
 
     Component {
         id: strategyWorkbenchComponent
-        ScrollView {
+        Components.StyledScrollView {
+            designSystem: rootDesignSystem
             objectName: "strategyWorkbenchPreviewPanel"
             contentWidth: availableWidth
             clip: true
@@ -605,7 +614,8 @@ ApplicationWindow {
 
     Component {
         id: diagnosticsPanelComponent
-        ScrollView {
+        Components.StyledScrollView {
+            designSystem: rootDesignSystem
             objectName: "diagnosticsPreviewPanel"
             contentWidth: availableWidth
             clip: true
@@ -684,10 +694,13 @@ ApplicationWindow {
         width: Math.min(parent.width * 0.8, 1100)
         height: Math.min(parent.height * 0.85, 780)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Overlay.modal: Rectangle {
+            color: Qt.rgba(0, 0, 0, 0.62)
+        }
         background: Rectangle {
             anchors.fill: parent
             radius: 24
-            color: Qt.rgba(0, 0, 0, 0.75)
+            color: designSystem.color("surface")
             border.color: designSystem.color("border")
             border.width: 1
         }

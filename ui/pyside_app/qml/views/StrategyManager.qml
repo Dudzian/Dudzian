@@ -176,6 +176,12 @@ Item {
             clip: true
             spacing: 12
             model: presetsModel()
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                width: 10
+                background: Rectangle { radius: 5; color: designSystem ? Qt.rgba(1, 1, 1, 0.04) : Qt.rgba(1, 1, 1, 0.06) }
+                contentItem: Rectangle { radius: 4; color: designSystem ? designSystem.color("surfaceElevated") : "#596172"; border.color: designSystem ? designSystem.color("border") : "#3a4358"; border.width: 1 }
+            }
             delegate: Rectangle {
                 width: ListView.view.width
                 color: designSystem ? designSystem.color("surface") : "#1c2030"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ SMOKE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "smoke.py"
 PLAN_SOURCE = REPO_ROOT / "scripts" / "ui_preview_launch_plan.py"
 APP_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "app.py"
 QML_SOURCE_ROOT = REPO_ROOT / "ui" / "pyside_app" / "qml"
+PALETTE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "theme" / "palette.json"
 FORBIDDEN_SOURCE_TOKENS = (
     "create" + "_" + "order",
     "fetch" + "_" + "balance",
@@ -149,6 +151,46 @@ def _qml_sources() -> list[Path]:
 
 def _qml_text() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in _qml_sources())
+
+
+def test_qml_design_system_color_tokens_are_registered() -> None:
+    # Source safety guard: QML falls back poorly when a token is misspelled or removed,
+    # so every literal designSystem.color("TOKEN") use in preview sources must exist in
+    # the real dark palette shipped with the PySide preview.
+    palette = json.loads(PALETTE_SOURCE.read_text(encoding="utf-8"))
+    allowed_tokens = set(palette["palettes"]["dark"])
+    token_pattern = re.compile(r"(?:\bdesignSystem|\b\w+\.designSystem)\.color\(\"([^\"]+)\"\)")
+
+    used_tokens: set[str] = set()
+    for qml_source in _qml_sources():
+        used_tokens.update(token_pattern.findall(qml_source.read_text(encoding="utf-8")))
+
+    assert used_tokens
+    assert used_tokens <= allowed_tokens
+    assert "success" not in used_tokens
+
+
+def test_visible_preview_lists_use_dark_scrollbar_sources() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    ai_decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
+    strategy_manager = (QML_SOURCE_ROOT / "views" / "StrategyManager.qml").read_text(
+        encoding="utf-8"
+    )
+
+    for source in (main_window, ai_decisions, strategy_manager):
+        assert "ScrollBar.vertical: ScrollBar" in source
+        assert 'designSystem.color("surfaceElevated")' in source
+        assert 'designSystem.color("border")' in source
+
+
+def test_operator_dashboard_uses_stable_contrast_tokens_for_visible_statuses() -> None:
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
+
+    assert 'accent: "accent"' in dashboard
+    assert 'designSystem.color("accent")' in dashboard
+    assert 'designSystem.color("success")' not in dashboard
+    assert 'designSystem.color("positive")' not in dashboard
+    assert "root.designSystem.color(modelData.accent)" not in dashboard
 
 
 def test_qml_operator_dashboard_is_default_selected_panel() -> None:

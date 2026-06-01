@@ -3,13 +3,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components" as Components
 
-ScrollView {
+Components.StyledScrollView {
     id: root
     objectName: "strategiesPreviewPanel"
     property var runtimeService
-    property var designSystem
-    contentWidth: availableWidth
-    clip: true
 
     property var demoStrategies: [
         ({ id: "btc-shadow-momentum", name: qsTr("BTC Shadow Momentum"), mode: "demo/offline", profile: "balanced", params: ({ max_position_usd: 2500, confidence_floor: 0.72, cooldown_sec: 90 }) }),
@@ -98,7 +95,7 @@ ScrollView {
                     Components.IconButton {
                         designSystem: root.designSystem
                         text: qsTr("Zapisz preview")
-                        iconName: "save"
+                        iconName: "copy"
                         onClicked: {
                             if (runtimeService && runtimeService.saveStrategyConfig) {
                                 const result = runtimeService.saveStrategyConfig(workingCopy.id, workingCopy)
