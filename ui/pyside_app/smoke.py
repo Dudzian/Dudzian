@@ -27,6 +27,11 @@ class UiSmokeResult:
     env_values_read: bool = False
     dot_env_read: bool = False
     production_runtime_loop_started: bool = False
+    operator_dashboard_present: bool = False
+    operator_dashboard_default: bool = False
+    operator_dashboard_visible: bool = False
+    active_panel_id: str = ""
+    central_content_empty: bool = True
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -65,10 +70,36 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         if qt_app is not None:
             qt_app.processEvents()
         qml_loaded = bool(engine.rootObjects())
+        operator_dashboard_present = False
+        operator_dashboard_visible = False
+        operator_dashboard_default = False
+        active_panel_id = ""
+        central_content_empty = True
+        if qml_loaded:
+            from PySide6.QtCore import QObject
+
+            root = engine.rootObjects()[0]
+            active_panel_id = str(root.property("currentPanelId") or "")
+            dashboard = root.findChild(QObject, "operatorDashboardRoot")
+            central_loader = root.findChild(QObject, "centralContentLoader")
+            operator_dashboard_present = dashboard is not None
+            operator_dashboard_default = active_panel_id in {"sidePanel", "operatorDashboard"}
+            if dashboard is not None:
+                operator_dashboard_visible = bool(dashboard.property("visible"))
+            if central_loader is not None:
+                loaded_item = central_loader.property("item")
+                central_content_empty = loaded_item is None
+            else:
+                central_content_empty = dashboard is None
         result = UiSmokeResult(
             status="ok" if qml_loaded else "error",
             ui_loaded=qml_loaded,
             qml_loaded=qml_loaded,
+            operator_dashboard_present=operator_dashboard_present,
+            operator_dashboard_default=operator_dashboard_default,
+            operator_dashboard_visible=operator_dashboard_visible,
+            active_panel_id=active_panel_id,
+            central_content_empty=central_content_empty,
             issues=[] if qml_loaded else issues or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)

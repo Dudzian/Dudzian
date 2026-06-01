@@ -21,14 +21,21 @@ ApplicationWindow {
     property string currentPanelId: defaultPanelId
 
     function showPanel(panelId) {
-        if (!panelId || !layoutController)
+        if (!panelId)
             return
         currentPanelId = panelId
-        layoutController.setPanelVisibility(panelId, true)
+        if (layoutController)
+            layoutController.setPanelVisibility(panelId, true)
     }
 
     function showOperatorDashboard() {
         showPanel(defaultPanelId)
+    }
+
+    function selectedPanelComponent() {
+        if (panelRegistry && panelRegistry[currentPanelId] && panelRegistry[currentPanelId].component)
+            return panelRegistry[currentPanelId].component
+        return sidePanelComponent
     }
 
     property var panelMetadata: [
@@ -219,7 +226,7 @@ ApplicationWindow {
                 text: qsTr("Tryby pracy")
                 iconName: "mode_wizard"
                 subtle: true
-                onClicked: modeWizardDialog.open()
+                onClicked: root.showPanel("modeWizardPanel")
             }
 
             Components.IconButton {
@@ -233,147 +240,44 @@ ApplicationWindow {
         }
     }
 
-    LayoutComponents.DockManager {
-        id: dockManager
+    Rectangle {
+        id: centralContentRoot
+        objectName: "centralContentRoot"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.top: parent.top
         anchors.margins: 16
+        radius: 28
+        color: Qt.rgba(0, 0, 0, 0.08)
+        border.color: designSystem.color("border")
+        border.width: 1
+
+        Loader {
+            id: centralContentLoader
+            objectName: "centralContentLoader"
+            anchors.fill: parent
+            anchors.margins: 0
+            active: true
+            sourceComponent: root.selectedPanelComponent()
+        }
+    }
+
+    LayoutComponents.DockManager {
+        id: dockManager
+        anchors.fill: centralContentRoot
         layoutController: layoutController
         panelRegistry: panelRegistry
         designSystem: designSystem
+        visible: false
     }
 
     Component {
         id: sidePanelComponent
-        ColumnLayout {
-            objectName: "operatorOverviewDashboard"
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 12
-
-            Label {
-                text: qsTr("Dashboard operatora")
-                font.bold: true
-                font.pointSize: 18
-                wrapMode: Text.WordWrap
-                color: designSystem.color("textPrimary")
-            }
-            Label {
-                text: qsTr("Tryb demo/offline — podłączony lokalny preview bridge. Live trading pozostaje wyłączony.")
-                wrapMode: Text.WordWrap
-                color: designSystem.color("textSecondary")
-            }
-
-            GridLayout {
-                Layout.fillWidth: true
-                columns: 2
-                columnSpacing: 12
-                rowSpacing: 8
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 132
-                    radius: 16
-                    color: designSystem.color("surfaceMuted")
-                    border.color: designSystem.color("border")
-                    border.width: 1
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 6
-                        Label { text: qsTr("Tryb: Demo / Paper"); font.bold: true; color: designSystem.color("textPrimary") }
-                        Label { text: qsTr("Endpoint: in-process"); color: designSystem.color("textSecondary") }
-                        Label { text: qsTr("Cloud runtime: wyłączony"); color: designSystem.color("warning") }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 132
-                    radius: 16
-                    color: designSystem.color("surfaceMuted")
-                    border.color: designSystem.color("border")
-                    border.width: 1
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 6
-                        Label { text: qsTr("Exchange I/O disabled"); font.bold: true; color: designSystem.color("warning") }
-                        Label { text: qsTr("Order submission disabled"); color: designSystem.color("warning") }
-                        Label { text: qsTr("Runtime loop not started"); color: designSystem.color("warning") }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 132
-                    radius: 16
-                    color: designSystem.color("surfaceMuted")
-                    border.color: designSystem.color("border")
-                    border.width: 1
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 6
-                        Label { text: qsTr("API keys required: false"); font.bold: true; color: designSystem.color("success") }
-                        Label { text: qsTr("Active strategy: Demo Momentum Guard"); color: designSystem.color("textSecondary") }
-                        Label { text: qsTr("Last decision: HOLD / NO ORDER"); color: designSystem.color("textPrimary") }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 132
-                    radius: 16
-                    color: designSystem.color("surfaceMuted")
-                    border.color: designSystem.color("border")
-                    border.width: 1
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 6
-                        Label { text: qsTr("Live trading: blocked / disabled"); font.bold: true; color: designSystem.color("warning") }
-                        Label { text: qsTr("Live disabled"); color: designSystem.color("warning") }
-                        Label { text: qsTr("Kill switch: armed / preview"); color: designSystem.color("success") }
-                    }
-                }
-            }
-
-            Label {
-                text: qsTr("Demo feed")
-                font.bold: true
-                color: designSystem.color("textPrimary")
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 6
-                Label { text: qsTr("BTC/USDT | HOLD | confidence 0.62 | no order"); color: designSystem.color("textPrimary") }
-                Label { text: qsTr("ETH/USDT | WAIT | confidence 0.55 | no order"); color: designSystem.color("textPrimary") }
-                Label { text: qsTr("SOL/USDT | BLOCKED LIVE | reason: demo mode"); color: designSystem.color("warning") }
-            }
-
-            Rectangle { height: 1; Layout.fillWidth: true; color: designSystem.color("border"); opacity: 0.3 }
-            Label {
-                text: qsTr("Kontrola ryzyka")
-                font.bold: true
-                color: designSystem.color("textPrimary")
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 6
-                Label { text: qsTr("Live disabled"); color: designSystem.color("warning") }
-                Label { text: qsTr("Max drawdown guard: demo only"); color: designSystem.color("textSecondary") }
-                Label { text: qsTr("Kill switch: armed / preview"); color: designSystem.color("success") }
-            }
-            Label {
-                text: licensingController.licenseAccepted
-                      ? qsTr("Licencja aktywna: %1").arg(licensingController.licenseId || "-")
-                      : qsTr("Licencja nieaktywna — preview nie wymaga sekretów")
-                wrapMode: Text.WordWrap
-                color: designSystem.color("textSecondary")
-            }
+        Views.OperatorDashboard {
+            width: parent ? parent.width : implicitWidth
+            height: parent ? parent.height : implicitHeight
+            designSystem: designSystem
         }
     }
 
