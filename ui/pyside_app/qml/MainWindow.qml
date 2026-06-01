@@ -21,6 +21,143 @@ ApplicationWindow {
     property string currentPanelId: defaultPanelId
     readonly property var rootDesignSystem: designSystem
 
+    // UI-PREVIEW-7.2 local-only final product preview state. No backend, no exchange I/O, no order submission.
+    property var selectedExchanges: ["Demo Exchange"]
+    property var selectedPairs: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    property var whitelistPairs: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    property var blacklistPairs: []
+    property var activeStrategies: ["Momentum Guard", "Range Guard"]
+    property string paperSessionState: "stopped"
+    property int paperTicks: 0
+    property real mockEquity: 100000.0
+    property real mockPnl: 0.0
+    property var paperOrdersPreview: [
+        ({ timestamp: "12:00:00Z", pair: "BTC/USDT", side: "HOLD", size: "0", price: "preview", status: "no order", reason: "simulated preview only • no real order • order submission disabled" })
+    ]
+    property var openPaperPositions: [
+        ({ pair: "BTC/USDT", side: "paper long", size: "0.012", pnl: "+42.10", label: "simulated preview only" }),
+        ({ pair: "SOL/USDT", side: "watch", size: "0", pnl: "0.00", label: "no real order" })
+    ]
+    property var closedPaperTrades: [
+        ({ pair: "ETH/USDT", side: "paper sell", pnl: "+18.44", label: "order submission disabled" })
+    ]
+    property string lastGovernorDecision: "BTC/USDT HOLD • confidence 0.81 • NO ORDER — preview only"
+    property string autonomyMode: "Supervised dry-run"
+    property int autonomyLevel: 2
+    property int modelReadiness: 72
+    property int trainingCoverage: 68
+    property int dataCoverage: 74
+    property int confidenceThreshold: 75
+    property string decisionPolicyPreview: "balanced"
+    property bool riskLocked: true
+    property string riskProfile: "Balanced"
+    property string riskState: "guarded preview • kill-switch armed • live blocked"
+    property bool liveTradingDisabled: true
+    property bool exchangeIoDisabled: true
+    property bool orderSubmissionDisabled: true
+    property bool apiKeysRequired: false
+    property bool runtimeLoopStarted: false
+    property bool marketsImported: false
+    property string marketFilter: "All"
+    property string marketSearch: ""
+    property var previewMarketPairs: [
+        "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "ADA/USDT",
+        "DOGE/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT", "LTC/USDT", "BCH/USDT",
+        "ATOM/USDT", "NEAR/USDT", "ARB/USDT", "OP/USDT", "INJ/USDT", "APT/USDT",
+        "SUI/USDT", "TON/USDT", "PEPE/USDT", "WIF/USDT", "FET/USDT", "RENDER/USDT",
+        "TAO/USDT", "UNI/USDT", "AAVE/USDT", "ETC/USDT", "FIL/USDT", "ICP/USDT"
+    ]
+    property var previewExchanges: [
+        "Binance", "Bybit", "OKX", "KuCoin", "Coinbase", "Kraken", "Bitget", "Gate.io", "MEXC", "Demo Exchange"
+    ]
+    property var decisionPreviewRows: [
+        ({ timestamp: "12:04:18Z", symbol: "BTC/USDT", action: "HOLD", confidence: "0.81", reason: "Momentum neutralny; trend nie pokonał confidence floor.", riskReason: "Max drawdown guard within preview limit; position cap not used.", strategy: "Momentum Guard", safety: "NO ORDER — preview only", paperState: "stopped" }),
+        ({ timestamp: "12:03:42Z", symbol: "ETH/USDT", action: "WAIT", confidence: "0.74", reason: "Training coverage preview wskazuje brak przewagi po kosztach.", riskReason: "Risk governor waits for lower slippage and fresh telemetry.", strategy: "Range Guard", safety: "Exchange I/O disabled", paperState: "stopped" }),
+        ({ timestamp: "12:02:57Z", symbol: "SOL/USDT", action: "BLOCKED LIVE", confidence: "0.69", reason: "Volatility breakout requires live guard, which is intentionally disabled.", riskReason: "Execution guard blocks order route; risk kill-switch armed.", strategy: "Volatility Breakout Preview", safety: "Live trading disabled • Order submission disabled", paperState: "stopped" }),
+        ({ timestamp: "12:01:33Z", symbol: "BNB/USDT", action: "NO ORDER", confidence: "0.61", reason: "Advisory preview rejected low confidence setup.", riskReason: "Below model readiness confidence floor.", strategy: "Strategy governor", safety: "Preview only / no order", paperState: "stopped" })
+    ]
+    property string telemetryHeartbeat: "12:04:18Z"
+    property int telemetryReconnects: 0
+    property string telemetryDowntime: "0 ms"
+    property string telemetryFreshness: "mock/local preview"
+    property var telemetryRows: [
+        ({ timestamp: "12:04:18Z", message: "BTC/USDT heartbeat OK • runtime loop not started" }),
+        ({ timestamp: "12:03:58Z", message: "Exchange/order disabled • local telemetry preview" })
+    ]
+    property string diagnosticsBundleStatus: "Nie wygenerowano jeszcze paczki"
+
+    function hasValue(list, value) {
+        return list && list.indexOf(value) >= 0
+    }
+
+    function toggledList(list, value) {
+        var copy = list ? list.slice() : []
+        var idx = copy.indexOf(value)
+        if (idx >= 0) copy.splice(idx, 1); else copy.push(value)
+        return copy
+    }
+
+    function toggleExchange(exchange) { selectedExchanges = toggledList(selectedExchanges, exchange) }
+    function togglePair(pair) { selectedPairs = toggledList(selectedPairs, pair); whitelistPairs = selectedPairs.slice() }
+    function toggleBlacklist(pair) { blacklistPairs = toggledList(blacklistPairs, pair) }
+    function importMarketsPreview() { marketsImported = true }
+    function selectAllPairs() { marketsImported = true; selectedPairs = previewMarketPairs.slice(); whitelistPairs = selectedPairs.slice() }
+    function clearSelectedPairs() { selectedPairs = []; whitelistPairs = [] }
+    function setAutonomyMode(mode) { autonomyMode = mode; autonomyLevel = mode === "Advisory" ? 1 : (mode === "Supervised dry-run" ? 2 : (mode === "Autonomous paper" ? 4 : 0)) }
+    function setDecisionPolicy(policy) { decisionPolicyPreview = policy }
+    function setRiskProfile(profile) { riskProfile = profile; riskState = profile + " preview • daily loss limit active • live blocked"; riskLocked = true }
+    function setStrategyActive(name, enabled) {
+        var active = activeStrategies.slice()
+        var idx = active.indexOf(name)
+        if (enabled && idx < 0) active.push(name)
+        if (!enabled && idx >= 0) active.splice(idx, 1)
+        activeStrategies = active
+    }
+    function previewTime() {
+        var seconds = (paperTicks % 50) + 10
+        return "12:05:" + (seconds < 10 ? "0" + seconds : seconds) + "Z"
+    }
+    function addDecision(action, reason) {
+        var pair = selectedPairs.length > 0 ? selectedPairs[paperTicks % selectedPairs.length] : "BTC/USDT"
+        var strategy = activeStrategies.length > 0 ? activeStrategies[paperTicks % activeStrategies.length] : "Strategy governor"
+        var confidence = (0.62 + ((paperTicks % 8) * 0.035)).toFixed(2)
+        var row = ({ timestamp: previewTime(), symbol: pair, action: action, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Live trading disabled • Exchange I/O disabled • Order submission disabled", paperState: paperSessionState })
+        var rows = decisionPreviewRows.slice()
+        rows.unshift(row)
+        decisionPreviewRows = rows.slice(0, 12)
+        lastGovernorDecision = pair + " " + action + " • confidence " + confidence + " • " + reason
+    }
+    function generateGovernorRecommendation() { addDecision("WAIT", "Governor recommendation generated locally; no backend, no live, no exchange I/O.") }
+    function generateNextDecision() { addDecision((paperTicks % 3) === 0 ? "PAPER BUY" : ((paperTicks % 3) === 1 ? "NO ORDER" : "HOLD"), "Generated next decision from local preview state.") }
+    function generatePaperTick() {
+        paperTicks += 1
+        paperSessionState = paperSessionState === "stopped" ? "running" : paperSessionState
+        var pair = selectedPairs.length > 0 ? selectedPairs[paperTicks % selectedPairs.length] : "BTC/USDT"
+        var side = (paperTicks % 2) === 0 ? "PAPER BUY" : "PAPER SELL"
+        var status = (paperTicks % 4) === 0 ? "blocked" : ((paperTicks % 5) === 0 ? "no order" : "simulated")
+        var price = (30000 + paperTicks * 137).toFixed(2)
+        mockPnl = Number((mockPnl + (paperTicks % 2 === 0 ? 24.5 : -8.75)).toFixed(2))
+        mockEquity = Number((100000 + mockPnl).toFixed(2))
+        var order = ({ timestamp: previewTime(), pair: pair, side: side, size: "0.01", price: price, status: status, reason: "simulated preview only • no real order • order submission disabled" })
+        var orders = paperOrdersPreview.slice()
+        orders.unshift(order)
+        paperOrdersPreview = orders.slice(0, 10)
+        addDecision(status === "simulated" ? side : (status === "blocked" ? "BLOCKED LIVE" : "NO ORDER"), order.reason)
+    }
+    function runTenMockTicks() { for (var i = 0; i < 10; ++i) generatePaperTick() }
+    function startPaperPreview() { paperSessionState = "running"; generatePaperTick() }
+    function pausePaperPreview() { paperSessionState = "paused" }
+    function stopPaperPreview() { paperSessionState = "stopped" }
+    function resetPaperPreview() { paperSessionState = "stopped"; paperTicks = 0; mockEquity = 100000.0; mockPnl = 0.0; paperOrdersPreview = []; addDecision("NO ORDER", "Paper preview reset; no real order.") }
+    function pingTelemetryFeed() {
+        telemetryHeartbeat = previewTime()
+        telemetryFreshness = "mock/local preview refreshed"
+        var rows = telemetryRows.slice()
+        rows.unshift(({ timestamp: telemetryHeartbeat, message: "Ping feed updated local preview heartbeat • runtime loop not started • exchange/order disabled" }))
+        telemetryRows = rows.slice(0, 8)
+    }
+    function generateDiagnosticBundle() { diagnosticsBundleStatus = "Last bundle path/status: var/tmp/preview-diagnostic-bundle-mock.zip • generated local UI status only • secrets/.env/keychain/real env values excluded" }
+
     function showPanel(panelId) {
         if (!panelId)
             return
@@ -287,6 +424,7 @@ ApplicationWindow {
     Component {
         id: sidePanelComponent
         Views.OperatorDashboard {
+            previewState: root
             width: parent ? parent.width : implicitWidth
             height: parent ? parent.height : implicitHeight
             designSystem: rootDesignSystem
@@ -296,6 +434,7 @@ ApplicationWindow {
     Component {
         id: aiCenterPanelComponent
         Views.AiControlCenter {
+            previewState: root
             width: parent ? parent.width : implicitWidth
             height: parent ? parent.height : implicitHeight
             designSystem: rootDesignSystem
@@ -305,6 +444,7 @@ ApplicationWindow {
     Component {
         id: tradingUniversePanelComponent
         Views.TradingUniverse {
+            previewState: root
             width: parent ? parent.width : implicitWidth
             height: parent ? parent.height : implicitHeight
             designSystem: rootDesignSystem
@@ -320,52 +460,35 @@ ApplicationWindow {
             clip: true
             ColumnLayout {
                 width: parent.availableWidth
-                spacing: 16
-                ColumnLayout {
+                spacing: 14
+                Label {
+                    objectName: "telemetryFeedPreviewTitle"
+                    text: qsTr("Telemetria")
+                    font.bold: true
+                    font.pixelSize: 22
+                    color: designSystem.color("textPrimary")
                     Layout.fillWidth: true
-                    spacing: 6
-                    Label {
-                        objectName: "telemetryFeedPreviewTitle"
-                        text: qsTr("Telemetria")
-                        font.bold: true
-                        font.pixelSize: 22
-                        color: designSystem.color("textPrimary")
-                    }
-                    Label {
-                        text: qsTr("Pełnoprawna Telemetria preview: feed status, reconnects, downtime, last heartbeat, data freshness. Runtime loop not started, Exchange I/O disabled, Order submission disabled.")
-                        wrapMode: Text.WordWrap
-                        color: designSystem.color("textSecondary")
-                        Layout.fillWidth: true
-                    }
                 }
-                RowLayout {
+                Label {
+                    text: qsTr("Dynamiczny mock preview: Feed status, Reconnects, Downtime, Last heartbeat, Data freshness. Runtime loop not started, exchange/order disabled.")
+                    wrapMode: Text.WordWrap
+                    color: designSystem.color("textSecondary")
                     Layout.fillWidth: true
-                    spacing: 12
-                    Components.PreviewCard {
-                        designSystem: rootDesignSystem
-                        title: qsTr("Feed status")
-                        description: qsTr("Stan: %1").arg(contextRuntimeState ? contextRuntimeState.feedHealth.status || qsTr("inicjalizacja") : qsTr("inicjalizacja"))
-                        Layout.fillWidth: true
-                    }
-                    Components.PreviewCard {
-                        designSystem: rootDesignSystem
-                        title: qsTr("Reconnects / Downtime")
-                        description: qsTr("Reconnects: %1 • Downtime: %2 ms")
-                              .arg(contextRuntimeState ? contextRuntimeState.feedHealth.reconnects || 0 : 0)
-                              .arg(Math.round(contextRuntimeState ? contextRuntimeState.feedHealth.downtimeMs || 0 : 0))
-                        Layout.fillWidth: true
-                    }
-                    Components.PreviewCard {
-                        designSystem: rootDesignSystem
-                        title: qsTr("Last heartbeat / Data freshness")
-                        description: qsTr("Last heartbeat: 12:04:18Z • Data freshness: mock/local preview • last error: %1").arg(contextRuntimeState ? contextRuntimeState.feedHealth.lastError || qsTr("brak") : qsTr("brak"))
-                        Layout.fillWidth: true
-                    }
+                }
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: width > 900 ? 4 : 2
+                    rowSpacing: 10
+                    columnSpacing: 10
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Feed status"); description: qsTr("mock/local preview feed • runtime loop not started"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Reconnects"); description: String(root.telemetryReconnects); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Downtime"); description: root.telemetryDowntime; Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Last heartbeat / Data freshness"); description: qsTr("Last heartbeat: %1 • Data freshness: %2").arg(root.telemetryHeartbeat).arg(root.telemetryFreshness); Layout.fillWidth: true }
                 }
                 Components.PreviewCard {
                     designSystem: rootDesignSystem
                     title: qsTr("Mock local preview rows")
-                    description: qsTr("Last heartbeat 12:04:18Z • Data freshness: mock/local preview • BTC/USDT heartbeat OK • ETH/USDT stale guard OK • SOL/USDT telemetry preview")
+                    description: qsTr("Ping feed aktualizuje local preview heartbeat text i dodaje lokalny wiersz telemetryczny.")
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
@@ -373,17 +496,37 @@ ApplicationWindow {
                             designSystem: rootDesignSystem
                             text: qsTr("Ping feed")
                             iconName: "refresh"
-                            subtle: true
-                            onClicked: runtimeService && runtimeService.loadRecentDecisions(0)
+                            backgroundColor: designSystem.color("accent")
+                            foregroundColor: designSystem.color("surface")
+                            onClicked: root.pingTelemetryFeed()
                         }
                         Label {
-                            text: qsTr("Mock local preview rows only. Runtime loop not started, exchange/order disabled.")
+                            text: qsTr("Last heartbeat: %1 • runtime loop not started • exchange/order disabled").arg(root.telemetryHeartbeat)
                             color: designSystem.color("textSecondary")
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
                     }
+                    Repeater {
+                        model: root.telemetryRows
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            implicitHeight: telemetryRow.implicitHeight + 16
+                            radius: 12
+                            color: designSystem.color("surfaceMuted")
+                            border.color: designSystem.color("border")
+                            ColumnLayout {
+                                id: telemetryRow
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                Label { text: modelData.timestamp; color: designSystem.color("textPrimary"); font.bold: true }
+                                Label { text: modelData.message; color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            }
+                        }
+                    }
                 }
+                Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Safety status"); description: qsTr("Runtime loop not started • Exchange I/O disabled • Order submission disabled • API keys not required") }
             }
         }
     }
@@ -391,6 +534,7 @@ ApplicationWindow {
     Component {
         id: aiDecisionsPanelComponent
         Views.AiDecisionsView {
+            previewState: root
             Layout.fillWidth: true
             Layout.fillHeight: true
             runtimeService: runtimeService
@@ -599,6 +743,7 @@ ApplicationWindow {
     Component {
         id: strategiesPanelComponent
         Views.Strategies {
+            previewState: root
             Layout.fillWidth: true
             Layout.fillHeight: true
             runtimeService: runtimeService
@@ -609,6 +754,7 @@ ApplicationWindow {
     Component {
         id: riskControlsPanelComponent
         Views.RiskControls {
+            previewState: root
             Layout.fillWidth: true
             Layout.fillHeight: true
             runtimeService: runtimeService
@@ -650,50 +796,53 @@ ApplicationWindow {
             clip: true
             ColumnLayout {
                 width: parent.availableWidth
-                spacing: 16
+                spacing: 14
                 Label {
                     objectName: "diagnosticsPreviewTitle"
                     text: qsTr("Diagnostyka")
                     font.bold: true
                     font.pixelSize: 22
                     color: designSystem.color("textPrimary")
+                    Layout.fillWidth: true
                 }
                 Label {
-                    text: qsTr("Final diagnostics preview: status paczki diagnostycznej, zakres, safety, ostatnia paczka i generowanie lokalne. No secrets / no .env / no keychain. Local preview only.")
+                    text: qsTr("Lokalny mock status diagnostyki. Generate diagnostic bundle ustawia tylko local UI status text; nie czyta secrets, .env, keychain ani real env values.")
                     color: designSystem.color("textSecondary")
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
-                    spacing: 12
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Status"); description: diagnosticsController && diagnosticsController.busy ? qsTr("Generuję paczkę diagnostyczną…") : qsTr("Gotowe — paczka może zostać wygenerowana lokalnie"); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Zakres") ; description: qsTr("UI logs, preview config, telemetry snapshot, governor state — no secrets / no .env / no keychain"); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Safety") ; description: qsTr("API keys not required, Exchange I/O disabled, Order submission disabled, Runtime loop not started, Preview only"); Layout.fillWidth: true }
+                    columns: width > 900 ? 3 : 1
+                    rowSpacing: 10
+                    columnSpacing: 10
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Last bundle path/status"); description: root.diagnosticsBundleStatus; Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Included") ; description: qsTr("UI logs • preview config • telemetry snapshot • governor state"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Excluded") ; description: qsTr("secrets • .env • keychain • real env values"); Layout.fillWidth: true }
                 }
                 Components.PreviewCard {
                     designSystem: rootDesignSystem
-                    title: qsTr("Ostatnia paczka i akcje diagnostyczne")
-                    description: qsTr("Generuj paczkę lokalnie w safe preview. Local preview only, bez sekretów i bez runtime loop.")
+                    title: qsTr("Generate diagnostic bundle")
+                    description: qsTr("Generate diagnostic bundle tworzy wyłącznie local UI status w tym preview. No secrets / no .env / no keychain. Local preview only.")
                     RowLayout {
                         Layout.fillWidth: true
                         Components.IconButton {
                             designSystem: rootDesignSystem
                             iconName: "diagnostics"
-                            text: diagnosticsController && diagnosticsController.busy ? qsTr("Generuję…") : qsTr("Generuj paczkę")
-                            enabled: !diagnosticsController || !diagnosticsController.busy
+                            text: qsTr("Generate diagnostic bundle")
                             backgroundColor: designSystem.color("accent")
                             foregroundColor: designSystem.color("surface")
-                            onClicked: diagnosticsController && diagnosticsController.generateDiagnostics()
+                            onClicked: root.generateDiagnosticBundle()
                         }
                         Label {
-                            text: diagnosticsController && diagnosticsController.lastArchivePath && diagnosticsController.lastArchivePath.length > 0 ? qsTr("Ostatnia paczka: %1").arg(diagnosticsController.lastArchivePath) : qsTr("Last diagnostic bundle path: mock/local preview path unavailable in this session")
+                            text: root.diagnosticsBundleStatus
                             color: designSystem.color("textSecondary")
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                         }
                     }
                 }
+                Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Safety") ; description: qsTr("Live trading disabled • Exchange I/O disabled • Order submission disabled • API keys not required • Runtime loop not started") }
             }
         }
     }
