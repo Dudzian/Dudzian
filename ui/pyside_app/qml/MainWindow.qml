@@ -17,6 +17,19 @@ ApplicationWindow {
     property var contextGrpcBridge: (typeof grpcBridge !== "undefined" ? grpcBridge : null)
     property var runtimeService: contextGrpcBridge && contextGrpcBridge.runtimeService ? contextGrpcBridge.runtimeService : null
     property var contextRuntimeState: (typeof runtimeState !== "undefined" ? runtimeState : null)
+    property string defaultPanelId: "sidePanel"
+    property string currentPanelId: defaultPanelId
+
+    function showPanel(panelId) {
+        if (!panelId || !layoutController)
+            return
+        currentPanelId = panelId
+        layoutController.setPanelVisibility(panelId, true)
+    }
+
+    function showOperatorDashboard() {
+        showPanel(defaultPanelId)
+    }
 
     property var panelMetadata: [
         ({ panelId: "sidePanel", title: qsTr("Dashboard operatora"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
@@ -112,10 +125,15 @@ ApplicationWindow {
                 readonly property var entry: modelData
                 text: entry && entry.title ? entry.title : entry.panelId
                 checkable: true
-                checked: entry && entry.visible !== false
+                checked: entry && entry.panelId === root.defaultPanelId ? true : entry && entry.visible !== false
                 onTriggered: {
                     if (layoutController && entry) {
+                        if (entry.panelId === root.defaultPanelId) {
+                            root.showOperatorDashboard()
+                            return
+                        }
                         var currentVisible = layoutController.isPanelVisible(entry.panelId)
+                        root.currentPanelId = entry.panelId
                         layoutController.setPanelVisibility(entry.panelId, !currentVisible)
                     }
                 }
@@ -192,8 +210,7 @@ ApplicationWindow {
                 iconName: "strategy_manager"
                 subtle: true
                 onClicked: {
-                    if (layoutController)
-                        layoutController.setPanelVisibility("strategyManagerPanel", true)
+                    root.showPanel("strategyManagerPanel")
                 }
             }
 
@@ -232,82 +249,129 @@ ApplicationWindow {
         id: sidePanelComponent
         ColumnLayout {
             objectName: "operatorOverviewDashboard"
-            spacing: 10
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 12
 
             Label {
-                text: qsTr("Demo preview / Paper mode")
+                text: qsTr("Dashboard operatora")
                 font.bold: true
-                font.pointSize: 16
+                font.pointSize: 18
                 wrapMode: Text.WordWrap
                 color: designSystem.color("textPrimary")
             }
             Label {
-                text: qsTr("Podłączony lokalny preview bridge — brak danych live, tryb demo/offline.")
+                text: qsTr("Tryb demo/offline — podłączony lokalny preview bridge. Live trading pozostaje wyłączony.")
                 wrapMode: Text.WordWrap
                 color: designSystem.color("textSecondary")
             }
+
             GridLayout {
                 Layout.fillWidth: true
                 columns: 2
-                columnSpacing: 10
-                rowSpacing: 6
-                Label { text: qsTr("Endpoint"); color: designSystem.color("textSecondary") }
-                Label { text: qsTr("in-process"); font.bold: true; color: designSystem.color("textPrimary") }
-                Label { text: qsTr("Cloud runtime"); color: designSystem.color("textSecondary") }
-                Label { text: qsTr("disabled"); font.bold: true; color: designSystem.color("warning") }
-                Label { text: qsTr("Exchange I/O"); color: designSystem.color("textSecondary") }
-                Label { text: qsTr("disabled"); font.bold: true; color: designSystem.color("warning") }
-                Label { text: qsTr("Order submission"); color: designSystem.color("textSecondary") }
-                Label { text: qsTr("disabled"); font.bold: true; color: designSystem.color("warning") }
-                Label { text: qsTr("Runtime loop"); color: designSystem.color("textSecondary") }
-                Label { text: qsTr("not started"); font.bold: true; color: designSystem.color("warning") }
-                Label { text: qsTr("API keys required"); color: designSystem.color("textSecondary") }
-                Label { text: qsTr("false"); font.bold: true; color: designSystem.color("success") }
+                columnSpacing: 12
+                rowSpacing: 8
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 132
+                    radius: 16
+                    color: designSystem.color("surfaceMuted")
+                    border.color: designSystem.color("border")
+                    border.width: 1
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 6
+                        Label { text: qsTr("Tryb: Demo / Paper"); font.bold: true; color: designSystem.color("textPrimary") }
+                        Label { text: qsTr("Endpoint: in-process"); color: designSystem.color("textSecondary") }
+                        Label { text: qsTr("Cloud runtime: wyłączony"); color: designSystem.color("warning") }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 132
+                    radius: 16
+                    color: designSystem.color("surfaceMuted")
+                    border.color: designSystem.color("border")
+                    border.width: 1
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 6
+                        Label { text: qsTr("Exchange I/O disabled"); font.bold: true; color: designSystem.color("warning") }
+                        Label { text: qsTr("Order submission disabled"); color: designSystem.color("warning") }
+                        Label { text: qsTr("Runtime loop not started"); color: designSystem.color("warning") }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 132
+                    radius: 16
+                    color: designSystem.color("surfaceMuted")
+                    border.color: designSystem.color("border")
+                    border.width: 1
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 6
+                        Label { text: qsTr("API keys required: false"); font.bold: true; color: designSystem.color("success") }
+                        Label { text: qsTr("Active strategy: Demo Momentum Guard"); color: designSystem.color("textSecondary") }
+                        Label { text: qsTr("Last decision: HOLD / NO ORDER"); color: designSystem.color("textPrimary") }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 132
+                    radius: 16
+                    color: designSystem.color("surfaceMuted")
+                    border.color: designSystem.color("border")
+                    border.width: 1
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 6
+                        Label { text: qsTr("Live trading: blocked / disabled"); font.bold: true; color: designSystem.color("warning") }
+                        Label { text: qsTr("Live disabled"); color: designSystem.color("warning") }
+                        Label { text: qsTr("Kill switch: armed / preview"); color: designSystem.color("success") }
+                    }
+                }
             }
-            Rectangle { height: 1; width: parent.width; color: designSystem.color("border"); opacity: 0.3 }
+
             Label {
-                text: qsTr("Aktywna strategia: Demo Momentum Guard")
+                text: qsTr("Demo feed")
                 font.bold: true
                 color: designSystem.color("textPrimary")
             }
-            Label {
-                text: qsTr("Symbole demo labels only: BTC/USDT, ETH/USDT")
-                wrapMode: Text.WordWrap
-                color: designSystem.color("textSecondary")
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                Label { text: qsTr("BTC/USDT | HOLD | confidence 0.62 | no order"); color: designSystem.color("textPrimary") }
+                Label { text: qsTr("ETH/USDT | WAIT | confidence 0.55 | no order"); color: designSystem.color("textPrimary") }
+                Label { text: qsTr("SOL/USDT | BLOCKED LIVE | reason: demo mode"); color: designSystem.color("warning") }
             }
+
+            Rectangle { height: 1; Layout.fillWidth: true; color: designSystem.color("border"); opacity: 0.3 }
             Label {
-                text: qsTr("Ostatnia decyzja: HOLD / NO ORDER / BLOCKED LIVE")
-                wrapMode: Text.WordWrap
+                text: qsTr("Kontrola ryzyka")
+                font.bold: true
                 color: designSystem.color("textPrimary")
             }
-            Label {
-                text: qsTr("Ryzyko: OK — live disabled; max drawdown guard inactive in demo")
-                wrapMode: Text.WordWrap
-                color: designSystem.color("success")
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                Label { text: qsTr("Live disabled"); color: designSystem.color("warning") }
+                Label { text: qsTr("Max drawdown guard: demo only"); color: designSystem.color("textSecondary") }
+                Label { text: qsTr("Kill switch: armed / preview"); color: designSystem.color("success") }
             }
-            Label {
-                text: qsTr("Feed mock: BTC/USDT heartbeat OK • ETH/USDT stale guard OK")
-                wrapMode: Text.WordWrap
-                color: designSystem.color("textSecondary")
-            }
-            Rectangle { height: 1; width: parent.width; color: designSystem.color("border"); opacity: 0.3 }
             Label {
                 text: licensingController.licenseAccepted
                       ? qsTr("Licencja aktywna: %1").arg(licensingController.licenseId || "-")
                       : qsTr("Licencja nieaktywna — preview nie wymaga sekretów")
-                font.bold: true
                 wrapMode: Text.WordWrap
-                color: designSystem.color("textPrimary")
-            }
-            Label {
-                text: licensingController.statusDetails.length > 0
-                      ? licensingController.statusDetails
-                      : qsTr("Brak danych live — tryb demo/offline. Order execution disabled.")
-                wrapMode: Text.WordWrap
-                color: designSystem.color("textSecondary")
-            }
-            Label {
-                text: qsTr("Profil UI: %1").arg(uiConfig && uiConfig.profile ? uiConfig.profile : "default")
                 color: designSystem.color("textSecondary")
             }
         }
@@ -693,8 +757,10 @@ ApplicationWindow {
             runtimeService.loadRecentDecisions(uiConfig ? uiConfig.decision_limit : 25)
         if (licensingController && licensingController.refreshFingerprint)
             licensingController.refreshFingerprint()
-        if (layoutController && layoutController.registerPanels)
+        if (layoutController && layoutController.registerPanels) {
             layoutController.registerPanels(panelMetadata)
+            showOperatorDashboard()
+        }
     }
 
     Timer {

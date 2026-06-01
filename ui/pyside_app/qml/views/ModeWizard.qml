@@ -179,7 +179,7 @@ Item {
                     text: recommendationSummary && recommendationSummary.recommendations
                           && recommendationSummary.recommendations.summary
                           ? recommendationSummary.recommendations.summary
-                          : qsTr("Aktywuj kreator, aby governor zaproponował profil.")
+                          : qsTr("Tryb demo/offline — profile cloud niedostępne. Live trading pozostaje wyłączony.")
                     color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
                     wrapMode: Text.WordWrap
                 }
@@ -215,7 +215,7 @@ Item {
                 Label {
                     text: aiProfiles && Object.keys(aiProfiles).length > 0
                           ? qsTr("Dostępne profile cloud: %1").arg(Object.keys(aiProfiles).join(", "))
-                          : qsTr("Brak danych o profilach cloud")
+                          : qsTr("Brak danych o profilach cloud — tryb demo/offline. Live trading pozostaje wyłączony.")
                     color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
                     wrapMode: Text.WordWrap
                 }
@@ -493,14 +493,14 @@ Item {
                             : null
 
                     Label {
-                        text: wizardPanel.currentStep ? wizardPanel.currentStep.title : qsTr("Brak kroków do wyświetlenia")
+                        text: wizardPanel.currentStep ? wizardPanel.currentStep.title : qsTr("Tryb demo/offline — brak kroków cloud do wyświetlenia")
                         font.pixelSize: 18
                         font.bold: true
                         color: dsColor("textPrimary", "#ffffff")
                     }
 
                     Label {
-                        text: wizardPanel.currentStep ? wizardPanel.currentStep.description : qsTr("Wybierz tryb, aby zobaczyć kroki kreatora.")
+                        text: wizardPanel.currentStep ? wizardPanel.currentStep.description : qsTr("Tryb demo/offline — profile cloud niedostępne. Live trading pozostaje wyłączony.")
                         color: dsColor("textSecondary", "#d0d4e0")
                         wrapMode: Text.WordWrap
                     }
@@ -578,7 +578,7 @@ Item {
             visible: compact
             spacing: 8
             Label {
-                text: qsTr("Otwórz kreator, aby spersonalizować tryb pracy.")
+                text: qsTr("Tryb demo/offline — profile cloud niedostępne. Live trading pozostaje wyłączony. Otwórz kreator tylko do lokalnego preview.")
                 color: dsColor("textSecondary", "#d0d4e0")
                 wrapMode: Text.WordWrap
             }
