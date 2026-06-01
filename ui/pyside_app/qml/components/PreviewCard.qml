@@ -25,14 +25,26 @@ Rectangle {
         anchors.margins: card.cardPadding
         spacing: 8
 
-        Label {
+        RowLayout {
             visible: card.title.length > 0
-            text: card.title
-            font.bold: true
-            font.pixelSize: 16
-            color: card.designSystem ? card.designSystem.color("textPrimary") : "#f5f7ff"
-            wrapMode: Text.WordWrap
             Layout.fillWidth: true
+            spacing: 8
+            Rectangle {
+                objectName: "previewCardTitleAccentBar"
+                width: 3
+                height: Math.max(18, cardTitle.implicitHeight)
+                radius: 2
+                color: card.designSystem ? card.designSystem.color("accent") : "#55c7ff"
+            }
+            Label {
+                id: cardTitle
+                text: card.title
+                font.bold: true
+                font.pixelSize: 16
+                color: card.designSystem ? card.designSystem.color("textPrimary") : "#f5f7ff"
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
         }
 
         Label {

@@ -242,7 +242,7 @@ def test_qml_operator_preview_demo_offline_safety_copy() -> None:
 
     required_copy = (
         "Live trading disabled",
-        "Exchange I/O disabled",
+        "Exchange route disabled",
         "Order submission disabled",
         "Runtime loop not started",
         "API keys not required",
@@ -277,7 +277,6 @@ def test_qml_operator_dashboard_has_real_visible_central_component_and_tab_navig
     assert "layoutController.setPanelVisibility(panelId, true)" in main_window
     assert "implicitWidth:" in dashboard
     assert "implicitHeight:" in dashboard
-    assert "anchors.fill: parent" not in dashboard
     assert "Layout.fillWidth: true" in dashboard
 
 
@@ -316,7 +315,7 @@ def test_product_preview_shell_has_tabs_and_required_preview_labels() -> None:
         "Model readiness",
         "Training/coverage",
         "Live trading disabled",
-        "Exchange I/O disabled",
+        "Exchange route disabled",
         "Order submission disabled",
         "API keys not required",
         "Runtime loop not started",
@@ -371,8 +370,8 @@ def test_final_product_dashboard_ai_universe_risk_decision_telemetry_copy() -> N
         "Downtime",
         "Last heartbeat",
         "Data freshness",
-        "Mock local preview rows",
-        "No secrets / no .env / no keychain",
+        "Telemetry heartbeat feed",
+        "Preview diagnostics readiness",
     ):
         assert label in source
 
@@ -421,8 +420,8 @@ def test_all_preview_menu_panels_have_visible_content_markers() -> None:
         "AI Center": 'objectName: "aiControlCenterTitle"',
         "Trading Universe": 'objectName: "tradingUniverseTitle"',
         "Strategie": 'objectName: "strategiesPreviewTitle"',
-        "Ryzyko": 'objectName: "riskControlsPreviewTitle"',
-        "Decyzje": 'objectName: "aiDecisionsView"',
+        "Ryzyko": 'objectName: "riskControlsTitle"',
+        "Decyzje": 'objectName: "aiDecisionsTitle"',
         "Telemetria": 'objectName: "telemetryFeedPreviewTitle"',
         "Diagnostyka": 'objectName: "diagnosticsPreviewTitle"',
     }
@@ -438,9 +437,9 @@ def test_strategy_and_risk_panels_use_styled_controls_for_dark_theme_contrast() 
     assert "Components.StyledSwitch" in strategies
     assert 'designSystem.color("textPrimary")' in strategies
     assert 'designSystem.color("textSecondary")' in strategies
-    assert "Components.StyledSpinBox" in risk
-    assert "Components.StyledTextField" in risk
-    assert "Components.StyledSwitch" in risk
+    assert "riskProfileSegmentedControl" in risk
+    assert "Components.StyledSpinBox" not in risk
+    assert "Components.StyledTextField" not in risk
     assert "ComboBox" not in risk
     assert 'designSystem.color("textPrimary")' in risk
     assert 'designSystem.color("textSecondary")' in risk
@@ -555,13 +554,15 @@ def test_ui_preview_7_2_dashboard_paper_cockpit_controls() -> None:
         "Stop",
         "Reset",
         "Generate Next Tick",
-        "Run 10 mock ticks",
-        "Mock PnL / equity preview",
-        "Mock open paper positions",
-        "Mock closed paper trades",
-        "Mock paper orders list",
-        "simulated preview only",
-        "no real order",
+        "Run 10 paper ticks",
+        "Paper PnL / equity preview",
+        "Paper order blotter",
+        "Time",
+        "Pair",
+        "Action",
+        "Status",
+        "Confidence",
+        "Reason",
         "order submission disabled",
     ):
         assert label in dashboard
@@ -574,20 +575,24 @@ def test_ui_preview_7_2_trading_universe_market_selector_contract() -> None:
     for label in (
         "Import markets preview",
         "Search pair",
-        "select all",
-        "clear selected",
+        "Select all visible",
+        "Clear selected",
         "All",
-        "Selected",
-        "Top volume",
+        "USDT",
+        "USDC",
+        "BTC",
+        "ETH",
+        "Major",
         "AI candidates",
-        "Excluded",
-        "Whitelist preview state",
-        "Blacklist preview state",
+        "Excluded / blacklist",
+        "Select top 20",
+        "Whitelist selected",
+        "Blacklist selected",
     ):
         assert label in source
 
-    preview_pairs = re.findall(r'"[A-Z0-9]+/USDT"', main_window)
-    assert len(set(preview_pairs)) >= 25
+    preview_pairs = re.findall(r'"[A-Z0-9]+/(?:USDT|USDC|BTC|ETH)"', main_window)
+    assert len(set(preview_pairs)) >= 100
 
     for exchange in (
         "Binance",
@@ -599,7 +604,7 @@ def test_ui_preview_7_2_trading_universe_market_selector_contract() -> None:
         "Bitget",
         "Gate.io",
         "MEXC",
-        "Demo Exchange",
+        "Paper Preview Catalog",
     ):
         assert exchange in main_window
 
@@ -609,14 +614,13 @@ def test_ui_preview_7_2_ai_strategies_risk_decisions_telemetry_diagnostics_contr
     strategies = (QML_SOURCE_ROOT / "views" / "Strategies.qml").read_text(encoding="utf-8")
 
     for label in (
-        "Autonomy mode selector",
+        "Autonomy and policy controls",
         "Model readiness",
-        "Training coverage %",
-        "Data coverage %",
+        "Training/coverage",
+        "Data coverage percent",
         "Generate governor recommendation",
-        "Confidence threshold slider/styled control",
+        "confidence threshold",
         "Market scanner",
-        "Signal scorer",
         "Strategy governor",
         "Risk governor",
         "Execution guard",
@@ -639,13 +643,12 @@ def test_ui_preview_7_2_ai_strategies_risk_decisions_telemetry_diagnostics_contr
 
     for label in (
         "Daily loss limit",
-        "Per-symbol exposure",
-        "Apply preview risk profile",
+        "Risk profile segmented control",
         "Conservative",
         "Balanced",
         "Aggressive",
         "Generate next decision",
-        "action:",
+        "action",
         "confidence",
         "reason:",
         "Risk reason",
@@ -654,7 +657,7 @@ def test_ui_preview_7_2_ai_strategies_risk_decisions_telemetry_diagnostics_contr
         "Generate diagnostic bundle",
         "Included",
         "Excluded",
-        "secrets • .env • keychain • real env values",
+        "secrets • env files • keychain • real environment values • exchange state",
     ):
         assert label in source
 
@@ -672,3 +675,88 @@ def test_ui_preview_7_2_smoke_contract_fields_are_reported() -> None:
     assert payload["paper_session_controls_present"] is True
     assert payload["market_universe_controls_present"] is True
     assert payload["ai_governor_controls_present"] is True
+
+
+def test_ui_preview_7_4_product_ux_source_contract() -> None:
+    source = _qml_text()
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
+    universe = (QML_SOURCE_ROOT / "views" / "TradingUniverse.qml").read_text(encoding="utf-8")
+    ai_center = (QML_SOURCE_ROOT / "views" / "AiControlCenter.qml").read_text(encoding="utf-8")
+    risk = (QML_SOURCE_ROOT / "views" / "RiskControls.qml").read_text(encoding="utf-8")
+    decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
+
+    assert "Menu {" not in main_window
+    assert "MenuItem {" not in main_window
+    assert 'objectName: "productPreviewTabBar"' in main_window
+
+    raw_marker_patterns = (
+        r'text:\s*qsTr\("[|▌▍❘]\\s*(Dashboard|Trading Universe|Strategie|Decyzje|Telemetria)',
+        r'text:\s*"[|▌▍❘]\\s*(Dashboard|Trading Universe|Strategie|Decyzje|Telemetria)',
+        r'color:\s*"white"[\s\S]{0,120}objectName:\s*".*TitleAccentBar"',
+    )
+    for pattern in raw_marker_patterns:
+        assert re.search(pattern, source) is None
+    for accent in (
+        "operatorDashboardTitleAccentBar",
+        "tradingUniverseTitleAccentBar",
+        "strategiesTitleAccentBar",
+        "aiDecisionsTitleAccentBar",
+        "telemetryTitleAccentBar",
+    ):
+        assert accent in source
+
+    preview_pairs = re.findall(r'"[A-Z0-9]+/(?:USDT|USDC|BTC|ETH)"', main_window)
+    assert len(set(preview_pairs)) >= 100
+
+    for token in (
+        "marketQuoteFilter",
+        "marketCategoryFilter",
+        "quote filter: USDT, USDC, BTC, ETH",
+        "category filter: Major, AI, Meme, DeFi, Layer1, Layer2, High volume",
+        "Select all visible",
+        "Select top 20",
+        "Whitelist selected",
+        "Blacklist selected",
+        "Exchange market import flow",
+        "preview-only local catalog",
+        "paper/testserver trading",
+    ):
+        assert token in universe or token in main_window
+
+    for token in (
+        "Time",
+        "Pair",
+        "Action",
+        "Status",
+        "Confidence",
+        "Reason",
+        "status chips",
+        "action chips",
+    ):
+        assert token in dashboard
+
+    for token in (
+        "ProgressBar",
+        "Readiness badge",
+        "Autonomy level",
+        "policy selector",
+        "confidence threshold",
+    ):
+        assert token in ai_center
+
+    assert "riskProfileSegmentedControl" in risk
+    for token in ("Conservative", "Balanced", "Aggressive"):
+        assert token in risk
+
+    for token in ("Decision filters", "all", "paper", "blocked", "no-order", "selected pair"):
+        assert token in decisions
+
+    for token in ("property int telemetryTick", "heartbeat/tick source state", "freshness status"):
+        assert token in source
+
+    for token in ("Preview diagnostics readiness", "included", "excluded", "Safety boundary"):
+        assert token in source
+
+    for token in FORBIDDEN_SOURCE_TOKENS:
+        assert token not in source

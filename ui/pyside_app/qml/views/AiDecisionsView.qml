@@ -5,72 +5,94 @@ import "../components" as Components
 
 Components.StyledScrollView {
     id: root
-    objectName: "aiDecisionsView"
+    objectName: "aiDecisionsPreviewPanel"
     property var runtimeService
     property var previewState
-    property var aiSnapshot: runtimeService && runtimeService.aiGovernorSnapshot ? runtimeService.aiGovernorSnapshot : ({})
-    property var lastDecision: aiSnapshot.lastDecision || ({})
-    property var decisionTimeline: aiSnapshot.history || []
-    property var recommendedModes: lastDecision.recommendedModes || []
-    property int timelineCount: decisionTimeline.length
-    property int recommendationCount: recommendedModes.length
-    property string currentMode: lastDecision.mode || "preview"
     contentWidth: availableWidth
     clip: true
 
-    function countAction(fragment) {
+    function filteredDecisionRows() {
+        var out = []
+        for (var i = 0; i < previewState.decisionPreviewRows.length; ++i) {
+            var row = previewState.decisionPreviewRows[i]
+            if (previewState.decisionFilter === "paper" && row.action.indexOf("PAPER") < 0) continue
+            if (previewState.decisionFilter === "blocked" && row.action !== "BLOCKED LIVE") continue
+            if (previewState.decisionFilter === "no-order" && row.action !== "NO ORDER" && row.action !== "HOLD" && row.action !== "WAIT") continue
+            if (previewState.decisionPairFilter !== "All pairs" && row.symbol !== previewState.decisionPairFilter) continue
+            out.push(row)
+        }
+        return out
+    }
+    function countAction(kind) {
         var count = 0
         for (var i = 0; i < previewState.decisionPreviewRows.length; ++i) {
-            if (previewState.decisionPreviewRows[i].action.indexOf(fragment) >= 0)
-                count += 1
+            var action = previewState.decisionPreviewRows[i].action
+            if (kind === "blocked" && action === "BLOCKED LIVE") count += 1
+            if (kind === "paper" && action.indexOf("PAPER") >= 0) count += 1
+            if (kind === "no-order" && (action === "NO ORDER" || action === "HOLD" || action === "WAIT")) count += 1
         }
         return count
     }
 
-    function refreshSnapshot() {
-        aiSnapshot = runtimeService && runtimeService.aiGovernorSnapshot ? runtimeService.aiGovernorSnapshot : ({})
-        lastDecision = aiSnapshot.lastDecision || ({})
-        decisionTimeline = aiSnapshot.history || []
-        recommendedModes = lastDecision.recommendedModes || []
-        timelineCount = decisionTimeline.length
-        recommendationCount = recommendedModes.length
-        currentMode = lastDecision.mode || "preview"
-    }
-
-    Component.onCompleted: refreshSnapshot()
-    onRuntimeServiceChanged: refreshSnapshot()
-
     ColumnLayout {
         width: root.availableWidth
         spacing: 14
-        Label { objectName: "aiDecisionsTitle"; text: qsTr("Decyzje"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-        Label { text: qsTr("Dynamiczny local decision stream reaguje na paper simulation i Generate governor recommendation. Lista nie jest pusta i nie używa backendu."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+            Rectangle { objectName: "aiDecisionsTitleAccentBar"; width: 4; Layout.fillHeight: true; radius: 2; color: designSystem.color("accent") }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Label { objectName: "aiDecisionsTitle"; text: qsTr("Decyzje"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
+                Label { text: qsTr("Decision stream rotates selected pairs, active strategies, action chips and timestamps. All rows are Paper preview records; no live orders are emitted."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            }
+        }
 
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Last decision"); description: previewState.lastGovernorDecision; Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("blocked live count"); description: String(root.countAction("BLOCKED LIVE")); Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("paper simulated orders count"); description: String(root.countAction("PAPER")); Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("no order count"); description: String(root.countAction("NO ORDER")); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("blocked live count"); description: String(root.countAction("blocked")); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("paper simulated orders count"); description: String(root.countAction("paper")); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("no order count"); description: String(root.countAction("no-order")); Layout.fillWidth: true }
+        }
+
+        Components.PreviewCard {
+            designSystem: root.designSystem
+            title: qsTr("Decision filters")
+            description: qsTr("Filters: all, paper, blocked, no-order, selected pair.")
+            Flow {
+                Layout.fillWidth: true
+                spacing: 8
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("all"); subtle: previewState.decisionFilter !== "all"; onClicked: previewState.decisionFilter = "all" }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("paper"); subtle: previewState.decisionFilter !== "paper"; onClicked: previewState.decisionFilter = "paper" }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("blocked"); subtle: previewState.decisionFilter !== "blocked"; onClicked: previewState.decisionFilter = "blocked" }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("no-order"); subtle: previewState.decisionFilter !== "no-order"; onClicked: previewState.decisionFilter = "no-order" }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("selected pair"); subtle: previewState.decisionPairFilter === "All pairs"; onClicked: previewState.decisionPairFilter = previewState.selectedPairs.length > 0 ? previewState.selectedPairs[0] : "All pairs" }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("All pairs"); subtle: previewState.decisionPairFilter !== "All pairs"; onClicked: previewState.decisionPairFilter = "All pairs" }
+            }
         }
 
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("AI / Governor decision preview")
-            description: qsTr("Każdy rekord: Timestamp, symbol, action, confidence, reason, Risk reason, Strategy source, Safety block state, paper/session state.")
+            description: qsTr("Each record includes Timestamp, symbol, action, confidence, reason, Risk reason, Strategy source and Safety block state.")
             RowLayout {
                 Layout.fillWidth: true
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate next decision"); iconName: "mode_wizard"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.generateNextDecision() }
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate governor recommendation"); subtle: true; onClicked: previewState.generateGovernorRecommendation() }
                 Label { text: qsTr("Paper session state: %1").arg(previewState.paperSessionState); color: designSystem.color("textSecondary"); Layout.fillWidth: true }
             }
-            Repeater {
-                model: previewState.decisionPreviewRows
+            ListView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 520
+                clip: true
+                spacing: 8
+                model: root.filteredDecisionRows()
                 delegate: Rectangle {
                     required property var modelData
-                    Layout.fillWidth: true
-                    implicitHeight: decisionColumn.implicitHeight + 22
+                    width: ListView.view ? ListView.view.width : 900
+                    height: decisionColumn.implicitHeight + 22
                     radius: 14
                     color: designSystem.color("surfaceMuted")
                     border.color: modelData.action === "BLOCKED LIVE" ? designSystem.color("critical") : designSystem.color("border")
@@ -83,7 +105,7 @@ Components.StyledScrollView {
                         RowLayout {
                             Layout.fillWidth: true
                             Label { text: modelData.symbol; color: designSystem.color("textPrimary"); font.bold: true; Layout.fillWidth: true }
-                            Label { text: qsTr("action: %1").arg(modelData.action); color: modelData.action === "BLOCKED LIVE" ? designSystem.color("warning") : designSystem.color("accent"); font.bold: true }
+                            Rectangle { implicitWidth: Math.max(110, actionLabel.implicitWidth + 22); implicitHeight: 26; radius: 13; color: Qt.rgba(0.33, 0.78, 1, 0.14); border.color: modelData.action === "BLOCKED LIVE" ? designSystem.color("critical") : designSystem.color("accent"); Label { id: actionLabel; anchors.centerIn: parent; text: modelData.action; color: designSystem.color("textPrimary"); font.bold: true; font.pixelSize: 11 } }
                             Label { text: qsTr("confidence %1").arg(modelData.confidence); color: designSystem.color("textSecondary") }
                             Label { text: qsTr("Timestamp %1").arg(modelData.timestamp); color: designSystem.color("textSecondary") }
                         }
