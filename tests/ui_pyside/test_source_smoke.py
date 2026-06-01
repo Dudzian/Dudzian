@@ -31,15 +31,13 @@ FORBIDDEN_SOURCE_TOKENS = (
 
 PANEL_AUDIT_IDS = (
     "sidePanel",
-    "telemetryPanel",
-    "aiDecisionsPanel",
-    "diagnosticsPanel",
-    "chartView",
-    "strategyWorkbench",
+    "aiCenterPanel",
+    "tradingUniversePanel",
     "strategiesPanel",
     "riskControlsPanel",
-    "modeWizardPanel",
-    "strategyManagerPanel",
+    "aiDecisionsPanel",
+    "telemetryPanel",
+    "diagnosticsPanel",
 )
 
 
@@ -172,12 +170,11 @@ def test_qml_design_system_color_tokens_are_registered() -> None:
 
 def test_visible_preview_lists_use_dark_scrollbar_sources() -> None:
     main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
-    ai_decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
     strategy_manager = (QML_SOURCE_ROOT / "views" / "StrategyManager.qml").read_text(
         encoding="utf-8"
     )
 
-    for source in (main_window, ai_decisions, strategy_manager):
+    for source in (main_window, strategy_manager):
         assert "ScrollBar.vertical: ScrollBar" in source
         assert 'designSystem.color("surfaceElevated")' in source
         assert 'designSystem.color("border")' in source
@@ -186,8 +183,8 @@ def test_visible_preview_lists_use_dark_scrollbar_sources() -> None:
 def test_operator_dashboard_uses_stable_contrast_tokens_for_visible_statuses() -> None:
     dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
 
-    assert 'accent: "accent"' in dashboard
-    assert 'designSystem.color("accent")' in dashboard
+    assert 'designSystem.color("textPrimary")' in dashboard
+    assert 'designSystem.color("textSecondary")' in dashboard
     assert 'designSystem.color("success")' not in dashboard
     assert 'designSystem.color("positive")' not in dashboard
     assert "root.designSystem.color(modelData.accent)" not in dashboard
@@ -200,7 +197,7 @@ def test_qml_operator_dashboard_is_default_selected_panel() -> None:
     assert "property string currentPanelId: defaultPanelId" in main_window
     assert "showOperatorDashboard()" in main_window
     assert "layoutController.registerPanels(panelMetadata)" in main_window
-    assert 'panelId: "sidePanel", title: qsTr("Dashboard operatora")' in main_window
+    assert 'panelId: "sidePanel", title: qsTr("Dashboard")' in main_window
     assert 'defaultPanelId: "modeWizardPanel"' not in main_window
     assert 'currentPanelId: "modeWizardPanel"' not in main_window
     assert 'defaultPanelId: ""' not in main_window
@@ -215,13 +212,11 @@ def test_qml_operator_dashboard_default_content_and_labels() -> None:
     assert 'objectName: "operatorDashboardSafetySummary"' in dashboard
     assert 'objectName: "operatorDashboardFeed"' in dashboard
     assert 'objectName: "operatorDashboardRiskControls"' in dashboard
-    assert "Dashboard operatora" in dashboard
-    assert "Tryb: Demo / Paper" in dashboard
-    assert "Kontrola ryzyka" in dashboard
-    assert "Strumień decyzji" in source
-    assert "Menedżer strategii" in source
-    assert "Warsztat strategii" in source
-    assert ("Decyzje governor" in source) or ("Decyzje strategii" in source)
+    assert "Dashboard" in dashboard
+    assert "AI / Governor mode" in dashboard
+    assert "Trading Universe" in source
+    assert "Model readiness" in source
+    assert "Decyzje" in source
 
 
 def test_qml_operator_preview_removes_raw_labels_and_refresh_garbled_glyph() -> None:
@@ -239,40 +234,36 @@ def test_qml_operator_preview_removes_raw_labels_and_refresh_garbled_glyph() -> 
     )
     for label in forbidden_labels:
         assert label not in source
-    assert 'text: qsTr("Odśwież dane")' in source
+    assert 'text: qsTr("Odśwież preview")' in source
 
 
 def test_qml_operator_preview_demo_offline_safety_copy() -> None:
     source = _qml_text()
 
     required_copy = (
+        "Live trading disabled",
         "Exchange I/O disabled",
         "Order submission disabled",
         "Runtime loop not started",
-        "API keys required: false",
-        "Active strategy: Demo Momentum Guard",
-        "Last decision: HOLD / NO ORDER",
-        "Live trading: blocked / disabled",
-        "Live disabled",
-        "BTC/USDT demo row | HOLD | confidence 0.62 | no order",
-        "ETH/USDT demo row | WAIT | confidence 0.55 | no order",
-        "SOL/USDT demo row | BLOCKED LIVE | reason: demo mode",
-        "Max drawdown guard: demo only",
-        "Kill switch: armed / preview",
-        "podłączony lokalny preview bridge",
+        "API keys not required",
+        "Preview only",
+        "BTC/USDT HOLD",
+        "ETH/USDT",
+        "SOL/USDT",
+        "Model readiness",
+        "Safety kill-switch",
+        "NO ORDER — preview only",
     )
     for text in required_copy:
         assert text in source
 
 
-def test_qml_operator_dashboard_has_real_visible_central_component_and_restorable_menu_action() -> (
-    None
-):
+def test_qml_operator_dashboard_has_real_visible_central_component_and_tab_navigation() -> None:
     main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
     dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
 
     assert (
-        '"sidePanel": { title: qsTr("Dashboard operatora"), icon: "fingerprint", component: sidePanelComponent }'
+        '"sidePanel": { title: qsTr("Dashboard"), icon: "fingerprint", component: sidePanelComponent }'
         in main_window
     )
     assert "id: sidePanelComponent" in main_window
@@ -282,11 +273,11 @@ def test_qml_operator_dashboard_has_real_visible_central_component_and_restorabl
     assert "sourceComponent: root.selectedPanelComponent()" in main_window
     assert "return sidePanelComponent" in main_window
     assert "visible: false" in main_window
-    assert "root.showOperatorDashboard()" in main_window
+    assert "showOperatorDashboard()" in main_window
     assert "layoutController.setPanelVisibility(panelId, true)" in main_window
     assert "implicitWidth:" in dashboard
     assert "implicitHeight:" in dashboard
-    assert "anchors.fill: parent" in dashboard
+    assert "anchors.fill: parent" not in dashboard
     assert "Layout.fillWidth: true" in dashboard
 
 
@@ -296,6 +287,123 @@ def test_qml_work_modes_has_demo_offline_placeholder() -> None:
     assert "Brak danych o profilach cloud" in mode_wizard
     assert "Tryb demo/offline" in mode_wizard
     assert "Live trading pozostaje wyłączony" in mode_wizard
+
+
+def test_product_preview_shell_has_tabs_and_required_preview_labels() -> None:
+    source = _qml_text()
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert 'objectName: "productPreviewTabBar"' in main_window
+    assert "Menu {" not in main_window
+    assert "MenuItem {" not in main_window
+    for label in (
+        "Dashboard",
+        "AI Center",
+        "Centrum autonomii",
+        "Trading Universe",
+        "Strategie",
+        "Ryzyko",
+        "Decyzje",
+        "Telemetria",
+        "Diagnostyka",
+        "Binance",
+        "Bybit",
+        "OKX",
+        "KuCoin",
+        "BTC/USDT",
+        "ETH/USDT",
+        "SOL/USDT",
+        "Model readiness",
+        "Training/coverage",
+        "Live trading disabled",
+        "Exchange I/O disabled",
+        "Order submission disabled",
+        "API keys not required",
+        "Runtime loop not started",
+    ):
+        assert label in source
+
+
+def test_final_product_dashboard_ai_universe_risk_decision_telemetry_copy() -> None:
+    source = _qml_text()
+
+    for label in (
+        "Bot status: Demo/Paper Preview",
+        "AI/Governor status",
+        "Active AI model / governor engine",
+        "Model readiness %",
+        "Training/coverage",
+        "Autonomy level",
+        "Selected exchanges",
+        "Selected coins/pairs",
+        "Active strategies",
+        "Last AI/governor decision",
+        "Risk state",
+        "Decision Governor Preview Core",
+        "Model family/type",
+        "Model version/build",
+        "Training/readiness percent",
+        "Data coverage percent",
+        "Current autonomy mode",
+        "Market scanner",
+        "Strategy governor",
+        "Risk governor",
+        "Execution guard",
+        "Recovery monitor",
+        "Telemetry monitor",
+        "Kill-switch",
+        "Market data status",
+        "API key status",
+        "Live trading status / Order route",
+        "Max position",
+        "Max open positions",
+        "Stop loss",
+        "Take profit",
+        "Max slippage",
+        "Max drawdown",
+        "Opportunity governor mode",
+        "Risk reason",
+        "Strategy source",
+        "Timestamp",
+        "Safety block state",
+        "Feed status",
+        "Reconnects",
+        "Downtime",
+        "Last heartbeat",
+        "Data freshness",
+        "Mock local preview rows",
+        "No secrets / no .env / no keychain",
+    ):
+        assert label in source
+
+
+def test_product_preview_qml_has_no_native_primary_menu_or_unsafe_visual_tokens() -> None:
+    source = _qml_text()
+
+    forbidden_visual_tokens = (
+        'designSystem.color("success")',
+        'designSystem.color("positive")',
+        'color: "black"',
+        'color: "#000',
+    )
+    for token in forbidden_visual_tokens:
+        assert token not in source
+
+
+def test_final_product_panels_avoid_raw_native_form_controls() -> None:
+    final_panel_sources = [
+        QML_SOURCE_ROOT / "views" / "Strategies.qml",
+        QML_SOURCE_ROOT / "views" / "RiskControls.qml",
+        QML_SOURCE_ROOT / "views" / "TradingUniverse.qml",
+    ]
+    source = "\n".join(path.read_text(encoding="utf-8") for path in final_panel_sources)
+
+    assert re.search(r"(^|\n)\s*TextField\s*\{", source) is None
+    assert re.search(r"(^|\n)\s*SpinBox\s*\{", source) is None
+    assert re.search(r"(^|\n)\s*ComboBox\s*\{", source) is None
+    assert "Components.StyledTextField" in source
+    assert "Components.StyledSpinBox" in source
+    assert "Components.StyledSwitch" in source
 
 
 def test_changed_ui_qml_sources_have_no_forbidden_runtime_or_secret_calls() -> None:
@@ -309,16 +417,14 @@ def test_all_preview_menu_panels_have_visible_content_markers() -> None:
     source = _qml_text()
 
     required_markers = {
-        "Dashboard operatora": 'objectName: "operatorDashboardTitle"',
-        "Telemetria feedu": 'objectName: "telemetryFeedPreviewTitle"',
-        "Decyzje governor": 'objectName: "aiDecisionsView"',
-        "Diagnostyka": 'objectName: "diagnosticsPreviewTitle"',
-        "Strumień decyzji": 'objectName: "decisionStreamPreviewTitle"',
-        "Warsztat strategii": 'objectName: "strategyWorkbenchPreviewTitle"',
+        "Dashboard": 'objectName: "operatorDashboardTitle"',
+        "AI Center": 'objectName: "aiControlCenterTitle"',
+        "Trading Universe": 'objectName: "tradingUniverseTitle"',
         "Strategie": 'objectName: "strategiesPreviewTitle"',
-        "Kontrola ryzyka": 'objectName: "riskControlsPreviewTitle"',
-        "Tryby pracy": 'objectName: "modeWizardPreviewPanel"',
-        "Menedżer strategii": 'objectName: "strategyManagerPreviewTitle"',
+        "Ryzyko": 'objectName: "riskControlsPreviewTitle"',
+        "Decyzje": 'objectName: "aiDecisionsView"',
+        "Telemetria": 'objectName: "telemetryFeedPreviewTitle"',
+        "Diagnostyka": 'objectName: "diagnosticsPreviewTitle"',
     }
     for panel_name, marker in required_markers.items():
         assert panel_name in source
@@ -329,13 +435,13 @@ def test_strategy_and_risk_panels_use_styled_controls_for_dark_theme_contrast() 
     strategies = (QML_SOURCE_ROOT / "views" / "Strategies.qml").read_text(encoding="utf-8")
     risk = (QML_SOURCE_ROOT / "views" / "RiskControls.qml").read_text(encoding="utf-8")
 
-    assert "Components.StyledTextField" in strategies
+    assert "Components.StyledSwitch" in strategies
     assert 'designSystem.color("textPrimary")' in strategies
     assert 'designSystem.color("textSecondary")' in strategies
     assert "Components.StyledSpinBox" in risk
     assert "Components.StyledTextField" in risk
     assert "Components.StyledSwitch" in risk
-    assert "contentItem: Text" in risk
+    assert "ComboBox" not in risk
     assert 'designSystem.color("textPrimary")' in risk
     assert 'designSystem.color("textSecondary")' in risk
 
@@ -371,6 +477,9 @@ def test_preview_card_has_default_layout_content_container() -> None:
 def test_offscreen_smoke_audits_every_menu_panel_loads_non_empty() -> None:
     result = _run_ui_smoke()
     payload = _smoke_payload(result)
+
+    if result.returncode != 0 and any("libGL.so.1" in issue for issue in payload["issues"]):
+        pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert payload["status"] == "ok"

@@ -3,164 +3,68 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components" as Components
 
-Item {
+Components.StyledScrollView {
     id: root
     objectName: "operatorDashboardRoot"
-    property var designSystem
     property bool defaultDashboard: true
-    implicitWidth: 900
-    implicitHeight: 620
+    contentWidth: availableWidth
+    clip: true
+    implicitWidth: 1040
+    implicitHeight: 680
 
-    function statusAccent(token) {
-        if (!root.designSystem)
-            return "#f5f7ff"
-        switch (token) {
-        case "accent":
-            return root.designSystem.color("accent")
-        case "warning":
-            return root.designSystem.color("warning")
-        default:
-            return root.designSystem.color("textPrimary")
-        }
-    }
+    ColumnLayout {
+        width: root.availableWidth
+        spacing: 16
 
-    Rectangle {
-        anchors.fill: parent
-        radius: 24
-        color: designSystem ? designSystem.color("surface") : Qt.rgba(0.12, 0.12, 0.12, 1)
-        border.color: designSystem ? designSystem.color("border") : Qt.rgba(1, 1, 1, 0.08)
-        border.width: 1
-    }
-
-    Components.StyledScrollView {
-        id: dashboardScroll
-        designSystem: root.designSystem
-        anchors.fill: parent
-        anchors.margins: 18
-        clip: true
-        contentWidth: availableWidth
-
-        ColumnLayout {
-            id: dashboardContent
-            width: dashboardScroll.availableWidth
+        RowLayout {
+            Layout.fillWidth: true
             spacing: 14
-
-            Label {
-                objectName: "operatorDashboardTitle"
-                text: qsTr("Dashboard operatora")
-                font.bold: true
-                font.pointSize: 22
-                wrapMode: Text.WordWrap
-                color: root.designSystem ? root.designSystem.color("textPrimary") : "white"
+            ColumnLayout {
                 Layout.fillWidth: true
+                spacing: 6
+                Label { objectName: "operatorDashboardTitle"; text: qsTr("Dashboard"); font.bold: true; font.pixelSize: 28; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
+                Label { text: qsTr("Final-product safe preview shell for Dudzian Bot. Static local preview / no live data, but final application flow and layout."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Bot status: Demo/Paper Preview"); description: qsTr("Preview only • Runtime loop not started • API keys not required"); Layout.preferredWidth: 280 }
+        }
 
-            Label {
-                text: qsTr("Tryb demo/offline — podłączony lokalny preview bridge. Live trading pozostaje wyłączony.")
-                wrapMode: Text.WordWrap
-                color: root.designSystem ? root.designSystem.color("textSecondary") : "#cbd5e1"
-                Layout.fillWidth: true
-            }
+        GridLayout {
+            objectName: "operatorDashboardSafetySummary"
+            Layout.fillWidth: true
+            columns: 3
+            rowSpacing: 12
+            columnSpacing: 12
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("AI/Governor status • AI / Governor mode"); description: qsTr("Active AI model / governor engine: Decision Governor Preview Core • advisory / supervised dry-run"); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Model readiness %"); description: qsTr("Model readiness 72% • Training/coverage 68% • static local preview metric"); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Autonomy level"); description: qsTr("Autonomy level: supervised dry-run. Execution guard blocks all live actions."); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Selected exchanges"); description: qsTr("Demo Exchange active • Binance, Bybit, OKX, KuCoin, Coinbase available as UI-only dry-run"); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Selected coins/pairs"); description: qsTr("BTC/USDT, ETH/USDT, SOL/USDT selected • BNB/USDT, XRP/USDT, ADA/USDT, DOGE/USDT available"); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Active strategies"); description: qsTr("Momentum Guard, Range Guard enabled preview • Volatility Breakout Preview guarded"); Layout.fillWidth: true }
+        }
 
-            GridLayout {
-                objectName: "operatorDashboardSafetySummary"
-                Layout.fillWidth: true
-                columns: 2
-                columnSpacing: 12
-                rowSpacing: 12
-
-                Repeater {
-                    model: [
-                        { title: qsTr("Tryb: Demo / Paper"), lines: [qsTr("Endpoint: in-process"), qsTr("Cloud runtime: wyłączony")], accent: "textPrimary" },
-                        { title: qsTr("Exchange I/O disabled"), lines: [qsTr("Order submission disabled"), qsTr("Runtime loop not started")], accent: "warning" },
-                        { title: qsTr("API keys required: false"), lines: [qsTr("Active strategy: Demo Momentum Guard"), qsTr("Last decision: HOLD / NO ORDER")], accent: "accent" },
-                        { title: qsTr("Live trading: blocked / disabled"), lines: [qsTr("Live disabled"), qsTr("Kill switch: armed / preview")], accent: "warning" }
-                    ]
-                    delegate: Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 136
-                        radius: 16
-                        color: root.designSystem ? root.designSystem.color("surfaceMuted") : Qt.rgba(1, 1, 1, 0.06)
-                        border.color: root.designSystem ? root.designSystem.color("border") : Qt.rgba(1, 1, 1, 0.1)
-                        border.width: 1
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 14
-                            spacing: 6
-
-                            Label {
-                                text: modelData.title
-                                font.bold: true
-                                wrapMode: Text.WordWrap
-                                color: root.statusAccent(modelData.accent)
-                                Layout.fillWidth: true
-                            }
-                            Repeater {
-                                model: modelData.lines
-                                delegate: Label {
-                                    text: modelData
-                                    wrapMode: Text.WordWrap
-                                    color: root.designSystem ? root.designSystem.color("textSecondary") : "#cbd5e1"
-                                    Layout.fillWidth: true
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Components.PreviewCard {
                 objectName: "operatorDashboardFeed"
+                designSystem: root.designSystem
+                title: qsTr("Last AI/governor decision")
+                description: qsTr("BTC/USDT HOLD • confidence 0.81 • reason: momentum neutralny, risk state guarded • NO ORDER — preview only")
                 Layout.fillWidth: true
-                Layout.preferredHeight: feedColumn.implicitHeight + 28
-                radius: 16
-                color: root.designSystem ? root.designSystem.color("surfaceMuted") : Qt.rgba(1, 1, 1, 0.06)
-                border.color: root.designSystem ? root.designSystem.color("border") : Qt.rgba(1, 1, 1, 0.1)
-                border.width: 1
-
-                ColumnLayout {
-                    id: feedColumn
-                    anchors.fill: parent
-                    anchors.margins: 14
-                    spacing: 8
-
-                    Label {
-                        text: qsTr("Demo feed")
-                        font.bold: true
-                        color: root.designSystem ? root.designSystem.color("textPrimary") : "white"
-                    }
-                    Label { text: qsTr("BTC/USDT demo row | HOLD | confidence 0.62 | no order"); color: root.designSystem ? root.designSystem.color("textPrimary") : "white"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    Label { text: qsTr("ETH/USDT demo row | WAIT | confidence 0.55 | no order"); color: root.designSystem ? root.designSystem.color("textPrimary") : "white"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    Label { text: qsTr("SOL/USDT demo row | BLOCKED LIVE | reason: demo mode"); color: root.designSystem ? root.designSystem.color("warning") : "#fbbf24"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                }
             }
-
-            Rectangle {
+            Components.PreviewCard {
                 objectName: "operatorDashboardRiskControls"
+                designSystem: root.designSystem
+                title: qsTr("Risk state")
+                description: qsTr("Risk state: guarded preview • max drawdown 4.0% • risk kill-switch armed • execution guard blocking live orders")
                 Layout.fillWidth: true
-                Layout.preferredHeight: riskColumn.implicitHeight + 28
-                radius: 16
-                color: root.designSystem ? root.designSystem.color("surfaceMuted") : Qt.rgba(1, 1, 1, 0.06)
-                border.color: root.designSystem ? root.designSystem.color("border") : Qt.rgba(1, 1, 1, 0.1)
-                border.width: 1
-
-                ColumnLayout {
-                    id: riskColumn
-                    anchors.fill: parent
-                    anchors.margins: 14
-                    spacing: 8
-
-                    Label {
-                        text: qsTr("Kontrola ryzyka")
-                        font.bold: true
-                        color: root.designSystem ? root.designSystem.color("textPrimary") : "white"
-                    }
-                    Label { text: qsTr("Live disabled"); color: root.designSystem ? root.designSystem.color("warning") : "#fbbf24" }
-                    Label { text: qsTr("Max drawdown guard: demo only"); color: root.designSystem ? root.designSystem.color("textSecondary") : "#cbd5e1" }
-                    Label { text: qsTr("Kill switch: armed / preview"); color: root.designSystem ? root.designSystem.color("accent") : "#22c55e" }
-                }
             }
+        }
+
+        Components.PreviewCard {
+            designSystem: root.designSystem
+            title: qsTr("Safety locks")
+            description: qsTr("Live trading disabled • Exchange I/O disabled • Order submission disabled • API keys not required • Runtime loop not started")
         }
     }
 }

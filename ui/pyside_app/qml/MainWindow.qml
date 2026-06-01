@@ -12,7 +12,7 @@ ApplicationWindow {
     width: 1280
     height: 720
     visible: true
-    title: qsTr("Stage6 PySide UI")
+    title: qsTr("Dudzian Product Preview — safe dry-run")
     color: designSystem.color("background")
     property var contextGrpcBridge: (typeof grpcBridge !== "undefined" ? grpcBridge : null)
     property var runtimeService: contextGrpcBridge && contextGrpcBridge.runtimeService ? contextGrpcBridge.runtimeService : null
@@ -40,29 +40,31 @@ ApplicationWindow {
     }
 
     property var panelMetadata: [
-        ({ panelId: "sidePanel", title: qsTr("Dashboard operatora"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
-        ({ panelId: "telemetryPanel", title: qsTr("Telemetria feedu"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 1 }),
-        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje governor"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 2 }),
-        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 3 }),
-        ({ panelId: "chartView", title: qsTr("Strumień decyzji"), icon: "cloud", defaultColumn: 1, defaultOrder: 0 }),
-        ({ panelId: "strategyWorkbench", title: qsTr("Warsztat strategii"), icon: "package", defaultColumn: 1, defaultOrder: 1 }),
-        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 2 }),
-        ({ panelId: "riskControlsPanel", title: qsTr("Kontrola ryzyka"), icon: "shield", defaultColumn: 1, defaultOrder: 3 }),
-        ({ panelId: "modeWizardPanel", title: qsTr("Tryby pracy"), icon: "mode_wizard", defaultColumn: 1, defaultOrder: 4 }),
-        ({ panelId: "strategyManagerPanel", title: qsTr("Menedżer strategii"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 5 })
+        ({ panelId: "sidePanel", title: qsTr("Dashboard"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
+        ({ panelId: "aiCenterPanel", title: qsTr("AI Center"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 1 }),
+        ({ panelId: "tradingUniversePanel", title: qsTr("Trading Universe"), icon: "cloud", defaultColumn: 0, defaultOrder: 2 }),
+        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 0, defaultOrder: 3 }),
+        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), icon: "shield", defaultColumn: 0, defaultOrder: 4 }),
+        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 5 }),
+        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 6 }),
+        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 7 })
     ]
 
+    property var productTabs: panelMetadata
+
     property var panelRegistry: ({
-        "sidePanel": { title: qsTr("Dashboard operatora"), icon: "fingerprint", component: sidePanelComponent },
-        "telemetryPanel": { title: qsTr("Telemetria feedu"), icon: "diagnostics", component: telemetryPanelComponent },
+        "sidePanel": { title: qsTr("Dashboard"), icon: "fingerprint", component: sidePanelComponent },
+        "aiCenterPanel": { title: qsTr("AI Center"), icon: "mode_wizard", component: aiCenterPanelComponent },
+        "tradingUniversePanel": { title: qsTr("Trading Universe"), icon: "cloud", component: tradingUniversePanelComponent },
+        "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
+        "riskControlsPanel": { title: qsTr("Ryzyko"), icon: "shield", component: riskControlsPanelComponent },
+        "aiDecisionsPanel": { title: qsTr("Decyzje"), icon: "mode_wizard", component: aiDecisionsPanelComponent },
+        "telemetryPanel": { title: qsTr("Telemetria"), icon: "diagnostics", component: telemetryPanelComponent },
+        "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
         "chartView": { title: qsTr("Strumień decyzji"), icon: "cloud", component: chartViewComponent },
         "strategyWorkbench": { title: qsTr("Warsztat strategii"), icon: "package", component: strategyWorkbenchComponent },
-        "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
-        "riskControlsPanel": { title: qsTr("Kontrola ryzyka"), icon: "shield", component: riskControlsPanelComponent },
         "modeWizardPanel": { title: qsTr("Tryby pracy"), icon: "mode_wizard", component: modeWizardPanelComponent },
-        "strategyManagerPanel": { title: qsTr("Menedżer strategii"), icon: "strategy_manager", component: strategyManagerPanelComponent },
-        "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
-        "aiDecisionsPanel": { title: qsTr("Decyzje governor"), icon: "mode_wizard", component: aiDecisionsPanelComponent }
+        "strategyManagerPanel": { title: qsTr("Menedżer strategii"), icon: "strategy_manager", component: strategyManagerPanelComponent }
     })
 
     StylesModule.DesignSystem {
@@ -125,30 +127,6 @@ ApplicationWindow {
         }
     }
 
-    Menu {
-        id: panelMenu
-        Repeater {
-            model: layoutController ? layoutController.availablePanels : []
-            delegate: MenuItem {
-                readonly property var entry: modelData
-                text: entry && entry.title ? entry.title : entry.panelId
-                checkable: true
-                checked: entry && entry.panelId === root.defaultPanelId ? true : entry && entry.visible !== false
-                onTriggered: {
-                    if (layoutController && entry) {
-                        if (entry.panelId === root.defaultPanelId) {
-                            root.showOperatorDashboard()
-                            return
-                        }
-                        var currentVisible = layoutController.isPanelVisible(entry.panelId)
-                        root.currentPanelId = entry.panelId
-                        layoutController.setPanelVisibility(entry.panelId, !currentVisible)
-                    }
-                }
-            }
-        }
-    }
-
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
@@ -184,56 +162,89 @@ ApplicationWindow {
         }
         RowLayout {
             anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
             spacing: 12
 
-            Label {
-                text: qsTr("Endpoint: %1").arg(uiConfig && uiConfig.endpoint ? uiConfig.endpoint : "local-demo")
-                font.bold: true
-                color: designSystem.color("textPrimary")
+            ColumnLayout {
                 Layout.alignment: Qt.AlignVCenter
+                spacing: 2
+                Label {
+                    text: qsTr("Dudzian Bot Preview")
+                    font.bold: true
+                    font.pixelSize: 16
+                    color: designSystem.color("textPrimary")
+                }
+                Label {
+                    text: qsTr("Live trading disabled • Exchange I/O disabled • Order submission disabled")
+                    color: designSystem.color("textSecondary")
+                    font.pixelSize: 11
+                }
             }
 
-            Rectangle { width: 1; height: parent.height * 0.6; color: designSystem.color("border"); opacity: 0.4 }
+            Rectangle { width: 1; height: parent.height * 0.6; color: designSystem.color("border"); opacity: 0.45 }
 
-            Label {
-                text: contextRuntimeState ? contextRuntimeState.cloudStatusLabel : qsTr("Cloud runtime: wyłączony")
-                color: designSystem.color("textSecondary")
+            Flickable {
+                id: tabOverflow
+                objectName: "productPreviewTabBar"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 46
                 Layout.alignment: Qt.AlignVCenter
-            }
+                clip: true
+                contentWidth: browserTabBar.implicitWidth
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.HorizontalFlick
 
-            Item { Layout.fillWidth: true }
-
-            Components.IconButton {
-                id: layoutButton
-                designSystem: rootDesignSystem
-                text: qsTr("Panele")
-                iconName: "package"
-                subtle: true
-                onClicked: panelMenu.popup(layoutButton)
-            }
-
-            Components.IconButton {
-                designSystem: rootDesignSystem
-                text: qsTr("Strategie")
-                iconName: "strategy_manager"
-                subtle: true
-                onClicked: {
-                    root.showPanel("strategyManagerPanel")
+                Row {
+                    id: browserTabBar
+                    height: parent.height
+                    spacing: 6
+                    Repeater {
+                        model: root.productTabs
+                        delegate: Rectangle {
+                            required property var modelData
+                            property bool hovered: false
+                            readonly property bool active: root.currentPanelId === modelData.panelId
+                            width: Math.max(120, tabLabel.implicitWidth + 34)
+                            height: 42
+                            radius: 14
+                            color: active ? designSystem.color("surface") : (hovered ? Qt.rgba(0.33, 0.78, 1.0, 0.12) : Qt.rgba(0, 0, 0, 0.20))
+                            border.color: active ? designSystem.color("accent") : (hovered ? designSystem.color("textSecondary") : designSystem.color("border"))
+                            border.width: active ? 2 : 1
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: active ? 3 : 0
+                                radius: 2
+                                color: designSystem.color("accent")
+                            }
+                            Label {
+                                id: tabLabel
+                                anchors.centerIn: parent
+                                text: modelData.title
+                                font.bold: active
+                                color: active ? designSystem.color("textPrimary") : designSystem.color("textSecondary")
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onEntered: parent.hovered = true
+                                onExited: parent.hovered = false
+                                onPressed: parent.opacity = 0.82
+                                onReleased: parent.opacity = 1.0
+                                onClicked: root.showPanel(modelData.panelId)
+                            }
+                        }
+                    }
                 }
             }
 
             Components.IconButton {
                 designSystem: rootDesignSystem
-                text: qsTr("Tryby pracy")
-                iconName: "mode_wizard"
-                subtle: true
-                onClicked: root.showPanel("modeWizardPanel")
-            }
-
-            Components.IconButton {
-                designSystem: rootDesignSystem
-                text: qsTr("Odśwież dane")
-                iconName: ""
+                text: qsTr("Odśwież preview")
+                iconName: "refresh"
                 backgroundColor: designSystem.color("accent")
                 foregroundColor: designSystem.color("surface")
                 onClicked: runtimeService && runtimeService.loadRecentDecisions(uiConfig ? uiConfig.decision_limit : 25)
@@ -283,6 +294,24 @@ ApplicationWindow {
     }
 
     Component {
+        id: aiCenterPanelComponent
+        Views.AiControlCenter {
+            width: parent ? parent.width : implicitWidth
+            height: parent ? parent.height : implicitHeight
+            designSystem: rootDesignSystem
+        }
+    }
+
+    Component {
+        id: tradingUniversePanelComponent
+        Views.TradingUniverse {
+            width: parent ? parent.width : implicitWidth
+            height: parent ? parent.height : implicitHeight
+            designSystem: rootDesignSystem
+        }
+    }
+
+    Component {
         id: telemetryPanelComponent
         Components.StyledScrollView {
             designSystem: rootDesignSystem
@@ -297,13 +326,13 @@ ApplicationWindow {
                     spacing: 6
                     Label {
                         objectName: "telemetryFeedPreviewTitle"
-                        text: qsTr("Telemetria feedu")
+                        text: qsTr("Telemetria")
                         font.bold: true
                         font.pixelSize: 22
                         color: designSystem.color("textPrimary")
                     }
                     Label {
-                        text: qsTr("Bezpieczny podgląd health-checków feedu. Demo/offline: runtime loop not started, exchange/order disabled.")
+                        text: qsTr("Pełnoprawna Telemetria preview: feed status, reconnects, downtime, last heartbeat, data freshness. Runtime loop not started, Exchange I/O disabled, Order submission disabled.")
                         wrapMode: Text.WordWrap
                         color: designSystem.color("textSecondary")
                         Layout.fillWidth: true
@@ -314,13 +343,13 @@ ApplicationWindow {
                     spacing: 12
                     Components.PreviewCard {
                         designSystem: rootDesignSystem
-                        title: qsTr("Status feedu")
+                        title: qsTr("Feed status")
                         description: qsTr("Stan: %1").arg(contextRuntimeState ? contextRuntimeState.feedHealth.status || qsTr("inicjalizacja") : qsTr("inicjalizacja"))
                         Layout.fillWidth: true
                     }
                     Components.PreviewCard {
                         designSystem: rootDesignSystem
-                        title: qsTr("Reconnects")
+                        title: qsTr("Reconnects / Downtime")
                         description: qsTr("Reconnects: %1 • Downtime: %2 ms")
                               .arg(contextRuntimeState ? contextRuntimeState.feedHealth.reconnects || 0 : 0)
                               .arg(Math.round(contextRuntimeState ? contextRuntimeState.feedHealth.downtimeMs || 0 : 0))
@@ -328,15 +357,15 @@ ApplicationWindow {
                     }
                     Components.PreviewCard {
                         designSystem: rootDesignSystem
-                        title: qsTr("Ostatni błąd")
-                        description: qsTr("%1").arg(contextRuntimeState ? contextRuntimeState.feedHealth.lastError || qsTr("brak") : qsTr("brak"))
+                        title: qsTr("Last heartbeat / Data freshness")
+                        description: qsTr("Last heartbeat: 12:04:18Z • Data freshness: mock/local preview • last error: %1").arg(contextRuntimeState ? contextRuntimeState.feedHealth.lastError || qsTr("brak") : qsTr("brak"))
                         Layout.fillWidth: true
                     }
                 }
                 Components.PreviewCard {
                     designSystem: rootDesignSystem
-                    title: qsTr("Demo/offline heartbeat")
-                    description: qsTr("BTC/USDT heartbeat OK • ETH/USDT stale guard OK • loading/empty state gotowy do prezentacji.")
+                    title: qsTr("Mock local preview rows")
+                    description: qsTr("Last heartbeat 12:04:18Z • Data freshness: mock/local preview • BTC/USDT heartbeat OK • ETH/USDT stale guard OK • SOL/USDT telemetry preview")
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
@@ -348,7 +377,7 @@ ApplicationWindow {
                             onClicked: runtimeService && runtimeService.loadRecentDecisions(0)
                         }
                         Label {
-                            text: qsTr("Brak realnych requestów sieciowych w panelu preview.")
+                            text: qsTr("Mock local preview rows only. Runtime loop not started, exchange/order disabled.")
                             color: designSystem.color("textSecondary")
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -630,7 +659,7 @@ ApplicationWindow {
                     color: designSystem.color("textPrimary")
                 }
                 Label {
-                    text: qsTr("Panel paczki diagnostycznej w trybie safe preview. Nie czyta sekretów, nie uruchamia runtime loop ani połączeń giełdowych.")
+                    text: qsTr("Final diagnostics preview: status paczki diagnostycznej, zakres, safety, ostatnia paczka i generowanie lokalne. No secrets / no .env / no keychain. Local preview only.")
                     color: designSystem.color("textSecondary")
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
@@ -638,27 +667,27 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 12
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Status"); description: diagnosticsController.busy ? qsTr("Generuję paczkę diagnostyczną…") : qsTr("Gotowe — paczka może zostać wygenerowana lokalnie"); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Zakres") ; description: qsTr("UI logs, konfiguracja preview i metadane bez sekretów"); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Safety") ; description: qsTr("API keys not required, exchange/order disabled"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Status"); description: diagnosticsController && diagnosticsController.busy ? qsTr("Generuję paczkę diagnostyczną…") : qsTr("Gotowe — paczka może zostać wygenerowana lokalnie"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Zakres") ; description: qsTr("UI logs, preview config, telemetry snapshot, governor state — no secrets / no .env / no keychain"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Safety") ; description: qsTr("API keys not required, Exchange I/O disabled, Order submission disabled, Runtime loop not started, Preview only"); Layout.fillWidth: true }
                 }
                 Components.PreviewCard {
                     designSystem: rootDesignSystem
-                    title: qsTr("Akcje diagnostyczne")
-                    description: qsTr("Surowy identyfikator statusu został zastąpiony czytelnym komunikatem dla demo.")
+                    title: qsTr("Ostatnia paczka i akcje diagnostyczne")
+                    description: qsTr("Generuj paczkę lokalnie w safe preview. Local preview only, bez sekretów i bez runtime loop.")
                     RowLayout {
                         Layout.fillWidth: true
                         Components.IconButton {
                             designSystem: rootDesignSystem
                             iconName: "diagnostics"
-                            text: diagnosticsController.busy ? qsTr("Generuję…") : qsTr("Generuj paczkę")
-                            enabled: !diagnosticsController.busy
+                            text: diagnosticsController && diagnosticsController.busy ? qsTr("Generuję…") : qsTr("Generuj paczkę")
+                            enabled: !diagnosticsController || !diagnosticsController.busy
                             backgroundColor: designSystem.color("accent")
                             foregroundColor: designSystem.color("surface")
-                            onClicked: diagnosticsController.generateDiagnostics()
+                            onClicked: diagnosticsController && diagnosticsController.generateDiagnostics()
                         }
                         Label {
-                            text: diagnosticsController.lastArchivePath.length > 0 ? qsTr("Ostatnia paczka: %1").arg(diagnosticsController.lastArchivePath) : qsTr("Brak wygenerowanej paczki w tej sesji")
+                            text: diagnosticsController && diagnosticsController.lastArchivePath && diagnosticsController.lastArchivePath.length > 0 ? qsTr("Ostatnia paczka: %1").arg(diagnosticsController.lastArchivePath) : qsTr("Last diagnostic bundle path: mock/local preview path unavailable in this session")
                             color: designSystem.color("textSecondary")
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true

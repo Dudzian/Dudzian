@@ -43,15 +43,13 @@ class UiSmokeResult:
 
 PANEL_AUDIT_IDS = (
     "sidePanel",
-    "telemetryPanel",
-    "aiDecisionsPanel",
-    "diagnosticsPanel",
-    "chartView",
-    "strategyWorkbench",
+    "aiCenterPanel",
+    "tradingUniversePanel",
     "strategiesPanel",
     "riskControlsPanel",
-    "modeWizardPanel",
-    "strategyManagerPanel",
+    "aiDecisionsPanel",
+    "telemetryPanel",
+    "diagnosticsPanel",
 )
 
 
