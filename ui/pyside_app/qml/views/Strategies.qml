@@ -29,7 +29,7 @@ Components.StyledScrollView {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { objectName: "strategiesPreviewTitle"; text: qsTr("Strategie"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                Label { text: qsTr("Configurable strategy modules for Paper preview. Save Preview updates local UI state only; runtime config and live execution are untouched."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("Docelowe moduły strategii dla Paper Preview. Każda karta ma enabled toggle, confidence floor, cooldown, timeframe, max allocation, allowed pairs count, risk profile i local Save Preview action. Zmiany są tylko lokalnym UI state, bez runtime config write i bez live execution."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }
 
@@ -37,7 +37,7 @@ Components.StyledScrollView {
             Layout.fillWidth: true
             spacing: 10
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Active strategies summary"); description: qsTr("%1 active strategies: %2").arg(previewState.activeStrategies.length).arg(previewState.activeStrategies.join(", ")); Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Preview-only save state"); description: qsTr("Save Preview changes local label and activeStrategies only — no runtime write."); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Preview-only save state"); description: previewState.lastStrategySaveStatus + qsTr(" • Save Preview changes local label and activeStrategies only — no runtime write."); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Execution policy"); description: qsTr("Live trading disabled • Exchange route disabled • Order submission disabled"); Layout.fillWidth: true }
         }
 
@@ -65,21 +65,21 @@ Components.StyledScrollView {
                         rowSpacing: 8
                         columnSpacing: 12
                         Label { text: qsTr("confidence floor"); color: root.designSystem.color("textSecondary") }
-                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.floor; Layout.fillWidth: true }
+                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.floor; placeholderText: qsTr("0.70"); Layout.fillWidth: true }
                         Label { text: qsTr("cooldown"); color: root.designSystem.color("textSecondary") }
-                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.cooldown; Layout.fillWidth: true }
+                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.cooldown; placeholderText: qsTr("120s"); Layout.fillWidth: true }
                         Label { text: qsTr("timeframe"); color: root.designSystem.color("textSecondary") }
-                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.timeframe; Layout.fillWidth: true }
+                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.timeframe; placeholderText: qsTr("15m"); Layout.fillWidth: true }
                         Label { text: qsTr("max allocation"); color: root.designSystem.color("textSecondary") }
-                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.allocation; Layout.fillWidth: true }
+                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.allocation; placeholderText: qsTr("5%"); Layout.fillWidth: true }
                         Label { text: qsTr("allowed pairs count"); color: root.designSystem.color("textSecondary") }
                         Components.StyledSpinBox { designSystem: root.designSystem; from: 0; to: 128; value: previewState.selectedPairs.length; Layout.fillWidth: true }
                         Label { text: qsTr("risk profile"); color: root.designSystem.color("textSecondary") }
-                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.riskProfile; Layout.fillWidth: true }
+                        Components.StyledTextField { designSystem: root.designSystem; text: modelData.riskProfile; placeholderText: qsTr("Balanced"); Layout.fillWidth: true }
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        Components.IconButton { designSystem: root.designSystem; text: qsTr("Save Preview"); iconName: "copy"; onClicked: { previewState.setStrategyActive(modelData.name, enabledPreview); saveStatus.text = qsTr("Save Preview updated local UI state — no runtime config write") } }
+                        Components.IconButton { designSystem: root.designSystem; text: qsTr("Save Preview"); iconName: "copy"; onClicked: { previewState.setStrategyActive(modelData.name, enabledPreview); previewState.saveStrategyPreview(modelData.name); saveStatus.text = qsTr("local Save Preview action updated local UI state — no runtime config write") } }
                         Label { id: saveStatus; text: enabledPreview ? qsTr("status: enabled/guarded") : qsTr("status: disabled"); color: root.designSystem.color("textSecondary"); Layout.fillWidth: true }
                     }
                 }

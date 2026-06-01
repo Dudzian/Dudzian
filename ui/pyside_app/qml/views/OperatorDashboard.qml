@@ -31,7 +31,7 @@ Components.StyledScrollView {
                 Layout.fillWidth: true
                 spacing: 6
                 Label { objectName: "operatorDashboardTitle"; text: qsTr("Dashboard"); font.bold: true; font.pixelSize: 28; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                Label { text: qsTr("Operator cockpit for safe dry-run and Paper preview. Live trading disabled, Exchange route disabled, Order submission disabled, order submission disabled, API keys not required in preview."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("Kokpit operatora dla bezpiecznego Paper Preview. Live trading disabled, Exchange route disabled, Order submission disabled, order submission disabled, API keys not required."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Bot status: Demo/Paper Preview"); description: qsTr("Paper session status: %1 • Runtime loop not started • Sandbox/testnet planned").arg(previewState.paperSessionState); Layout.preferredWidth: 340 }
         }
@@ -42,7 +42,7 @@ Components.StyledScrollView {
             columns: width > 1100 ? 4 : 2
             rowSpacing: 10
             columnSpacing: 10
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("AI/Governor status • AI / Governor mode • Autonomy level"); description: qsTr("Active AI model / governor engine: Decision Governor Preview Core • autonomy mode %1 • autonomy level %2/5").arg(previewState.autonomyMode).arg(previewState.autonomyLevel); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("AI/Governor status • AI / Governor mode • Autonomy level"); description: qsTr("Active AI model / governor engine: %1 • autonomy mode %2 • autonomy level %3/5").arg(previewState.activeGovernorEngine).arg(previewState.autonomyMode).arg(previewState.autonomyLevel); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Model readiness %"); description: qsTr("Model readiness %1% • Training/coverage %2% • Data coverage %3%").arg(previewState.modelReadiness).arg(previewState.trainingCoverage).arg(previewState.dataCoverage); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Selected exchanges"); description: qsTr("%1 selected: %2").arg(previewState.selectedExchanges.length).arg(previewState.selectedExchanges.join(", ")); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Selected coins/pairs"); description: qsTr("%1 selected from %2 preview pairs: %3").arg(previewState.selectedPairs.length).arg(previewState.previewMarketPairs.length).arg(previewState.selectedPairs.slice(0, 8).join(", ")); Layout.fillWidth: true }
@@ -55,7 +55,7 @@ Components.StyledScrollView {
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("Paper / dry-run session cockpit")
-            description: qsTr("Controls update local UI state only. Safe dry-run stays inside the preview shell; no exchange route and no real orders.")
+            description: qsTr("Przyciski zmieniają lokalny preview state: session status, ticks, orders, blocked, no-order, simulated, Paper PnL/equity, last governor decision i order blotter. Nie uruchamiają runtime loop ani real orders.")
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
@@ -68,9 +68,10 @@ Components.StyledScrollView {
             }
             GridLayout {
                 Layout.fillWidth: true
-                columns: width > 900 ? 5 : 2
+                columns: width > 900 ? 6 : 2
                 rowSpacing: 8
                 columnSpacing: 8
+                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper session status"); description: previewState.paperSessionState; Layout.fillWidth: true }
                 Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Session ticks"); description: String(previewState.paperTicks); Layout.fillWidth: true }
                 Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Orders"); description: String(previewState.paperOrdersCount); Layout.fillWidth: true }
                 Components.PreviewCard { designSystem: root.designSystem; title: qsTr("blocked"); description: String(previewState.blockedOrdersCount); Layout.fillWidth: true }

@@ -22,14 +22,14 @@ Components.StyledScrollView {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { objectName: "riskControlsTitle"; text: qsTr("Ryzyko"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                Label { text: qsTr("Risk cockpit for safe Paper preview. Segmented profile control updates local limits while live trading and order routes remain disabled."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("Kokpit ryzyka dla bezpiecznego Paper Preview. Segmented Conservative/Balanced/Aggressive aktualizuje lokalne wartości limitów; live trading, exchange route i order submission pozostają wyłączone."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }
 
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("Risk profile segmented control")
-            description: qsTr("Choose Conservative, Balanced or Aggressive. Active segment updates riskProfile, maxPosition, maxOpenPositions, stopLoss, takeProfit, maxSlippage, maxDrawdown, dailyLossLimit and riskState.")
+            description: qsTr("Choose Conservative, Balanced or Aggressive. Active segment updates riskProfile, maxPosition, maxOpenPositions, stopLoss, takeProfit, maxSlippage, maxDrawdown, dailyLossLimit, per-symbol exposure and riskState.")
             RowLayout {
                 objectName: "riskProfileSegmentedControl"
                 Layout.fillWidth: true
@@ -64,12 +64,13 @@ Components.StyledScrollView {
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Max slippage"); description: previewState.maxSlippage; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Max drawdown"); description: previewState.maxDrawdown; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Daily loss limit"); description: previewState.dailyLossLimit; Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Per-symbol exposure"); description: previewState.perSymbolExposure; Layout.fillWidth: true }
         }
 
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("Safety boundary")
-            description: qsTr("Safety kill-switch armed • Market data status preview-only • API key status not required • Live trading status / Order route disabled • Paper bridge not connected / planned.")
+            description: qsTr("Safety kill-switch armed • live disabled • exchange route disabled • order submission disabled • paper bridge not connected/planned • API keys not required.")
         }
     }
 }

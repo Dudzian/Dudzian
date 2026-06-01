@@ -760,3 +760,65 @@ def test_ui_preview_7_4_product_ux_source_contract() -> None:
 
     for token in FORBIDDEN_SOURCE_TOKENS:
         assert token not in source
+
+
+def test_ui_preview_7_5_final_polish_clickable_preview_state_contract() -> None:
+    source = _qml_text()
+    ai_center = (QML_SOURCE_ROOT / "views" / "AiControlCenter.qml").read_text(encoding="utf-8")
+    universe = (QML_SOURCE_ROOT / "views" / "TradingUniverse.qml").read_text(encoding="utf-8")
+    strategies = (QML_SOURCE_ROOT / "views" / "Strategies.qml").read_text(encoding="utf-8")
+    risk = (QML_SOURCE_ROOT / "views" / "RiskControls.qml").read_text(encoding="utf-8")
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert "Components.StyledProgressBar" in ai_center
+    assert re.search(r"(^|\n)\s*ProgressBar\s*\{", ai_center) is None
+    for token in (
+        "activeGovernorEngine",
+        "modelVersionBuild",
+        "decision policy",
+        "confidence threshold",
+        "cyan fill",
+        "rounded corners",
+    ):
+        assert token in source
+
+    for token in (
+        "choose exchange -> sandbox/testnet/API planned/disabled -> import markets preview -> AI scans eligible pairs -> paper/testserver route planned/disabled",
+        "total pairs",
+        "visible pairs",
+        "selected pairs",
+        "whitelisted",
+        "blacklisted",
+        "AI candidates",
+        "no real API calls",
+    ):
+        assert token in universe
+
+    for token in (
+        "local Save Preview action",
+        "confidence floor",
+        "cooldown",
+        "timeframe",
+        "max allocation",
+        "allowed pairs count",
+        "risk profile",
+    ):
+        assert token in strategies
+
+    for token in (
+        "Per-symbol exposure",
+        "paper bridge not connected/planned",
+        "live disabled",
+        "exchange route disabled",
+        "order submission disabled",
+    ):
+        assert token in risk
+
+    for token in (
+        "included: UI state, telemetry snapshot, governor rows, config preview metadata",
+        "excluded: secrets, env files, keychain, real environment values, exchange state",
+        "zero real network/API calls",
+        "property string lastStrategySaveStatus",
+        "function visiblePairsCount",
+    ):
+        assert token in main_window

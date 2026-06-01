@@ -8,7 +8,7 @@ Components.StyledScrollView {
     objectName: "aiControlCenterRoot"
     property var runtimeService
     property var previewState
-    property var policies: ["Conservative policy", "Balanced policy", "Opportunity policy"]
+    property var policies: ["Polityka konserwatywna", "Polityka zbalansowana", "Polityka oportunistyczna"]
     contentWidth: availableWidth
     clip: true
 
@@ -22,7 +22,7 @@ Components.StyledScrollView {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { objectName: "aiControlCenterTitle"; text: qsTr("AI Center"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                Label { text: qsTr("Centrum autonomii for supervised Paper preview. Model, governor and policy controls are visible while live execution remains locked."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("Centrum autonomii dla nadzorowanego Paper Preview. Model, Governor i polityki są klikalne lokalnie, a live trading, exchange route i order submission pozostają wyłączone."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }
 
@@ -31,26 +31,26 @@ Components.StyledScrollView {
             columns: width > 1100 ? 3 : 1
             rowSpacing: 10
             columnSpacing: 10
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Decision Governor Preview Core"); description: qsTr("Model family/type: policy ensemble • Model version/build: preview-7.4 • Active AI model / governor engine") }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Readiness badge"); description: qsTr("READY FOR PAPER PREVIEW • Live trading disabled • Exchange route disabled") }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Current autonomy mode • Opportunity governor mode"); description: qsTr("%1 • Autonomy level %2/5").arg(previewState.autonomyMode).arg(previewState.autonomyLevel) }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Decision Governor Preview Core"); description: qsTr("Active AI model / governor engine: %1 • Model family/type: policy ensemble • Model version/build: %2").arg(previewState.activeGovernorEngine).arg(previewState.modelVersionBuild) }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Readiness badge"); description: qsTr("READY FOR PAPER PREVIEW • Model readiness %1% • Live trading disabled • Exchange route disabled • Order submission disabled • API keys not required").arg(previewState.modelReadiness) }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Current autonomy mode • Opportunity governor mode"); description: qsTr("%1 • Autonomy level %2/5 • confidence threshold %3% • decision policy: %4").arg(previewState.autonomyMode).arg(previewState.autonomyLevel).arg(previewState.confidenceThreshold).arg(previewState.decisionPolicyPreview) }
         }
 
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("Model readiness")
-            description: qsTr("Visual readiness indicators: Model readiness %, Training/readiness percent, Training/coverage, Data coverage percent.")
+            description: qsTr("StyledProgressBar indicators: Model readiness %, Training/readiness percent, Training/coverage, Data coverage percent. Ciemne tło, cyan fill, rounded corners i czytelny procent bez natywnego wyglądu systemowego.")
             GridLayout {
                 Layout.fillWidth: true
                 columns: 2
                 rowSpacing: 10
                 columnSpacing: 12
                 Label { text: qsTr("Model readiness %"); color: designSystem.color("textPrimary") }
-                ProgressBar { objectName: "aiReadinessProgressBar"; from: 0; to: 100; value: previewState.modelReadiness; Layout.fillWidth: true }
+                Components.StyledProgressBar { objectName: "aiReadinessProgressBar"; designSystem: root.designSystem; value: previewState.modelReadiness; label: previewState.modelReadiness + "%"; Layout.fillWidth: true }
                 Label { text: qsTr("Training/readiness percent • Training/coverage"); color: designSystem.color("textPrimary") }
-                ProgressBar { objectName: "aiTrainingCoverageProgressBar"; from: 0; to: 100; value: previewState.trainingCoverage; Layout.fillWidth: true }
+                Components.StyledProgressBar { objectName: "aiTrainingCoverageProgressBar"; designSystem: root.designSystem; value: previewState.trainingCoverage; label: previewState.trainingCoverage + "%"; Layout.fillWidth: true }
                 Label { text: qsTr("Data coverage percent"); color: designSystem.color("textPrimary") }
-                ProgressBar { objectName: "aiDataCoverageProgressBar"; from: 0; to: 100; value: previewState.dataCoverage; Layout.fillWidth: true }
+                Components.StyledProgressBar { objectName: "aiDataCoverageProgressBar"; designSystem: root.designSystem; value: previewState.dataCoverage; label: previewState.dataCoverage + "%"; Layout.fillWidth: true }
             }
         }
 
@@ -61,8 +61,8 @@ Components.StyledScrollView {
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Advisory"); subtle: previewState.autonomyMode !== "Advisory"; onClicked: previewState.setAutonomyMode("Advisory") }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Supervised dry-run"); subtle: previewState.autonomyMode !== "Supervised dry-run"; onClicked: previewState.setAutonomyMode("Supervised dry-run") }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Doradczy"); subtle: previewState.autonomyMode !== "Advisory"; onClicked: previewState.setAutonomyMode("Advisory") }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Nadzorowany dry-run"); subtle: previewState.autonomyMode !== "Supervised dry-run"; onClicked: previewState.setAutonomyMode("Supervised dry-run") }
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Autonomous paper"); subtle: previewState.autonomyMode !== "Autonomous paper"; onClicked: previewState.setAutonomyMode("Autonomous paper") }
             }
             Flow {
