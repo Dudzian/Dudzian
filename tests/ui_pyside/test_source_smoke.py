@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SMOKE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "smoke.py"
 PLAN_SOURCE = REPO_ROOT / "scripts" / "ui_preview_launch_plan.py"
 APP_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "app.py"
+QML_SOURCE_ROOT = REPO_ROOT / "ui" / "pyside_app" / "qml"
 FORBIDDEN_SOURCE_TOKENS = (
     "create_order",
     "fetch_balance",
@@ -23,6 +24,7 @@ FORBIDDEN_SOURCE_TOKENS = (
     "dotenv",
     "shell=True",
     "subprocess.run",
+    "os.environ",
 )
 
 
@@ -103,6 +105,64 @@ def test_smoke_and_plan_sources_have_no_forbidden_runtime_or_secret_calls() -> N
     source = "\n".join(
         path.read_text(encoding="utf-8") for path in (SMOKE_SOURCE, PLAN_SOURCE, APP_SOURCE)
     )
+
+    for token in FORBIDDEN_SOURCE_TOKENS:
+        assert token not in source
+
+
+def _qml_sources() -> list[Path]:
+    return sorted(QML_SOURCE_ROOT.rglob("*.qml"))
+
+
+def _qml_text() -> str:
+    return "\n".join(path.read_text(encoding="utf-8") for path in _qml_sources())
+
+
+def test_qml_operator_dashboard_default_content_and_labels() -> None:
+    source = _qml_text()
+
+    assert 'objectName: "operatorOverviewDashboard"' in source
+    assert "Demo preview / Paper mode" in source
+    assert "Dashboard operatora" in source
+    assert "Strumień decyzji" in source
+    assert "Kontrola ryzyka" in source
+    assert "Menedżer strategii" in source
+    assert "Warsztat strategii" in source
+    assert ("Decyzje governor" in source) or ("Decyzje strategii" in source)
+
+
+def test_qml_operator_preview_removes_raw_labels_and_refresh_garbled_glyph() -> None:
+    source = _qml_text()
+
+    forbidden_labels = (
+        "Chart_Decision Stream",
+        "Chart & Decision Stream",
+        "Decyzje AI",
+        "Strategy Workbench",
+        "Risk Controls",
+        "Strategy Manager",
+        "ǎ Odśwież dane",
+        "ǎ",
+    )
+    for label in forbidden_labels:
+        assert label not in source
+    assert 'text: qsTr("Odśwież dane")' in source
+
+
+def test_qml_operator_preview_demo_offline_safety_copy() -> None:
+    source = _qml_text()
+
+    assert "Exchange I/O" in source and "disabled" in source
+    assert "Order submission" in source and "disabled" in source
+    assert "Runtime loop" in source and "not started" in source
+    assert "API keys required" in source and "false" in source
+    assert "Order execution disabled" in source
+    assert "Brak danych live" in source
+    assert "Podłączony lokalny preview bridge" in source
+
+
+def test_changed_ui_qml_sources_have_no_forbidden_runtime_or_secret_calls() -> None:
+    source = _qml_text()
 
     for token in FORBIDDEN_SOURCE_TOKENS:
         assert token not in source

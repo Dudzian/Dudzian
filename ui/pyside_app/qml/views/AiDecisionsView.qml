@@ -160,7 +160,7 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 Text {
-                    text: qsTr("Decyzje AI")
+                    text: qsTr("Decyzje governor")
                     font.bold: true
                     font.pointSize: 17
                     color: designSystem ? designSystem.color("textPrimary") : "#fdfdfd"
@@ -366,7 +366,7 @@ Rectangle {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             visible: filteredTimelineCount === 0
-            text: qsTr("Brak historii AI Governora")
+            text: qsTr("Brak historii governora")
             color: designSystem ? designSystem.color("textSecondary") : "#c5cad3"
         }
     }
