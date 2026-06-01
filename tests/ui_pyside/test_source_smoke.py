@@ -81,6 +81,11 @@ def test_source_smoke_finishes_and_reports_safety_contract() -> None:
     assert payload["exchange_io"] == "disabled"
     assert payload["order_submission"] == "disabled"
     assert payload["api_keys_required"] is False
+    assert payload["operator_dashboard_present"] is True
+    assert payload["operator_dashboard_default"] is True
+    assert payload["operator_dashboard_visible"] is True
+    assert payload["active_panel_id"] in {"sidePanel", "operatorDashboard"}
+    assert payload["central_content_empty"] is False
     assert payload["secrets_read"] is False
     assert payload["keychain_read"] is False
     assert payload["env_values_read"] is False
@@ -101,6 +106,11 @@ def test_smoke_blocks_live_runtime_flag_without_qt_bootstrap() -> None:
     assert payload["order_submission"] == "disabled"
     assert payload["api_keys_required"] is False
     assert payload["live_mode_allowed"] is False
+    assert payload["operator_dashboard_present"] is False
+    assert payload["operator_dashboard_default"] is False
+    assert payload["operator_dashboard_visible"] is False
+    assert payload["active_panel_id"] == ""
+    assert payload["central_content_empty"] is True
     assert payload["issues"] == ["smoke_mode_blocks_enable_cloud_runtime"]
 
 
@@ -136,12 +146,17 @@ def test_qml_operator_dashboard_is_default_selected_panel() -> None:
 
 def test_qml_operator_dashboard_default_content_and_labels() -> None:
     source = _qml_text()
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
 
-    assert 'objectName: "operatorOverviewDashboard"' in source
-    assert "Dashboard operatora" in source
-    assert "Tryb: Demo / Paper" in source
+    assert 'objectName: "operatorDashboardRoot"' in dashboard
+    assert 'objectName: "operatorDashboardTitle"' in dashboard
+    assert 'objectName: "operatorDashboardSafetySummary"' in dashboard
+    assert 'objectName: "operatorDashboardFeed"' in dashboard
+    assert 'objectName: "operatorDashboardRiskControls"' in dashboard
+    assert "Dashboard operatora" in dashboard
+    assert "Tryb: Demo / Paper" in dashboard
+    assert "Kontrola ryzyka" in dashboard
     assert "Strumień decyzji" in source
-    assert "Kontrola ryzyka" in source
     assert "Menedżer strategii" in source
     assert "Warsztat strategii" in source
     assert ("Decyzje governor" in source) or ("Decyzje strategii" in source)
@@ -177,9 +192,9 @@ def test_qml_operator_preview_demo_offline_safety_copy() -> None:
         "Last decision: HOLD / NO ORDER",
         "Live trading: blocked / disabled",
         "Live disabled",
-        "BTC/USDT | HOLD | confidence 0.62 | no order",
-        "ETH/USDT | WAIT | confidence 0.55 | no order",
-        "SOL/USDT | BLOCKED LIVE | reason: demo mode",
+        "BTC/USDT demo row | HOLD | confidence 0.62 | no order",
+        "ETH/USDT demo row | WAIT | confidence 0.55 | no order",
+        "SOL/USDT demo row | BLOCKED LIVE | reason: demo mode",
         "Max drawdown guard: demo only",
         "Kill switch: armed / preview",
         "podłączony lokalny preview bridge",
@@ -188,17 +203,29 @@ def test_qml_operator_preview_demo_offline_safety_copy() -> None:
         assert text in source
 
 
-def test_qml_operator_dashboard_has_real_content_component_and_restorable_menu_action() -> None:
+def test_qml_operator_dashboard_has_real_visible_central_component_and_restorable_menu_action() -> (
+    None
+):
     main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
 
     assert (
         '"sidePanel": { title: qsTr("Dashboard operatora"), icon: "fingerprint", component: sidePanelComponent }'
         in main_window
     )
     assert "id: sidePanelComponent" in main_window
-    assert 'objectName: "operatorOverviewDashboard"' in main_window
+    assert "Views.OperatorDashboard" in main_window
+    assert 'objectName: "centralContentRoot"' in main_window
+    assert 'objectName: "centralContentLoader"' in main_window
+    assert "sourceComponent: root.selectedPanelComponent()" in main_window
+    assert "return sidePanelComponent" in main_window
+    assert "visible: false" in main_window
     assert "root.showOperatorDashboard()" in main_window
     assert "layoutController.setPanelVisibility(panelId, true)" in main_window
+    assert "implicitWidth:" in dashboard
+    assert "implicitHeight:" in dashboard
+    assert "anchors.fill: parent" in dashboard
+    assert "Layout.fillWidth: true" in dashboard
 
 
 def test_qml_work_modes_has_demo_offline_placeholder() -> None:
