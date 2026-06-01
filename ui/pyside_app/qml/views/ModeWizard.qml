@@ -179,7 +179,7 @@ Item {
                     text: recommendationSummary && recommendationSummary.recommendations
                           && recommendationSummary.recommendations.summary
                           ? recommendationSummary.recommendations.summary
-                          : qsTr("Aktywuj kreator, aby AI zaproponowało profil.")
+                          : qsTr("Aktywuj kreator, aby governor zaproponował profil.")
                     color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"
                     wrapMode: Text.WordWrap
                 }
@@ -205,7 +205,7 @@ Item {
                     }
                     Label {
                         text: recommendationSummary.ai_profile_hint && recommendationSummary.ai_profile_hint.length > 0
-                              ? qsTr("Profil AI: %1").arg(recommendationSummary.ai_profile_hint)
+                              ? qsTr("Profil governora: %1").arg(recommendationSummary.ai_profile_hint)
                               : ""
                         visible: text.length > 0
                         color: designSystem ? designSystem.color("textSecondary") : "#d0d4e0"

@@ -19,29 +19,29 @@ ApplicationWindow {
     property var contextRuntimeState: (typeof runtimeState !== "undefined" ? runtimeState : null)
 
     property var panelMetadata: [
-        ({ panelId: "sidePanel", title: qsTr("Panel statusu"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
+        ({ panelId: "sidePanel", title: qsTr("Dashboard operatora"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
         ({ panelId: "telemetryPanel", title: qsTr("Telemetria feedu"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 1 }),
-        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje AI"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 2 }),
+        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje governor"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 2 }),
         ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 3 }),
-        ({ panelId: "chartView", title: qsTr("Chart & Decision Stream"), icon: "cloud", defaultColumn: 1, defaultOrder: 0 }),
-        ({ panelId: "strategyWorkbench", title: qsTr("Strategy Workbench"), icon: "package", defaultColumn: 1, defaultOrder: 1 }),
+        ({ panelId: "chartView", title: qsTr("Strumień decyzji"), icon: "cloud", defaultColumn: 1, defaultOrder: 0 }),
+        ({ panelId: "strategyWorkbench", title: qsTr("Warsztat strategii"), icon: "package", defaultColumn: 1, defaultOrder: 1 }),
         ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 2 }),
-        ({ panelId: "riskControlsPanel", title: qsTr("Risk Controls"), icon: "shield", defaultColumn: 1, defaultOrder: 3 }),
+        ({ panelId: "riskControlsPanel", title: qsTr("Kontrola ryzyka"), icon: "shield", defaultColumn: 1, defaultOrder: 3 }),
         ({ panelId: "modeWizardPanel", title: qsTr("Tryby pracy"), icon: "mode_wizard", defaultColumn: 1, defaultOrder: 4 }),
-        ({ panelId: "strategyManagerPanel", title: qsTr("Strategy Manager"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 5 })
+        ({ panelId: "strategyManagerPanel", title: qsTr("Menedżer strategii"), icon: "strategy_manager", defaultColumn: 1, defaultOrder: 5 })
     ]
 
     property var panelRegistry: ({
-        "sidePanel": { title: qsTr("Panel statusu"), icon: "fingerprint", component: sidePanelComponent },
+        "sidePanel": { title: qsTr("Dashboard operatora"), icon: "fingerprint", component: sidePanelComponent },
         "telemetryPanel": { title: qsTr("Telemetria feedu"), icon: "diagnostics", component: telemetryPanelComponent },
-        "chartView": { title: qsTr("Chart & Decision Stream"), icon: "cloud", component: chartViewComponent },
-        "strategyWorkbench": { title: qsTr("Strategy Workbench"), icon: "package", component: strategyWorkbenchComponent },
+        "chartView": { title: qsTr("Strumień decyzji"), icon: "cloud", component: chartViewComponent },
+        "strategyWorkbench": { title: qsTr("Warsztat strategii"), icon: "package", component: strategyWorkbenchComponent },
         "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
-        "riskControlsPanel": { title: qsTr("Risk Controls"), icon: "shield", component: riskControlsPanelComponent },
+        "riskControlsPanel": { title: qsTr("Kontrola ryzyka"), icon: "shield", component: riskControlsPanelComponent },
         "modeWizardPanel": { title: qsTr("Tryby pracy"), icon: "mode_wizard", component: modeWizardPanelComponent },
-        "strategyManagerPanel": { title: qsTr("Strategy Manager"), icon: "strategy_manager", component: strategyManagerPanelComponent },
+        "strategyManagerPanel": { title: qsTr("Menedżer strategii"), icon: "strategy_manager", component: strategyManagerPanelComponent },
         "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
-        "aiDecisionsPanel": { title: qsTr("Decyzje AI"), icon: "mode_wizard", component: aiDecisionsPanelComponent }
+        "aiDecisionsPanel": { title: qsTr("Decyzje governor"), icon: "mode_wizard", component: aiDecisionsPanelComponent }
     })
 
     StylesModule.DesignSystem {
@@ -208,10 +208,10 @@ ApplicationWindow {
             Components.IconButton {
                 designSystem: designSystem
                 text: qsTr("Odśwież dane")
-                iconName: "refresh"
+                iconName: ""
                 backgroundColor: designSystem.color("accent")
                 foregroundColor: designSystem.color("surface")
-                onClicked: runtimeService.loadRecentDecisions(uiConfig ? uiConfig.decision_limit : 25)
+                onClicked: runtimeService && runtimeService.loadRecentDecisions(uiConfig ? uiConfig.decision_limit : 25)
             }
         }
     }
@@ -231,11 +231,70 @@ ApplicationWindow {
     Component {
         id: sidePanelComponent
         ColumnLayout {
-            spacing: 8
+            objectName: "operatorOverviewDashboard"
+            spacing: 10
+
+            Label {
+                text: qsTr("Demo preview / Paper mode")
+                font.bold: true
+                font.pointSize: 16
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textPrimary")
+            }
+            Label {
+                text: qsTr("Podłączony lokalny preview bridge — brak danych live, tryb demo/offline.")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textSecondary")
+            }
+            GridLayout {
+                Layout.fillWidth: true
+                columns: 2
+                columnSpacing: 10
+                rowSpacing: 6
+                Label { text: qsTr("Endpoint"); color: designSystem.color("textSecondary") }
+                Label { text: qsTr("in-process"); font.bold: true; color: designSystem.color("textPrimary") }
+                Label { text: qsTr("Cloud runtime"); color: designSystem.color("textSecondary") }
+                Label { text: qsTr("disabled"); font.bold: true; color: designSystem.color("warning") }
+                Label { text: qsTr("Exchange I/O"); color: designSystem.color("textSecondary") }
+                Label { text: qsTr("disabled"); font.bold: true; color: designSystem.color("warning") }
+                Label { text: qsTr("Order submission"); color: designSystem.color("textSecondary") }
+                Label { text: qsTr("disabled"); font.bold: true; color: designSystem.color("warning") }
+                Label { text: qsTr("Runtime loop"); color: designSystem.color("textSecondary") }
+                Label { text: qsTr("not started"); font.bold: true; color: designSystem.color("warning") }
+                Label { text: qsTr("API keys required"); color: designSystem.color("textSecondary") }
+                Label { text: qsTr("false"); font.bold: true; color: designSystem.color("success") }
+            }
+            Rectangle { height: 1; width: parent.width; color: designSystem.color("border"); opacity: 0.3 }
+            Label {
+                text: qsTr("Aktywna strategia: Demo Momentum Guard")
+                font.bold: true
+                color: designSystem.color("textPrimary")
+            }
+            Label {
+                text: qsTr("Symbole demo labels only: BTC/USDT, ETH/USDT")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textSecondary")
+            }
+            Label {
+                text: qsTr("Ostatnia decyzja: HOLD / NO ORDER / BLOCKED LIVE")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textPrimary")
+            }
+            Label {
+                text: qsTr("Ryzyko: OK — live disabled; max drawdown guard inactive in demo")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("success")
+            }
+            Label {
+                text: qsTr("Feed mock: BTC/USDT heartbeat OK • ETH/USDT stale guard OK")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textSecondary")
+            }
+            Rectangle { height: 1; width: parent.width; color: designSystem.color("border"); opacity: 0.3 }
             Label {
                 text: licensingController.licenseAccepted
                       ? qsTr("Licencja aktywna: %1").arg(licensingController.licenseId || "-")
-                      : qsTr("Licencja nieaktywna")
+                      : qsTr("Licencja nieaktywna — preview nie wymaga sekretów")
                 font.bold: true
                 wrapMode: Text.WordWrap
                 color: designSystem.color("textPrimary")
@@ -243,54 +302,9 @@ ApplicationWindow {
             Label {
                 text: licensingController.statusDetails.length > 0
                       ? licensingController.statusDetails
-                      : qsTr("Użyj kreatora, aby aktywować licencję OEM.")
+                      : qsTr("Brak danych live — tryb demo/offline. Order execution disabled.")
                 wrapMode: Text.WordWrap
                 color: designSystem.color("textSecondary")
-            }
-            RowLayout {
-                spacing: 8
-                Components.IconButton {
-                    designSystem: designSystem
-                    iconName: "fingerprint"
-                    text: qsTr("Fingerprint")
-                    subtle: true
-                    onClicked: licensingController.refreshFingerprint()
-                }
-                Components.IconButton {
-                    designSystem: designSystem
-                    iconName: "shield"
-                    text: qsTr("Reset")
-                    subtle: true
-                    onClicked: licensingController.resetStatus()
-                }
-            }
-            Rectangle { height: 1; width: parent.width; color: designSystem.color("border"); opacity: 0.3 }
-            ColumnLayout {
-                visible: cloudRuntimeEnabled
-                spacing: 4
-                Label {
-                    text: qsTr("Cloud endpoint: %1").arg(contextRuntimeState ? contextRuntimeState.cloudTarget : "client.yaml")
-                    color: designSystem.color("textSecondary")
-                    wrapMode: Text.WordWrap
-                }
-                Label {
-                    text: qsTr("Licencja: %1 • HWID: %2")
-                          .arg(contextRuntimeState ? contextRuntimeState.handshakeLicenseId : "?")
-                          .arg(contextRuntimeState ? contextRuntimeState.handshakeFingerprint : "?")
-                    color: designSystem.color("textSecondary")
-                    wrapMode: Text.WordWrap
-                }
-                Label {
-                    text: qsTr("Status handshake: %1").arg(contextRuntimeState ? contextRuntimeState.handshakeStatus : qsTr("oczekuje"))
-                    color: designSystem.color(contextRuntimeState && contextRuntimeState.handshakeOk ? "success" : "warning")
-                }
-                Components.IconButton {
-                    designSystem: designSystem
-                    iconName: "refresh"
-                    text: qsTr("Odnów handshake")
-                    subtle: true
-                    onClicked: runtimeService && runtimeService.refreshCloudHandshake()
-                }
             }
             Label {
                 text: qsTr("Profil UI: %1").arg(uiConfig && uiConfig.profile ? uiConfig.profile : "default")
@@ -319,12 +333,17 @@ ApplicationWindow {
                           .arg(Math.round(contextRuntimeState ? contextRuntimeState.feedHealth.downtimeMs || 0 : 0))
                     color: designSystem.color("textSecondary")
                 }
+                Label {
+                    text: qsTr("Mock telemetry rows: BTC/USDT heartbeat OK • ETH/USDT stale guard OK")
+                    wrapMode: Text.WordWrap
+                    color: designSystem.color("textSecondary")
+                }
             Components.IconButton {
                 designSystem: designSystem
                 text: qsTr("Ping feed")
                 iconName: "refresh"
                 subtle: true
-                onClicked: runtimeService.loadRecentDecisions(0)
+                onClicked: runtimeService && runtimeService.loadRecentDecisions(0)
             }
         }
     }
@@ -344,7 +363,7 @@ ApplicationWindow {
         ColumnLayout {
             spacing: 12
             Label {
-                text: qsTr("Confidence chart & dziennik decyzji")
+                text: qsTr("Strumień decyzji i dziennik governora")
                 font.bold: true
                 color: designSystem.color("textPrimary")
             }
@@ -357,7 +376,7 @@ ApplicationWindow {
                     ctx.reset()
                     ctx.fillStyle = designSystem.color("surfaceMuted")
                     ctx.fillRect(0, 0, width, height)
-                    var data = runtimeService.decisions || []
+                    var data = runtimeService ? runtimeService.decisions || [] : []
                     if (data.length === 0)
                         return
                     var windowSize = Math.min(40, data.length)
@@ -387,11 +406,17 @@ ApplicationWindow {
                     chartCanvas.requestPaint()
                 }
             }
+            Label {
+                text: qsTr("Brak danych live — tryb demo/offline. Order execution disabled.")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textSecondary")
+                visible: !runtimeService || !runtimeService.decisions || runtimeService.decisions.length === 0
+            }
             ListView {
                 id: decisionList
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                model: runtimeService.decisions
+                model: runtimeService ? runtimeService.decisions : []
                 clip: true
                 delegate: Rectangle {
                     width: ListView.view.width
@@ -425,7 +450,7 @@ ApplicationWindow {
                             color: designSystem.color("textPrimary")
                         }
                         Label {
-                            text: modelData.ai && modelData.ai.strategy ? qsTr("AI: %1").arg(modelData.ai.strategy) : ""
+                            text: modelData.ai && modelData.ai.strategy ? qsTr("Governor: %1").arg(modelData.ai.strategy) : ""
                             color: designSystem.color("textSecondary")
                             visible: text.length > 0
                         }
@@ -442,7 +467,7 @@ ApplicationWindow {
             property var strategies: []
             property var marketplacePresets: strategyManagementController ? strategyManagementController.presets : []
             function rebuild() {
-                var data = runtimeService.decisions || []
+                var data = runtimeService ? runtimeService.decisions || [] : []
                 var stats = {}
                 for (var i = 0; i < data.length; ++i) {
                     var entry = data[i]
@@ -467,9 +492,15 @@ ApplicationWindow {
                 }
             }
             Label {
-                text: qsTr("Strategie AI oraz marketplace")
+                text: qsTr("Warsztat strategii i marketplace")
                 font.bold: true
                 color: designSystem.color("textPrimary")
+            }
+            Label {
+                text: qsTr("Brak danych live — tryb demo/offline. Podłączony lokalny preview bridge.")
+                wrapMode: Text.WordWrap
+                color: designSystem.color("textSecondary")
+                visible: strategies.length === 0
             }
             ListView {
                 Layout.fillWidth: true
@@ -498,7 +529,7 @@ ApplicationWindow {
                 designSystem: designSystem
                 text: qsTr("Odśwież strategie")
                 iconName: "refresh"
-                onClicked: runtimeService.loadRecentDecisions(0)
+                onClicked: runtimeService && runtimeService.loadRecentDecisions(0)
             }
             Rectangle {
                 Layout.fillWidth: true
@@ -550,7 +581,7 @@ ApplicationWindow {
                                 }
                                 Components.IconButton {
                                     designSystem: designSystem
-                                    text: qsTr("Otwórz w managerze")
+                                    text: qsTr("Otwórz w menedżerze")
                                     iconName: "package"
                                     subtle: true
                                     onClicked: {
@@ -576,7 +607,7 @@ ApplicationWindow {
                         }
                         Components.IconButton {
                             designSystem: designSystem
-                            text: qsTr("Strategy Manager")
+                            text: qsTr("Menedżer strategii")
                             iconName: "strategy_manager"
                             onClicked: {
                                 if (layoutController)
@@ -670,7 +701,7 @@ ApplicationWindow {
         interval: 15000
         repeat: true
         running: true
-        onTriggered: runtimeService.loadRecentDecisions(0)
+        onTriggered: runtimeService && runtimeService.loadRecentDecisions(0)
     }
 
     Dialog {
