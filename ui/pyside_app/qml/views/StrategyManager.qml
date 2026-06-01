@@ -6,6 +6,7 @@ import "../components" as Components
 
 Item {
     id: root
+    objectName: "strategyManagerPreviewPanel"
     property var designSystem
     property var strategyManagementController
     property var layoutController
@@ -28,7 +29,8 @@ Item {
             Layout.fillWidth: true
             spacing: 12
             Label {
-                text: qsTr("Manager strategii & Marketplace")
+                objectName: "strategyManagerPreviewTitle"
+                text: qsTr("Menedżer strategii i Marketplace")
                 font.pixelSize: 20
                 font.bold: true
                 color: designSystem ? designSystem.color("textPrimary") : "#fff"
@@ -38,7 +40,7 @@ Item {
                 designSystem: designSystem
                 text: qsTr("Odśwież")
                 iconName: "refresh"
-                enabled: strategyManagementController && !strategyManagementController.busy
+                enabled: strategyManagementController ? !strategyManagementController.busy : false
                 onClicked: strategyManagementController.refreshMarketplace()
             }
         }
@@ -65,8 +67,9 @@ Item {
                 RowLayout {
                     spacing: 8
                     Layout.fillWidth: true
-                    TextField {
+                    Components.StyledTextField {
                         id: portfolioInput
+                        designSystem: root.designSystem
                         Layout.fillWidth: true
                         placeholderText: qsTr("ID portfela docelowego")
                     }
@@ -85,7 +88,7 @@ Item {
         }
 
         Loader {
-            active: strategyManagementController && strategyManagementController.busy
+            active: strategyManagementController ? strategyManagementController.busy : false
             Layout.preferredHeight: active ? 4 : 0
             sourceComponent: Rectangle {
                 Layout.fillWidth: true
@@ -98,6 +101,70 @@ Item {
                     loops: Animation.Infinite
                     NumberAnimation { from: 0.3; to: 1.0; duration: 800 }
                     NumberAnimation { from: 1.0; to: 0.3; duration: 800 }
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Components.PreviewCard {
+                designSystem: root.designSystem
+                title: qsTr("Marketplace unavailable")
+                description: qsTr("Safe demo/offline state: presety mogą być niedostępne bez backendu preview.")
+                Layout.fillWidth: true
+            }
+            Components.PreviewCard {
+                designSystem: root.designSystem
+                title: qsTr("BTC/USDT preview")
+                description: qsTr("4 zdarzenia BTC/USDT przygotowane jako statyczny podgląd marketplace.")
+                Layout.fillWidth: true
+            }
+            Components.PreviewCard {
+                designSystem: root.designSystem
+                title: qsTr("Safety boundary")
+                description: qsTr("Runtime loop not started, exchange/order disabled, API keys not required.")
+                Layout.fillWidth: true
+            }
+        }
+
+        Components.PreviewCard {
+            designSystem: root.designSystem
+            title: qsTr("Demo/offline zdarzenia BTC/USDT")
+            description: qsTr("Statyczny zapis aktywności marketplace, żeby panel nie był pusty w widocznym preview.")
+            Repeater {
+                model: [
+                    qsTr("BTC/USDT • preset momentum sprawdzony lokalnie"),
+                    qsTr("BTC/USDT • marketplace unavailable — użyto cache preview"),
+                    qsTr("BTC/USDT • podpis presetu oczekuje na backend"),
+                    qsTr("BTC/USDT • przypisanie portfela zablokowane w demo/offline")
+                ]
+                delegate: Label {
+                    Layout.fillWidth: true
+                    text: "• " + modelData
+                    color: root.designSystem ? root.designSystem.color("textSecondary") : "#b5bfd8"
+                    wrapMode: Text.WordWrap
+                }
+            }
+            RowLayout {
+                spacing: 8
+                Components.IconButton {
+                    designSystem: root.designSystem
+                    text: qsTr("Odśwież marketplace")
+                    iconName: "refresh"
+                    subtle: true
+                    enabled: strategyManagementController ? !strategyManagementController.busy : false
+                    onClicked: strategyManagementController.refreshMarketplace()
+                }
+                Components.IconButton {
+                    designSystem: root.designSystem
+                    text: qsTr("Tryb demo")
+                    iconName: "mode_wizard"
+                    subtle: true
+                    onClicked: {
+                        if (layoutController)
+                            layoutController.setPanelVisibility("modeWizardPanel", true)
+                    }
                 }
             }
         }
@@ -248,7 +315,7 @@ Item {
                             designSystem: designSystem
                             text: qsTr("Zainstaluj i przypisz")
                             iconName: "package"
-                            enabled: strategyManagementController && !strategyManagementController.busy
+                            enabled: strategyManagementController ? !strategyManagementController.busy : false
                             onClicked: {
                                 var result = strategyManagementController.activateAndAssign(modelData.presetId, portfolioInput.text)
                                 if (result && result.assignmentError)
@@ -260,7 +327,7 @@ Item {
                             text: qsTr("Tylko przypisz")
                             iconName: "fingerprint"
                             subtle: true
-                            enabled: strategyManagementController && !strategyManagementController.busy
+                            enabled: strategyManagementController ? !strategyManagementController.busy : false
                             onClicked: strategyManagementController.assignPresetToPortfolio(modelData.presetId, portfolioInput.text)
                         }
                         Item { Layout.fillWidth: true }

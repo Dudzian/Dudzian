@@ -27,6 +27,19 @@ FORBIDDEN_SOURCE_TOKENS = (
     "os" + "." + "environ",
 )
 
+PANEL_AUDIT_IDS = (
+    "sidePanel",
+    "telemetryPanel",
+    "aiDecisionsPanel",
+    "diagnosticsPanel",
+    "chartView",
+    "strategyWorkbench",
+    "strategiesPanel",
+    "riskControlsPanel",
+    "modeWizardPanel",
+    "strategyManagerPanel",
+)
+
 
 def _run_ui_smoke(*extra_args: str) -> subprocess.CompletedProcess[str]:
     run_process = getattr(subprocess, "run")
@@ -86,6 +99,13 @@ def test_source_smoke_finishes_and_reports_safety_contract() -> None:
     assert payload["operator_dashboard_visible"] is True
     assert payload["active_panel_id"] in {"sidePanel", "operatorDashboard"}
     assert payload["central_content_empty"] is False
+    panel_load_results = payload["panel_load_results"]
+    assert isinstance(panel_load_results, dict)
+    for panel_id in PANEL_AUDIT_IDS:
+        result = panel_load_results[panel_id]
+        assert result["loaded"] is True
+        assert result["empty"] is False
+        assert result["visible"] is True
     assert payload["secrets_read"] is False
     assert payload["keychain_read"] is False
     assert payload["env_values_read"] is False
@@ -241,3 +261,92 @@ def test_changed_ui_qml_sources_have_no_forbidden_runtime_or_secret_calls() -> N
 
     for token in FORBIDDEN_SOURCE_TOKENS:
         assert token not in source
+
+
+def test_all_preview_menu_panels_have_visible_content_markers() -> None:
+    source = _qml_text()
+
+    required_markers = {
+        "Dashboard operatora": 'objectName: "operatorDashboardTitle"',
+        "Telemetria feedu": 'objectName: "telemetryFeedPreviewTitle"',
+        "Decyzje governor": 'objectName: "aiDecisionsView"',
+        "Diagnostyka": 'objectName: "diagnosticsPreviewTitle"',
+        "Strumień decyzji": 'objectName: "decisionStreamPreviewTitle"',
+        "Warsztat strategii": 'objectName: "strategyWorkbenchPreviewTitle"',
+        "Strategie": 'objectName: "strategiesPreviewTitle"',
+        "Kontrola ryzyka": 'objectName: "riskControlsPreviewTitle"',
+        "Tryby pracy": 'objectName: "modeWizardPreviewPanel"',
+        "Menedżer strategii": 'objectName: "strategyManagerPreviewTitle"',
+    }
+    for panel_name, marker in required_markers.items():
+        assert panel_name in source
+        assert marker in source
+
+
+def test_strategy_and_risk_panels_use_styled_controls_for_dark_theme_contrast() -> None:
+    strategies = (QML_SOURCE_ROOT / "views" / "Strategies.qml").read_text(encoding="utf-8")
+    risk = (QML_SOURCE_ROOT / "views" / "RiskControls.qml").read_text(encoding="utf-8")
+
+    assert "Components.StyledTextField" in strategies
+    assert 'designSystem.color("textPrimary")' in strategies
+    assert 'designSystem.color("textSecondary")' in strategies
+    assert "Components.StyledSpinBox" in risk
+    assert "Components.StyledTextField" in risk
+    assert "Components.StyledSwitch" in risk
+    assert "contentItem: Text" in risk
+    assert 'designSystem.color("textPrimary")' in risk
+    assert 'designSystem.color("textSecondary")' in risk
+
+
+def test_preview_empty_states_have_demo_copy_and_styled_actions() -> None:
+    manager = (QML_SOURCE_ROOT / "views" / "StrategyManager.qml").read_text(encoding="utf-8")
+    workbench = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    mode_wizard = (QML_SOURCE_ROOT / "views" / "ModeWizard.qml").read_text(encoding="utf-8")
+
+    for source in (manager, workbench, mode_wizard):
+        assert "demo/offline" in source
+        assert "Components.IconButton" in source
+
+    assert "Marketplace unavailable" in manager
+    assert "4 zdarzenia BTC/USDT" in manager
+    assert "strategyWorkbenchPreviewPanel" in workbench
+    assert "Brak live danych" in workbench
+    assert "modeWizardPreviewPanel" in mode_wizard
+    assert "Otwórz kreator" in mode_wizard
+
+
+def test_preview_card_has_default_layout_content_container() -> None:
+    preview_card = (QML_SOURCE_ROOT / "components" / "PreviewCard.qml").read_text(encoding="utf-8")
+
+    assert "default property alias content: extraContent.data" in preview_card
+    assert "id: extraContent" in preview_card
+    assert 'objectName: "previewCardExtraContent"' in preview_card
+    assert "Layout.fillWidth: true" in preview_card
+    assert "implicitHeight: cardContent.implicitHeight + cardPadding * 2" in preview_card
+    assert "property alias contentItem: cardContent" not in preview_card
+
+
+def test_offscreen_smoke_audits_every_menu_panel_loads_non_empty() -> None:
+    result = _run_ui_smoke()
+    payload = _smoke_payload(result)
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert payload["status"] == "ok"
+    assert payload["ui_loaded"] is True
+    assert payload["qml_loaded"] is True
+    assert payload["central_content_empty"] is False
+    assert payload["runtime_loop_started"] is False
+    assert payload["exchange_io"] == "disabled"
+    assert payload["order_submission"] == "disabled"
+    assert payload["api_keys_required"] is False
+
+    panel_load_results = payload["panel_load_results"]
+    assert isinstance(panel_load_results, dict)
+    assert set(panel_load_results) == set(PANEL_AUDIT_IDS)
+    for panel_id in PANEL_AUDIT_IDS:
+        panel_result = panel_load_results[panel_id]
+        assert panel_result["loaded"] is True
+        assert panel_result["empty"] is False
+        assert panel_result["visible"] is True
+        assert panel_result["width"] > 0 or panel_result["implicitWidth"] > 0
+        assert panel_result["height"] > 0 or panel_result["implicitHeight"] > 0
