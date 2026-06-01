@@ -5,10 +5,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 from scripts import ui_preview_launch_plan
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "ui_preview_launch_plan.py"
+VISIBLE_LAUNCHER = REPO_ROOT / "scripts" / "windows" / "run_ui_preview_visible.bat"
+VISIBLE_CONFIG = REPO_ROOT / "ui" / "config" / "preview_local.yaml"
 FORBIDDEN_SOURCE_TOKENS = (
     "create_order",
     "fetch_balance",
@@ -44,6 +48,8 @@ def test_launch_plan_contract_and_entrypoint_detection() -> None:
     assert payload["qml_entrypoint_found"] is True
     assert payload["qml_entrypoint_path"] == "ui/pyside_app/qml/MainWindow.qml"
     assert payload["ui_framework"] == "PySide6/QML"
+    assert payload["visible_ui_config_found"] is True
+    assert payload["visible_ui_config_path"] == "ui/config/preview_local.yaml"
 
 
 def test_launch_plan_safety_boundary() -> None:
@@ -75,7 +81,14 @@ def test_launch_plan_command_is_render_only_source_entrypoint() -> None:
         "-m",
         "ui.pyside_app",
         "--config",
-        "ui/config/example.yaml",
+        "ui/config/preview_local.yaml",
+    ]
+    assert payload["visible_ui_command_preview"] == [
+        sys.executable,
+        "-m",
+        "ui.pyside_app",
+        "--config",
+        "ui/config/preview_local.yaml",
     ]
     assert payload["ui_smoke_command_preview"] == [
         sys.executable,
@@ -100,7 +113,41 @@ def test_build_launch_plan_does_not_depend_on_cwd(tmp_path: Path, monkeypatch) -
 
 
 def test_plan_only_source_has_no_forbidden_runtime_or_secret_calls() -> None:
-    source = SCRIPT.read_text(encoding="utf-8")
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in (SCRIPT, VISIBLE_LAUNCHER, VISIBLE_CONFIG)
+    )
 
     for token in FORBIDDEN_SOURCE_TOKENS:
         assert token not in source
+
+
+def test_visible_windows_launcher_is_safe_source_ui_entrypoint() -> None:
+    assert VISIBLE_LAUNCHER.exists()
+    assert VISIBLE_CONFIG.exists()
+
+    source = VISIBLE_LAUNCHER.read_text(encoding="utf-8")
+    normalized = source.lower()
+
+    assert source.startswith("@echo off")
+    assert "setlocal EnableExtensions" in source
+    assert 'cd /d "%~dp0\\..\\.."' in source
+    assert "python --version" in source
+    assert "python -m ui.pyside_app --config ui/config/preview_local.yaml" in source
+    assert "pause" in normalized
+    assert "--smoke" not in source
+    assert "--offscreen" not in source
+    assert "--enable-cloud-runtime" not in source
+    assert "start /b" not in normalized
+    assert "live" not in normalized
+
+
+def test_visible_preview_config_is_local_and_tls_disabled() -> None:
+    payload = yaml.safe_load(VISIBLE_CONFIG.read_text(encoding="utf-8"))
+
+    assert payload["endpoint"] == "in-process"
+    assert payload["transport"]["mode"] == "in-process"
+    assert payload["grpc"]["tls"]["enabled"] is False
+    assert payload["grpc"]["tls"]["require_client_auth"] is False
+    assert payload["tls"]["enabled"] is False
+    assert payload["telemetry"]["metrics_endpoint"] == "in-process"
+    assert payload["telemetry"]["metrics_auth_token"] == ""
