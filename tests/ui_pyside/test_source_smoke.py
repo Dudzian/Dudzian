@@ -151,6 +151,12 @@ def _qml_text() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in _qml_sources())
 
 
+def test_ai_decisions_view_preserves_timeline_count_contract() -> None:
+    decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
+
+    assert "property int timelineCount" in decisions
+
+
 def test_qml_design_system_color_tokens_are_registered() -> None:
     # Source safety guard: QML falls back poorly when a token is misspelled or removed,
     # so every literal designSystem.color("TOKEN") use in preview sources must exist in

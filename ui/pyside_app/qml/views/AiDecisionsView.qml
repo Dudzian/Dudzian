@@ -8,30 +8,73 @@ Components.StyledScrollView {
     objectName: "aiDecisionsPreviewPanel"
     property var runtimeService
     property var previewState
+    property var governorSnapshot: ({})
+    property int timelineCount: root.hasHistoryRowsSource() ? root.historyRows().length : root.filteredDecisionRows().length
+    property int recommendationCount: root.recommendedModes().length
+    property string currentMode: root.lastDecisionValue("mode", "")
     contentWidth: availableWidth
     clip: true
 
+    function decisionRows() {
+        if (!root.previewState || !root.previewState.decisionPreviewRows) return []
+        return root.previewState.decisionPreviewRows
+    }
+    function hasHistoryRowsSource() {
+        return root.governorSnapshot && root.governorSnapshot.history !== undefined && root.governorSnapshot.history !== null
+    }
+    function historyRows() {
+        if (!root.hasHistoryRowsSource()) return []
+        return root.governorSnapshot.history
+    }
+    function lastDecisionValue(key, fallback) {
+        if (!root.governorSnapshot || !root.governorSnapshot.lastDecision) return fallback
+        var value = root.governorSnapshot.lastDecision[key]
+        return value === undefined || value === null ? fallback : value
+    }
+    function recommendedModes() {
+        return root.lastDecisionValue("recommendedModes", [])
+    }
+    function refreshAiGovernorSnapshot() {
+        if (!root.runtimeService || !root.runtimeService.aiGovernorSnapshot) {
+            root.governorSnapshot = {}
+            return
+        }
+        root.governorSnapshot = root.runtimeService.aiGovernorSnapshot
+    }
     function filteredDecisionRows() {
         var out = []
-        for (var i = 0; i < previewState.decisionPreviewRows.length; ++i) {
-            var row = previewState.decisionPreviewRows[i]
-            if (previewState.decisionFilter === "paper" && row.action.indexOf("PAPER") < 0) continue
-            if (previewState.decisionFilter === "blocked" && row.action !== "BLOCKED LIVE") continue
-            if (previewState.decisionFilter === "no-order" && row.action !== "NO ORDER" && row.action !== "HOLD" && row.action !== "WAIT") continue
-            if (previewState.decisionPairFilter !== "All pairs" && row.symbol !== previewState.decisionPairFilter) continue
+        var rows = root.decisionRows()
+        var decisionFilter = root.previewState && root.previewState.decisionFilter ? root.previewState.decisionFilter : "all"
+        var decisionPairFilter = root.previewState && root.previewState.decisionPairFilter ? root.previewState.decisionPairFilter : "All pairs"
+        for (var i = 0; i < rows.length; ++i) {
+            var row = rows[i]
+            if (decisionFilter === "paper" && row.action.indexOf("PAPER") < 0) continue
+            if (decisionFilter === "blocked" && row.action !== "BLOCKED LIVE") continue
+            if (decisionFilter === "no-order" && row.action !== "NO ORDER" && row.action !== "HOLD" && row.action !== "WAIT") continue
+            if (decisionPairFilter !== "All pairs" && row.symbol !== decisionPairFilter) continue
             out.push(row)
         }
         return out
     }
     function countAction(kind) {
         var count = 0
-        for (var i = 0; i < previewState.decisionPreviewRows.length; ++i) {
-            var action = previewState.decisionPreviewRows[i].action
+        var rows = root.decisionRows()
+        for (var i = 0; i < rows.length; ++i) {
+            var action = rows[i].action
             if (kind === "blocked" && action === "BLOCKED LIVE") count += 1
             if (kind === "paper" && action.indexOf("PAPER") >= 0) count += 1
             if (kind === "no-order" && (action === "NO ORDER" || action === "HOLD" || action === "WAIT")) count += 1
         }
         return count
+    }
+
+    onRuntimeServiceChanged: root.refreshAiGovernorSnapshot()
+    Component.onCompleted: root.refreshAiGovernorSnapshot()
+
+    Connections {
+        target: root.runtimeService
+        ignoreUnknownSignals: true
+        function onAiGovernorSnapshotChanged() { root.refreshAiGovernorSnapshot() }
     }
 
     ColumnLayout {
