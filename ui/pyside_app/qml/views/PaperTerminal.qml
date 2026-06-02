@@ -279,7 +279,22 @@ Components.StyledScrollView {
                             color: designSystem.color("surfaceMuted")
                             border.color: designSystem.color("border")
                             implicitHeight: 54
-                            ColumnLayout { anchors.fill: parent; anchors.margins: 8; Label { text: modelData.label; color: designSystem.color("textSecondary"); font.pixelSize: 11 }; Label { text: modelData.value; color: designSystem.color("textPrimary"); font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true } }
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                Label {
+                                    text: modelData.label
+                                    color: designSystem.color("textSecondary")
+                                    font.pixelSize: 11
+                                }
+                                Label {
+                                    text: modelData.value
+                                    color: designSystem.color("textPrimary")
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
                         }
                     }
                 }
@@ -341,8 +356,42 @@ Components.StyledScrollView {
                 Layout.minimumWidth: 280
                 Layout.alignment: Qt.AlignTop
 
-                RowLayout { Layout.fillWidth: true; Label { text: root.activePair; color: designSystem.color("textPrimary"); font.bold: true; Layout.fillWidth: true }; Label { text: qsTr("last price row: %1").arg(previewState.terminalPrice); color: designSystem.color("textSecondary") } }
-                RowLayout { Layout.fillWidth: true; Label { text: qsTr("Price"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 82 }; Label { text: qsTr("Amount"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 76 }; Label { text: qsTr("Total"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 82 }; Label { text: qsTr("Action"); color: designSystem.color("textSecondary"); Layout.fillWidth: true } }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label {
+                        text: root.activePair
+                        color: designSystem.color("textPrimary")
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        text: qsTr("last price row: %1").arg(previewState.terminalPrice)
+                        color: designSystem.color("textSecondary")
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label {
+                        text: qsTr("Price")
+                        color: designSystem.color("textSecondary")
+                        Layout.preferredWidth: 82
+                    }
+                    Label {
+                        text: qsTr("Amount")
+                        color: designSystem.color("textSecondary")
+                        Layout.preferredWidth: 76
+                    }
+                    Label {
+                        text: qsTr("Total")
+                        color: designSystem.color("textSecondary")
+                        Layout.preferredWidth: 82
+                    }
+                    Label {
+                        text: qsTr("Action")
+                        color: designSystem.color("textSecondary")
+                        Layout.fillWidth: true
+                    }
+                }
                 Repeater { model: previewState.mockOrderBookAsks; delegate: orderBookRowDelegate }
                 Rectangle { Layout.fillWidth: true; radius: 10; color: designSystem.color("surfaceMuted"); border.color: designSystem.color("border"); implicitHeight: 38; Label { anchors.centerIn: parent; text: qsTr("Spread row 8.90 USDT • Last price row %1 • Paper Preview").arg(previewState.terminalPrice); color: designSystem.color("textPrimary"); font.bold: true } }
                 Repeater { model: previewState.mockOrderBookBids; delegate: orderBookRowDelegate }

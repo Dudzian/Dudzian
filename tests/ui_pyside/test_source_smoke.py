@@ -157,6 +157,44 @@ def test_ai_decisions_view_preserves_timeline_count_contract() -> None:
     assert "property int timelineCount" in decisions
 
 
+def test_ui_preview_7_7_2_qml_standalone_guards_and_terminal_parse_patterns() -> None:
+    terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
+    decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
+    icon_button = (QML_SOURCE_ROOT / "components" / "IconButton.qml").read_text(encoding="utf-8")
+
+    # Guard against the compact inline child-object syntax that broke QML parsing
+    # with `Unexpected token ;` in PaperTerminal chart/order-book rows.
+    assert re.search(r"ColumnLayout\s*\{[^}]*Label\s*\{[^}]*\}\s*;\s*Label", terminal) is None
+    assert re.search(r"RowLayout\s*\{[^}]*Label\s*\{[^}]*\}\s*;\s*Label", terminal) is None
+
+    for guard in (
+        "function safeColor",
+        "function previewValue",
+        "function decisionRows",
+        "function decisionFilterValue",
+        "function decisionPairFilterValue",
+        "function paperSessionStatusValue",
+        "function lastGovernorDecisionValue",
+        'root.previewValue("decisionPreviewRows", [])',
+        'root.previewValue("paperSessionStatus", "stopped")',
+        'root.previewValue("lastGovernorDecision", qsTr("No paper decision yet"))',
+    ):
+        assert guard in decisions
+
+    for unguarded_pattern in (
+        r"description:\s*previewState\.lastGovernorDecision",
+        r"arg\(previewState\.paperSessionStatus\)",
+        r"subtle:\s*previewState\.decisionFilter",
+        r"subtle:\s*previewState\.decisionPairFilter",
+        r"color:\s*designSystem\.color\(",
+    ):
+        assert re.search(unguarded_pattern, decisions) is None
+
+    assert "function safeIconSource" in icon_button
+    assert 'typeof control.designSystem.iconSource === "function"' in icon_button
+    assert "designSystem.iconSource(control.iconName)" not in icon_button
+
+
 def test_qml_design_system_color_tokens_are_registered() -> None:
     # Source safety guard: QML falls back poorly when a token is misspelled or removed,
     # so every literal designSystem.color("TOKEN") use in preview sources must exist in
