@@ -44,7 +44,7 @@ Components.StyledScrollView {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { objectName: "aiDecisionsTitle"; text: qsTr("Decyzje"); font.bold: true; font.pixelSize: 26; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                Label { text: qsTr("Decision stream rotates selected pairs, active strategies, action chips and timestamps. All rows are Paper preview records; no live orders are emitted."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("Decision stream reads shared local-only paper bridge/state rows from Generate next decision, Generate governor recommendation and Simulate terminal order. All rows are Paper preview records; no live orders are emitted."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }
 
@@ -81,7 +81,7 @@ Components.StyledScrollView {
                 Layout.fillWidth: true
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate next decision"); iconName: "mode_wizard"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.generateNextDecision() }
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate governor recommendation"); subtle: true; onClicked: previewState.generateGovernorRecommendation() }
-                Label { text: qsTr("Paper session state: %1").arg(previewState.paperSessionState); color: designSystem.color("textSecondary"); Layout.fillWidth: true }
+                Label { text: qsTr("Paper session state: %1").arg(previewState.paperSessionStatus); color: designSystem.color("textSecondary"); Layout.fillWidth: true }
             }
             ListView {
                 Layout.fillWidth: true

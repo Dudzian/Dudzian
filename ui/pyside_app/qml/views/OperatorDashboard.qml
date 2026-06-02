@@ -33,7 +33,7 @@ Components.StyledScrollView {
                 Label { objectName: "operatorDashboardTitle"; text: qsTr("Dashboard"); font.bold: true; font.pixelSize: 28; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
                 Label { text: qsTr("Kokpit operatora dla bezpiecznego Paper Preview. Live trading disabled, Exchange route disabled, Order submission disabled, order submission disabled, API keys not required."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Bot status: Demo/Paper Preview"); description: qsTr("Paper session status: %1 • Runtime loop not started • Sandbox/testnet planned").arg(previewState.paperSessionState); Layout.preferredWidth: 340 }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Bot status: Demo/Paper Preview"); description: qsTr("Paper session status: %1 • Runtime loop not started • Sandbox/testnet planned").arg(previewState.paperSessionStatus); Layout.preferredWidth: 340 }
         }
 
         GridLayout {
@@ -49,7 +49,9 @@ Components.StyledScrollView {
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Active strategies"); description: qsTr("%1 active strategies: %2").arg(previewState.activeStrategies.length).arg(previewState.activeStrategies.join(", ")); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardFeed"; designSystem: root.designSystem; title: qsTr("Last AI/governor decision"); description: previewState.lastGovernorDecision; Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardRiskControls"; designSystem: root.designSystem; title: qsTr("Risk state"); description: qsTr("%1 • Risk profile %2 • max position %3").arg(previewState.riskState).arg(previewState.riskProfile).arg(previewState.maxPosition); Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper PnL / equity preview"); description: qsTr("Paper equity: %1 USDT • Paper PnL: %2 USDT • Session ticks: %3").arg(previewState.previewEquity.toFixed(2)).arg(previewState.previewPnl.toFixed(2)).arg(previewState.paperTicks); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper PnL / equity preview"); description: qsTr("Paper equity: %1 USDT • Paper PnL: %2 USDT • Session ticks: %3").arg(previewState.paperEquity.toFixed(2)).arg(previewState.paperPnl.toFixed(2)).arg(previewState.paperSessionTicks); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Last paper order"); description: previewState.paperOrderRows.length > 0 ? qsTr("%1 • %2 • %3 • %4").arg(previewState.paperOrderRows[0].timestamp).arg(previewState.paperOrderRows[0].pair).arg(previewState.paperOrderRows[0].action).arg(previewState.paperOrderRows[0].status) : qsTr("No local-only paper bridge/state orders yet"); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Last governor/paper decision"); description: previewState.lastGovernorDecision; Layout.fillWidth: true }
         }
 
         Components.PreviewCard {
@@ -71,12 +73,12 @@ Components.StyledScrollView {
                 columns: width > 900 ? 6 : 2
                 rowSpacing: 8
                 columnSpacing: 8
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper session status"); description: previewState.paperSessionState; Layout.fillWidth: true }
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Session ticks"); description: String(previewState.paperTicks); Layout.fillWidth: true }
+                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper session status"); description: previewState.paperSessionStatus; Layout.fillWidth: true }
+                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Session ticks"); description: String(previewState.paperSessionTicks); Layout.fillWidth: true }
                 Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Orders"); description: String(previewState.paperOrdersCount); Layout.fillWidth: true }
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("blocked"); description: String(previewState.blockedOrdersCount); Layout.fillWidth: true }
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("no-order"); description: String(previewState.noOrderCount); Layout.fillWidth: true }
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("simulated"); description: String(previewState.simulatedOrdersCount); Layout.fillWidth: true }
+                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("blocked"); description: String(previewState.paperBlockedCount); Layout.fillWidth: true }
+                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("no-order"); description: String(previewState.paperNoOrderCount); Layout.fillWidth: true }
+                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("simulated"); description: String(previewState.paperSimulatedCount); Layout.fillWidth: true }
             }
         }
 
@@ -106,7 +108,7 @@ Components.StyledScrollView {
                 Layout.preferredHeight: 280
                 clip: true
                 spacing: 8
-                model: previewState.paperOrdersPreview
+                model: previewState.paperOrderRows
                 delegate: Rectangle {
                     required property var modelData
                     width: ListView.view ? ListView.view.width : 900

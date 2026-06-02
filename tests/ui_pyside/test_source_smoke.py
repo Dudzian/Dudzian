@@ -677,6 +677,222 @@ def test_ui_preview_7_2_smoke_contract_fields_are_reported() -> None:
     assert payload["ai_governor_controls_present"] is True
 
 
+def test_ui_preview_7_6_paper_terminal_source_contract() -> None:
+    source = _qml_text()
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    terminal_path = QML_SOURCE_ROOT / "views" / "PaperTerminal.qml"
+    terminal = terminal_path.read_text(encoding="utf-8")
+
+    assert terminal_path.exists()
+    assert 'objectName: "paperTerminalRoot"' in terminal
+    assert "Paper Terminal" in terminal or "Terminal" in terminal
+    assert 'panelId: "terminalPanel", title: qsTr("Paper Terminal")' in main_window
+    assert '"terminalPanel": { title: qsTr("Paper Terminal")' in main_window
+    assert "terminalPanelComponent" in main_window
+
+    for token in (
+        "Order Form",
+        "BUY",
+        "SELL",
+        "LIMIT",
+        "MARKET",
+        "Order Book",
+        "Positions",
+        "Orders",
+        "History",
+        "Reserved",
+        "Strategy",
+        "Log",
+        "Messages",
+    ):
+        assert token in terminal
+
+    for token in (
+        "Paper Preview only",
+        "Live trading disabled",
+        "Exchange I/O disabled",
+        "Order submission disabled",
+        "API keys not required",
+        "Runtime loop not started",
+        "No real orders",
+    ):
+        assert token in terminal
+
+    for token in (
+        "Pair selector",
+        "paperTerminalPairSelector",
+        "paperTerminalPairSearchInput",
+        "Search pair",
+        "active pair",
+        "selectedPairs fallback to previewMarketPairs",
+        "active timeframe local state",
+        "terminalTimeframe",
+        "setTerminalTimeframe",
+        "available balance preview",
+        "fee estimate preview",
+        "order value preview",
+        "TP preview",
+        "SL preview",
+        "post-only local",
+        "reduce-only local",
+        "time-in-force GTC",
+    ):
+        assert token in terminal or token in main_window
+
+    assert main_window.count('action: "Use ask"') >= 10
+    assert main_window.count('action: "Use bid"') >= 10
+
+    for token in (
+        "selectedTerminalPair",
+        "terminalSide",
+        "terminalOrderType",
+        "terminalPrice",
+        "terminalAmount",
+        "terminalTotal",
+        "terminalAutoConfirm",
+        "terminalSelectedBottomTab",
+        "mockOrderBookAsks",
+        "mockOrderBookBids",
+        "mockTerminalPositions",
+        "mockTerminalOrders",
+        "mockTerminalHistory",
+        "terminalLogRows",
+        "mockTerminalReservedBalances",
+        "terminalPairSearch",
+        "terminalTimeframe",
+        "function terminalPairCandidates",
+        "function setTerminalTimeframe",
+        "function setTerminalPair",
+        "function setTerminalSide",
+        "function setTerminalOrderType",
+        "function setTerminalPrice",
+        "function setTerminalAmount",
+        "function applyTerminalPercent",
+        "function simulateTerminalOrder",
+        "function selectTerminalBottomTab",
+        "function useOrderBookPrice",
+    ):
+        assert token in main_window
+
+    assert "Local preview chart" in terminal
+    assert "BTC/USDT" in main_window
+    assert (
+        'selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT"' in main_window
+    )
+    assert "preview-only local catalog" in source
+    assert "Paper Preview only" in terminal
+
+    forbidden_terminal_tokens = (
+        "ccxt",
+        "create_order",
+        "fetch_balance",
+        "load_markets",
+        "os.environ",
+        "getenv",
+        "keyring",
+        "dotenv",
+        "subprocess",
+        "shell=True",
+    )
+    for token in forbidden_terminal_tokens:
+        assert token not in terminal
+
+
+def test_ui_preview_7_7_local_paper_bridge_state_contract() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
+    decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
+
+    required_state_tokens = (
+        "paperSessionStatus",
+        "paperEquity",
+        "paperPnl",
+        "paperSessionTicks",
+        "paperOrdersCount",
+        "paperBlockedCount",
+        "paperNoOrderCount",
+        "paperSimulatedCount",
+        "paperOrderRows",
+        "paperTelemetryRows",
+        "paperOpenPositions",
+        "paperClosedTrades",
+        "validatePaperOrderPreview",
+        "appendPaperTelemetry",
+        "appendPaperDecision",
+        "submitLocalPaperOrder",
+        "updatePaperPositionPreview",
+        "updatePaperEquityPreview",
+    )
+    for token in required_state_tokens:
+        assert token in main_window
+
+    for token in (
+        "local-only paper bridge/state",
+        "Paper Preview only",
+        "Live trading disabled",
+        "Exchange I/O disabled",
+        "Order submission disabled",
+        "API keys not required",
+        "Runtime loop not started",
+        "No real orders",
+    ):
+        assert token in main_window or token in terminal or token in dashboard or token in decisions
+
+    for token in (
+        "previewState.paperSessionStatus",
+        "previewState.paperEquity",
+        "previewState.paperPnl",
+        "previewState.paperSessionTicks",
+        "previewState.paperOrderRows",
+    ):
+        assert token in dashboard
+
+    for token in (
+        "previewState.decisionPreviewRows",
+        "Simulate terminal order",
+        "Generate next decision",
+        "Generate governor recommendation",
+        "previewState.paperSessionStatus",
+    ):
+        assert token in decisions or token in main_window
+
+    for token in (
+        "root.paperTelemetryRows",
+        "root.paperSessionTicks",
+        "last paper event",
+        "bounded list 8–12 rows",
+        "exchange I/O disabled",
+        "runtime loop not started",
+    ):
+        assert token in main_window
+
+    for token in (
+        "previewState.paperOpenPositions",
+        "previewState.paperOrderRows",
+        "previewState.paperClosedTrades",
+        "previewState.terminalLogRows",
+        "Safety/system messages",
+    ):
+        assert token in terminal
+
+    guarded_sources = "\n".join((main_window, terminal, dashboard, decisions))
+    forbidden_tokens = (
+        "ccxt",
+        "create_order",
+        "fetch_balance",
+        "load_markets",
+        "os.environ",
+        "getenv",
+        "keyring",
+        "dotenv",
+        "subprocess",
+        "shell=True",
+    )
+    for token in forbidden_tokens:
+        assert token not in guarded_sources
+
+
 def test_ui_preview_7_4_product_ux_source_contract() -> None:
     source = _qml_text()
     main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
