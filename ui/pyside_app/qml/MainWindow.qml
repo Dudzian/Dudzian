@@ -49,6 +49,29 @@ ApplicationWindow {
     property var closedPaperTrades: [
         ({ pair: "ETH/USDT", side: "paper sell", pnl: "+18.44", label: "simulated" })
     ]
+    // UI-PREVIEW-7.7 local-only paper bridge/state shared by Dashboard, Decisions, Telemetry and Paper Terminal.
+    // Paper Preview only: live trading disabled, exchange I/O disabled, order submission disabled, API keys not required, runtime loop not started, no real orders.
+    property string paperSessionStatus: "stopped"
+    property real paperEquity: 100000.0
+    property real paperPnl: 0.0
+    property int paperSessionTicks: 0
+    property int paperBlockedCount: 0
+    property int paperNoOrderCount: 1
+    property int paperSimulatedCount: 0
+    property var paperOpenPositions: [
+        ({ pair: "BTC/USDT", side: "paper long", size: "0.012", pnl: "+42.10", label: "simulated" }),
+        ({ pair: "SOL/USDT", side: "watch", size: "0", pnl: "0.00", label: "no order" })
+    ]
+    property var paperClosedTrades: [
+        ({ pair: "ETH/USDT", side: "paper sell", pnl: "+18.44", label: "simulated" })
+    ]
+    property var paperOrderRows: [
+        ({ timestamp: "12:00:01Z", pair: "BTC/USDT", action: "HOLD", status: "no order", confidence: "0.81", reason: "Preview guard held the setup; order submission disabled." })
+    ]
+    property var paperTelemetryRows: [
+        ({ timestamp: "12:04:18Z", message: "local-only paper bridge/state ready • runtime loop not started" }),
+        ({ timestamp: "12:03:58Z", message: "Paper Preview only • exchange I/O disabled • no real orders" })
+    ]
     property string lastGovernorDecision: "BTC/USDT HOLD • confidence 0.81 • NO ORDER — preview only"
     property string autonomyMode: "Supervised dry-run"
     property int autonomyLevel: 2
@@ -128,6 +151,67 @@ ApplicationWindow {
     property string diagnosticsBundleStatus: "Last bundle path/status: not generated"
     property string lastStrategySaveStatus: "Brak lokalnego zapisu preview"
 
+
+    // UI-PREVIEW-7.6 local-only Product Trading Terminal / Paper Trading Cockpit state.
+    // Safe preview only: live trading disabled, exchange I/O disabled, order submission disabled, API keys not required, runtime loop not started, no real orders.
+    property string selectedTerminalPair: selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT"
+    property string terminalSide: "BUY"
+    property string terminalOrderType: "LIMIT"
+    property string terminalPrice: "68240.50"
+    property string terminalAmount: "0.010"
+    property string terminalTotal: "682.41"
+    property bool terminalAutoConfirm: false
+    property string terminalSelectedBottomTab: "Positions"
+    property string terminalPairSearch: ""
+    property string terminalTimeframe: "15m"
+    property string terminalTakeProfit: "2.80%"
+    property string terminalStopLoss: "1.20%"
+    property var mockOrderBookAsks: [
+        ({ price: "68302.40", amount: "0.184", total: "12567.64", action: "Use ask" }),
+        ({ price: "68295.10", amount: "0.312", total: "21308.07", action: "Use ask" }),
+        ({ price: "68288.60", amount: "0.146", total: "9970.14", action: "Use ask" }),
+        ({ price: "68281.90", amount: "0.428", total: "29229.65", action: "Use ask" }),
+        ({ price: "68275.20", amount: "0.233", total: "15907.12", action: "Use ask" }),
+        ({ price: "68269.40", amount: "0.517", total: "35304.28", action: "Use ask" }),
+        ({ price: "68264.20", amount: "0.096", total: "6553.36", action: "Use ask" }),
+        ({ price: "68258.50", amount: "0.287", total: "19591.19", action: "Use ask" }),
+        ({ price: "68251.20", amount: "0.356", total: "24297.43", action: "Use ask" }),
+        ({ price: "68245.80", amount: "0.142", total: "9690.90", action: "Use ask" })
+    ]
+    property var mockOrderBookBids: [
+        ({ price: "68236.10", amount: "0.188", total: "12844.39", action: "Use bid" }),
+        ({ price: "68231.70", amount: "0.431", total: "29400.86", action: "Use bid" }),
+        ({ price: "68225.30", amount: "0.274", total: "18693.73", action: "Use bid" }),
+        ({ price: "68220.40", amount: "0.265", total: "18078.41", action: "Use bid" }),
+        ({ price: "68212.90", amount: "0.502", total: "34282.88", action: "Use bid" }),
+        ({ price: "68206.60", amount: "0.118", total: "8048.38", action: "Use bid" }),
+        ({ price: "68199.20", amount: "0.349", total: "23801.52", action: "Use bid" }),
+        ({ price: "68192.50", amount: "0.622", total: "42455.74", action: "Use bid" }),
+        ({ price: "68185.70", amount: "0.213", total: "14522.55", action: "Use bid" }),
+        ({ price: "68178.30", amount: "0.461", total: "31430.20", action: "Use bid" })
+    ]
+    property var mockTerminalPositions: [
+        ({ pair: "BTC/USDT", side: "paper long", size: "0.012", entry: "68110.20", pnl: "+42.10", status: "open paper" }),
+        ({ pair: "ETH/USDT", side: "paper watch", size: "0.000", entry: "—", pnl: "0.00", status: "no real orders" })
+    ]
+    property var mockTerminalOrders: [
+        ({ time: "12:02:10Z", pair: "BTC/USDT", side: "BUY", type: "LIMIT", price: "68180.00", amount: "0.010", status: "paper pending" }),
+        ({ time: "12:03:22Z", pair: "SOL/USDT", side: "SELL", type: "MARKET", price: "preview", amount: "1.500", status: "simulated only" })
+    ]
+    property var mockTerminalHistory: [
+        ({ time: "11:58:40Z", pair: "ETH/USDT", side: "SELL", price: "3560.10", amount: "0.250", result: "+18.44 paper" }),
+        ({ time: "11:45:12Z", pair: "BTC/USDT", side: "BUY", price: "67980.00", amount: "0.006", result: "+9.12 paper" })
+    ]
+    property var mockTerminalReservedBalances: [
+        ({ asset: "USDT", reserved: "682.41", reason: "paper limit preview", status: "local only" }),
+        ({ asset: "BTC", reserved: "0.0100", reason: "paper position margin", status: "no exchange lock" }),
+        ({ asset: "ETH", reserved: "0.0000", reason: "idle preview", status: "available" })
+    ]
+    property var terminalLogRows: [
+        ({ time: "12:04:00Z", message: "Paper Preview loaded • live trading disabled • exchange I/O disabled" }),
+        ({ time: "12:04:03Z", message: "Runtime loop not started • order submission disabled • API keys not required" })
+    ]
+
     function hasValue(list, value) {
         return list && list.indexOf(value) >= 0
     }
@@ -167,6 +251,163 @@ ApplicationWindow {
             out.push(pair)
         }
         return out
+    }
+
+    function currentTerminalPair() { return selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT" }
+    function setTerminalPair(pair) { selectedTerminalPair = pair && pair.length > 0 ? pair : currentTerminalPair() }
+    function setTerminalSide(side) { terminalSide = side === "SELL" ? "SELL" : "BUY" }
+    function setTerminalOrderType(type) { terminalOrderType = type === "MARKET" ? "MARKET" : "LIMIT" }
+    function setTerminalTimeframe(timeframe) { terminalTimeframe = timeframe && timeframe.length > 0 ? timeframe : "15m" }
+    function terminalPairCandidates() {
+        var sourcePairs = selectedPairs && selectedPairs.length > 0 ? selectedPairs : previewMarketPairs
+        var term = terminalPairSearch.toLowerCase()
+        var out = []
+        for (var i = 0; i < sourcePairs.length && out.length < 16; ++i) {
+            var pair = sourcePairs[i]
+            if (term.length > 0 && pair.toLowerCase().indexOf(term) < 0)
+                continue
+            out.push(pair)
+        }
+        if (out.length === 0)
+            out.push("BTC/USDT")
+        return out
+    }
+    function recalcTerminalTotal() {
+        var price = Number(terminalPrice)
+        var amount = Number(terminalAmount)
+        if (!isNaN(price) && !isNaN(amount))
+            terminalTotal = (price * amount).toFixed(2)
+    }
+    function setTerminalPrice(price) { terminalPrice = String(price); recalcTerminalTotal() }
+    function setTerminalAmount(amount) { terminalAmount = String(amount); recalcTerminalTotal() }
+    function applyTerminalPercent(percent) {
+        var baseAmount = 0.02
+        var pct = Number(percent)
+        if (isNaN(pct))
+            pct = 10
+        terminalAmount = (baseAmount * pct / 100).toFixed(4)
+        recalcTerminalTotal()
+        var logCopy = terminalLogRows.slice()
+        logCopy.unshift(({ time: previewTime(logCopy.length + 1), message: "Applied local paper percent chip " + pct + "% • no real orders" }))
+        terminalLogRows = logCopy.slice(0, 12)
+    }
+    function syncPaperBridgeState() {
+        paperSessionState = paperSessionStatus
+        paperTicks = paperSessionTicks
+        previewEquity = paperEquity
+        previewPnl = paperPnl
+        blockedOrdersCount = paperBlockedCount
+        noOrderCount = paperNoOrderCount
+        simulatedOrdersCount = paperSimulatedCount
+        paperOrdersCount = paperOrderRows.length
+        paperOrdersPreview = paperOrderRows.slice(0, 20)
+        openPaperPositions = paperOpenPositions.slice(0, 20)
+        closedPaperTrades = paperClosedTrades.slice(0, 20)
+        telemetryRows = paperTelemetryRows.slice(0, 12)
+    }
+    function appendTerminalLog(message) {
+        var logCopy = terminalLogRows.slice()
+        logCopy.unshift(({ time: previewTime(logCopy.length + paperSessionTicks + 1), message: message }))
+        terminalLogRows = logCopy.slice(0, 12)
+    }
+    function appendPaperTelemetry(message) {
+        telemetryTick += 1
+        telemetryHeartbeat = previewTime(telemetryTick + paperSessionTicks)
+        telemetryFreshness = "freshness status: paper bridge event #" + telemetryTick + " • " + telemetryHeartbeat
+        var rows = paperTelemetryRows.slice()
+        rows.unshift(({ timestamp: telemetryHeartbeat, message: message + " • local-only paper bridge/state • exchange I/O disabled • runtime loop not started" }))
+        paperTelemetryRows = rows.slice(0, 12)
+        telemetryRows = paperTelemetryRows.slice(0, 12)
+    }
+    function appendPaperDecision(action, reason, pair, status) {
+        decisionSequence += 1
+        var symbol = pair && pair.length > 0 ? pair : currentTerminalPair()
+        var strategy = activeStrategies.length > 0 ? activeStrategies[decisionSequence % activeStrategies.length] : "Strategy governor"
+        var confidence = action === "BLOCKED" || action === "NO ORDER" ? "0.00" : (0.70 + ((decisionSequence % 7) * 0.021)).toFixed(2)
+        var normalizedAction = action === "BLOCKED" ? "BLOCKED LIVE" : action
+        var row = ({ timestamp: previewTime(decisionSequence + paperSessionTicks), symbol: symbol, action: normalizedAction, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Paper Preview only • Live trading disabled • Exchange I/O disabled • Order submission disabled", paperState: paperSessionStatus, status: status })
+        var rows = decisionPreviewRows.slice()
+        if (rows.length === 0 || rows[0].timestamp !== row.timestamp || rows[0].action !== row.action || rows[0].symbol !== row.symbol)
+            rows.unshift(row)
+        decisionPreviewRows = rows.slice(0, 20)
+        lastGovernorDecision = symbol + " " + normalizedAction + " • confidence " + confidence + " • " + reason
+        return row
+    }
+    function validatePaperOrderPreview() {
+        var price = Number(terminalPrice)
+        var amount = Number(terminalAmount)
+        var total = Number(terminalTotal)
+        if (isNaN(amount) || amount <= 0)
+            return ({ ok: false, action: "NO ORDER", status: "no order", reason: "Local validation failed: amount must be > 0." })
+        if (terminalOrderType === "LIMIT" && (isNaN(price) || price <= 0))
+            return ({ ok: false, action: "NO ORDER", status: "no order", reason: "Local validation failed: price must be > 0 for LIMIT." })
+        if (isNaN(total) || total <= 0) {
+            total = (isNaN(price) ? 0 : price) * amount
+            terminalTotal = total.toFixed(2)
+        }
+        if (total > paperEquity)
+            return ({ ok: false, action: "NO ORDER", status: "no order", reason: "Local validation failed: total exceeds paper balance." })
+        if (riskLocked)
+            return ({ ok: false, action: "BLOCKED", status: "blocked", reason: "Risk kill-switch active; paper bridge recorded a blocked local preview event." })
+        return ({ ok: true, action: terminalSide === "SELL" ? "PAPER SELL" : "PAPER BUY", status: "paper simulated / no real order", reason: "Paper simulated order accepted locally; live trading disabled and order submission disabled." })
+    }
+    function updatePaperEquityPreview(status, total) {
+        var delta = status === "blocked" ? 0 : (terminalSide === "BUY" ? 7.25 : 5.10)
+        paperPnl = Number((paperPnl + delta).toFixed(2))
+        paperEquity = Number((100000.0 + paperPnl).toFixed(2))
+        previewPnl = paperPnl
+        previewEquity = paperEquity
+    }
+    function updatePaperPositionPreview(event) {
+        if (event.status === "blocked" || event.status === "no order")
+            return
+        if (event.action === "PAPER BUY") {
+            var positions = paperOpenPositions.slice()
+            positions.unshift(({ pair: event.pair, side: "paper long", size: event.amount, pnl: paperPnl >= 0 ? "+" + paperPnl.toFixed(2) : paperPnl.toFixed(2), label: "paper simulated" }))
+            paperOpenPositions = positions.slice(0, 12)
+        } else {
+            var trades = paperClosedTrades.slice()
+            trades.unshift(({ pair: event.pair, side: "paper sell", pnl: paperPnl >= 0 ? "+" + paperPnl.toFixed(2) : paperPnl.toFixed(2), label: "paper simulated" }))
+            paperClosedTrades = trades.slice(0, 12)
+        }
+    }
+    function submitLocalPaperOrder() {
+        setTerminalPair(selectedTerminalPair || currentTerminalPair())
+        recalcTerminalTotal()
+        paperSessionStatus = paperSessionStatus === "stopped" ? "running" : paperSessionStatus
+        paperSessionTicks += 1
+        var validation = validatePaperOrderPreview()
+        var timestamp = previewTime(paperSessionTicks)
+        var event = ({ timestamp: timestamp, time: timestamp, pair: selectedTerminalPair, action: validation.action, side: terminalSide, type: terminalOrderType, price: terminalOrderType === "MARKET" ? "paper market preview" : terminalPrice, amount: terminalAmount, total: terminalTotal, status: validation.status, confidence: validation.ok ? "0.86" : "0.00", reason: validation.reason })
+        var orderRows = paperOrderRows.slice()
+        orderRows.unshift(event)
+        paperOrderRows = orderRows.slice(0, 20)
+        var terminalRows = mockTerminalOrders.slice()
+        terminalRows.unshift(event)
+        mockTerminalOrders = terminalRows.slice(0, 20)
+        if (event.status === "blocked")
+            paperBlockedCount += 1
+        else if (event.status === "no order")
+            paperNoOrderCount += 1
+        else
+            paperSimulatedCount += 1
+        updatePaperEquityPreview(event.status, Number(event.total))
+        updatePaperPositionPreview(event)
+        appendTerminalLog(event.action + " " + event.pair + " • " + event.status + " • " + event.reason)
+        appendPaperTelemetry("paper order event " + event.action + " " + event.pair + " • " + event.status)
+        appendPaperDecision(event.action, event.reason, event.pair, event.status)
+        terminalSelectedBottomTab = "Orders"
+        syncPaperBridgeState()
+        return event
+    }
+    function simulateTerminalOrder() { submitLocalPaperOrder() }
+    function selectTerminalBottomTab(tab) { terminalSelectedBottomTab = tab }
+    function useOrderBookPrice(price) {
+        terminalPrice = String(price)
+        recalcTerminalTotal()
+        var logCopy = terminalLogRows.slice()
+        logCopy.unshift(({ time: previewTime(logCopy.length + 1), message: "Copied mock order book price " + price + " into local Order Form • exchange I/O disabled" }))
+        terminalLogRows = logCopy.slice(0, 12)
     }
 
 
@@ -223,28 +464,30 @@ ApplicationWindow {
         return "simulated"
     }
     function recountOrderCounters() {
-        var paper = 0, blocked = 0, none = 0, simulated = 0
-        for (var i = 0; i < paperOrdersPreview.length; ++i) {
-            var status = paperOrdersPreview[i].status
+        var blocked = 0, none = 0, simulated = 0
+        for (var i = 0; i < paperOrderRows.length; ++i) {
+            var status = paperOrderRows[i].status
             if (status === "blocked") blocked += 1
             else if (status === "no order") none += 1
-            else if (status === "simulated") simulated += 1
+            else if (status.indexOf("paper simulated") >= 0 || status === "simulated") simulated += 1
         }
-        paperOrdersCount = paperOrdersPreview.length
-        blockedOrdersCount = blocked
-        noOrderCount = none
-        simulatedOrdersCount = simulated
+        paperOrdersCount = paperOrderRows.length
+        paperBlockedCount = blocked
+        paperNoOrderCount = none
+        paperSimulatedCount = simulated
+        syncPaperBridgeState()
     }
     function addDecision(action, reason) {
         decisionSequence += 1
         var pair = selectedPairs.length > 0 ? selectedPairs[decisionSequence % selectedPairs.length] : "BTC/USDT"
         var strategy = activeStrategies.length > 0 ? activeStrategies[decisionSequence % activeStrategies.length] : "Strategy governor"
         var confidence = (0.58 + ((decisionSequence % 11) * 0.033)).toFixed(2)
-        var row = ({ timestamp: previewTime(decisionSequence), symbol: pair, action: action, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Live trading disabled • Exchange route disabled • Order submission disabled", paperState: paperSessionState })
+        var row = ({ timestamp: previewTime(decisionSequence), symbol: pair, action: action, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Live trading disabled • Exchange route disabled • Order submission disabled", paperState: paperSessionStatus })
         var rows = decisionPreviewRows.slice()
         rows.unshift(row)
-        decisionPreviewRows = rows.slice(0, 12)
+        decisionPreviewRows = rows.slice(0, 20)
         lastGovernorDecision = pair + " " + action + " • confidence " + confidence + " • " + reason
+        appendPaperTelemetry("paper decision row " + action + " " + pair)
         return row
     }
     function generateGovernorRecommendation() {
@@ -257,27 +500,28 @@ ApplicationWindow {
         addDecision(actions[decisionSequence % actions.length], "Generated from selected pairs and active strategy preview state.")
     }
     function generatePaperTick() {
-        paperTicks += 1
-        paperSessionState = paperSessionState === "stopped" ? "running" : paperSessionState
+        paperSessionTicks += 1
+        paperSessionStatus = paperSessionStatus === "stopped" ? "running" : paperSessionStatus
         var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED LIVE"]
-        var action = actions[paperTicks % actions.length]
+        var action = actions[paperSessionTicks % actions.length]
         var status = actionStatus(action)
-        var pair = selectedPairs.length > 0 ? selectedPairs[paperTicks % selectedPairs.length] : "BTC/USDT"
-        var confidence = (0.60 + ((paperTicks % 10) * 0.031)).toFixed(2)
-        previewPnl = Number((previewPnl + (status === "simulated" ? 18.5 : (status === "blocked" ? 0 : -2.25))).toFixed(2))
-        previewEquity = Number((100000 + previewPnl).toFixed(2))
+        var pair = selectedPairs.length > 0 ? selectedPairs[paperSessionTicks % selectedPairs.length] : "BTC/USDT"
+        var confidence = (0.60 + ((paperSessionTicks % 10) * 0.031)).toFixed(2)
+        paperPnl = Number((paperPnl + (status === "simulated" ? 18.5 : (status === "blocked" ? 0 : -2.25))).toFixed(2))
+        paperEquity = Number((100000 + paperPnl).toFixed(2))
         var order = ({ timestamp: previewTime(1), pair: pair, action: action, status: status, confidence: confidence, reason: status === "simulated" ? "Paper preview fill recorded locally; no real route used." : (status === "blocked" ? "Live order route blocked by preview guard." : "No order emitted by governor policy.") })
-        var orders = paperOrdersPreview.slice()
+        var orders = paperOrderRows.slice()
         orders.unshift(order)
-        paperOrdersPreview = orders.slice(0, 10)
+        paperOrderRows = orders.slice(0, 20)
+        appendPaperTelemetry("paper tick " + paperSessionTicks + " • " + action + " " + pair)
         recountOrderCounters()
         addDecision(action, order.reason)
     }
     function runTenMockTicks() { for (var i = 0; i < 10; ++i) generatePaperTick() }
-    function startPaperPreview() { paperSessionState = "running"; generatePaperTick() }
-    function pausePaperPreview() { paperSessionState = "paused" }
-    function stopPaperPreview() { paperSessionState = "stopped" }
-    function resetPaperPreview() { paperSessionState = "stopped"; paperTicks = 0; decisionSequence += 1; previewEquity = 100000.0; previewPnl = 0.0; paperOrdersPreview = []; recountOrderCounters(); addDecision("NO ORDER", "Paper preview reset; order submission remains disabled.") }
+    function startPaperPreview() { paperSessionStatus = "running"; syncPaperBridgeState(); generatePaperTick() }
+    function pausePaperPreview() { paperSessionStatus = "paused"; syncPaperBridgeState(); appendPaperTelemetry("paper session paused") }
+    function stopPaperPreview() { paperSessionStatus = "stopped"; syncPaperBridgeState(); appendPaperTelemetry("paper session stopped") }
+    function resetPaperPreview() { paperSessionStatus = "stopped"; paperSessionTicks = 0; decisionSequence += 1; paperEquity = 100000.0; paperPnl = 0.0; paperOrderRows = []; paperOpenPositions = []; paperClosedTrades = []; recountOrderCounters(); addDecision("NO ORDER", "Paper preview reset; order submission remains disabled.") }
     function pingTelemetryFeed() {
         telemetryTick += 1
         telemetryHeartbeat = previewTime(telemetryTick)
@@ -288,9 +532,7 @@ ApplicationWindow {
             "paper bridge check #" + telemetryTick + " • not connected / planned",
             "decision stream pulse #" + telemetryTick + " • order submission disabled"
         ]
-        var rows = telemetryRows.slice()
-        rows.unshift(({ timestamp: telemetryHeartbeat, message: messages[telemetryTick % messages.length] }))
-        telemetryRows = rows.slice(0, 10)
+        appendPaperTelemetry(messages[telemetryTick % messages.length])
     }
     function generateDiagnosticBundle() { diagnosticsBundleStatus = "Last bundle path/status: var/tmp/preview-diagnostic-bundle-ui-only.zip • generated local diagnostic status • included: UI state, telemetry snapshot, governor rows, config preview metadata • excluded: secrets, env files, keychain, real environment values, exchange state" }
 
@@ -316,11 +558,12 @@ ApplicationWindow {
         ({ panelId: "sidePanel", title: qsTr("Dashboard"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
         ({ panelId: "aiCenterPanel", title: qsTr("AI Center"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 1 }),
         ({ panelId: "tradingUniversePanel", title: qsTr("Trading Universe"), icon: "cloud", defaultColumn: 0, defaultOrder: 2 }),
-        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 0, defaultOrder: 3 }),
-        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), icon: "shield", defaultColumn: 0, defaultOrder: 4 }),
-        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 5 }),
-        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 6 }),
-        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 7 })
+        ({ panelId: "terminalPanel", title: qsTr("Paper Terminal"), icon: "package", defaultColumn: 0, defaultOrder: 3 }),
+        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 0, defaultOrder: 4 }),
+        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), icon: "shield", defaultColumn: 0, defaultOrder: 5 }),
+        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 6 }),
+        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 7 }),
+        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 8 })
     ]
 
     property var productTabs: panelMetadata
@@ -329,6 +572,7 @@ ApplicationWindow {
         "sidePanel": { title: qsTr("Dashboard"), icon: "fingerprint", component: sidePanelComponent },
         "aiCenterPanel": { title: qsTr("AI Center"), icon: "mode_wizard", component: aiCenterPanelComponent },
         "tradingUniversePanel": { title: qsTr("Trading Universe"), icon: "cloud", component: tradingUniversePanelComponent },
+        "terminalPanel": { title: qsTr("Paper Terminal"), icon: "package", component: terminalPanelComponent },
         "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
         "riskControlsPanel": { title: qsTr("Ryzyko"), icon: "shield", component: riskControlsPanelComponent },
         "aiDecisionsPanel": { title: qsTr("Decyzje"), icon: "mode_wizard", component: aiDecisionsPanelComponent },
@@ -587,6 +831,17 @@ ApplicationWindow {
         }
     }
 
+
+    Component {
+        id: terminalPanelComponent
+        Views.PaperTerminal {
+            previewState: root
+            width: parent ? parent.width : implicitWidth
+            height: parent ? parent.height : implicitHeight
+            designSystem: rootDesignSystem
+        }
+    }
+
     Component {
         id: telemetryPanelComponent
         Components.StyledScrollView {
@@ -615,28 +870,28 @@ ApplicationWindow {
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Feed status"); description: qsTr("feed: safe preview • zero real network/API calls"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("runtime loop"); description: qsTr("not started"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("exchange route"); description: qsTr("disabled"); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("paper bridge"); description: qsTr("not connected / planned"); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Reconnects"); description: String(root.telemetryReconnects); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Downtime"); description: root.telemetryDowntime; Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("paper bridge"); description: qsTr("local-only paper bridge/state • no real orders"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("session ticks"); description: String(root.paperSessionTicks); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("last paper event"); description: root.paperTelemetryRows.length > 0 ? root.paperTelemetryRows[0].message : qsTr("no paper telemetry yet"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Last heartbeat"); description: root.telemetryHeartbeat; Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Data freshness"); description: root.telemetryFreshness; Layout.fillWidth: true }
                 }
                 Components.PreviewCard {
                     designSystem: rootDesignSystem
                     title: qsTr("Telemetry heartbeat feed")
-                    description: qsTr("Ping feed zwiększa heartbeat/tick, dodaje różne wiersze, unika duplikacji timestamp i ogranicza scrollowalną listę.")
+                    description: qsTr("Ping feed and Paper Terminal events append to shared paperTelemetryRows: last heartbeat, session ticks, last paper event, bounded list 8–12 rows, exchange I/O disabled, runtime loop not started.")
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
                         Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Ping feed"); iconName: "refresh"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: root.pingTelemetryFeed() }
-                        Label { text: qsTr("heartbeat/tick source state: %1 • %2").arg(root.telemetryTick).arg(root.telemetryFreshness); color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: qsTr("heartbeat/tick source state: %1 • session ticks %2 • last paper event: %3").arg(root.telemetryTick).arg(root.paperSessionTicks).arg(root.paperTelemetryRows.length > 0 ? root.paperTelemetryRows[0].message : "none"); color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     ListView {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 330
                         clip: true
                         spacing: 8
-                        model: root.telemetryRows
+                        model: root.paperTelemetryRows
                         delegate: Rectangle {
                             required property var modelData
                             width: ListView.view ? ListView.view.width : 900
