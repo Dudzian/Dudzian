@@ -11,9 +11,15 @@ Button {
     property bool subtle: false
     implicitHeight: 40
     implicitWidth: Math.max(40, contentItem.implicitWidth + 16)
-    readonly property string glyphText: designSystem && iconName.length > 0 && designSystem.iconGlyph
+    readonly property string glyphText: designSystem && iconName.length > 0 && typeof designSystem.iconGlyph === "function"
                                         ? designSystem.iconGlyph(iconName)
                                         : ""
+
+    function safeIconSource(name) {
+        if (control.designSystem && name.length > 0 && typeof control.designSystem.iconSource === "function")
+            return control.designSystem.iconSource(name)
+        return ""
+    }
 
     background: Rectangle {
         radius: 10
@@ -37,9 +43,7 @@ Button {
         }
         IconGlyph {
             visible: control.glyphText.length === 0 && control.iconName.length > 0
-            source: control.iconName.length > 0 && designSystem
-                    ? designSystem.iconSource(control.iconName)
-                    : ""
+            source: control.safeIconSource(control.iconName)
             width: 18
             height: 18
             fillMode: Image.PreserveAspectFit
