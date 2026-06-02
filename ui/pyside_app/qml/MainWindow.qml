@@ -423,16 +423,74 @@ ApplicationWindow {
         return count
     }
     function saveStrategyPreview(name) { lastStrategySaveStatus = "Zapisano lokalny preview strategii: " + name + " • runtime config write disabled • live execution disabled" }
-    function toggleExchange(exchange) { selectedExchanges = toggledList(selectedExchanges, exchange) }
-    function togglePair(pair) { selectedPairs = toggledList(selectedPairs, pair); whitelistPairs = selectedPairs.slice() }
-    function toggleBlacklist(pair) { blacklistPairs = toggledList(blacklistPairs, pair) }
-    function importMarketsPreview() { marketsImported = true }
-    function selectAllVisiblePairs() { marketsImported = true; selectedPairs = filteredMarketPairs().slice(); whitelistPairs = selectedPairs.slice() }
+    function ensureSelectedTerminalPair() {
+        if (selectedPairs.length > 0 && !hasValue(selectedPairs, selectedTerminalPair))
+            selectedTerminalPair = selectedPairs[0]
+        if (!selectedTerminalPair || selectedTerminalPair.length === 0)
+            selectedTerminalPair = currentTerminalPair()
+    }
+    function syncUniverseSelectionState(message) {
+        ensureSelectedTerminalPair()
+        if (decisionPairFilter !== "All pairs" && !hasValue(selectedPairs, decisionPairFilter))
+            decisionPairFilter = selectedTerminalPair
+        lastGovernorDecision = selectedTerminalPair + " UNIVERSE UPDATE • " + selectedPairs.length + " selected preview pairs • " + message
+        appendPaperTelemetry(message + " • selected pairs update Dashboard, Decisions and Paper Terminal")
+    }
+    function toggleExchange(exchange) {
+        selectedExchanges = toggledList(selectedExchanges, exchange)
+        marketsImported = true
+        syncUniverseSelectionState("Exchange toggle preview: " + exchange + " • sandbox/testnet/API planned/disabled")
+    }
+    function togglePair(pair) {
+        selectedPairs = toggledList(selectedPairs, pair)
+        whitelistPairs = selectedPairs.slice()
+        if (hasValue(blacklistPairs, pair) && hasValue(selectedPairs, pair))
+            blacklistPairs = blacklistPairs.filter(function(item) { return item !== pair })
+        syncUniverseSelectionState("Pair toggle preview: " + pair)
+    }
+    function toggleBlacklist(pair) {
+        blacklistPairs = toggledList(blacklistPairs, pair)
+        if (hasValue(blacklistPairs, pair))
+            selectedPairs = selectedPairs.filter(function(item) { return item !== pair })
+        whitelistPairs = selectedPairs.slice()
+        syncUniverseSelectionState("Blacklist toggle preview: " + pair)
+    }
+    function importMarketsPreview() {
+        marketsImported = true
+        marketAiCandidatesOnly = true
+        syncUniverseSelectionState("Import markets preview complete; AI scans eligible local pairs only")
+    }
+    function selectAllVisiblePairs() {
+        marketsImported = true
+        selectedPairs = filteredMarketPairs().filter(function(pair) { return blacklistPairs.indexOf(pair) < 0 })
+        whitelistPairs = selectedPairs.slice()
+        syncUniverseSelectionState("Select all visible preview pairs")
+    }
     function selectAllPairs() { selectAllVisiblePairs() }
-    function clearSelectedPairs() { selectedPairs = []; whitelistPairs = [] }
-    function selectTop20Pairs() { marketsImported = true; selectedPairs = filteredMarketPairs().slice(0, 20); whitelistPairs = selectedPairs.slice() }
-    function blacklistSelectedPairs() { blacklistPairs = selectedPairs.slice() }
-    function whitelistSelectedPairs() { whitelistPairs = selectedPairs.slice(); blacklistPairs = blacklistPairs.filter(function(pair) { return selectedPairs.indexOf(pair) < 0 }) }
+    function clearSelectedPairs() {
+        selectedPairs = []
+        whitelistPairs = []
+        decisionPairFilter = "All pairs"
+        syncUniverseSelectionState("Clear selected preview pairs")
+    }
+    function selectTop20Pairs() {
+        marketsImported = true
+        selectedPairs = filteredMarketPairs().filter(function(pair) { return blacklistPairs.indexOf(pair) < 0 }).slice(0, 20)
+        whitelistPairs = selectedPairs.slice()
+        syncUniverseSelectionState("Select top 20 preview pairs")
+    }
+    function blacklistSelectedPairs() {
+        blacklistPairs = uniqueList(blacklistPairs.concat(selectedPairs))
+        selectedPairs = []
+        whitelistPairs = []
+        decisionPairFilter = "All pairs"
+        syncUniverseSelectionState("Blacklist selected preview pairs")
+    }
+    function whitelistSelectedPairs() {
+        whitelistPairs = selectedPairs.slice()
+        blacklistPairs = blacklistPairs.filter(function(pair) { return selectedPairs.indexOf(pair) < 0 })
+        syncUniverseSelectionState("Whitelist selected preview pairs")
+    }
     function setAutonomyMode(mode) { autonomyMode = mode; autonomyLevel = mode === "Advisory" ? 1 : (mode === "Supervised dry-run" ? 2 : (mode === "Autonomous paper" ? 4 : 0)) }
     function setDecisionPolicy(policy) { decisionPolicyPreview = policy }
     function setConfidenceThreshold(value) { confidenceThreshold = value }
@@ -764,7 +822,7 @@ ApplicationWindow {
                 iconName: "refresh"
                 backgroundColor: designSystem.color("accent")
                 foregroundColor: designSystem.color("surface")
-                onClicked: runtimeService && runtimeService.loadRecentDecisions(uiConfig ? uiConfig.decision_limit : 25)
+                onClicked: root.pingTelemetryFeed()
             }
         }
     }

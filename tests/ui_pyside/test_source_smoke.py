@@ -33,6 +33,7 @@ PANEL_AUDIT_IDS = (
     "sidePanel",
     "aiCenterPanel",
     "tradingUniversePanel",
+    "terminalPanel",
     "strategiesPanel",
     "riskControlsPanel",
     "aiDecisionsPanel",
@@ -77,6 +78,17 @@ def test_smoke_flags_are_available_in_parser() -> None:
     assert options.offscreen is True
     assert options.enable_cloud_runtime is False
 
+    exercise_options = AppOptions.parse(
+        [
+            "--config",
+            "ui/config/preview_local.yaml",
+            "--smoke",
+            "--offscreen",
+            "--exercise-preview-state",
+        ]
+    )
+    assert exercise_options.exercise_preview_state is True
+
 
 def test_source_smoke_finishes_and_reports_safety_contract() -> None:
     result = _run_ui_smoke()
@@ -111,6 +123,63 @@ def test_source_smoke_finishes_and_reports_safety_contract() -> None:
     assert payload["env_values_read"] is False
     assert payload["dot_env_read"] is False
     assert payload["issues"] == []
+
+
+def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
+    result = _run_ui_smoke("--exercise-preview-state")
+    payload = _smoke_payload(result)
+
+    if result.returncode != 0 and any("libGL.so.1" in issue for issue in payload["issues"]):
+        pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert payload["status"] == "ok"
+    assert payload["preview_state_exercised"] is True
+    assert payload["runtime_loop_started"] is False
+    assert payload["exchange_io"] == "disabled"
+    assert payload["order_submission"] == "disabled"
+    assert payload["api_keys_required"] is False
+    assert payload["secrets_read"] is False
+    assert payload["keychain_read"] is False
+    assert payload["env_values_read"] is False
+    assert payload["dot_env_read"] is False
+
+    audit = payload["preview_state_audit"]
+    assert isinstance(audit, dict)
+    assert audit["passed"] is True
+    assert audit["smoke_only"] is True
+    assert audit["network_api_calls"] == "disabled"
+    assert audit["runtime_loop_started"] is False
+    assert audit["live_trading_disabled"] is True
+    assert audit["exchange_io_disabled"] is True
+    assert audit["order_submission_disabled"] is True
+    assert audit["api_keys_required"] is False
+    assert audit["safety_boundary_ok"] is True
+
+    assert audit["start_sets_running"] is True
+    assert audit["start_tick_delta"] >= 1
+    assert audit["generate_tick_delta"] == 1
+    assert audit["generate_tick_appended_order"] is True
+    assert audit["generate_tick_appended_decision"] is True
+    assert audit["generate_tick_appended_telemetry"] is True
+    assert audit["run_ten_tick_delta"] == 10
+    assert audit["pause_sets_paused"] is True
+    assert audit["stop_sets_stopped"] is True
+    assert audit["reset_sets_stopped"] is True
+    assert audit["reset_ticks_zero"] is True
+    assert audit["reset_clears_orders"] is True
+    assert audit["governor_updates_decision"] is True
+    assert audit["ping_appends_telemetry"] is True
+
+    assert audit["select_top20_count"] == 20
+    assert audit["select_top20_propagates_terminal_pair"] is True
+    assert audit["select_all_visible_at_least_top20"] is True
+    assert audit["clear_selected_pairs_zero"] is True
+    assert audit["toggle_pair_selects_pair"] is True
+    assert audit["toggle_pair_updates_terminal_pair"] is True
+    assert audit["pair_selection_updates_decision_summary"] is True
+    assert audit["risk_profile_updates"] is True
+    assert audit["risk_summary_updates"] is True
 
 
 def test_smoke_blocks_live_runtime_flag_without_qt_bootstrap() -> None:
@@ -763,13 +832,13 @@ def test_ui_preview_7_6_paper_terminal_source_contract() -> None:
         assert token in terminal
 
     for token in (
-        "Pair selector",
+        "Selektor pary",
         "paperTerminalPairSelector",
         "paperTerminalPairSearchInput",
         "Search pair",
-        "active pair",
-        "selectedPairs fallback to previewMarketPairs",
-        "active timeframe local state",
+        "aktywna para",
+        "fallbackiem do previewMarketPairs",
+        "Aktywny timeframe jest stanem lokalnym",
         "terminalTimeframe",
         "setTerminalTimeframe",
         "available balance preview",
@@ -818,7 +887,7 @@ def test_ui_preview_7_6_paper_terminal_source_contract() -> None:
     ):
         assert token in main_window
 
-    assert "Local preview chart" in terminal
+    assert "Lokalny wykres preview" in terminal
     assert "BTC/USDT" in main_window
     assert (
         'selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT"' in main_window
@@ -1082,3 +1151,105 @@ def test_ui_preview_7_5_final_polish_clickable_preview_state_contract() -> None:
         "function visiblePairsCount",
     ):
         assert token in main_window
+
+
+def test_ui_preview_7_8_shared_state_interactivity_and_responsive_terminal_contract() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
+    ai_center = (QML_SOURCE_ROOT / "views" / "AiControlCenter.qml").read_text(encoding="utf-8")
+    universe = (QML_SOURCE_ROOT / "views" / "TradingUniverse.qml").read_text(encoding="utf-8")
+    strategies = (QML_SOURCE_ROOT / "views" / "Strategies.qml").read_text(encoding="utf-8")
+    risk = (QML_SOURCE_ROOT / "views" / "RiskControls.qml").read_text(encoding="utf-8")
+    decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
+    source = "\n".join(
+        (main_window, terminal, dashboard, ai_center, universe, strategies, risk, decisions)
+    )
+
+    for component_token in (
+        "Views.OperatorDashboard {\n            previewState: root",
+        "Views.AiControlCenter {\n            previewState: root",
+        "Views.TradingUniverse {\n            previewState: root",
+        "Views.PaperTerminal {\n            previewState: root",
+        "Views.AiDecisionsView {\n            previewState: root",
+        "root.paperTelemetryRows",
+        "root.paperSessionTicks",
+        "previewState.paperSessionStatus",
+        "previewState.decisionPreviewRows",
+        "previewState.paperOrderRows",
+        "previewState.activeStrategies",
+        "previewState.riskProfile",
+    ):
+        assert component_token in source
+
+    handlers = {
+        "Start Paper Preview": "previewState.startPaperPreview()",
+        "Pause": "previewState.pausePaperPreview()",
+        "Stop": "previewState.stopPaperPreview()",
+        "Reset": "previewState.resetPaperPreview()",
+        "Generate Next Tick": "previewState.generatePaperTick()",
+        "Run 10 paper ticks": "previewState.runTenMockTicks()",
+        "Generate governor recommendation": "generateGovernorRecommendation",
+        "Generate next decision": "generateNextDecision",
+        "Ping feed": "pingTelemetryFeed()",
+        "Generate diagnostic bundle": "generateDiagnosticBundle()",
+        "Select all visible": "selectAllVisiblePairs()",
+        "Clear selected": "clearSelectedPairs()",
+        "Select top 20": "selectTop20Pairs()",
+        "Blacklist selected": "blacklistSelectedPairs()",
+        "Whitelist selected": "whitelistSelectedPairs()",
+        "Save Preview": "saveStrategyPreview",
+        "riskProfileSegmentedControl": "setRiskProfile",
+    }
+    for label, handler in handlers.items():
+        assert label in source
+        assert handler in source
+
+    for token in (
+        "function syncUniverseSelectionState",
+        "function ensureSelectedTerminalPair",
+        "selected pairs update Dashboard, Decisions and Paper Terminal",
+        "Import markets preview complete; AI scans eligible local pairs only",
+        "Exchange toggle preview",
+        "sandbox/testnet/API planned/disabled",
+        "marketAiCandidatesOnly = true",
+    ):
+        assert token in main_window
+
+    preview_pairs = re.findall(r'"[A-Z0-9]+/(?:USDT|USDC|BTC|ETH)"', main_window)
+    assert len(set(preview_pairs)) >= 100
+
+    for safety_token in (
+        "Live trading disabled",
+        "Exchange I/O disabled",
+        "Order submission disabled",
+        "API keys not required",
+        "no network/API call",
+        "No real orders",
+        "no real order / paper simulation only",
+    ):
+        assert safety_token in source
+
+    for layout_token in (
+        'objectName: "paperTerminalOrderForm"',
+        'objectName: "paperTerminalChartArea"',
+        'objectName: "paperTerminalOrderBook"',
+        'objectName: "paperTerminalOrderBookScroll"',
+        "ScrollBar.horizontal.policy: ScrollBar.AlwaysOff",
+        'objectName: "paperTerminalResponsiveCockpitGrid"',
+        "readonly property int cockpitColumns",
+        "columns: root.cockpitColumns",
+        "orderFormPreferredWidth",
+        "chartPreferredWidth",
+        "orderBookPreferredWidth",
+        "orderBookScrollHeight",
+        "Positions / Orders / History / Reserved / Strategy / Log / Messages",
+    ):
+        assert layout_token in terminal
+
+    assert "Menu {" not in main_window
+    assert "MenuItem {" not in main_window
+    assert 'objectName: "productPreviewTabBar"' in main_window
+    assert "Flickable.HorizontalFlick" in main_window
+    assert "root.showPanel(modelData.panelId)" in main_window
+    assert "active ? 2 : 1" in main_window

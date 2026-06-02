@@ -19,6 +19,11 @@ Components.StyledScrollView {
     readonly property real orderValue: Number(previewState.terminalTotal)
     readonly property string feeEstimate: isNaN(orderValue) ? "0.00 USDT" : (orderValue * 0.001).toFixed(2) + " USDT"
     readonly property string availableBalance: "100,000.00 USDT paper balance"
+    readonly property int cockpitColumns: root.availableWidth >= 1180 ? 3 : (root.availableWidth >= 760 ? 2 : 1)
+    readonly property real orderFormPreferredWidth: cockpitColumns === 3 ? 320 : 340
+    readonly property real chartPreferredWidth: cockpitColumns === 3 ? Math.max(520, root.availableWidth - 700) : 620
+    readonly property real orderBookPreferredWidth: cockpitColumns === 3 ? 320 : 340
+    readonly property real orderBookScrollHeight: cockpitColumns === 3 ? 360 : 430
 
     ColumnLayout {
         width: parent.availableWidth
@@ -31,7 +36,7 @@ Components.StyledScrollView {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { objectName: "paperTerminalTitle"; text: qsTr("Paper Terminal"); font.bold: true; font.pixelSize: 24; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                Label { text: qsTr("Product-grade trading cockpit preview for %1 — local-only paper bridge/state — Paper Preview only. Live trading disabled • Exchange I/O disabled • Order submission disabled • API keys not required • Runtime loop not started • No real orders.").arg(root.activePair); wrapMode: Text.WordWrap; color: designSystem.color("textSecondary"); Layout.fillWidth: true }
+                Label { text: qsTr("Produktowy kokpit tradingowy preview dla %1 — lokalny Paper Preview. Live trading disabled • Exchange I/O disabled • Order submission disabled • API keys not required • Runtime loop not started • No real orders.").arg(root.activePair); wrapMode: Text.WordWrap; color: designSystem.color("textSecondary"); Layout.fillWidth: true }
             }
         }
 
@@ -64,8 +69,8 @@ Components.StyledScrollView {
         Components.PreviewCard {
             objectName: "paperTerminalPairSelector"
             designSystem: root.designSystem
-            title: qsTr("Pair selector")
-            description: qsTr("Local pair selector: search input and chips are sourced from selectedPairs or previewMarketPairs. Selecting a pair updates selectedTerminalPair only; no API call and no market loading.")
+            title: qsTr("Selektor pary")
+            description: qsTr("Lokalny selektor par: wyszukiwarka i chipy czytają selectedPairs albo previewMarketPairs. Wybór aktualizuje tylko selectedTerminalPair; no API call i bez ładowania rynku.")
             Layout.fillWidth: true
             RowLayout {
                 Layout.fillWidth: true
@@ -78,7 +83,7 @@ Components.StyledScrollView {
                     Layout.preferredWidth: 240
                     onTextEdited: previewState.terminalPairSearch = text
                 }
-                Label { text: qsTr("active pair: %1 • local pair selector • selectedPairs fallback to previewMarketPairs").arg(root.activePair); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("aktywna para: %1 • lokalny selektor • selectedPairs z fallbackiem do previewMarketPairs").arg(root.activePair); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
             Flow {
                 Layout.fillWidth: true
@@ -99,7 +104,8 @@ Components.StyledScrollView {
 
         GridLayout {
             Layout.fillWidth: true
-            columns: width > 1180 ? 3 : (width > 760 ? 2 : 1)
+            objectName: "paperTerminalResponsiveCockpitGrid"
+            columns: root.cockpitColumns
             rowSpacing: 14
             columnSpacing: 14
 
@@ -107,9 +113,9 @@ Components.StyledScrollView {
                 objectName: "paperTerminalOrderForm"
                 designSystem: root.designSystem
                 title: qsTr("Order Form")
-                description: qsTr("BUY / SELL and LIMIT / MARKET are active local toggles. Submit appends a paper row only: no real order / paper simulation only.")
+                description: qsTr("BUY / SELL oraz LIMIT / MARKET to aktywne lokalne przełączniki. Submit dopisuje tylko lokalny paper row: no real order / paper simulation only.")
                 Layout.fillWidth: true
-                Layout.preferredWidth: 330
+                Layout.preferredWidth: root.orderFormPreferredWidth
                 Layout.minimumWidth: 280
                 Layout.alignment: Qt.AlignTop
 
@@ -234,9 +240,9 @@ Components.StyledScrollView {
                 objectName: "paperTerminalChartArea"
                 designSystem: root.designSystem
                 title: qsTr("Chart area")
-                description: qsTr("Local preview chart, no network/API call. active timeframe local state: %1; mock OHLC / last price / volume for %2.").arg(previewState.terminalTimeframe).arg(root.activePair)
+                description: qsTr("Lokalny wykres preview, no network/API call. Aktywny timeframe jest stanem lokalnym: %1; mock OHLC / last price / volume dla %2.").arg(previewState.terminalTimeframe).arg(root.activePair)
                 Layout.fillWidth: true
-                Layout.preferredWidth: 620
+                Layout.preferredWidth: root.chartPreferredWidth
                 Layout.minimumWidth: 360
                 Layout.alignment: Qt.AlignTop
 
@@ -352,7 +358,7 @@ Components.StyledScrollView {
                 title: qsTr("Order Book")
                 description: qsTr("10 ask levels and 10 bid levels. Price clicks copy to the local Order Form; action chips mutate only local UI state.")
                 Layout.fillWidth: true
-                Layout.preferredWidth: 340
+                Layout.preferredWidth: root.orderBookPreferredWidth
                 Layout.minimumWidth: 280
                 Layout.alignment: Qt.AlignTop
 
@@ -369,32 +375,47 @@ Components.StyledScrollView {
                         color: designSystem.color("textSecondary")
                     }
                 }
-                RowLayout {
+
+                ScrollView {
+                    objectName: "paperTerminalOrderBookScroll"
                     Layout.fillWidth: true
-                    Label {
-                        text: qsTr("Price")
-                        color: designSystem.color("textSecondary")
-                        Layout.preferredWidth: 82
-                    }
-                    Label {
-                        text: qsTr("Amount")
-                        color: designSystem.color("textSecondary")
-                        Layout.preferredWidth: 76
-                    }
-                    Label {
-                        text: qsTr("Total")
-                        color: designSystem.color("textSecondary")
-                        Layout.preferredWidth: 82
-                    }
-                    Label {
-                        text: qsTr("Action")
-                        color: designSystem.color("textSecondary")
-                        Layout.fillWidth: true
+                    Layout.preferredHeight: root.orderBookScrollHeight
+                    contentWidth: availableWidth
+                    clip: true
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                    ColumnLayout {
+                        width: parent.availableWidth
+                        spacing: 6
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label {
+                                text: qsTr("Price")
+                                color: designSystem.color("textSecondary")
+                                Layout.preferredWidth: 82
+                            }
+                            Label {
+                                text: qsTr("Amount")
+                                color: designSystem.color("textSecondary")
+                                Layout.preferredWidth: 76
+                            }
+                            Label {
+                                text: qsTr("Total")
+                                color: designSystem.color("textSecondary")
+                                Layout.preferredWidth: 82
+                            }
+                            Label {
+                                text: qsTr("Action")
+                                color: designSystem.color("textSecondary")
+                                Layout.fillWidth: true
+                            }
+                        }
+                        Repeater { model: previewState.mockOrderBookAsks; delegate: orderBookRowDelegate }
+                        Rectangle { Layout.fillWidth: true; radius: 10; color: designSystem.color("surfaceMuted"); border.color: designSystem.color("border"); implicitHeight: 38; Label { anchors.centerIn: parent; text: qsTr("Spread row 8.90 USDT • Last price row %1 • Paper Preview").arg(previewState.terminalPrice); color: designSystem.color("textPrimary"); font.bold: true } }
+                        Repeater { model: previewState.mockOrderBookBids; delegate: orderBookRowDelegate }
                     }
                 }
-                Repeater { model: previewState.mockOrderBookAsks; delegate: orderBookRowDelegate }
-                Rectangle { Layout.fillWidth: true; radius: 10; color: designSystem.color("surfaceMuted"); border.color: designSystem.color("border"); implicitHeight: 38; Label { anchors.centerIn: parent; text: qsTr("Spread row 8.90 USDT • Last price row %1 • Paper Preview").arg(previewState.terminalPrice); color: designSystem.color("textPrimary"); font.bold: true } }
-                Repeater { model: previewState.mockOrderBookBids; delegate: orderBookRowDelegate }
             }
         }
 

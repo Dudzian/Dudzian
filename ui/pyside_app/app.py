@@ -32,6 +32,7 @@ class AppOptions:
     log_level: str = "INFO"
     smoke: bool = False
     offscreen: bool = False
+    exercise_preview_state: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "config_path", Path(self.config_path).expanduser().resolve())
@@ -76,6 +77,11 @@ class AppOptions:
             action="store_true",
             help="Ustawia Qt offscreen wyłącznie dla trybu --smoke",
         )
+        parser.add_argument(
+            "--exercise-preview-state",
+            action="store_true",
+            help="Smoke-only: mutuje lokalny PreviewState/PaperState i zwraca audyt JSON bez runtime loop",
+        )
         return parser
 
     @classmethod
@@ -97,6 +103,7 @@ class AppOptions:
             log_level=args.log_level,
             smoke=args.smoke,
             offscreen=args.offscreen,
+            exercise_preview_state=args.exercise_preview_state,
         )
 
     def validate(self) -> None:

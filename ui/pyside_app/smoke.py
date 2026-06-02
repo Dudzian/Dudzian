@@ -38,6 +38,8 @@ class UiSmokeResult:
     paper_session_controls_present: bool = False
     market_universe_controls_present: bool = False
     ai_governor_controls_present: bool = False
+    preview_state_exercised: bool = False
+    preview_state_audit: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -59,6 +61,7 @@ PANEL_AUDIT_IDS = (
     "sidePanel",
     "aiCenterPanel",
     "tradingUniversePanel",
+    "terminalPanel",
     "strategiesPanel",
     "riskControlsPanel",
     "aiDecisionsPanel",
@@ -144,6 +147,204 @@ def _audit_panel_loads(root: Any) -> dict[str, dict[str, object]]:
     return results
 
 
+def _variant(value: Any) -> Any:
+    to_variant = getattr(value, "toVariant", None)
+    if callable(to_variant):
+        return to_variant()
+    return value
+
+
+def _sequence_length(value: Any) -> int:
+    value = _variant(value)
+    if value is None:
+        return 0
+    try:
+        return len(value)
+    except TypeError:
+        return 0
+
+
+def _first_row_repr(value: Any) -> str:
+    value = _variant(value)
+    try:
+        return repr(value[0]) if value else ""
+    except (KeyError, TypeError, IndexError):
+        return ""
+
+
+def _string_property(item: Any, name: str) -> str:
+    return str(_variant(item.property(name)) or "")
+
+
+def _bool_property(item: Any, name: str) -> bool:
+    return bool(_variant(item.property(name)))
+
+
+def _invoke_qml(root: Any, method: str, *args: str) -> None:
+    callable_method = getattr(root, method, None)
+    if callable(callable_method):
+        callable_method(*args)
+        _process_events()
+        return
+
+    from PySide6.QtCore import Q_ARG, QMetaObject, Qt
+
+    if args:
+        invoked = QMetaObject.invokeMethod(
+            root,
+            method,
+            Qt.ConnectionType.DirectConnection,
+            *[Q_ARG(str, arg) for arg in args],
+        )
+    else:
+        invoked = QMetaObject.invokeMethod(root, method, Qt.ConnectionType.DirectConnection)
+    if not invoked:
+        raise RuntimeError(f"QML method not invoked: {method}")
+    _process_events()
+
+
+def _exercise_preview_state(root: Any) -> dict[str, object]:
+    """Mutate only the smoke-loaded local PreviewState/PaperState and return audit facts."""
+
+    audit: dict[str, object] = {
+        "smoke_only": True,
+        "network_api_calls": "disabled",
+        "runtime_loop_started": _bool_property(root, "runtimeLoopStarted"),
+        "live_trading_disabled": _bool_property(root, "liveTradingDisabled"),
+        "exchange_io_disabled": _bool_property(root, "exchangeIoDisabled"),
+        "order_submission_disabled": _bool_property(root, "orderSubmissionDisabled"),
+        "api_keys_required": _bool_property(root, "apiKeysRequired"),
+    }
+    initial_ticks = int(root.property("paperSessionTicks") or 0)
+    initial_orders = _sequence_length(root.property("paperOrderRows"))
+    initial_decisions = _sequence_length(root.property("decisionPreviewRows"))
+    initial_telemetry = _sequence_length(root.property("paperTelemetryRows"))
+
+    _invoke_qml(root, "startPaperPreview")
+    after_start_ticks = int(root.property("paperSessionTicks") or 0)
+    audit["start_sets_running"] = _string_property(root, "paperSessionStatus") == "running"
+    audit["start_tick_delta"] = after_start_ticks - initial_ticks
+
+    before_tick_orders = _sequence_length(root.property("paperOrderRows"))
+    before_tick_decisions = _sequence_length(root.property("decisionPreviewRows"))
+    before_tick_telemetry = _sequence_length(root.property("paperTelemetryRows"))
+    _invoke_qml(root, "generatePaperTick")
+    after_tick_ticks = int(root.property("paperSessionTicks") or 0)
+    audit["generate_tick_delta"] = after_tick_ticks - after_start_ticks
+    audit["generate_tick_appended_order"] = (
+        _sequence_length(root.property("paperOrderRows")) > before_tick_orders
+    )
+    audit["generate_tick_appended_decision"] = (
+        _sequence_length(root.property("decisionPreviewRows")) > before_tick_decisions
+    )
+    audit["generate_tick_appended_telemetry"] = (
+        _sequence_length(root.property("paperTelemetryRows")) > before_tick_telemetry
+    )
+
+    _invoke_qml(root, "runTenMockTicks")
+    after_ten_ticks = int(root.property("paperSessionTicks") or 0)
+    audit["run_ten_tick_delta"] = after_ten_ticks - after_tick_ticks
+
+    _invoke_qml(root, "pausePaperPreview")
+    audit["pause_sets_paused"] = _string_property(root, "paperSessionStatus") == "paused"
+    _invoke_qml(root, "stopPaperPreview")
+    audit["stop_sets_stopped"] = _string_property(root, "paperSessionStatus") == "stopped"
+    _invoke_qml(root, "resetPaperPreview")
+    audit["reset_sets_stopped"] = _string_property(root, "paperSessionStatus") == "stopped"
+    audit["reset_ticks_zero"] = int(root.property("paperSessionTicks") or 0) == 0
+    audit["reset_clears_orders"] = _sequence_length(root.property("paperOrderRows")) == 0
+
+    before_governor_decisions = _sequence_length(root.property("decisionPreviewRows"))
+    before_governor_text = _string_property(root, "lastGovernorDecision")
+    _invoke_qml(root, "generateGovernorRecommendation")
+    audit["governor_updates_decision"] = (
+        _sequence_length(root.property("decisionPreviewRows")) > before_governor_decisions
+        and _string_property(root, "lastGovernorDecision") != before_governor_text
+    )
+
+    before_ping_rows = root.property("paperTelemetryRows")
+    before_ping_telemetry = _sequence_length(before_ping_rows)
+    before_ping_first_row = _first_row_repr(before_ping_rows)
+    _invoke_qml(root, "pingTelemetryFeed")
+    after_ping_rows = root.property("paperTelemetryRows")
+    audit["ping_appends_telemetry"] = (
+        _sequence_length(after_ping_rows) > before_ping_telemetry
+        or _first_row_repr(after_ping_rows) != before_ping_first_row
+    )
+
+    _invoke_qml(root, "selectTop20Pairs")
+    top20_count = _sequence_length(root.property("selectedPairs"))
+    top20_terminal_pair = _string_property(root, "selectedTerminalPair")
+    audit["select_top20_count"] = top20_count
+    audit["select_top20_propagates_terminal_pair"] = bool(top20_terminal_pair)
+
+    _invoke_qml(root, "selectAllVisiblePairs")
+    all_visible_count = _sequence_length(root.property("selectedPairs"))
+    audit["select_all_visible_count"] = all_visible_count
+    audit["select_all_visible_at_least_top20"] = all_visible_count >= top20_count >= 20
+
+    _invoke_qml(root, "clearSelectedPairs")
+    audit["clear_selected_pairs_zero"] = _sequence_length(root.property("selectedPairs")) == 0
+    _invoke_qml(root, "togglePair", "ETH/USDT")
+    selected_pairs = _variant(root.property("selectedPairs")) or []
+    audit["toggle_pair_selects_pair"] = "ETH/USDT" in selected_pairs
+    audit["toggle_pair_updates_terminal_pair"] = (
+        _string_property(root, "selectedTerminalPair") == "ETH/USDT"
+    )
+    audit["pair_selection_updates_decision_summary"] = "ETH/USDT" in _string_property(
+        root, "lastGovernorDecision"
+    )
+
+    _invoke_qml(root, "setRiskProfile", "Aggressive")
+    audit["risk_profile_updates"] = _string_property(root, "riskProfile") == "Aggressive"
+    audit["risk_summary_updates"] = "Aggressive" in _string_property(root, "riskState")
+
+    audit["final_order_rows"] = _sequence_length(root.property("paperOrderRows"))
+    audit["final_decision_rows"] = _sequence_length(root.property("decisionPreviewRows"))
+    audit["final_telemetry_rows"] = _sequence_length(root.property("paperTelemetryRows"))
+    audit["initial_order_rows"] = initial_orders
+    audit["initial_decision_rows"] = initial_decisions
+    audit["initial_telemetry_rows"] = initial_telemetry
+    audit["safety_boundary_ok"] = (
+        audit["live_trading_disabled"] is True
+        and audit["exchange_io_disabled"] is True
+        and audit["order_submission_disabled"] is True
+        and audit["api_keys_required"] is False
+        and audit["runtime_loop_started"] is False
+        and audit["network_api_calls"] == "disabled"
+    )
+    required_true_keys = (
+        "start_sets_running",
+        "generate_tick_appended_order",
+        "generate_tick_appended_decision",
+        "generate_tick_appended_telemetry",
+        "pause_sets_paused",
+        "stop_sets_stopped",
+        "reset_sets_stopped",
+        "reset_ticks_zero",
+        "reset_clears_orders",
+        "governor_updates_decision",
+        "ping_appends_telemetry",
+        "select_top20_propagates_terminal_pair",
+        "select_all_visible_at_least_top20",
+        "clear_selected_pairs_zero",
+        "toggle_pair_selects_pair",
+        "toggle_pair_updates_terminal_pair",
+        "pair_selection_updates_decision_summary",
+        "risk_profile_updates",
+        "risk_summary_updates",
+        "safety_boundary_ok",
+    )
+    audit["passed"] = (
+        int(audit["start_tick_delta"]) >= 1
+        and int(audit["generate_tick_delta"]) == 1
+        and int(audit["run_ten_tick_delta"]) == 10
+        and int(audit["select_top20_count"]) == 20
+        and all(audit[key] is True for key in required_true_keys)
+    )
+    return audit
+
+
 def _force_offscreen_platform() -> None:
     """Select Qt's offscreen platform before QGuiApplication is created."""
 
@@ -185,6 +386,7 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         paper_session_controls_present = False
         market_universe_controls_present = False
         ai_governor_controls_present = False
+        preview_state_audit: dict[str, object] = {}
         if qml_loaded:
             source = _qml_preview_source()
             final_preview_tabs_loaded = _source_has_all(
@@ -237,6 +439,10 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             ]
             if failed_panels:
                 audit_issues.extend(f"panel_load_failed:{panel_id}" for panel_id in failed_panels)
+            if options.exercise_preview_state:
+                preview_state_audit = _exercise_preview_state(root)
+                if preview_state_audit.get("passed") is not True:
+                    audit_issues.append("preview_state_exercise_failed")
         smoke_ok = qml_loaded and not audit_issues
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
@@ -252,6 +458,8 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             paper_session_controls_present=paper_session_controls_present,
             market_universe_controls_present=market_universe_controls_present,
             ai_governor_controls_present=ai_governor_controls_present,
+            preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
+            preview_state_audit=preview_state_audit,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)
