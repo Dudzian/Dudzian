@@ -274,10 +274,10 @@ Components.StyledScrollView {
                     columnSpacing: 8
                     Repeater {
                         model: [
-                            { label: "mock OHLC", value: "O 68,180 • H 68,302 • L 68,178 • C 68,240" },
+                            { label: "mock OHLC", value: "scenario " + previewState.simulationMarketMode + " • tick " + previewState.simulationTickCount },
                             { label: "last price", value: previewState.terminalPrice },
-                            { label: "volume", value: "1,284.42 BTC paper" },
-                            { label: "chart source", value: "local preview chart" }
+                            { label: "volume", value: (1284 + previewState.simulationTickCount * 7) + " paper units" },
+                            { label: "chart source", value: "local preview chart • live-like paper simulation" }
                         ]
                         delegate: Rectangle {
                             required property var modelData
@@ -315,14 +315,7 @@ Components.StyledScrollView {
                     Repeater { model: 8; delegate: Rectangle { x: 20; y: 42 + index * 34; width: parent.width - 40; height: 1; color: Qt.rgba(1, 1, 1, 0.06) } }
                     Repeater { model: 11; delegate: Rectangle { x: 36 + index * Math.max(44, (parent.width - 90) / 10); y: 32; width: 1; height: parent.height - 70; color: Qt.rgba(1, 1, 1, 0.035) } }
                     Repeater {
-                        model: [
-                            { x: 36, open: 145, close: 104, high: 78, low: 174, vol: 44 }, { x: 78, open: 112, close: 168, high: 94, low: 194, vol: 72 },
-                            { x: 120, open: 164, close: 122, high: 96, low: 184, vol: 58 }, { x: 162, open: 128, close: 88, high: 64, low: 148, vol: 38 },
-                            { x: 204, open: 92, close: 154, high: 82, low: 178, vol: 82 }, { x: 246, open: 158, close: 128, high: 106, low: 188, vol: 66 },
-                            { x: 288, open: 132, close: 86, high: 70, low: 154, vol: 48 }, { x: 330, open: 90, close: 142, high: 78, low: 168, vol: 74 },
-                            { x: 372, open: 146, close: 98, high: 76, low: 166, vol: 62 }, { x: 414, open: 102, close: 72, high: 56, low: 132, vol: 36 },
-                            { x: 456, open: 76, close: 128, high: 66, low: 158, vol: 70 }, { x: 498, open: 132, close: 92, high: 74, low: 152, vol: 54 }
-                        ]
+                        model: previewState.mockTerminalCandles
                         delegate: Item {
                             required property var modelData
                             x: Math.min(modelData.x, parent.width - 46)
@@ -504,6 +497,7 @@ Components.StyledScrollView {
         if (previewState.terminalSelectedBottomTab === "Messages")
             return [
                 { c1: "Safety/system messages", c2: "Live trading disabled", c3: "Exchange I/O disabled", c4: "Order submission disabled • API keys not required • no real orders" },
+                { c1: "Live-like paper simulation", c2: previewState.simulationStatusLabel, c3: previewState.simulationScenario, c4: previewState.simulationSafetyBoundary },
                 { c1: "Preview notices", c2: "Paper Preview only", c3: "Runtime loop not started", c4: "All controls are local-only mock UI state" }
             ]
         return [

@@ -52,6 +52,10 @@ Components.StyledScrollView {
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper session PnL / equity"); description: qsTr("Paper session equity: %1 • Paper session PnL: %2 • Session ticks: %3 • Portfolio report / selected range: %4 %5").arg(previewState.formatMoney(previewState.paperEquity, "USDT")).arg(previewState.formatUsd(previewState.paperPnl)).arg(previewState.paperSessionTicks).arg(previewState.portfolioSelectedRange).arg(previewState.formatUsd(previewState.portfolioAllTimePnlUsd)); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Last paper order"); description: previewState.paperOrderRows.length > 0 ? qsTr("%1 • %2 • %3 • %4").arg(previewState.paperOrderRows[0].timestamp).arg(previewState.paperOrderRows[0].pair).arg(previewState.paperOrderRows[0].action).arg(previewState.paperOrderRows[0].status) : qsTr("No local-only paper bridge/state orders yet"); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Last governor/paper decision"); description: previewState.lastGovernorDecision; Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Simulation status"); description: previewState.simulationStatusLabel + " • running=" + previewState.simulationRunning + " paused=" + previewState.simulationPaused; Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Simulation speed / tick count"); description: qsTr("speed x%1 • interval %2 ms • ticks %3 • last tick %4").arg(previewState.simulationSpeed).arg(previewState.simulationTickIntervalMs).arg(previewState.simulationTickCount).arg(previewState.simulationLastTickAt); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Last simulated scan"); description: qsTr("pair %1 • action %2 • order %3").arg(previewState.simulationLastPair).arg(previewState.simulationLastAction).arg(previewState.simulationLastOrder); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Safety boundary"); description: previewState.simulationSafetyBoundary; Layout.fillWidth: true }
         }
 
         Components.PreviewCard {
@@ -68,6 +72,23 @@ Components.StyledScrollView {
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate Next Tick"); helpText: previewState.tooltipText("Generate Next Tick"); iconName: "refresh"; onClicked: previewState.generatePaperTick() }
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Run 10 paper ticks"); helpText: previewState.tooltipText("Run 10 paper ticks"); onClicked: previewState.runTenMockTicks() }
             }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 8
+                Repeater {
+                    model: previewState.simulationScenarios
+                    delegate: Components.IconButton {
+                        required property string modelData
+                        designSystem: root.designSystem
+                        text: modelData
+                        helpText: previewState.tooltipText("Market scenario")
+                        subtle: previewState.simulationScenario !== modelData
+                        onClicked: previewState.setSimulationScenario(modelData)
+                    }
+                }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Simulation speed x1"); helpText: previewState.tooltipText("Simulation speed"); subtle: previewState.simulationSpeed !== 1; onClicked: previewState.setSimulationSpeed(1) }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Simulation speed x3"); helpText: previewState.tooltipText("Simulation speed"); subtle: previewState.simulationSpeed !== 3; onClicked: previewState.setSimulationSpeed(3) }
+            }
             GridLayout {
                 Layout.fillWidth: true
                 columns: width > 900 ? 6 : 2
@@ -79,6 +100,8 @@ Components.StyledScrollView {
                 Components.PreviewCard { designSystem: root.designSystem; title: qsTr("blocked"); description: String(previewState.paperBlockedCount); Layout.fillWidth: true }
                 Components.PreviewCard { designSystem: root.designSystem; title: qsTr("no-order"); description: String(previewState.paperNoOrderCount); Layout.fillWidth: true }
                 Components.PreviewCard { designSystem: root.designSystem; title: qsTr("simulated"); description: String(previewState.paperSimulatedCount); Layout.fillWidth: true }
+                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Market scenario"); description: previewState.simulationScenario + " / " + previewState.simulationMarketMode; Layout.fillWidth: true }
+                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Live-like paper simulation"); description: qsTr("Paper loop local-only: no exchange API, no real orders, no secret reads, production runtime loop not started."); Layout.fillWidth: true }
             }
         }
 
