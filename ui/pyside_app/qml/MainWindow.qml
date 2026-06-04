@@ -77,8 +77,11 @@ ApplicationWindow {
     property real portfolioStartingEquityUsd: 100000.0
     property real portfolioTotalEquityUsd: 102020.0
     property real portfolioTotalEquityPln: 402468.90
-    property real portfolioAvailableBalanceUsd: 71440.0
+    property real portfolioAvailableBalanceUsd: 68115.0
     property real portfolioInPositionsUsd: 30580.0
+    property real portfolioReservedMarginUsd: 3325.0
+    property real portfolioTradingEquityUsdt: 102020.0
+    property real portfolioTradingAvailableUsdt: 68115.0
     property real portfolioRealizedPnlUsd: 1900.0
     property real portfolioUnrealizedPnlUsd: 220.0
     property real portfolioFeesUsd: 86.40
@@ -86,24 +89,35 @@ ApplicationWindow {
     property real portfolioNetPnlUsd: 2020.0
     property real portfolioSessionPnlUsd: 2020.0
     property real portfolioLastCyclePnlUsd: 126.75
+    property string portfolioLastCycleId: "CYCLE-20260602-0810"
+    property string portfolioLastCycleTimestamp: "2026-06-02 08:45 UTC"
+    property int portfolioLastCycleTradesCount: 7
+    property int portfolioLastCycleWinners: 5
+    property int portfolioLastCycleLosers: 2
+    property real portfolioLastCycleFeesUsd: 8.40
+    property real portfolioLastCycleNetUsd: 118.35
     property real portfolioAllTimePnlUsd: 2020.0
+    property real portfolioRoiPercent: 2.02
     property string portfolioFiatAccountLabel: "102 020.00 USD / 402 468.90 PLN"
     property string portfolioCryptoAccountLabel: "BTC 0.412 • ETH 3.80 • SOL 92.4 • USDT 18 640"
-    property string portfolioSelectedRange: "24h"
-    property string portfolioRangeLabel: "Zakres: 24h preview"
-    property var portfolioTimeFilters: ["1h", "24h", "7d", "30d", "1y", "All", "Custom"]
+    property string portfolioSelectedRange: "1d"
+    property string portfolioRangeLabel: "Zakres: 1d preview • filtry raportowe nie zmieniają aktywnej sesji Paper"
+    property string portfolioCustomFrom: "2026-06-01 00:00"
+    property string portfolioCustomTo: "2026-06-02 23:59"
+    property var portfolioTimeFilters: ["1h", "1d", "7d", "1m", "1y", "all", "custom"]
     property string portfolioWinRate: "64.6%"
     property string portfolioMaxDrawdown: "-3.8%"
     property string portfolioBestPair: "BTC/USDT +1 120.00 USD"
     property string portfolioWorstPair: "ARB/USDT -240.00 USD"
     property int portfolioTradeCount: 48
     property var portfolioPerformanceCards: [
-        ({ title: "Stan konta fiat", field: "fiat" }),
-        ({ title: "Stan konta crypto", field: "crypto" }),
-        ({ title: "Wolne środki", field: "available" }),
-        ({ title: "W pozycjach", field: "positions" }),
+        ({ title: "Fiat balance / equity", field: "fiat" }),
+        ({ title: "Trading balance / equity", field: "trading" }),
+        ({ title: "Available balance", field: "available" }),
+        ({ title: "In positions", field: "positions" }),
+        ({ title: "Reserved / margin preview", field: "reserved" }),
         ({ title: "PnL ostatniego cyklu", field: "lastCycle" }),
-        ({ title: "PnL sesji", field: "session" }),
+        ({ title: "Paper session PnL", field: "paperSession" }),
         ({ title: "PnL całkowity", field: "allTime" }),
         ({ title: "Win rate", field: "winRate" }),
         ({ title: "Liczba transakcji", field: "tradeCount" }),
@@ -123,12 +137,12 @@ ApplicationWindow {
     property var portfolioCycleRows: portfolioAllCycleRows.slice(0, 5)
     property var portfolioRangeSnapshots: ({
         "1h": ({ realized: 122.00, unrealized: 18.10, fees: 7.20, fundingOtherCosts: 2.90, sessionPnl: 130.00, lastCyclePnl: 38.40, tradeCount: 4, winRate: "75.0%", maxDrawdown: "-0.4%", bestPair: "BTC/USDT +82.00 USD", worstPair: "SOL/USDT -12.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 1) }),
-        "24h": ({ realized: 1900.00, unrealized: 220.00, fees: 86.40, fundingOtherCosts: 13.60, sessionPnl: 2020.00, lastCyclePnl: 126.75, tradeCount: 48, winRate: "64.6%", maxDrawdown: "-3.8%", bestPair: "BTC/USDT +1 120.00 USD", worstPair: "ARB/USDT -240.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 5) }),
-        "7d": ({ realized: 2640.00, unrealized: 330.00, fees: 118.80, fundingOtherCosts: 31.20, sessionPnl: 2820.00, lastCyclePnl: 212.40, tradeCount: 82, winRate: "67.1%", maxDrawdown: "-4.2%", bestPair: "LINK/USDT +1 420.00 USD", worstPair: "ARB/USDT -310.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
-        "30d": ({ realized: 5120.00, unrealized: 680.00, fees: 246.50, fundingOtherCosts: 73.50, sessionPnl: 5480.00, lastCyclePnl: 310.20, tradeCount: 196, winRate: "62.8%", maxDrawdown: "-5.6%", bestPair: "BTC/USDT +2 840.00 USD", worstPair: "OP/USDT -520.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
-        "1y": ({ realized: 18450.00, unrealized: 1120.00, fees: 940.00, fundingOtherCosts: 210.00, sessionPnl: 18420.00, lastCyclePnl: 640.80, tradeCount: 1180, winRate: "60.2%", maxDrawdown: "-8.9%", bestPair: "BTC/USDT +8 900.00 USD", worstPair: "ARB/USDT -1 460.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
-        "All": ({ realized: 22600.00, unrealized: 1640.00, fees: 1180.00, fundingOtherCosts: 260.00, sessionPnl: 22800.00, lastCyclePnl: 640.80, tradeCount: 1460, winRate: "61.4%", maxDrawdown: "-9.4%", bestPair: "BTC/USDT +10 400.00 USD", worstPair: "ARB/USDT -1 720.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
-        "Custom": ({ realized: 820.00, unrealized: 95.00, fees: 36.00, fundingOtherCosts: 9.00, sessionPnl: 870.00, lastCyclePnl: 64.20, tradeCount: 21, winRate: "66.7%", maxDrawdown: "-1.9%", bestPair: "ETH/USDT +420.00 USD", worstPair: "SOL/USDT -96.00 USD", cycleRows: portfolioAllCycleRows.slice(1, 4) })
+        "1d": ({ realized: 1900.00, unrealized: 220.00, fees: 86.40, fundingOtherCosts: 13.60, sessionPnl: 2020.00, lastCyclePnl: 126.75, lastCycleTrades: 7, lastCycleWinners: 5, lastCycleLosers: 2, lastCycleFees: 8.40, lastCycleNet: 118.35, tradeCount: 48, winRate: "64.6%", maxDrawdown: "-3.8%", bestPair: "BTC/USDT +1 120.00 USD", worstPair: "ARB/USDT -240.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 5) }),
+        "7d": ({ realized: 2640.00, unrealized: 330.00, fees: 118.80, fundingOtherCosts: 31.20, sessionPnl: 2820.00, lastCyclePnl: 212.40, lastCycleTrades: 9, lastCycleWinners: 7, lastCycleLosers: 2, lastCycleFees: 9.10, lastCycleNet: 203.30, tradeCount: 82, winRate: "67.1%", maxDrawdown: "-4.2%", bestPair: "LINK/USDT +1 420.00 USD", worstPair: "ARB/USDT -310.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
+        "1m": ({ realized: 5120.00, unrealized: 680.00, fees: 246.50, fundingOtherCosts: 73.50, sessionPnl: 5480.00, lastCyclePnl: 310.20, lastCycleTrades: 12, lastCycleWinners: 8, lastCycleLosers: 4, lastCycleFees: 14.50, lastCycleNet: 295.70, tradeCount: 196, winRate: "62.8%", maxDrawdown: "-5.6%", bestPair: "BTC/USDT +2 840.00 USD", worstPair: "OP/USDT -520.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
+        "1y": ({ realized: 18450.00, unrealized: 1120.00, fees: 940.00, fundingOtherCosts: 210.00, sessionPnl: 18420.00, lastCyclePnl: 640.80, lastCycleTrades: 18, lastCycleWinners: 13, lastCycleLosers: 5, lastCycleFees: 32.00, lastCycleNet: 608.80, tradeCount: 1180, winRate: "60.2%", maxDrawdown: "-8.9%", bestPair: "BTC/USDT +8 900.00 USD", worstPair: "ARB/USDT -1 460.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
+        "all": ({ realized: 22600.00, unrealized: 1640.00, fees: 1180.00, fundingOtherCosts: 260.00, sessionPnl: 22800.00, lastCyclePnl: 640.80, lastCycleTrades: 18, lastCycleWinners: 13, lastCycleLosers: 5, lastCycleFees: 32.00, lastCycleNet: 608.80, tradeCount: 1460, winRate: "61.4%", maxDrawdown: "-9.4%", bestPair: "BTC/USDT +10 400.00 USD", worstPair: "ARB/USDT -1 720.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
+        "custom": ({ realized: 820.00, unrealized: 95.00, fees: 36.00, fundingOtherCosts: 9.00, sessionPnl: 870.00, lastCyclePnl: 64.20, lastCycleTrades: 5, lastCycleWinners: 4, lastCycleLosers: 1, lastCycleFees: 5.80, lastCycleNet: 58.40, tradeCount: 21, winRate: "66.7%", maxDrawdown: "-1.9%", bestPair: "ETH/USDT +420.00 USD", worstPair: "SOL/USDT -96.00 USD", cycleRows: portfolioAllCycleRows.slice(1, 4) })
     })
     property string lastGovernorDecision: "BTC/USDT HOLD • confidence 0.81 • NO ORDER — preview only"
     property string autonomyMode: "Supervised dry-run"
@@ -388,9 +402,12 @@ ApplicationWindow {
     function portfolioCardDescription(field) {
         if (field === "fiat") return portfolioFiatAccountLabel
         if (field === "crypto") return portfolioCryptoAccountLabel
+        if (field === "trading") return formatMoney(portfolioTradingEquityUsdt, "USDT") + " • equity preview"
         if (field === "available") return formatMoney(portfolioAvailableBalanceUsd, portfolioBaseCurrency)
         if (field === "positions") return formatMoney(portfolioInPositionsUsd, portfolioBaseCurrency)
+        if (field === "reserved") return formatMoney(portfolioReservedMarginUsd, portfolioBaseCurrency)
         if (field === "lastCycle") return formatUsd(portfolioLastCyclePnlUsd)
+        if (field === "paperSession") return formatUsd(paperPnl) + " • equity " + formatMoney(paperEquity, "USD")
         if (field === "session") return formatUsd(portfolioSessionPnlUsd)
         if (field === "allTime") return formatUsd(portfolioAllTimePnlUsd)
         if (field === "winRate") return portfolioWinRate
@@ -406,18 +423,34 @@ ApplicationWindow {
         portfolioAllTimePnlUsd = portfolioNetPnlUsd
         portfolioTotalEquityUsd = Number((portfolioStartingEquityUsd + portfolioAllTimePnlUsd).toFixed(2))
         portfolioTotalEquityPln = Number((portfolioTotalEquityUsd * 3.945).toFixed(2))
-        portfolioAvailableBalanceUsd = Number((portfolioTotalEquityUsd - portfolioInPositionsUsd).toFixed(2))
+        portfolioRoiPercent = Number(((portfolioAllTimePnlUsd / portfolioStartingEquityUsd) * 100).toFixed(2))
+        portfolioAvailableBalanceUsd = Number((portfolioTotalEquityUsd - portfolioInPositionsUsd - portfolioReservedMarginUsd).toFixed(2))
+        portfolioTradingEquityUsdt = portfolioTotalEquityUsd
+        portfolioTradingAvailableUsdt = portfolioAvailableBalanceUsd
         portfolioFiatAccountLabel = formatMoney(portfolioTotalEquityUsd, "USD") + " / " + formatMoney(portfolioTotalEquityPln, "PLN")
     }
+    function normalizedPortfolioRange(range) {
+        if (range === "24h") return "1d"
+        if (range === "30d") return "1m"
+        if (range === "All") return "all"
+        if (range === "Custom") return "custom"
+        return range
+    }
     function applyPortfolioSnapshot(range, snapshot) {
-        portfolioSelectedRange = range
-        portfolioRangeLabel = range === "Custom" ? "Zakres własny: preview" : "Zakres: " + range + " preview"
+        var normalizedRange = normalizedPortfolioRange(range)
+        portfolioSelectedRange = normalizedRange
+        portfolioRangeLabel = normalizedRange === "custom" ? "Zakres własny: preview • " + portfolioCustomFrom + " → " + portfolioCustomTo : "Zakres: " + normalizedRange + " preview • filtry raportowe nie zmieniają aktywnej sesji Paper"
         portfolioRealizedPnlUsd = Number(snapshot.realized)
         portfolioUnrealizedPnlUsd = Number(snapshot.unrealized)
         portfolioFeesUsd = Number(snapshot.fees)
         portfolioFundingOtherCostsUsd = Number(snapshot.fundingOtherCosts)
         portfolioSessionPnlUsd = Number(snapshot.sessionPnl)
         portfolioLastCyclePnlUsd = Number(snapshot.lastCyclePnl)
+        portfolioLastCycleTradesCount = Number(snapshot.lastCycleTrades || portfolioLastCycleTradesCount)
+        portfolioLastCycleWinners = Number(snapshot.lastCycleWinners || portfolioLastCycleWinners)
+        portfolioLastCycleLosers = Number(snapshot.lastCycleLosers || portfolioLastCycleLosers)
+        portfolioLastCycleFeesUsd = Number(snapshot.lastCycleFees || portfolioLastCycleFeesUsd)
+        portfolioLastCycleNetUsd = Number(snapshot.lastCycleNet || (portfolioLastCyclePnlUsd - portfolioLastCycleFeesUsd))
         portfolioTradeCount = Number(snapshot.tradeCount)
         portfolioWinRate = snapshot.winRate
         portfolioMaxDrawdown = snapshot.maxDrawdown
@@ -427,16 +460,17 @@ ApplicationWindow {
         recomputePortfolioTotals()
     }
     function setPortfolioTimeRange(range) {
-        var snapshot = portfolioRangeSnapshots[range] || portfolioRangeSnapshots["24h"]
-        applyPortfolioSnapshot(range, snapshot)
+        var normalizedRange = normalizedPortfolioRange(range)
+        var snapshot = portfolioRangeSnapshots[normalizedRange] || portfolioRangeSnapshots["1d"]
+        applyPortfolioSnapshot(normalizedRange, snapshot)
+    }
+    function applyPortfolioCustomRange(fromValue, toValue) {
+        portfolioCustomFrom = fromValue && fromValue.length > 0 ? fromValue : portfolioCustomFrom
+        portfolioCustomTo = toValue && toValue.length > 0 ? toValue : portfolioCustomTo
+        setPortfolioTimeRange("custom")
     }
     function syncPortfolioPerformanceState() {
-        portfolioSessionPnlUsd = Number(paperPnl.toFixed(2))
-        portfolioUnrealizedPnlUsd = Number((paperPnl - portfolioRealizedPnlUsd + portfolioFeesUsd + portfolioFundingOtherCostsUsd).toFixed(2))
         recomputePortfolioTotals()
-        previewPnl = paperPnl
-        previewEquity = portfolioTotalEquityUsd
-        paperEquity = portfolioTotalEquityUsd
     }
     function appendTerminalLog(message) {
         var logCopy = terminalLogRows.slice()
