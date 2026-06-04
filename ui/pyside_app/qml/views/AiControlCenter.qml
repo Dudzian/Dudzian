@@ -84,7 +84,7 @@ Components.StyledScrollView {
             description: qsTr("Generate governor recommendation changes lastGovernorDecision, appends a decision stream row, rotates pair/action and updates timestamp.")
             RowLayout {
                 Layout.fillWidth: true
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate governor recommendation"); iconName: "mode_wizard"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.generateGovernorRecommendation() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate governor recommendation"); helpText: previewState.tooltipText("Generate governor recommendation"); iconName: "mode_wizard"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.generateGovernorRecommendation() }
                 Label { text: previewState.lastGovernorDecision; color: designSystem.color("textPrimary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }

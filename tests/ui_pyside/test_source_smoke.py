@@ -40,6 +40,7 @@ PANEL_AUDIT_IDS = (
     "aiDecisionsPanel",
     "telemetryPanel",
     "diagnosticsPanel",
+    "helpGlossaryPanel",
 )
 
 
@@ -123,6 +124,14 @@ def test_source_smoke_finishes_and_reports_safety_contract() -> None:
     assert payload["keychain_read"] is False
     assert payload["env_values_read"] is False
     assert payload["dot_env_read"] is False
+    assert payload["i18n_language_selector_present"] is True
+    assert payload["i18n_pl_en_available"] is True
+    assert payload["i18n_language_switch_local_only"] is True
+    assert payload["help_glossary_present"] is True
+    assert payload["glossary_required_terms_present"] is True
+    assert payload["tooltips_present"] is True
+    assert payload["safety_boundary_ok"] is True
+    assert payload["portfolio_filters_do_not_mutate_paper_state"] is True
     assert payload["issues"] == []
 
 
@@ -156,6 +165,8 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["order_submission_disabled"] is True
     assert audit["api_keys_required"] is False
     assert audit["safety_boundary_ok"] is True
+    assert payload["safety_boundary_ok"] is True
+    assert payload["portfolio_filters_do_not_mutate_paper_state"] is True
 
     assert audit["start_sets_running"] is True
     assert audit["start_tick_delta"] >= 1
@@ -265,6 +276,102 @@ def test_ui_preview_7_7_2_qml_standalone_guards_and_terminal_parse_patterns() ->
     assert "designSystem.iconSource(control.iconName)" not in icon_button
 
 
+def test_i18n_language_selector_help_glossary_and_tooltips_are_declared() -> None:
+    source = _qml_text()
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    icon_button = (QML_SOURCE_ROOT / "components" / "IconButton.qml").read_text(encoding="utf-8")
+
+    for token in (
+        "property string currentLanguage",
+        "property var languageOptions",
+        "function setLanguage(lang)",
+        "function trText(key)",
+        "function previewT(key)",
+        "translationDictionary",
+        'code: "PL"',
+        'code: "EN"',
+        'objectName: "languageSelector"',
+        "🇵🇱 PL",
+        "🌐 EN",
+    ):
+        assert token in main_window
+
+    for token in (
+        'panelId: "helpGlossaryPanel"',
+        "Pomoc / Słownik",
+        'objectName: "helpGlossaryRoot"',
+        "glossaryCategories",
+        "Trading",
+        "Ryzyko",
+        "AI / Governor",
+        "Strategie",
+        "Paper / Live",
+        "Giełdy / API",
+        "Diagnostyka",
+    ):
+        assert token in source
+
+    for term in (
+        "PnL",
+        "ROI",
+        "drawdown",
+        "slippage",
+        "spread",
+        "order book",
+        "paper trading",
+        "sandbox/testnet",
+        "API key",
+        "governor",
+        "confidence",
+        "strategy",
+        "risk guard",
+        "kill-switch",
+        "TP",
+        "SL",
+        "fee/prowizja",
+        "equity",
+        "available balance",
+        "in positions",
+        "blacklist",
+        "whitelist",
+    ):
+        assert term in source
+
+    assert "property string helpText" in icon_button
+    assert "ToolTip.delay: 800" in icon_button
+    assert "hovered || activeFocus" in icon_button
+    for tooltip_key in (
+        "Start Paper Preview",
+        "Pause",
+        "Stop",
+        "Reset",
+        "Generate Next Tick",
+        "Run 10 paper ticks",
+        "Generate governor recommendation",
+        "Import markets preview",
+        "Select top 20",
+        "Blacklist selected",
+        "Whitelist selected",
+        "Simulate buy/sell order",
+        "Risk profile Conservative",
+        "Risk profile Balanced",
+        "Risk profile Aggressive",
+        "Custom risk",
+        "AI recommended risk",
+        "Custom range",
+        "Zastosuj zakres",
+    ):
+        assert tooltip_key in source
+
+
+def test_ui_preview_sources_have_no_forbidden_runtime_or_secret_tokens() -> None:
+    source = "\n".join(path.read_text(encoding="utf-8") for path in _qml_sources())
+    source += SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    for token in FORBIDDEN_SOURCE_TOKENS:
+        assert token not in source
+
+
 def test_qml_design_system_color_tokens_are_registered() -> None:
     # Source safety guard: QML falls back poorly when a token is misspelled or removed,
     # so every literal designSystem.color("TOKEN") use in preview sources must exist in
@@ -348,7 +455,10 @@ def test_qml_operator_preview_removes_raw_labels_and_refresh_garbled_glyph() -> 
     )
     for label in forbidden_labels:
         assert label not in source
-    assert 'text: qsTr("Odśwież preview")' in source
+    assert (
+        'text: qsTr("Odśwież preview")' in source
+        or 'text: root.trText("refresh.preview")' in source
+    )
 
 
 def test_qml_operator_preview_demo_offline_safety_copy() -> None:
@@ -1408,3 +1518,5 @@ def test_ui_preview_8_0b_smoke_audits_portfolio_state_and_safety() -> None:
     assert audit["dashboard_separates_paper_and_portfolio_report"] is True
     assert audit["portfolio_money_formatting_ok"] is True
     assert audit["safety_boundary_ok"] is True
+    assert payload["safety_boundary_ok"] is True
+    assert payload["portfolio_filters_do_not_mutate_paper_state"] is True
