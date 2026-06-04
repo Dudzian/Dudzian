@@ -61,12 +61,12 @@ Components.StyledScrollView {
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Start Paper Preview"); iconName: "refresh"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.startPaperPreview() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Pause"); subtle: true; onClicked: previewState.pausePaperPreview() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Stop"); subtle: true; onClicked: previewState.stopPaperPreview() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Reset"); subtle: true; onClicked: previewState.resetPaperPreview() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate Next Tick"); iconName: "refresh"; onClicked: previewState.generatePaperTick() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Run 10 paper ticks"); onClicked: previewState.runTenMockTicks() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Start Paper Preview"); helpText: previewState.tooltipText("Start Paper Preview"); iconName: "refresh"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.startPaperPreview() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Pause"); helpText: previewState.tooltipText("Pause"); subtle: true; onClicked: previewState.pausePaperPreview() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Stop"); helpText: previewState.tooltipText("Stop"); subtle: true; onClicked: previewState.stopPaperPreview() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Reset"); helpText: previewState.tooltipText("Reset"); subtle: true; onClicked: previewState.resetPaperPreview() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate Next Tick"); helpText: previewState.tooltipText("Generate Next Tick"); iconName: "refresh"; onClicked: previewState.generatePaperTick() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Run 10 paper ticks"); helpText: previewState.tooltipText("Run 10 paper ticks"); onClicked: previewState.runTenMockTicks() }
             }
             GridLayout {
                 Layout.fillWidth: true

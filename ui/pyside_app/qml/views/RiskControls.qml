@@ -44,8 +44,11 @@ Components.StyledScrollView {
                         radius: 14
                         color: active ? designSystem.color("accent") : designSystem.color("surfaceMuted")
                         border.color: active ? designSystem.color("accent") : designSystem.color("border")
+                        ToolTip.delay: 800
+                        ToolTip.visible: riskProfileMouseArea.containsMouse
+                        ToolTip.text: previewState.tooltipText("Risk profile " + modelData)
                         Label { anchors.centerIn: parent; text: modelData; color: active ? designSystem.color("surface") : designSystem.color("textPrimary"); font.bold: true }
-                        MouseArea { anchors.fill: parent; onClicked: previewState.setRiskProfile(modelData) }
+                        MouseArea { id: riskProfileMouseArea; anchors.fill: parent; hoverEnabled: true; onClicked: previewState.setRiskProfile(modelData) }
                     }
                 }
             }
@@ -65,6 +68,8 @@ Components.StyledScrollView {
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Max drawdown"); description: previewState.maxDrawdown; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Daily loss limit"); description: previewState.dailyLossLimit; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Per-symbol exposure"); description: previewState.perSymbolExposure; Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Custom risk / Własny profil"); description: previewState.tooltipText("Custom risk"); Layout.fillWidth: true }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("AI recommended risk"); description: previewState.tooltipText("AI recommended risk"); Layout.fillWidth: true }
         }
 
         Components.PreviewCard {

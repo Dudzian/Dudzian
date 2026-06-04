@@ -229,6 +229,7 @@ Components.StyledScrollView {
                     objectName: "paperTerminalSimulateOrderButton"
                     designSystem: root.designSystem
                     text: previewState.terminalSide === "BUY" ? qsTr("Simulate buy order") : qsTr("Simulate sell order")
+                    helpText: previewState.tooltipText("Simulate buy/sell order")
                     Layout.fillWidth: true
                     backgroundColor: previewState.terminalSide === "BUY" ? root.buyTint : root.sellTint
                     foregroundColor: previewState.terminalSide === "BUY" ? root.buyText : root.sellText

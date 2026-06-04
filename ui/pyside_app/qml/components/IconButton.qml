@@ -9,8 +9,15 @@ Button {
     property color backgroundColor: designSystem ? designSystem.color("surfaceMuted") : "#2a303c"
     property color foregroundColor: designSystem ? designSystem.color("textPrimary") : "#f5f7ff"
     property bool subtle: false
+    property string helpText: ""
     implicitHeight: 40
     implicitWidth: Math.max(40, contentItem.implicitWidth + 16)
+    hoverEnabled: true
+    focusPolicy: Qt.StrongFocus
+    ToolTip.delay: 800
+    ToolTip.timeout: 5000
+    ToolTip.visible: helpText.length > 0 && (hovered || activeFocus)
+    ToolTip.text: helpText
     readonly property string glyphText: designSystem && iconName.length > 0 && typeof designSystem.iconGlyph === "function"
                                         ? designSystem.iconGlyph(iconName)
                                         : ""

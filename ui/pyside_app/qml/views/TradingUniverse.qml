@@ -106,7 +106,7 @@ Components.StyledScrollView {
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Import markets preview"); iconName: "cloud"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.importMarketsPreview() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Import markets preview"); helpText: previewState.tooltipText("Import markets preview"); iconName: "cloud"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.importMarketsPreview() }
                 Components.StyledTextField { objectName: "tradingUniverseSearchPair"; designSystem: root.designSystem; placeholderText: qsTr("Search pair"); text: previewState.marketSearch; onTextChanged: previewState.marketSearch = text; width: 240 }
                 Repeater { model: root.quoteFilters; delegate: Components.IconButton { required property string modelData; designSystem: root.designSystem; text: qsTr(modelData); subtle: previewState.marketQuoteFilter !== modelData; onClicked: previewState.marketQuoteFilter = modelData } }
             }
@@ -123,9 +123,9 @@ Components.StyledScrollView {
                 spacing: 8
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Select all visible"); onClicked: previewState.selectAllVisiblePairs() }
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Clear selected"); subtle: true; onClicked: previewState.clearSelectedPairs() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Select top 20"); onClicked: previewState.selectTop20Pairs() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Blacklist selected"); subtle: true; onClicked: previewState.blacklistSelectedPairs() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Whitelist selected"); onClicked: previewState.whitelistSelectedPairs() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Select top 20"); helpText: previewState.tooltipText("Select top 20"); onClicked: previewState.selectTop20Pairs() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Blacklist selected"); helpText: previewState.tooltipText("Blacklist selected"); subtle: true; onClicked: previewState.blacklistSelectedPairs() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Whitelist selected"); helpText: previewState.tooltipText("Whitelist selected"); onClicked: previewState.whitelistSelectedPairs() }
             }
             RowLayout {
                 Layout.fillWidth: true

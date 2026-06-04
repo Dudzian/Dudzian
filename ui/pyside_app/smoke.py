@@ -38,6 +38,14 @@ class UiSmokeResult:
     paper_session_controls_present: bool = False
     market_universe_controls_present: bool = False
     ai_governor_controls_present: bool = False
+    i18n_language_selector_present: bool = False
+    i18n_pl_en_available: bool = False
+    i18n_language_switch_local_only: bool = False
+    help_glossary_present: bool = False
+    glossary_required_terms_present: bool = False
+    tooltips_present: bool = False
+    safety_boundary_ok: bool = True
+    portfolio_filters_do_not_mutate_paper_state: bool = True
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
@@ -68,6 +76,7 @@ PANEL_AUDIT_IDS = (
     "aiDecisionsPanel",
     "telemetryPanel",
     "diagnosticsPanel",
+    "helpGlossaryPanel",
 )
 
 
@@ -500,6 +509,14 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         paper_session_controls_present = False
         market_universe_controls_present = False
         ai_governor_controls_present = False
+        i18n_language_selector_present = False
+        i18n_pl_en_available = False
+        i18n_language_switch_local_only = False
+        help_glossary_present = False
+        glossary_required_terms_present = False
+        tooltips_present = False
+        safety_boundary_ok = True
+        portfolio_filters_do_not_mutate_paper_state = True
         preview_state_audit: dict[str, object] = {}
         if qml_loaded:
             source = _qml_preview_source()
@@ -531,6 +548,64 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     "Training coverage %",
                 ),
             )
+            required_glossary_terms = (
+                "PnL",
+                "ROI",
+                "drawdown",
+                "slippage",
+                "spread",
+                "order book",
+                "paper trading",
+                "sandbox/testnet",
+                "API key",
+                "governor",
+                "confidence",
+                "strategy",
+                "risk guard",
+                "kill-switch",
+                "TP",
+                "SL",
+                "fee/prowizja",
+                "equity",
+                "available balance",
+                "in positions",
+                "blacklist",
+                "whitelist",
+            )
+            required_tooltips = (
+                "Start Paper Preview",
+                "Pause",
+                "Stop",
+                "Reset",
+                "Generate Next Tick",
+                "Run 10 paper ticks",
+                "Generate governor recommendation",
+                "Import markets preview",
+                "Select top 20",
+                "Blacklist selected",
+                "Whitelist selected",
+                "Simulate buy/sell order",
+                "Risk profile Conservative",
+                "Risk profile Balanced",
+                "Risk profile Aggressive",
+                "Custom risk",
+                "AI recommended risk",
+                "Custom range",
+                "Zastosuj zakres",
+            )
+            i18n_language_selector_present = _source_has_all(
+                source, ("currentLanguage", "languageSelector", "setLanguage", "trText", "previewT")
+            )
+            i18n_pl_en_available = _source_has_all(
+                source, ('code: "PL"', 'code: "EN"', '"PL": ({', '"EN": ({')
+            )
+            help_glossary_present = _source_has_all(
+                source, ("Pomoc / Słownik", "helpGlossaryPanel", "glossaryCategories")
+            )
+            glossary_required_terms_present = _source_has_all(source, required_glossary_terms)
+            tooltips_present = _source_has_all(
+                source, ("ToolTip.delay: 800", "helpText", "previewTooltips")
+            ) and _source_has_all(source, required_tooltips)
             from PySide6.QtCore import QObject
 
             root = engine.rootObjects()[0]
@@ -554,10 +629,43 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             ]
             if failed_panels:
                 audit_issues.extend(f"panel_load_failed:{panel_id}" for panel_id in failed_panels)
+            before_language = str(root.property("currentLanguage") or "")
+            before_runtime_loop = _bool_property(root, "runtimeLoopStarted")
+            before_exchange_io = _bool_property(root, "exchangeIoDisabled")
+            before_order_submission = _bool_property(root, "orderSubmissionDisabled")
+            before_api_keys_required = _bool_property(root, "apiKeysRequired")
+            _invoke_qml(root, "setLanguage", "EN")
+            after_language = str(root.property("currentLanguage") or "")
+            i18n_language_switch_local_only = (
+                before_language != after_language
+                and after_language == "EN"
+                and _bool_property(root, "runtimeLoopStarted") == before_runtime_loop
+                and _bool_property(root, "exchangeIoDisabled") == before_exchange_io
+                and _bool_property(root, "orderSubmissionDisabled") == before_order_submission
+                and _bool_property(root, "apiKeysRequired") == before_api_keys_required
+            )
+            _invoke_qml(root, "setLanguage", before_language or "PL")
+            if not all(
+                (
+                    i18n_language_selector_present,
+                    i18n_pl_en_available,
+                    i18n_language_switch_local_only,
+                    help_glossary_present,
+                    glossary_required_terms_present,
+                    tooltips_present,
+                )
+            ):
+                audit_issues.append("i18n_help_tooltip_audit_failed")
             if options.exercise_preview_state:
                 preview_state_audit = _exercise_preview_state(root)
                 if preview_state_audit.get("passed") is not True:
                     audit_issues.append("preview_state_exercise_failed")
+                safety_boundary_ok = bool(preview_state_audit.get("safety_boundary_ok"))
+                portfolio_filters_do_not_mutate_paper_state = bool(
+                    preview_state_audit.get("portfolio_time_filter_does_not_mutate_paper_state")
+                ) and bool(
+                    preview_state_audit.get("portfolio_custom_filter_does_not_mutate_paper_state")
+                )
         smoke_ok = qml_loaded and not audit_issues
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
@@ -573,6 +681,14 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             paper_session_controls_present=paper_session_controls_present,
             market_universe_controls_present=market_universe_controls_present,
             ai_governor_controls_present=ai_governor_controls_present,
+            i18n_language_selector_present=i18n_language_selector_present,
+            i18n_pl_en_available=i18n_pl_en_available,
+            i18n_language_switch_local_only=i18n_language_switch_local_only,
+            help_glossary_present=help_glossary_present,
+            glossary_required_terms_present=glossary_required_terms_present,
+            tooltips_present=tooltips_present,
+            safety_boundary_ok=safety_boundary_ok,
+            portfolio_filters_do_not_mutate_paper_state=portfolio_filters_do_not_mutate_paper_state,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],

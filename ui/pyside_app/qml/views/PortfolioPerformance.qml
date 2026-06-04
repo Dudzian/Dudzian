@@ -82,7 +82,7 @@ Components.StyledScrollView {
                 columnSpacing: 8
                 Components.StyledTextField { id: customFromField; objectName: "portfolioCustomFromInput"; designSystem: root.designSystem; text: previewState.portfolioCustomFrom; placeholderText: qsTr("from / start, np. 2026-06-01 00:00"); Layout.fillWidth: true }
                 Components.StyledTextField { id: customToField; objectName: "portfolioCustomToInput"; designSystem: root.designSystem; text: previewState.portfolioCustomTo; placeholderText: qsTr("to / end, np. 2026-06-02 23:59"); Layout.fillWidth: true }
-                Components.IconButton { objectName: "portfolioApplyCustomRangeButton"; designSystem: root.designSystem; text: qsTr("Zastosuj zakres"); backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.applyPortfolioCustomRange(customFromField.text, customToField.text) }
+                Components.IconButton { objectName: "portfolioApplyCustomRangeButton"; designSystem: root.designSystem; text: qsTr("Zastosuj zakres"); helpText: previewState.tooltipText("Zastosuj zakres"); backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.applyPortfolioCustomRange(customFromField.text, customToField.text) }
             }
         }
 

@@ -19,6 +19,151 @@ ApplicationWindow {
     property var contextRuntimeState: (typeof runtimeState !== "undefined" ? runtimeState : null)
     property string defaultPanelId: "sidePanel"
     property string currentPanelId: defaultPanelId
+    property string currentLanguage: "PL"
+    property var languageOptions: [
+        ({ code: "PL", label: "Polski", flag: "🇵🇱", display: "🇵🇱 PL" }),
+        ({ code: "EN", label: "English", flag: "🌐", display: "🌐 EN" })
+    ]
+    property var translationDictionary: ({
+        "PL": ({
+            "app.title": "Dudzian Bot Preview",
+            "safety.summary": "Live trading wyłączony • Połączenie z giełdą wyłączone • Składanie zleceń wyłączone",
+            "nav.dashboard": "Dashboard",
+            "nav.aiCenter": "AI Center",
+            "nav.universe": "Trading Universe",
+            "nav.portfolio": "Portfel / Wyniki",
+            "nav.terminal": "Paper Terminal",
+            "nav.strategies": "Strategie",
+            "nav.risk": "Ryzyko",
+            "nav.decisions": "Decyzje",
+            "nav.telemetry": "Telemetria",
+            "nav.diagnostics": "Diagnostyka",
+            "nav.help": "Pomoc / Słownik",
+            "language.label": "Język",
+            "refresh.preview": "Odśwież preview",
+            "help.title": "Pomoc / Słownik",
+            "help.description": "Prosty słowniczek pojęć dla nietechnicznego użytkownika. Wszystko działa lokalnie w Paper Preview.",
+            "category.trading": "Trading",
+            "category.risk": "Ryzyko",
+            "category.ai": "AI / Governor",
+            "category.strategies": "Strategie",
+            "category.paper": "Paper / Live",
+            "category.exchange": "Giełdy / API",
+            "category.diagnostics": "Diagnostyka"
+        }),
+        "EN": ({
+            "app.title": "Dudzian Bot Preview",
+            "safety.summary": "Live trading disabled • Exchange I/O disabled • Order submission disabled",
+            "nav.dashboard": "Dashboard",
+            "nav.aiCenter": "AI Center",
+            "nav.universe": "Trading Universe",
+            "nav.portfolio": "Portfolio / Results",
+            "nav.terminal": "Paper Terminal",
+            "nav.strategies": "Strategies",
+            "nav.risk": "Risk",
+            "nav.decisions": "Decisions",
+            "nav.telemetry": "Telemetry",
+            "nav.diagnostics": "Diagnostics",
+            "nav.help": "Help / Glossary",
+            "language.label": "Language",
+            "refresh.preview": "Refresh preview",
+            "help.title": "Help / Glossary",
+            "help.description": "A simple glossary for non-technical users. Everything stays local in Paper Preview.",
+            "category.trading": "Trading",
+            "category.risk": "Risk",
+            "category.ai": "AI / Governor",
+            "category.strategies": "Strategies",
+            "category.paper": "Paper / Live",
+            "category.exchange": "Exchanges / API",
+            "category.diagnostics": "Diagnostics"
+        })
+    })
+    property var previewTooltips: ({
+        "Start Paper Preview": "Uruchamia lokalną sesję testową Paper Preview. Nie składa prawdziwych zleceń.",
+        "Pause": "Wstrzymuje lokalne ticki bez kasowania wyników sesji.",
+        "Stop": "Zatrzymuje lokalną sesję testową. Runtime produkcyjny nadal nie startuje.",
+        "Reset": "Czyści lokalny stan sesji paper i zostawia blokady bezpieczeństwa aktywne.",
+        "Generate Next Tick": "Dodaje jeden przykładowy krok rynku i decyzji tylko w pamięci UI.",
+        "Run 10 paper ticks": "Szybko generuje 10 lokalnych kroków paper bez kontaktu z giełdą.",
+        "Generate governor recommendation": "Tworzy przykładową rekomendację AI/Governor w UI. To nie jest sygnał live.",
+        "Import markets preview": "Ładuje lokalny katalog par do podglądu, bez pobierania danych z giełdy.",
+        "Select top 20": "Zaznacza 20 lokalnych kandydatów z listy preview.",
+        "Blacklist selected": "Dodaje zaznaczone pary do lokalnej listy blokad.",
+        "Whitelist selected": "Dodaje zaznaczone pary do lokalnej listy dozwolonych par.",
+        "Simulate buy/sell order": "Dopisuje tylko lokalną symulację kupna lub sprzedaży. Brak prawdziwego zlecenia.",
+        "Risk profile Conservative": "Najostrożniejsze limity: mniejsze pozycje i ciaśniejsze ryzyko.",
+        "Risk profile Balanced": "Środkowy profil ryzyka dla zbalansowanego Paper Preview.",
+        "Risk profile Aggressive": "Wyższe limity preview; nadal bez live tradingu i prawdziwych zleceń.",
+        "Custom risk": "Miejsce na własny profil ryzyka w preview; zmiany są lokalne.",
+        "AI recommended risk": "Placeholder rekomendacji AI dla profilu ryzyka; nie wymusza live tradingu.",
+        "Custom range": "Zakres raportu portfela. Nie zmienia aktywnej sesji Paper.",
+        "Zastosuj zakres": "Stosuje zakres tylko do raportu Portfel / Wyniki, bez mutacji paper state."
+    })
+    property var glossaryCategories: [
+        ({ key: "category.trading", terms: ["PnL", "ROI", "spread", "order book", "fee/prowizja", "equity", "available balance", "in positions"] }),
+        ({ key: "category.risk", terms: ["drawdown", "risk guard", "kill-switch", "TP", "SL"] }),
+        ({ key: "category.ai", terms: ["governor", "confidence"] }),
+        ({ key: "category.strategies", terms: ["strategy"] }),
+        ({ key: "category.paper", terms: ["paper trading", "sandbox/testnet"] }),
+        ({ key: "category.exchange", terms: ["API key", "slippage", "blacklist", "whitelist"] }),
+        ({ key: "category.diagnostics", terms: ["Runtime loop not started", "Exchange I/O disabled", "Order submission disabled"] })
+    ]
+    property var glossaryDescriptions: ({
+        "PL": ({
+            "PnL": "Zysk lub strata z transakcji albo sesji.",
+            "ROI": "Procentowy wynik względem użytego kapitału.",
+            "drawdown": "Spadek kapitału od ostatniego szczytu.",
+            "slippage": "Różnica między oczekiwaną ceną a ceną wykonania.",
+            "spread": "Różnica między najlepszą ceną kupna i sprzedaży.",
+            "order book": "Lista ofert kupna i sprzedaży widoczna na rynku.",
+            "paper trading": "Handel testowy na danych preview, bez prawdziwych pieniędzy.",
+            "sandbox/testnet": "Bezpieczne środowisko testowe giełdy lub aplikacji.",
+            "API key": "Klucz dostępu do giełdy; w tym preview nie jest wymagany.",
+            "governor": "Warstwa AI, która podpowiada lub blokuje decyzje według zasad ryzyka.",
+            "confidence": "Poziom pewności modelu dla danej rekomendacji.",
+            "strategy": "Zestaw reguł mówiących, kiedy obserwować, kupić, sprzedać lub czekać.",
+            "risk guard": "Bezpiecznik ograniczający zbyt ryzykowne działania.",
+            "kill-switch": "Awaryjny wyłącznik blokujący handel lub akcje systemu.",
+            "TP": "Take Profit: poziom planowanego zamknięcia z zyskiem.",
+            "SL": "Stop Loss: poziom planowanego ograniczenia straty.",
+            "fee/prowizja": "Koszt transakcji pobierany przez giełdę lub symulowany w raporcie.",
+            "equity": "Łączna wartość konta: wolne środki plus pozycje.",
+            "available balance": "Środki dostępne do użycia, niezamrożone w pozycjach.",
+            "in positions": "Kapitał aktualnie zaangażowany w otwarte pozycje.",
+            "blacklist": "Lista par pomijanych lub blokowanych w preview.",
+            "whitelist": "Lista par dopuszczonych do obserwacji w preview.",
+            "Runtime loop not started": "Produkcyjna pętla pracy bota nie została uruchomiona.",
+            "Exchange I/O disabled": "UI nie wysyła ani nie pobiera danych z prawdziwej giełdy.",
+            "Order submission disabled": "Składanie zleceń jest zablokowane."
+        }),
+        "EN": ({
+            "PnL": "Profit or loss from a trade or session.",
+            "ROI": "Percentage result compared with the capital used.",
+            "drawdown": "Capital drop from a recent high point.",
+            "slippage": "Difference between expected price and execution price.",
+            "spread": "Gap between the best buy and sell prices.",
+            "order book": "Visible list of buy and sell offers in a market.",
+            "paper trading": "Test trading in preview without real money.",
+            "sandbox/testnet": "Safe exchange or app testing environment.",
+            "API key": "Exchange access key; not required in this preview.",
+            "governor": "AI layer that recommends or blocks actions using risk rules.",
+            "confidence": "How sure the model is about a recommendation.",
+            "strategy": "Rules for when to watch, buy, sell or wait.",
+            "risk guard": "Safety guard that limits risky actions.",
+            "kill-switch": "Emergency stop that blocks trading or system actions.",
+            "TP": "Take Profit: planned exit level for a gain.",
+            "SL": "Stop Loss: planned level for limiting loss.",
+            "fee/prowizja": "Transaction cost charged by an exchange or simulated in the report.",
+            "equity": "Total account value: free funds plus positions.",
+            "available balance": "Funds available to use, not locked in positions.",
+            "in positions": "Capital currently used in open positions.",
+            "blacklist": "Pairs skipped or blocked in preview.",
+            "whitelist": "Pairs allowed for observation in preview.",
+            "Runtime loop not started": "The production bot loop has not been started.",
+            "Exchange I/O disabled": "The UI does not send to or fetch from a real exchange.",
+            "Order submission disabled": "Submitting orders is blocked."
+        })
+    })
     readonly property var rootDesignSystem: designSystem
 
     // UI-PREVIEW-7.5 local-only product preview state. Safe dry-run/paper preview only: live trading disabled, exchange route disabled, order submission disabled, API keys not required.
@@ -377,6 +522,31 @@ ApplicationWindow {
         closedPaperTrades = paperClosedTrades.slice(0, 20)
         telemetryRows = paperTelemetryRows.slice(0, 12)
         syncPortfolioPerformanceState()
+    }
+    function setLanguage(lang) {
+        for (var i = 0; i < languageOptions.length; ++i) {
+            if (languageOptions[i].code === lang) {
+                currentLanguage = lang
+                return
+            }
+        }
+    }
+    function trText(key) {
+        var langTable = translationDictionary[currentLanguage] || translationDictionary["PL"]
+        return langTable && langTable[key] ? langTable[key] : key
+    }
+    function previewT(key) { return trText(key) }
+    function tooltipText(key) { return previewTooltips[key] || key }
+    function glossaryDescription(term) {
+        var table = glossaryDescriptions[currentLanguage] || glossaryDescriptions["PL"]
+        return table && table[term] ? table[term] : term
+    }
+    function languageDisplay(code) {
+        for (var i = 0; i < languageOptions.length; ++i) {
+            if (languageOptions[i].code === code)
+                return languageOptions[i].display
+        }
+        return "🌐 " + code
     }
     function groupedNumber(value) {
         var fixed = Math.abs(Number(value)).toFixed(2)
@@ -781,16 +951,17 @@ ApplicationWindow {
     }
 
     property var panelMetadata: [
-        ({ panelId: "sidePanel", title: qsTr("Dashboard"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
-        ({ panelId: "aiCenterPanel", title: qsTr("AI Center"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 1 }),
-        ({ panelId: "tradingUniversePanel", title: qsTr("Trading Universe"), icon: "cloud", defaultColumn: 0, defaultOrder: 2 }),
-        ({ panelId: "portfolioPerformancePanel", title: qsTr("Portfel / Wyniki"), icon: "package", defaultColumn: 0, defaultOrder: 3 }),
-        ({ panelId: "terminalPanel", title: qsTr("Paper Terminal"), icon: "package", defaultColumn: 0, defaultOrder: 4 }),
-        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 0, defaultOrder: 5 }),
-        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), icon: "shield", defaultColumn: 0, defaultOrder: 6 }),
-        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 7 }),
-        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 8 }),
-        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 9 })
+        ({ panelId: "sidePanel", title: qsTr("Dashboard"), titleKey: "nav.dashboard", icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
+        ({ panelId: "aiCenterPanel", title: qsTr("AI Center"), titleKey: "nav.aiCenter", icon: "mode_wizard", defaultColumn: 0, defaultOrder: 1 }),
+        ({ panelId: "tradingUniversePanel", title: qsTr("Trading Universe"), titleKey: "nav.universe", icon: "cloud", defaultColumn: 0, defaultOrder: 2 }),
+        ({ panelId: "portfolioPerformancePanel", title: qsTr("Portfel / Wyniki"), titleKey: "nav.portfolio", icon: "package", defaultColumn: 0, defaultOrder: 3 }),
+        ({ panelId: "terminalPanel", title: qsTr("Paper Terminal"), titleKey: "nav.terminal", icon: "package", defaultColumn: 0, defaultOrder: 4 }),
+        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), titleKey: "nav.strategies", icon: "strategy_manager", defaultColumn: 0, defaultOrder: 5 }),
+        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), titleKey: "nav.risk", icon: "shield", defaultColumn: 0, defaultOrder: 6 }),
+        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), titleKey: "nav.decisions", icon: "mode_wizard", defaultColumn: 0, defaultOrder: 7 }),
+        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), titleKey: "nav.telemetry", icon: "diagnostics", defaultColumn: 0, defaultOrder: 8 }),
+        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), titleKey: "nav.diagnostics", icon: "diagnostics", defaultColumn: 0, defaultOrder: 9 }),
+        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 10 })
     ]
 
     property var productTabs: panelMetadata
@@ -806,6 +977,7 @@ ApplicationWindow {
         "aiDecisionsPanel": { title: qsTr("Decyzje"), icon: "mode_wizard", component: aiDecisionsPanelComponent },
         "telemetryPanel": { title: qsTr("Telemetria"), icon: "diagnostics", component: telemetryPanelComponent },
         "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
+        "helpGlossaryPanel": { title: qsTr("Pomoc / Słownik"), icon: "diagnostics", component: helpGlossaryPanelComponent },
         "chartView": { title: qsTr("Strumień decyzji"), icon: "cloud", component: chartViewComponent },
         "strategyWorkbench": { title: qsTr("Warsztat strategii"), icon: "package", component: strategyWorkbenchComponent },
         "modeWizardPanel": { title: qsTr("Tryby pracy"), icon: "mode_wizard", component: modeWizardPanelComponent },
@@ -915,13 +1087,13 @@ ApplicationWindow {
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 2
                 Label {
-                    text: qsTr("Dudzian Bot Preview")
+                    text: root.trText("app.title")
                     font.bold: true
                     font.pixelSize: 16
                     color: designSystem.color("textPrimary")
                 }
                 Label {
-                    text: qsTr("Live trading disabled • Exchange I/O disabled • Order submission disabled")
+                    text: root.trText("safety.summary")
                     color: designSystem.color("textSecondary")
                     font.pixelSize: 11
                 }
@@ -967,7 +1139,7 @@ ApplicationWindow {
                             Label {
                                 id: tabLabel
                                 anchors.centerIn: parent
-                                text: modelData.title
+                                text: root.trText(modelData.titleKey)
                                 font.bold: active
                                 color: active ? designSystem.color("textPrimary") : designSystem.color("textSecondary")
                             }
@@ -986,9 +1158,23 @@ ApplicationWindow {
                 }
             }
 
+            ComboBox {
+                id: languageSelector
+                objectName: "languageSelector"
+                Layout.preferredWidth: 112
+                model: root.languageOptions
+                textRole: "display"
+                currentIndex: root.currentLanguage === "EN" ? 1 : 0
+                ToolTip.delay: 800
+                ToolTip.visible: hovered || activeFocus
+                ToolTip.text: root.trText("language.label") + " — local-only"
+                onActivated: function(index) { root.setLanguage(root.languageOptions[index].code) }
+            }
+
             Components.IconButton {
                 designSystem: rootDesignSystem
-                text: qsTr("Odśwież preview")
+                text: root.trText("refresh.preview")
+                helpText: root.tooltipText("Generate Next Tick")
                 iconName: "refresh"
                 backgroundColor: designSystem.color("accent")
                 foregroundColor: designSystem.color("surface")
@@ -1069,6 +1255,62 @@ ApplicationWindow {
         }
     }
 
+
+    Component {
+        id: helpGlossaryPanelComponent
+        Components.StyledScrollView {
+            objectName: "helpGlossaryRoot"
+            designSystem: rootDesignSystem
+            contentWidth: availableWidth
+            clip: true
+            ColumnLayout {
+                width: parent.availableWidth
+                spacing: 14
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Rectangle { objectName: "helpGlossaryTitleAccentBar"; width: 4; Layout.fillHeight: true; radius: 2; color: designSystem.color("accent") }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Label { objectName: "helpGlossaryTitle"; text: root.trText("help.title"); font.bold: true; font.pixelSize: 24; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
+                        Label { text: root.trText("help.description") + " • Live trading disabled • Exchange I/O disabled • Order submission disabled • API keys not required • No real orders • Runtime loop not started."; wrapMode: Text.WordWrap; color: designSystem.color("textSecondary"); Layout.fillWidth: true }
+                    }
+                }
+                Repeater {
+                    model: root.glossaryCategories
+                    delegate: Components.PreviewCard {
+                        required property var modelData
+                        designSystem: rootDesignSystem
+                        title: root.trText(modelData.key)
+                        description: qsTr("Kliknij/hover na przyciskach w aplikacji, aby zobaczyć krótkie podpowiedzi.")
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Repeater {
+                                model: modelData.terms
+                                delegate: Rectangle {
+                                    required property string modelData
+                                    width: Math.max(240, glossaryTermColumn.implicitWidth + 24)
+                                    height: glossaryTermColumn.implicitHeight + 20
+                                    radius: 14
+                                    color: designSystem.color("surfaceMuted")
+                                    border.color: designSystem.color("border")
+                                    ColumnLayout {
+                                        id: glossaryTermColumn
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 4
+                                        Label { text: modelData; color: designSystem.color("textPrimary"); font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                        Label { text: root.glossaryDescription(modelData); color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Component {
         id: terminalPanelComponent
