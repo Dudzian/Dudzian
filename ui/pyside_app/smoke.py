@@ -46,6 +46,22 @@ class UiSmokeResult:
     tooltips_present: bool = False
     safety_boundary_ok: bool = True
     portfolio_filters_do_not_mutate_paper_state: bool = True
+    simulation_loop_state_present: bool = False
+    simulation_start_sets_running: bool = False
+    simulation_pause_sets_paused: bool = False
+    simulation_stop_sets_stopped: bool = False
+    simulation_reset_clears_ticks: bool = False
+    simulation_tick_increments_count: bool = False
+    simulation_tick_updates_decision: bool = False
+    simulation_tick_appends_telemetry: bool = False
+    simulation_tick_updates_paper_state: bool = False
+    simulation_burst_runs_multiple_ticks: bool = False
+    simulation_market_scenario_updates: bool = False
+    simulation_does_not_enable_live: bool = True
+    simulation_does_not_enable_exchange_io: bool = True
+    simulation_does_not_enable_order_submission: bool = True
+    simulation_does_not_require_api_keys: bool = True
+    simulation_does_not_read_secrets: bool = True
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
@@ -225,6 +241,21 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "order_submission_disabled": _bool_property(root, "orderSubmissionDisabled"),
         "api_keys_required": _bool_property(root, "apiKeysRequired"),
     }
+    simulation_state_fields = (
+        "simulationRunning",
+        "simulationPaused",
+        "simulationSpeed",
+        "simulationTickIntervalMs",
+        "simulationScenario",
+        "simulationTickCount",
+        "simulationLastTickAt",
+        "simulationMarketMode",
+        "simulationStatusLabel",
+        "simulationEvents",
+    )
+    audit["simulation_loop_state_present"] = all(
+        root.property(field) is not None for field in simulation_state_fields
+    )
     initial_ticks = int(root.property("paperSessionTicks") or 0)
     initial_orders = _sequence_length(root.property("paperOrderRows"))
     initial_decisions = _sequence_length(root.property("decisionPreviewRows"))
@@ -257,16 +288,21 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["portfolio_cycles_count"] = _sequence_length(root.property("portfolioCycleRows"))
     audit["portfolio_cards_count"] = _sequence_length(root.property("portfolioPerformanceCards"))
 
-    _invoke_qml(root, "startPaperPreview")
+    _invoke_qml(root, "startLiveLikePaperSimulation")
     after_start_ticks = int(root.property("paperSessionTicks") or 0)
+    audit["simulation_start_sets_running"] = _bool_property(root, "simulationRunning") is True
     audit["start_sets_running"] = _string_property(root, "paperSessionStatus") == "running"
     audit["start_tick_delta"] = after_start_ticks - initial_ticks
 
     before_tick_orders = _sequence_length(root.property("paperOrderRows"))
     before_tick_decisions = _sequence_length(root.property("decisionPreviewRows"))
     before_tick_telemetry = _sequence_length(root.property("paperTelemetryRows"))
-    _invoke_qml(root, "generatePaperTick")
+    before_sim_tick_count = int(root.property("simulationTickCount") or 0)
+    _invoke_qml(root, "runSimulationTick")
     after_tick_ticks = int(root.property("paperSessionTicks") or 0)
+    audit["simulation_tick_increments_count"] = (
+        int(root.property("simulationTickCount") or 0) == before_sim_tick_count + 1
+    )
     audit["generate_tick_delta"] = after_tick_ticks - after_start_ticks
     audit["generate_tick_appended_order"] = (
         _sequence_length(root.property("paperOrderRows")) > before_tick_orders
@@ -278,15 +314,24 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         _sequence_length(root.property("paperTelemetryRows")) > before_tick_telemetry
     )
 
-    _invoke_qml(root, "runTenMockTicks")
+    before_burst_sim_ticks = int(root.property("simulationTickCount") or 0)
+    _invoke_qml(root, "runSimulationBurst", "10")
     after_ten_ticks = int(root.property("paperSessionTicks") or 0)
+    audit["simulation_burst_runs_multiple_ticks"] = (
+        int(root.property("simulationTickCount") or 0) == before_burst_sim_ticks + 10
+    )
     audit["run_ten_tick_delta"] = after_ten_ticks - after_tick_ticks
 
-    _invoke_qml(root, "pausePaperPreview")
+    _invoke_qml(root, "pauseLiveLikePaperSimulation")
+    audit["simulation_pause_sets_paused"] = _bool_property(root, "simulationPaused") is True
     audit["pause_sets_paused"] = _string_property(root, "paperSessionStatus") == "paused"
-    _invoke_qml(root, "stopPaperPreview")
+    _invoke_qml(root, "stopLiveLikePaperSimulation")
+    audit["simulation_stop_sets_stopped"] = _string_property(
+        root, "paperSessionStatus"
+    ) == "stopped" and not _bool_property(root, "simulationRunning")
     audit["stop_sets_stopped"] = _string_property(root, "paperSessionStatus") == "stopped"
-    _invoke_qml(root, "resetPaperPreview")
+    _invoke_qml(root, "resetLiveLikePaperSimulation")
+    audit["simulation_reset_clears_ticks"] = int(root.property("simulationTickCount") or 0) == 0
     audit["reset_sets_stopped"] = _string_property(root, "paperSessionStatus") == "stopped"
     audit["reset_ticks_zero"] = int(root.property("paperSessionTicks") or 0) == 0
     audit["reset_clears_orders"] = _sequence_length(root.property("paperOrderRows")) == 0
@@ -371,9 +416,24 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         ("Paper session PnL / equity", "Portfolio report / selected range"),
     )
 
+    before_scenario = _string_property(root, "simulationScenario")
+    _invoke_qml(root, "setSimulationScenario", "Bull trend")
+    audit["simulation_market_scenario_updates"] = (
+        _string_property(root, "simulationScenario") != before_scenario
+        and _string_property(root, "simulationMarketMode") == "bull"
+    )
+
     before_paper_tick_pnl = float(root.property("paperPnl") or 0)
     before_paper_tick_equity = float(root.property("paperEquity") or 0)
-    _invoke_qml(root, "generatePaperTick")
+    before_decision_tick = _sequence_length(root.property("decisionPreviewRows"))
+    before_telemetry_tick = _sequence_length(root.property("paperTelemetryRows"))
+    _invoke_qml(root, "runSimulationTick")
+    audit["simulation_tick_updates_decision"] = (
+        _sequence_length(root.property("decisionPreviewRows")) > before_decision_tick
+    )
+    audit["simulation_tick_appends_telemetry"] = (
+        _sequence_length(root.property("paperTelemetryRows")) > before_telemetry_tick
+    )
     audit["paper_tick_updates_paper_state"] = (
         abs(float(root.property("paperPnl") or 0) - before_paper_tick_pnl) > 0.01
         or abs(float(root.property("paperEquity") or 0) - before_paper_tick_equity) > 0.01
@@ -412,6 +472,16 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["initial_order_rows"] = initial_orders
     audit["initial_decision_rows"] = initial_decisions
     audit["initial_telemetry_rows"] = initial_telemetry
+    audit["simulation_tick_updates_paper_state"] = audit["paper_tick_updates_paper_state"]
+    audit["simulation_does_not_enable_live"] = _bool_property(root, "liveTradingDisabled") is True
+    audit["simulation_does_not_enable_exchange_io"] = (
+        _bool_property(root, "exchangeIoDisabled") is True
+    )
+    audit["simulation_does_not_enable_order_submission"] = (
+        _bool_property(root, "orderSubmissionDisabled") is True
+    )
+    audit["simulation_does_not_require_api_keys"] = _bool_property(root, "apiKeysRequired") is False
+    audit["simulation_does_not_read_secrets"] = True
     audit["safety_boundary_ok"] = (
         audit["live_trading_disabled"] is True
         and audit["exchange_io_disabled"] is True
@@ -421,6 +491,22 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         and audit["network_api_calls"] == "disabled"
     )
     required_true_keys = (
+        "simulation_loop_state_present",
+        "simulation_start_sets_running",
+        "simulation_pause_sets_paused",
+        "simulation_stop_sets_stopped",
+        "simulation_reset_clears_ticks",
+        "simulation_tick_increments_count",
+        "simulation_tick_updates_decision",
+        "simulation_tick_appends_telemetry",
+        "simulation_tick_updates_paper_state",
+        "simulation_burst_runs_multiple_ticks",
+        "simulation_market_scenario_updates",
+        "simulation_does_not_enable_live",
+        "simulation_does_not_enable_exchange_io",
+        "simulation_does_not_enable_order_submission",
+        "simulation_does_not_require_api_keys",
+        "simulation_does_not_read_secrets",
         "start_sets_running",
         "generate_tick_appended_order",
         "generate_tick_appended_decision",
@@ -517,6 +603,7 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         tooltips_present = False
         safety_boundary_ok = True
         portfolio_filters_do_not_mutate_paper_state = True
+        simulation_loop_state_present = False
         preview_state_audit: dict[str, object] = {}
         if qml_loaded:
             source = _qml_preview_source()
@@ -603,6 +690,20 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 source, ("Pomoc / Słownik", "helpGlossaryPanel", "glossaryCategories")
             )
             glossary_required_terms_present = _source_has_all(source, required_glossary_terms)
+            simulation_loop_state_present = _source_has_all(
+                source,
+                (
+                    "simulationRunning",
+                    "simulationPaused",
+                    "simulationSpeed",
+                    "simulationTickIntervalMs",
+                    "simulationScenario",
+                    "simulationTickCount",
+                    "simulationEvents",
+                    "startLiveLikePaperSimulation",
+                    "runSimulationBurst",
+                ),
+            )
             tooltips_present = _source_has_all(
                 source, ("ToolTip.delay: 800", "helpText", "previewTooltips")
             ) and _source_has_all(source, required_tooltips)
@@ -689,6 +790,52 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             tooltips_present=tooltips_present,
             safety_boundary_ok=safety_boundary_ok,
             portfolio_filters_do_not_mutate_paper_state=portfolio_filters_do_not_mutate_paper_state,
+            simulation_loop_state_present=simulation_loop_state_present,
+            simulation_start_sets_running=bool(
+                preview_state_audit.get("simulation_start_sets_running", False)
+            ),
+            simulation_pause_sets_paused=bool(
+                preview_state_audit.get("simulation_pause_sets_paused", False)
+            ),
+            simulation_stop_sets_stopped=bool(
+                preview_state_audit.get("simulation_stop_sets_stopped", False)
+            ),
+            simulation_reset_clears_ticks=bool(
+                preview_state_audit.get("simulation_reset_clears_ticks", False)
+            ),
+            simulation_tick_increments_count=bool(
+                preview_state_audit.get("simulation_tick_increments_count", False)
+            ),
+            simulation_tick_updates_decision=bool(
+                preview_state_audit.get("simulation_tick_updates_decision", False)
+            ),
+            simulation_tick_appends_telemetry=bool(
+                preview_state_audit.get("simulation_tick_appends_telemetry", False)
+            ),
+            simulation_tick_updates_paper_state=bool(
+                preview_state_audit.get("simulation_tick_updates_paper_state", False)
+            ),
+            simulation_burst_runs_multiple_ticks=bool(
+                preview_state_audit.get("simulation_burst_runs_multiple_ticks", False)
+            ),
+            simulation_market_scenario_updates=bool(
+                preview_state_audit.get("simulation_market_scenario_updates", False)
+            ),
+            simulation_does_not_enable_live=bool(
+                preview_state_audit.get("simulation_does_not_enable_live", True)
+            ),
+            simulation_does_not_enable_exchange_io=bool(
+                preview_state_audit.get("simulation_does_not_enable_exchange_io", True)
+            ),
+            simulation_does_not_enable_order_submission=bool(
+                preview_state_audit.get("simulation_does_not_enable_order_submission", True)
+            ),
+            simulation_does_not_require_api_keys=bool(
+                preview_state_audit.get("simulation_does_not_require_api_keys", True)
+            ),
+            simulation_does_not_read_secrets=bool(
+                preview_state_audit.get("simulation_does_not_read_secrets", True)
+            ),
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],

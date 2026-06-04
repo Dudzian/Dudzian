@@ -97,14 +97,19 @@ ApplicationWindow {
         "Custom risk": "Miejsce na własny profil ryzyka w preview; zmiany są lokalne.",
         "AI recommended risk": "Placeholder rekomendacji AI dla profilu ryzyka; nie wymusza live tradingu.",
         "Custom range": "Zakres raportu portfela. Nie zmienia aktywnej sesji Paper.",
-        "Zastosuj zakres": "Stosuje zakres tylko do raportu Portfel / Wyniki, bez mutacji paper state."
+        "Zastosuj zakres": "Stosuje zakres tylko do raportu Portfel / Wyniki, bez mutacji paper state.",
+        "Live-like paper simulation": "Lokalna pętla paper, która wygląda jak live scanning, ale nie używa giełdy, sekretów ani prawdziwych zleceń.",
+        "Simulation speed": "Szybkość lokalnego timera QML; zmienia tylko interwał preview.",
+        "Market scenario": "Lokalny scenariusz rynku dla mock cen: balanced, bull, bear, volatility albo range.",
+        "Paper loop": "Timer QML mieli ticki, decyzje, paper ordery, PnL i telemetrię tylko w pamięci UI.",
+        "No real orders": "Żadne kliknięcie w preview nie składa prawdziwego zlecenia ani nie uruchamia runtime produkcyjnego."
     })
     property var glossaryCategories: [
         ({ key: "category.trading", terms: ["PnL", "ROI", "spread", "order book", "fee/prowizja", "equity", "available balance", "in positions"] }),
         ({ key: "category.risk", terms: ["drawdown", "risk guard", "kill-switch", "TP", "SL"] }),
         ({ key: "category.ai", terms: ["governor", "confidence"] }),
         ({ key: "category.strategies", terms: ["strategy"] }),
-        ({ key: "category.paper", terms: ["paper trading", "sandbox/testnet"] }),
+        ({ key: "category.paper", terms: ["paper trading", "sandbox/testnet", "Live-like paper simulation", "Simulation speed", "Market scenario", "Paper loop", "No real orders"] }),
         ({ key: "category.exchange", terms: ["API key", "slippage", "blacklist", "whitelist"] }),
         ({ key: "category.diagnostics", terms: ["Runtime loop not started", "Exchange I/O disabled", "Order submission disabled"] })
     ]
@@ -134,7 +139,12 @@ ApplicationWindow {
             "whitelist": "Lista par dopuszczonych do obserwacji w preview.",
             "Runtime loop not started": "Produkcyjna pętla pracy bota nie została uruchomiona.",
             "Exchange I/O disabled": "UI nie wysyła ani nie pobiera danych z prawdziwej giełdy.",
-            "Order submission disabled": "Składanie zleceń jest zablokowane."
+            "Order submission disabled": "Składanie zleceń jest zablokowane.",
+            "Live-like paper simulation": "Lokalna symulacja pracy bota podobna do live: ticki, skan par, decyzje, paper ordery, PnL i telemetria bez giełdy.",
+            "Simulation speed": "Interwał lokalnego timera QML sterujący szybkością preview.",
+            "Market scenario": "Wybrany mock reżim rynku, który wpływa na lokalne zmiany ceny.",
+            "Paper loop": "Bezpieczna pętla paper w UI; produkcyjny runtime loop nie startuje.",
+            "No real orders": "Brak prawdziwych zleceń, tras egzekucji, API giełdy i sekretów."
         }),
         "EN": ({
             "PnL": "Profit or loss from a trade or session.",
@@ -161,7 +171,12 @@ ApplicationWindow {
             "whitelist": "Pairs allowed for observation in preview.",
             "Runtime loop not started": "The production bot loop has not been started.",
             "Exchange I/O disabled": "The UI does not send to or fetch from a real exchange.",
-            "Order submission disabled": "Submitting orders is blocked."
+            "Order submission disabled": "Submitting orders is blocked.",
+            "Live-like paper simulation": "A local bot-like paper loop: ticks, pair scans, decisions, paper orders, PnL and telemetry without exchange access.",
+            "Simulation speed": "The local QML timer interval controlling preview speed.",
+            "Market scenario": "A mock market regime that influences local price movement.",
+            "Paper loop": "Safe paper loop inside the UI; the production runtime loop is not started.",
+            "No real orders": "No real orders, execution route, exchange API or secret material."
         })
     })
     readonly property var rootDesignSystem: designSystem
@@ -216,6 +231,31 @@ ApplicationWindow {
     property var paperTelemetryRows: [
         ({ timestamp: "12:04:18Z", message: "local-only paper bridge/state ready • runtime loop not started" }),
         ({ timestamp: "12:03:58Z", message: "Paper Preview only • exchange I/O disabled • no real orders" })
+    ]
+    // UI-PREVIEW-8.0D QML-only live-like paper simulation loop. Local timer only: no backend runtime loop, no exchange I/O, no order submission, no API keys, no secret reads.
+    property bool simulationRunning: false
+    property bool simulationPaused: false
+    property int simulationSpeed: 1
+    property int simulationTickIntervalMs: 1200
+    property string simulationScenario: "Balanced preview"
+    property int simulationTickCount: 0
+    property string simulationLastTickAt: "not started"
+    property string simulationMarketMode: "balanced"
+    property string simulationStatusLabel: "stopped • local paper loop only"
+    property var simulationEvents: []
+    property var simulationScenarios: ["Balanced preview", "Bull trend", "Bear trend", "High volatility", "Sideways/range"]
+    property string simulationLastPair: "—"
+    property string simulationLastAction: "—"
+    property string simulationLastOrder: "—"
+    property string simulationSafetyBoundary: "Local paper loop only • no exchange API • no real orders • no secrets • production runtime loop not started"
+    property var simulationPrices: ({ "BTC/USDT": 68240.50, "ETH/USDT": 3560.10, "SOL/USDT": 154.20 })
+    property var mockTerminalCandles: [
+        ({ x: 36, open: 145, close: 104, high: 78, low: 174, vol: 44 }), ({ x: 78, open: 112, close: 168, high: 94, low: 194, vol: 72 }),
+        ({ x: 120, open: 164, close: 122, high: 96, low: 184, vol: 58 }), ({ x: 162, open: 128, close: 88, high: 64, low: 148, vol: 38 }),
+        ({ x: 204, open: 92, close: 154, high: 82, low: 178, vol: 82 }), ({ x: 246, open: 158, close: 128, high: 106, low: 188, vol: 66 }),
+        ({ x: 288, open: 132, close: 86, high: 70, low: 154, vol: 48 }), ({ x: 330, open: 90, close: 142, high: 78, low: 168, vol: 74 }),
+        ({ x: 372, open: 146, close: 98, high: 76, low: 166, vol: 62 }), ({ x: 414, open: 102, close: 72, high: 56, low: 132, vol: 36 }),
+        ({ x: 456, open: 76, close: 128, high: 66, low: 158, vol: 70 }), ({ x: 498, open: 132, close: 92, high: 74, low: 152, vol: 54 })
     ]
     // UI-PREVIEW-8.0A local-only portfolio/performance preview state. No backend, no exchange I/O, no order submission, no secrets/env/keychain reads.
     property string portfolioBaseCurrency: "USD"
@@ -662,7 +702,7 @@ ApplicationWindow {
         var strategy = activeStrategies.length > 0 ? activeStrategies[decisionSequence % activeStrategies.length] : "Strategy governor"
         var confidence = action === "BLOCKED" || action === "NO ORDER" ? "0.00" : (0.70 + ((decisionSequence % 7) * 0.021)).toFixed(2)
         var normalizedAction = action === "BLOCKED" ? "BLOCKED LIVE" : action
-        var row = ({ timestamp: previewTime(decisionSequence + paperSessionTicks), symbol: symbol, action: normalizedAction, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Paper Preview only • Live trading disabled • Exchange I/O disabled • Order submission disabled", paperState: paperSessionStatus, status: status })
+        var row = ({ timestamp: previewTime(decisionSequence + paperSessionTicks), symbol: symbol, action: normalizedAction, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Paper Preview only • Live trading disabled • Exchange I/O disabled • Order submission disabled", paperState: paperSessionStatus, status: status, orderEvent: status && status.indexOf("paper simulated") >= 0 ? "Paper Terminal order event for " + symbol : "no real order emitted" })
         var rows = decisionPreviewRows.slice()
         if (rows.length === 0 || rows[0].timestamp !== row.timestamp || rows[0].action !== row.action || rows[0].symbol !== row.symbol)
             rows.unshift(row)
@@ -878,7 +918,7 @@ ApplicationWindow {
         var pair = selectedPairs.length > 0 ? selectedPairs[decisionSequence % selectedPairs.length] : "BTC/USDT"
         var strategy = activeStrategies.length > 0 ? activeStrategies[decisionSequence % activeStrategies.length] : "Strategy governor"
         var confidence = (0.58 + ((decisionSequence % 11) * 0.033)).toFixed(2)
-        var row = ({ timestamp: previewTime(decisionSequence), symbol: pair, action: action, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Live trading disabled • Exchange route disabled • Order submission disabled", paperState: paperSessionStatus })
+        var row = ({ timestamp: previewTime(decisionSequence), symbol: pair, action: action, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Live trading disabled • Exchange route disabled • Order submission disabled", paperState: paperSessionStatus, orderEvent: action.indexOf("PAPER") >= 0 ? "Paper Terminal order event preview" : "no order / blocked live" })
         var rows = decisionPreviewRows.slice()
         rows.unshift(row)
         decisionPreviewRows = rows.slice(0, 20)
@@ -895,29 +935,186 @@ ApplicationWindow {
         var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED LIVE"]
         addDecision(actions[decisionSequence % actions.length], "Generated from selected pairs and active strategy preview state.")
     }
-    function generatePaperTick() {
+    function scenarioMode(scenario) {
+        if (scenario === "Bull trend") return "bull"
+        if (scenario === "Bear trend") return "bear"
+        if (scenario === "High volatility") return "volatility"
+        if (scenario === "Sideways/range") return "range"
+        return "balanced"
+    }
+    function scenarioDrift(mode, tick) {
+        if (mode === "bull") return 0.004 + (tick % 3) * 0.001
+        if (mode === "bear") return -0.004 - (tick % 3) * 0.001
+        if (mode === "volatility") return (tick % 2 === 0 ? 0.011 : -0.009) + (tick % 5) * 0.001
+        if (mode === "range") return tick % 2 === 0 ? 0.0018 : -0.0016
+        return (tick % 4 - 1.5) * 0.0015
+    }
+    function setSimulationScenario(scenario) {
+        simulationScenario = scenario
+        simulationMarketMode = scenarioMode(scenario)
+        simulationStatusLabel = (simulationRunning ? "running" : (simulationPaused ? "paused" : "stopped")) + " • " + simulationScenario + " • local paper loop only"
+        appendSimulationEvent("market scenario changed to " + simulationScenario + " • no exchange I/O")
+    }
+    function setSimulationSpeed(speed) {
+        var numeric = Number(speed)
+        if (isNaN(numeric) || numeric < 1)
+            numeric = 1
+        simulationSpeed = Math.min(5, Math.round(numeric))
+        simulationTickIntervalMs = Math.max(250, Math.round(1200 / simulationSpeed))
+        simulationStatusLabel = (simulationRunning ? "running" : (simulationPaused ? "paused" : "stopped")) + " • speed x" + simulationSpeed + " • local paper loop only"
+    }
+    function appendSimulationEvent(message) {
+        var rows = simulationEvents.slice()
+        rows.unshift(({ timestamp: previewTime(simulationTickCount + 1), message: message + " • local paper simulation • no real orders" }))
+        simulationEvents = rows.slice(0, 20)
+    }
+    function updateSimulationOrderBook(lastPrice) {
+        var asks = []
+        var bids = []
+        for (var i = 0; i < 10; ++i) {
+            var ask = Number((lastPrice + 4.5 + i * 3.7).toFixed(2))
+            var bid = Number((lastPrice - 4.5 - i * 3.5).toFixed(2))
+            var amount = Number((0.12 + ((simulationTickCount + i) % 8) * 0.047).toFixed(3))
+            asks.push(({ price: ask.toFixed(2), amount: amount.toFixed(3), total: (ask * amount).toFixed(2), action: "Use ask" }))
+            bids.push(({ price: bid.toFixed(2), amount: amount.toFixed(3), total: (bid * amount).toFixed(2), action: "Use bid" }))
+        }
+        mockOrderBookAsks = asks
+        mockOrderBookBids = bids
+    }
+    function updateSimulationCandles(lastPrice) {
+        var candles = mockTerminalCandles.slice(1)
+        var open = 95 + (simulationTickCount % 8) * 12
+        var close = open + (scenarioDrift(simulationMarketMode, simulationTickCount) >= 0 ? -38 : 34)
+        candles.push(({ x: 498, open: open, close: close, high: Math.max(48, Math.min(open, close) - 22), low: Math.min(198, Math.max(open, close) + 34), vol: 36 + (simulationTickCount % 7) * 9 }))
+        for (var i = 0; i < candles.length; ++i)
+            candles[i].x = 36 + i * 42
+        mockTerminalCandles = candles.slice(0, 12)
+        terminalPrice = Number(lastPrice).toFixed(2)
+        recalcTerminalTotal()
+    }
+    function paperOrderEventFromSimulation(action, status, pair, price, confidence, reason) {
+        var side = action === "PAPER SELL" ? "SELL" : (action === "PAPER BUY" ? "BUY" : "NONE")
+        var amount = status === "simulated" ? (pair.indexOf("BTC") >= 0 ? "0.010" : (pair.indexOf("ETH") >= 0 ? "0.120" : "1.500")) : "0.000"
+        var total = (Number(price) * Number(amount)).toFixed(2)
+        var eventStatus = status === "simulated" ? "paper simulated / no real order" : status
+        return ({ timestamp: simulationLastTickAt, time: simulationLastTickAt, pair: pair, action: action, side: side, type: "PAPER", price: Number(price).toFixed(2), amount: amount, total: total, status: eventStatus, confidence: confidence, reason: reason })
+    }
+    function runSimulationTick() {
+        simulationTickCount += 1
         paperSessionTicks += 1
-        paperSessionStatus = paperSessionStatus === "stopped" ? "running" : paperSessionStatus
+        paperSessionStatus = "running"
+        paperSessionState = "running"
+        simulationRunning = true
+        simulationPaused = false
+        simulationMarketMode = scenarioMode(simulationScenario)
+        var pair = selectedPairs.length > 0 ? selectedPairs[(simulationTickCount - 1) % selectedPairs.length] : "BTC/USDT"
+        selectedTerminalPair = pair
+        var prices = simulationPrices
+        var currentPrice = Number(prices[pair] || (pair.indexOf("BTC") >= 0 ? 68240.50 : (pair.indexOf("ETH") >= 0 ? 3560.10 : 154.20)))
+        var nextPrice = Number((currentPrice * (1 + scenarioDrift(simulationMarketMode, simulationTickCount))).toFixed(2))
+        prices[pair] = nextPrice
+        simulationPrices = prices
+        simulationLastTickAt = previewTime(simulationTickCount)
+        simulationLastPair = pair
         var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED LIVE"]
-        var action = actions[paperSessionTicks % actions.length]
+        var action = actions[(simulationTickCount + (simulationMarketMode === "bull" ? 0 : simulationMarketMode === "bear" ? 1 : 2)) % actions.length]
         var status = actionStatus(action)
-        var pair = selectedPairs.length > 0 ? selectedPairs[paperSessionTicks % selectedPairs.length] : "BTC/USDT"
-        var confidence = (0.60 + ((paperSessionTicks % 10) * 0.031)).toFixed(2)
-        paperPnl = Number((paperPnl + (status === "simulated" ? 18.5 : (status === "blocked" ? 0 : -2.25))).toFixed(2))
+        var confidence = (0.62 + ((simulationTickCount % 9) * 0.035)).toFixed(2)
+        var reason = "simulation tick " + simulationTickCount + " • " + simulationScenario + " • mock price " + nextPrice.toFixed(2) + " • no exchange I/O"
+        simulationLastAction = action
+        updateSimulationOrderBook(nextPrice)
+        updateSimulationCandles(nextPrice)
+        var delta = status === "simulated" ? (action === "PAPER BUY" ? 12.40 : 8.80) : (status === "blocked" ? 0.0 : -1.35)
+        paperPnl = Number((paperPnl + delta).toFixed(2))
         paperEquity = Number((portfolioStartingEquityUsd + paperPnl).toFixed(2))
-        var order = ({ timestamp: previewTime(1), pair: pair, action: action, status: status, confidence: confidence, reason: status === "simulated" ? "Paper preview fill recorded locally; no real route used." : (status === "blocked" ? "Live order route blocked by preview guard." : "No order emitted by governor policy.") })
+        var order = paperOrderEventFromSimulation(action, status, pair, nextPrice, confidence, reason)
         var orders = paperOrderRows.slice()
         orders.unshift(order)
         paperOrderRows = orders.slice(0, 20)
-        appendPaperTelemetry("paper tick " + paperSessionTicks + " • " + action + " " + pair)
+        var terminalOrders = mockTerminalOrders.slice()
+        terminalOrders.unshift(order)
+        mockTerminalOrders = terminalOrders.slice(0, 20)
+        updatePaperPositionPreview(order)
+        simulationLastOrder = status === "simulated" ? order.action + " " + order.pair + " @ " + order.price : (status === "blocked" ? "blocked live route" : "no order emitted")
+        appendPaperDecision(action, reason, pair, order ? order.status : status)
+        appendPaperTelemetry("heartbeat/tick " + simulationTickCount + " • simulation event " + action + " " + pair + " • no exchange I/O • order submission disabled • local paper loop only")
+        appendTerminalLog("paper loop tick " + simulationTickCount + " • " + pair + " " + action + " • price " + nextPrice.toFixed(2) + " • no real orders")
+        appendSimulationEvent("tick " + simulationTickCount + " scanned " + pair + " action " + action + " price " + nextPrice.toFixed(2))
+        terminalSelectedBottomTab = order ? "Orders" : "Log"
         recountOrderCounters()
-        addDecision(action, order.reason)
+        simulationStatusLabel = "running • speed x" + simulationSpeed + " • " + simulationScenario + " • local paper loop only"
     }
-    function runTenMockTicks() { for (var i = 0; i < 10; ++i) generatePaperTick() }
-    function startPaperPreview() { paperSessionStatus = "running"; syncPaperBridgeState(); generatePaperTick() }
-    function pausePaperPreview() { paperSessionStatus = "paused"; syncPaperBridgeState(); appendPaperTelemetry("paper session paused") }
-    function stopPaperPreview() { paperSessionStatus = "stopped"; syncPaperBridgeState(); appendPaperTelemetry("paper session stopped") }
-    function resetPaperPreview() { paperSessionStatus = "stopped"; paperSessionTicks = 0; decisionSequence += 1; paperEquity = portfolioStartingEquityUsd; paperPnl = 0.0; paperOrderRows = []; paperOpenPositions = []; paperClosedTrades = []; recountOrderCounters(); addDecision("NO ORDER", "Paper preview reset; order submission remains disabled.") }
+    function startLiveLikePaperSimulation() {
+        simulationRunning = true
+        simulationPaused = false
+        paperSessionStatus = "running"
+        paperSessionState = "running"
+        simulationStatusLabel = "running • speed x" + simulationSpeed + " • " + simulationScenario + " • local paper loop only"
+        syncPaperBridgeState()
+        simulationTimer.restart()
+        runSimulationTick()
+    }
+    function pauseLiveLikePaperSimulation() {
+        simulationRunning = false
+        simulationPaused = true
+        paperSessionStatus = "paused"
+        paperSessionState = "paused"
+        simulationStatusLabel = "paused • state preserved • local paper loop only"
+        simulationTimer.stop()
+        appendSimulationEvent("paper loop paused")
+        appendPaperTelemetry("paper session paused • local QML timer stopped")
+        syncPaperBridgeState()
+    }
+    function stopLiveLikePaperSimulation() {
+        simulationRunning = false
+        simulationPaused = false
+        paperSessionStatus = "stopped"
+        paperSessionState = "stopped"
+        simulationStatusLabel = "stopped • local paper loop only"
+        simulationTimer.stop()
+        appendSimulationEvent("paper loop stopped")
+        appendPaperTelemetry("paper session stopped • production runtime loop not started")
+        syncPaperBridgeState()
+    }
+    function resetLiveLikePaperSimulation() {
+        simulationTimer.stop()
+        simulationRunning = false
+        simulationPaused = false
+        simulationTickCount = 0
+        simulationLastTickAt = "not started"
+        simulationLastPair = "—"
+        simulationLastAction = "—"
+        simulationLastOrder = "—"
+        simulationStatusLabel = "stopped • local paper loop only"
+        simulationEvents = []
+        paperSessionStatus = "stopped"
+        paperSessionState = "stopped"
+        paperSessionTicks = 0
+        paperTicks = 0
+        paperEquity = portfolioStartingEquityUsd
+        paperPnl = 0.0
+        paperOrderRows = []
+        paperOpenPositions = []
+        paperClosedTrades = []
+        mockTerminalOrders = []
+        terminalLogRows = []
+        decisionPreviewRows = []
+        paperTelemetryRows = []
+        telemetryRows = []
+        recountOrderCounters()
+        syncPaperBridgeState()
+    }
+    function runSimulationBurst(count) {
+        var ticks = Math.max(0, Number(count) || 0)
+        for (var i = 0; i < ticks; ++i)
+            runSimulationTick()
+    }
+    function generatePaperTick() { runSimulationTick() }
+    function runTenMockTicks() { runSimulationBurst(10) }
+    function startPaperPreview() { startLiveLikePaperSimulation() }
+    function pausePaperPreview() { pauseLiveLikePaperSimulation() }
+    function stopPaperPreview() { stopLiveLikePaperSimulation() }
+    function resetPaperPreview() { resetLiveLikePaperSimulation() }
     function pingTelemetryFeed() {
         telemetryTick += 1
         telemetryHeartbeat = previewTime(telemetryTick)
@@ -1643,6 +1840,14 @@ ApplicationWindow {
             layoutController.registerPanels(panelMetadata)
             showOperatorDashboard()
         }
+    }
+
+    Timer {
+        id: simulationTimer
+        interval: root.simulationTickIntervalMs
+        repeat: true
+        running: root.simulationRunning && !root.simulationPaused
+        onTriggered: root.runSimulationTick()
     }
 
     Timer {

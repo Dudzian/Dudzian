@@ -27,6 +27,8 @@ FORBIDDEN_SOURCE_TOKENS = (
     "shell" + "=True",
     "subprocess" + "." + "run",
     "os" + "." + "environ",
+    "get" + "env",
+    "c" + "cxt",
 )
 
 PANEL_AUDIT_IDS = (
@@ -230,6 +232,125 @@ def _qml_sources() -> list[Path]:
 
 def _qml_text() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in _qml_sources())
+
+
+def test_ui_preview_8_0d_live_like_paper_simulation_contract() -> None:
+    source = _qml_text()
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
+    terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
+    decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
+
+    for token in (
+        "property bool simulationRunning",
+        "property bool simulationPaused",
+        "property int simulationSpeed",
+        "property int simulationTickIntervalMs",
+        "property string simulationScenario",
+        "property int simulationTickCount",
+        "property string simulationLastTickAt",
+        "property string simulationMarketMode",
+        "property string simulationStatusLabel",
+        "property var simulationEvents",
+        "function startLiveLikePaperSimulation()",
+        "function pauseLiveLikePaperSimulation()",
+        "function stopLiveLikePaperSimulation()",
+        "function resetLiveLikePaperSimulation()",
+        "function runSimulationTick()",
+        "function runSimulationBurst(count)",
+        "id: simulationTimer",
+    ):
+        assert token in main_window
+
+    for scenario in (
+        "Balanced preview",
+        "Bull trend",
+        "Bear trend",
+        "High volatility",
+        "Sideways/range",
+    ):
+        assert scenario in main_window
+
+    for control_contract in (
+        "onClicked: previewState.startPaperPreview()",
+        "onClicked: previewState.pausePaperPreview()",
+        "onClicked: previewState.stopPaperPreview()",
+        "onClicked: previewState.resetPaperPreview()",
+        "onClicked: previewState.generatePaperTick()",
+        "onClicked: previewState.runTenMockTicks()",
+        "function startPaperPreview() { startLiveLikePaperSimulation() }",
+        "function pausePaperPreview() { pauseLiveLikePaperSimulation() }",
+        "function stopPaperPreview() { stopLiveLikePaperSimulation() }",
+        "function resetPaperPreview() { resetLiveLikePaperSimulation() }",
+    ):
+        assert control_contract in main_window or control_contract in dashboard
+
+    for safety_copy in (
+        "Local paper loop only",
+        "no exchange API",
+        "no real orders",
+        "no secrets",
+        "production runtime loop not started",
+        "no exchange I/O",
+        "order submission disabled",
+        "API keys not required",
+    ):
+        assert safety_copy in source
+
+    for ui_marker in (
+        "Simulation status",
+        "Simulation speed / tick count",
+        "Last simulated scan",
+        "Safety boundary",
+        "Market scenario",
+        "Live-like paper simulation",
+        "Paper loop local-only",
+    ):
+        assert ui_marker in dashboard
+
+    for terminal_marker in (
+        "previewState.mockTerminalCandles",
+        "simulationMarketMode",
+        "simulationTickCount",
+        "live-like paper simulation",
+        "Live-like paper simulation",
+    ):
+        assert terminal_marker in terminal
+
+    for decision_marker in (
+        "confidence, strategy/governor, reason, safety state",
+        "paper order event:",
+        "Strategy source / governor",
+        "Safety state",
+    ):
+        assert decision_marker in decisions
+
+    for tooltip in (
+        "Live-like paper simulation",
+        "Simulation speed",
+        "Market scenario",
+        "Paper loop",
+        "No real orders",
+    ):
+        assert tooltip in main_window
+
+    forbidden_tokens = (
+        "create" + "_" + "order",
+        "fetch" + "_" + "balance",
+        "load" + "_" + "markets",
+        "key" + "ring",
+        "dot" + "env",
+        "shell" + "=True",
+        "subprocess" + "." + "run",
+        "os" + "." + "environ",
+        "get" + "env",
+        "c" + "cxt",
+    )
+    scoped_source = "\n".join(
+        path.read_text(encoding="utf-8") for path in [*_qml_sources(), SMOKE_SOURCE]
+    )
+    for token in forbidden_tokens:
+        assert token not in scoped_source
 
 
 def test_ai_decisions_view_preserves_timeline_count_contract() -> None:

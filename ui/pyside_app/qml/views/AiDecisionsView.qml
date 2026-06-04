@@ -171,7 +171,7 @@ Components.StyledScrollView {
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("AI / Governor decision preview")
-            description: qsTr("Each record includes Timestamp, symbol, action, confidence, reason, Risk reason, Strategy source and Safety block state.")
+            description: qsTr("Each record includes Timestamp, symbol, action, confidence, strategy/governor, reason, safety state, Safety block state and a paper order event link/text when one exists.")
             RowLayout {
                 Layout.fillWidth: true
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate next decision"); iconName: "mode_wizard"; backgroundColor: root.safeColor("accent", "#5BC8FF"); foregroundColor: root.safeColor("surface", "#10141f"); onClicked: root.generateNextDecision() }
@@ -206,7 +206,8 @@ Components.StyledScrollView {
                         }
                         Label { text: qsTr("reason: %1").arg(modelData.reason); color: root.safeColor("textSecondary", "#c5cad3"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         Label { text: qsTr("Risk reason: %1").arg(modelData.riskReason); color: root.safeColor("textSecondary", "#c5cad3"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                        Label { text: qsTr("Strategy source: %1 • Safety block state: %2 • paper/session state: %3").arg(modelData.strategy).arg(modelData.safety).arg(modelData.paperState); color: root.safeColor("textPrimary", "#ffffff"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Label { text: qsTr("Strategy source / governor: %1 • Safety state: %2 • paper/session state: %3").arg(modelData.strategy).arg(modelData.safety).arg(modelData.paperState); color: root.safeColor("textPrimary", "#ffffff"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Label { text: qsTr("paper order event: %1").arg(modelData.orderEvent ? modelData.orderEvent : (modelData.action.indexOf("PAPER") >= 0 ? "paper simulated order row in Paper Terminal" : "no order / blocked live")); color: root.safeColor("textSecondary", "#c5cad3"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     }
                 }
             }
