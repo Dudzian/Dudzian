@@ -1256,7 +1256,7 @@ def test_ui_preview_7_8_shared_state_interactivity_and_responsive_terminal_contr
     assert "active ? 2 : 1" in main_window
 
 
-def test_ui_preview_8_0a_portfolio_performance_source_contract() -> None:
+def test_ui_preview_8_0b_portfolio_performance_source_contract() -> None:
     source = _qml_text()
     main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
     portfolio = (QML_SOURCE_ROOT / "views" / "PortfolioPerformance.qml").read_text(encoding="utf-8")
@@ -1269,33 +1269,41 @@ def test_ui_preview_8_0a_portfolio_performance_source_contract() -> None:
 
     for label in (
         "Portfel / Wyniki",
-        "Stan konta fiat",
-        "Stan konta crypto",
-        "Wolne środki",
-        "W pozycjach",
-        "PnL ostatniego cyklu",
-        "PnL sesji",
-        "PnL całkowity",
-        "Win rate",
-        "Liczba transakcji",
-        "Prowizje",
-        "Max drawdown",
-        "Najlepsza para",
-        "Najgorsza para",
-        "Rozbicie wyniku",
-        "Zrealizowany PnL",
-        "Niezrealizowany PnL",
-        "Funding / inne koszty",
-        "PnL netto",
-        "Cykle transakcyjne",
-        "czas startu",
-        "czas końca",
-        "para",
-        "strategia",
-        "wynik",
-        "fee",
-        "status",
-        "powód zamknięcia",
+        "Stan konta",
+        "Fiat balance / equity",
+        "Trading balance / equity",
+        "Available balance",
+        "In positions",
+        "Reserved / margin preview",
+        "Ostatni cykl transakcyjny",
+        "Cycle id / timestamp",
+        "Cycle PnL",
+        "Cycle trades count",
+        "Winners / losers",
+        "Net result",
+        "Bieżąca sesja Paper",
+        "Paper session equity",
+        "Paper session PnL",
+        "Paper session ticks",
+        "Simulated orders",
+        "Blocked / no-order counts",
+        "Wynik całkowity",
+        "All-time PnL",
+        "Realized PnL",
+        "Unrealized PnL",
+        "Fees total",
+        "Net PnL",
+        "ROI % preview",
+        "Filtry czasu",
+        "Custom range",
+        "Zastosuj zakres",
+        "Tabela wyników / cykle",
+        "Time",
+        "Pair/Cycle",
+        "Trades",
+        "Gross PnL",
+        "Fees",
+        "Result",
         "TP",
         "SL",
         "AI exit",
@@ -1304,7 +1312,7 @@ def test_ui_preview_8_0a_portfolio_performance_source_contract() -> None:
     ):
         assert label in source
 
-    for time_filter in ('"1h"', '"24h"', '"7d"', '"30d"', '"1y"', '"All"', '"Custom"'):
+    for time_filter in ('"1h"', '"1d"', '"7d"', '"1m"', '"1y"', '"all"', '"custom"'):
         assert time_filter in main_window
 
     for state_token in (
@@ -1313,11 +1321,21 @@ def test_ui_preview_8_0a_portfolio_performance_source_contract() -> None:
         "property real portfolioTotalEquityUsd",
         "property real portfolioAvailableBalanceUsd",
         "property real portfolioInPositionsUsd",
+        "property real portfolioReservedMarginUsd",
+        "property real portfolioTradingEquityUsdt",
         "property real portfolioRealizedPnlUsd",
         "property real portfolioUnrealizedPnlUsd",
         "property real portfolioSessionPnlUsd",
         "property real portfolioLastCyclePnlUsd",
+        "property string portfolioLastCycleId",
+        "property string portfolioLastCycleTimestamp",
+        "property int portfolioLastCycleTradesCount",
+        "property int portfolioLastCycleWinners",
+        "property int portfolioLastCycleLosers",
+        "property real portfolioLastCycleFeesUsd",
+        "property real portfolioLastCycleNetUsd",
         "property real portfolioAllTimePnlUsd",
+        "property real portfolioRoiPercent",
         "property real portfolioFeesUsd",
         "property real portfolioFundingOtherCostsUsd",
         "property real portfolioNetPnlUsd",
@@ -1329,6 +1347,7 @@ def test_ui_preview_8_0a_portfolio_performance_source_contract() -> None:
         "property var portfolioCycleRows",
         "property var portfolioRangeSnapshots",
         "function setPortfolioTimeRange",
+        "function applyPortfolioCustomRange",
         "function syncPortfolioPerformanceState",
         "function recomputePortfolioTotals",
         "function applyPortfolioSnapshot",
@@ -1336,6 +1355,13 @@ def test_ui_preview_8_0a_portfolio_performance_source_contract() -> None:
         assert state_token in main_window
 
     assert "previewState.setPortfolioTimeRange(modelData)" in portfolio
+    assert (
+        "previewState.applyPortfolioCustomRange(customFromField.text, customToField.text)"
+        in portfolio
+    )
+    assert "Portfolio/Wyniki to preview/report state" in portfolio
+    assert "Live trading disabled" in portfolio
+    assert "Time filters do not alter active Paper session" in portfolio
     assert "runtime loop not started" in portfolio
     assert "exchange I/O disabled" in portfolio
     assert "order submission disabled" in portfolio
@@ -1343,7 +1369,7 @@ def test_ui_preview_8_0a_portfolio_performance_source_contract() -> None:
     assert "no secrets/env/keychain reads" in portfolio
 
 
-def test_ui_preview_8_0a_smoke_audits_portfolio_state_and_safety() -> None:
+def test_ui_preview_8_0b_smoke_audits_portfolio_state_and_safety() -> None:
     result = _run_ui_smoke("--exercise-preview-state")
     payload = _smoke_payload(result)
 
@@ -1370,6 +1396,7 @@ def test_ui_preview_8_0a_smoke_audits_portfolio_state_and_safety() -> None:
     assert audit["portfolio_cycles_count"] >= 4
     assert audit["portfolio_cards_count"] >= 13
     assert audit["portfolio_custom_filter_updates_label"] is True
+    assert audit["portfolio_custom_range_updates_report_state"] is True
     assert audit["portfolio_equity_formula_ok"] is True
     assert audit["portfolio_net_pnl_formula_ok"] is True
     assert audit["portfolio_no_double_count_ok"] is True

@@ -30,14 +30,21 @@ Components.StyledScrollView {
                 Layout.fillWidth: true
                 spacing: 6
                 Label { objectName: "portfolioPerformanceTitle"; text: qsTr("Portfel / Wyniki"); font.bold: true; font.pixelSize: 28; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                Label { text: qsTr("Produktowy kokpit portfela i wyników dla safe preview. Wszystkie wartości są lokalne/mock: runtime loop not started, exchange I/O disabled, order submission disabled, API keys not required, no secrets/env/keychain reads."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("Portfolio/Wyniki to preview/report state. Live trading disabled. Exchange I/O disabled. Order submission disabled. API keys not required / not read. Time filters do not alter active Paper session."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
             Components.PreviewCard {
                 designSystem: root.designSystem
                 title: qsTr("Wartość portfela")
-                description: qsTr("%1 / %2 • zakres %3").arg(previewState.formatMoney(previewState.portfolioTotalEquityUsd, "USD")).arg(previewState.formatMoney(previewState.portfolioTotalEquityPln, "PLN")).arg(previewState.portfolioSelectedRange)
+                description: qsTr("%1 / %2 • raport %3").arg(previewState.formatMoney(previewState.portfolioTotalEquityUsd, "USD")).arg(previewState.formatMoney(previewState.portfolioTotalEquityPln, "PLN")).arg(previewState.portfolioSelectedRange)
                 Layout.preferredWidth: 340
             }
+        }
+
+        Components.PreviewCard {
+            objectName: "portfolioSafetyBoundaryCard"
+            designSystem: root.designSystem
+            title: qsTr("Granica bezpieczeństwa preview-only")
+            description: qsTr("Raport portfolio jest lokalnym snapshotem UI. runtime loop not started, exchange I/O disabled, order submission disabled, API keys not required, no secrets/env/keychain reads. Filtry czasu aktualizują tylko Portfolio report / selected range, nigdy Paper session PnL / equity.")
         }
 
         Components.PreviewCard {
@@ -63,6 +70,106 @@ Components.StyledScrollView {
             }
         }
 
+        Components.PreviewCard {
+            objectName: "portfolioCustomRangeCard"
+            designSystem: root.designSystem
+            title: qsTr("Custom range")
+            description: qsTr("Preview-only pola daty/czasu. Zastosuj zakres zmienia tylko portfolio/report snapshot i etykietę zakresu; Paper session state pozostaje bez zmian.")
+            GridLayout {
+                Layout.fillWidth: true
+                columns: width > 760 ? 3 : 1
+                rowSpacing: 8
+                columnSpacing: 8
+                Components.StyledTextField { id: customFromField; objectName: "portfolioCustomFromInput"; designSystem: root.designSystem; text: previewState.portfolioCustomFrom; placeholderText: qsTr("from / start, np. 2026-06-01 00:00"); Layout.fillWidth: true }
+                Components.StyledTextField { id: customToField; objectName: "portfolioCustomToInput"; designSystem: root.designSystem; text: previewState.portfolioCustomTo; placeholderText: qsTr("to / end, np. 2026-06-02 23:59"); Layout.fillWidth: true }
+                Components.IconButton { objectName: "portfolioApplyCustomRangeButton"; designSystem: root.designSystem; text: qsTr("Zastosuj zakres"); backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.applyPortfolioCustomRange(customFromField.text, customToField.text) }
+            }
+        }
+
+        GridLayout {
+            objectName: "portfolioTopSectionsGrid"
+            Layout.fillWidth: true
+            columns: width > 980 ? 2 : 1
+            rowSpacing: 10
+            columnSpacing: 10
+
+            Components.PreviewCard {
+                objectName: "portfolioAccountStateCard"
+                designSystem: root.designSystem
+                title: qsTr("Stan konta")
+                description: qsTr("Fiat balance/equity i trading balance/equity są raportowym preview; nie są pobierane z giełdy.")
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    rowSpacing: 8
+                    columnSpacing: 8
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Fiat balance / equity"); description: previewState.portfolioFiatAccountLabel; Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Trading balance / equity"); description: previewState.formatMoney(previewState.portfolioTradingEquityUsdt, "USDT"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Available balance"); description: previewState.formatMoney(previewState.portfolioAvailableBalanceUsd, previewState.portfolioBaseCurrency); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("In positions"); description: previewState.formatMoney(previewState.portfolioInPositionsUsd, previewState.portfolioBaseCurrency); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Reserved / margin preview"); description: previewState.formatMoney(previewState.portfolioReservedMarginUsd, previewState.portfolioBaseCurrency); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Trading available"); description: previewState.formatMoney(previewState.portfolioTradingAvailableUsdt, "USDT"); Layout.fillWidth: true }
+                }
+            }
+
+            Components.PreviewCard {
+                objectName: "portfolioLastCycleCard"
+                designSystem: root.designSystem
+                title: qsTr("Ostatni cykl transakcyjny")
+                description: qsTr("Cycle id / timestamp preview, PnL, trades, winners / losers, fees i net result — wszystko local-only.")
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    rowSpacing: 8
+                    columnSpacing: 8
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Cycle id / timestamp"); description: previewState.portfolioLastCycleId + " • " + previewState.portfolioLastCycleTimestamp; Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Cycle PnL"); description: previewState.formatUsd(previewState.portfolioLastCyclePnlUsd); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Cycle trades count"); description: String(previewState.portfolioLastCycleTradesCount); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Winners / losers"); description: String(previewState.portfolioLastCycleWinners) + " / " + String(previewState.portfolioLastCycleLosers); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Fees"); description: previewState.formatMoney(previewState.portfolioLastCycleFeesUsd, previewState.portfolioBaseCurrency); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Net result"); description: previewState.formatUsd(previewState.portfolioLastCycleNetUsd); Layout.fillWidth: true }
+                }
+            }
+
+            Components.PreviewCard {
+                objectName: "portfolioPaperSessionCard"
+                designSystem: root.designSystem
+                title: qsTr("Bieżąca sesja Paper")
+                description: qsTr("Ten blok czyta aktywną sesję Paper oddzielnie od raportu portfolio; filtry czasu nie modyfikują tych wartości.")
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    rowSpacing: 8
+                    columnSpacing: 8
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper session equity"); description: previewState.formatMoney(previewState.paperEquity, "USD"); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper session PnL"); description: previewState.formatUsd(previewState.paperPnl); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Paper session ticks"); description: String(previewState.paperSessionTicks); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Simulated orders"); description: String(previewState.paperSimulatedCount); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Blocked / no-order counts"); description: String(previewState.paperBlockedCount) + " / " + String(previewState.paperNoOrderCount); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Session status"); description: previewState.paperSessionStatus; Layout.fillWidth: true }
+                }
+            }
+
+            Components.PreviewCard {
+                objectName: "portfolioAllTimeResultCard"
+                designSystem: root.designSystem
+                title: qsTr("Wynik całkowity")
+                description: qsTr("All-time PnL, realized/unrealized PnL, fees total, net PnL i ROI % preview.")
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    rowSpacing: 8
+                    columnSpacing: 8
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("All-time PnL"); description: previewState.formatUsd(previewState.portfolioAllTimePnlUsd); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Realized PnL"); description: previewState.formatUsd(previewState.portfolioRealizedPnlUsd); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Unrealized PnL"); description: previewState.formatUsd(previewState.portfolioUnrealizedPnlUsd); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Fees total"); description: previewState.formatMoney(previewState.portfolioFeesUsd, previewState.portfolioBaseCurrency); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Net PnL"); description: previewState.formatUsd(previewState.portfolioNetPnlUsd); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: root.designSystem; title: qsTr("ROI % preview"); description: String(previewState.portfolioRoiPercent.toFixed(2)) + "%"; Layout.fillWidth: true }
+                }
+            }
+        }
+
         GridLayout {
             objectName: "portfolioPerformanceTiles"
             Layout.fillWidth: true
@@ -82,28 +189,10 @@ Components.StyledScrollView {
         }
 
         Components.PreviewCard {
-            objectName: "portfolioBreakdownCard"
-            designSystem: root.designSystem
-            title: qsTr("Rozbicie wyniku")
-            description: qsTr("Lokalne rozbicie PnL. Funding i inne koszty są statycznym mockiem; bez backendu i bez network/API calls.")
-            GridLayout {
-                Layout.fillWidth: true
-                columns: width > 760 ? 5 : 2
-                rowSpacing: 8
-                columnSpacing: 8
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Zrealizowany PnL"); description: previewState.formatUsd(previewState.portfolioRealizedPnlUsd); Layout.fillWidth: true }
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Niezrealizowany PnL"); description: previewState.formatUsd(previewState.portfolioUnrealizedPnlUsd); Layout.fillWidth: true }
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Prowizje"); description: previewState.formatMoney(previewState.portfolioFeesUsd, previewState.portfolioBaseCurrency); Layout.fillWidth: true }
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Funding / inne koszty"); description: previewState.formatMoney(previewState.portfolioFundingOtherCostsUsd, previewState.portfolioBaseCurrency); Layout.fillWidth: true }
-                Components.PreviewCard { designSystem: root.designSystem; title: qsTr("PnL netto"); description: previewState.formatUsd(previewState.portfolioNetPnlUsd); Layout.fillWidth: true }
-            }
-        }
-
-        Components.PreviewCard {
             objectName: "portfolioCycleTableCard"
             designSystem: root.designSystem
-            title: qsTr("Cykle transakcyjne")
-            description: qsTr("Tabela preview: czas startu, czas końca, para, strategia, wynik, fee, status, powód zamknięcia. Klikalność pozostaje local-only i nie wykonuje realnych akcji.")
+            title: qsTr("Tabela wyników / cykle")
+            description: qsTr("Lista ostatnich cykli raportu (max 10–12 widocznych): Time, Pair/Cycle, Trades, Gross PnL, Fees, Net PnL, Result.")
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: 38
@@ -112,14 +201,13 @@ Components.StyledScrollView {
                 RowLayout {
                     anchors.fill: parent
                     anchors.margins: 8
-                    Label { text: qsTr("czas startu"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 130 }
-                    Label { text: qsTr("czas końca"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 130 }
-                    Label { text: qsTr("para"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 90 }
-                    Label { text: qsTr("strategia"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 190 }
-                    Label { text: qsTr("wynik"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 110 }
-                    Label { text: qsTr("fee"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 86 }
-                    Label { text: qsTr("status"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 120 }
-                    Label { text: qsTr("powód zamknięcia"); color: designSystem.color("textSecondary"); Layout.fillWidth: true }
+                    Label { text: qsTr("Time"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 135 }
+                    Label { text: qsTr("Pair/Cycle"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 125 }
+                    Label { text: qsTr("Trades"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 70 }
+                    Label { text: qsTr("Gross PnL"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 110 }
+                    Label { text: qsTr("Fees"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 90 }
+                    Label { text: qsTr("Net PnL"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 110 }
+                    Label { text: qsTr("Result"); color: designSystem.color("textSecondary"); Layout.fillWidth: true }
                 }
             }
             ListView {
@@ -140,14 +228,13 @@ Components.StyledScrollView {
                         id: cycleRow
                         anchors.fill: parent
                         anchors.margins: 9
-                        Label { text: modelData.startTime; color: designSystem.color("textPrimary"); Layout.preferredWidth: 130 }
-                        Label { text: modelData.endTime; color: designSystem.color("textPrimary"); Layout.preferredWidth: 130 }
-                        Label { text: modelData.pair; color: designSystem.color("textPrimary"); font.bold: true; Layout.preferredWidth: 90 }
-                        Label { text: modelData.strategy; color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.preferredWidth: 190 }
+                        Label { text: modelData.startTime; color: designSystem.color("textPrimary"); Layout.preferredWidth: 135 }
+                        Label { text: modelData.pair + " • " + modelData.closeReason; color: designSystem.color("textPrimary"); font.bold: true; Layout.preferredWidth: 125 }
+                        Label { text: String(previewState.portfolioLastCycleTradesCount); color: designSystem.color("textSecondary"); Layout.preferredWidth: 70 }
                         Label { text: modelData.result; color: root.pnlColor(modelData.result); font.bold: true; Layout.preferredWidth: 110 }
-                        Label { text: modelData.fee; color: designSystem.color("textSecondary"); Layout.preferredWidth: 86 }
-                        Rectangle { Layout.preferredWidth: 120; implicitHeight: 26; radius: 13; color: Qt.rgba(1, 1, 1, 0.05); border.color: designSystem.color("accent"); Label { anchors.centerIn: parent; text: modelData.status; color: designSystem.color("textPrimary"); font.bold: true; font.pixelSize: 11 } }
-                        Label { text: modelData.closeReason; color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Label { text: modelData.fee; color: designSystem.color("textSecondary"); Layout.preferredWidth: 90 }
+                        Label { text: modelData.result; color: root.pnlColor(modelData.result); font.bold: true; Layout.preferredWidth: 110 }
+                        Rectangle { Layout.preferredWidth: 150; implicitHeight: 26; radius: 13; color: Qt.rgba(1, 1, 1, 0.05); border.color: root.pnlColor(modelData.result); Label { anchors.centerIn: parent; text: modelData.result.indexOf("-") === 0 ? qsTr("LOSS preview") : qsTr("WIN preview"); color: root.pnlColor(modelData.result); font.bold: true; font.pixelSize: 11 } }
                     }
                     MouseArea {
                         anchors.fill: parent

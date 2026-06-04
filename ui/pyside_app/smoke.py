@@ -323,10 +323,13 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
 
     before_custom_paper_pnl = float(root.property("paperPnl") or 0)
     before_custom_paper_equity = float(root.property("paperEquity") or 0)
-    _invoke_qml(root, "setPortfolioTimeRange", "Custom")
+    _invoke_qml(root, "applyPortfolioCustomRange", "2026-06-01 00:00", "2026-06-02 23:59")
     audit["portfolio_custom_filter_updates_label"] = _string_property(
         root, "portfolioSelectedRange"
-    ) == "Custom" and "Zakres własny: preview" in _string_property(root, "portfolioRangeLabel")
+    ) == "custom" and "Zakres własny: preview" in _string_property(root, "portfolioRangeLabel")
+    audit["portfolio_custom_range_updates_report_state"] = (
+        _string_property(root, "portfolioRangeLabel").find("2026-06-01 00:00") >= 0
+    )
     after_custom_paper_pnl = float(root.property("paperPnl") or 0)
     after_custom_paper_equity = float(root.property("paperEquity") or 0)
     audit["portfolio_custom_filter_does_not_mutate_paper_state"] = (
@@ -425,6 +428,7 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "portfolio_time_filter_does_not_mutate_paper_state",
         "portfolio_time_filter_updates_report_state",
         "portfolio_custom_filter_does_not_mutate_paper_state",
+        "portfolio_custom_range_updates_report_state",
         "paper_tick_updates_paper_state",
         "dashboard_separates_paper_and_portfolio_report",
         "portfolio_equity_formula_ok",
