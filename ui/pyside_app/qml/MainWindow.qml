@@ -31,8 +31,8 @@ ApplicationWindow {
     property int paperTicks: 0
     property int decisionSequence: 0
     property int telemetryTick: 0
-    property real previewEquity: 100000.0
-    property real previewPnl: 0.0
+    property real previewEquity: 102020.0
+    property real previewPnl: 2020.0
     property alias mockEquity: root.previewEquity
     property alias mockPnl: root.previewPnl
     property int paperOrdersCount: 0
@@ -52,8 +52,8 @@ ApplicationWindow {
     // UI-PREVIEW-7.7 local-only paper bridge/state shared by Dashboard, Decisions, Telemetry and Paper Terminal.
     // Paper Preview only: live trading disabled, exchange I/O disabled, order submission disabled, API keys not required, runtime loop not started, no real orders.
     property string paperSessionStatus: "stopped"
-    property real paperEquity: 100000.0
-    property real paperPnl: 0.0
+    property real paperEquity: 102020.0
+    property real paperPnl: 2020.0
     property int paperSessionTicks: 0
     property int paperBlockedCount: 0
     property int paperNoOrderCount: 1
@@ -72,6 +72,64 @@ ApplicationWindow {
         ({ timestamp: "12:04:18Z", message: "local-only paper bridge/state ready • runtime loop not started" }),
         ({ timestamp: "12:03:58Z", message: "Paper Preview only • exchange I/O disabled • no real orders" })
     ]
+    // UI-PREVIEW-8.0A local-only portfolio/performance preview state. No backend, no exchange I/O, no order submission, no secrets/env/keychain reads.
+    property string portfolioBaseCurrency: "USD"
+    property real portfolioStartingEquityUsd: 100000.0
+    property real portfolioTotalEquityUsd: 102020.0
+    property real portfolioTotalEquityPln: 402468.90
+    property real portfolioAvailableBalanceUsd: 71440.0
+    property real portfolioInPositionsUsd: 30580.0
+    property real portfolioRealizedPnlUsd: 1900.0
+    property real portfolioUnrealizedPnlUsd: 220.0
+    property real portfolioFeesUsd: 86.40
+    property real portfolioFundingOtherCostsUsd: 13.60
+    property real portfolioNetPnlUsd: 2020.0
+    property real portfolioSessionPnlUsd: 2020.0
+    property real portfolioLastCyclePnlUsd: 126.75
+    property real portfolioAllTimePnlUsd: 2020.0
+    property string portfolioFiatAccountLabel: "102 020.00 USD / 402 468.90 PLN"
+    property string portfolioCryptoAccountLabel: "BTC 0.412 • ETH 3.80 • SOL 92.4 • USDT 18 640"
+    property string portfolioSelectedRange: "24h"
+    property string portfolioRangeLabel: "Zakres: 24h preview"
+    property var portfolioTimeFilters: ["1h", "24h", "7d", "30d", "1y", "All", "Custom"]
+    property string portfolioWinRate: "64.6%"
+    property string portfolioMaxDrawdown: "-3.8%"
+    property string portfolioBestPair: "BTC/USDT +1 120.00 USD"
+    property string portfolioWorstPair: "ARB/USDT -240.00 USD"
+    property int portfolioTradeCount: 48
+    property var portfolioPerformanceCards: [
+        ({ title: "Stan konta fiat", field: "fiat" }),
+        ({ title: "Stan konta crypto", field: "crypto" }),
+        ({ title: "Wolne środki", field: "available" }),
+        ({ title: "W pozycjach", field: "positions" }),
+        ({ title: "PnL ostatniego cyklu", field: "lastCycle" }),
+        ({ title: "PnL sesji", field: "session" }),
+        ({ title: "PnL całkowity", field: "allTime" }),
+        ({ title: "Win rate", field: "winRate" }),
+        ({ title: "Liczba transakcji", field: "tradeCount" }),
+        ({ title: "Prowizje", field: "fees" }),
+        ({ title: "Max drawdown", field: "drawdown" }),
+        ({ title: "Najlepsza para", field: "bestPair" }),
+        ({ title: "Najgorsza para", field: "worstPair" })
+    ]
+    property var portfolioAllCycleRows: [
+        ({ startTime: "2026-06-02 08:10", endTime: "2026-06-02 08:45", pair: "BTC/USDT", strategy: "Momentum Guard", result: "+126.75 USD", fee: "8.40 USD", status: "closed preview", closeReason: "TP" }),
+        ({ startTime: "2026-06-02 07:15", endTime: "2026-06-02 07:58", pair: "ETH/USDT", strategy: "Range Guard", result: "+64.20 USD", fee: "5.80 USD", status: "closed preview", closeReason: "AI exit" }),
+        ({ startTime: "2026-06-01 22:05", endTime: "2026-06-01 23:20", pair: "SOL/USDT", strategy: "Volatility Breakout Preview", result: "-42.10 USD", fee: "4.10 USD", status: "guarded preview", closeReason: "risk guard" }),
+        ({ startTime: "2026-06-01 18:30", endTime: "2026-06-01 19:05", pair: "BNB/USDT", strategy: "Strategy governor", result: "+38.00 USD", fee: "3.60 USD", status: "manual preview", closeReason: "manual preview" }),
+        ({ startTime: "2026-06-01 13:00", endTime: "2026-06-01 13:22", pair: "ARB/USDT", strategy: "Range Guard", result: "-58.30 USD", fee: "2.90 USD", status: "closed preview", closeReason: "SL" }),
+        ({ startTime: "2026-05-31 10:05", endTime: "2026-05-31 11:10", pair: "LINK/USDT", strategy: "Momentum Guard", result: "+212.40 USD", fee: "9.10 USD", status: "closed preview", closeReason: "TP" })
+    ]
+    property var portfolioCycleRows: portfolioAllCycleRows.slice(0, 5)
+    property var portfolioRangeSnapshots: ({
+        "1h": ({ realized: 122.00, unrealized: 18.10, fees: 7.20, fundingOtherCosts: 2.90, sessionPnl: 130.00, lastCyclePnl: 38.40, tradeCount: 4, winRate: "75.0%", maxDrawdown: "-0.4%", bestPair: "BTC/USDT +82.00 USD", worstPair: "SOL/USDT -12.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 1) }),
+        "24h": ({ realized: 1900.00, unrealized: 220.00, fees: 86.40, fundingOtherCosts: 13.60, sessionPnl: 2020.00, lastCyclePnl: 126.75, tradeCount: 48, winRate: "64.6%", maxDrawdown: "-3.8%", bestPair: "BTC/USDT +1 120.00 USD", worstPair: "ARB/USDT -240.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 5) }),
+        "7d": ({ realized: 2640.00, unrealized: 330.00, fees: 118.80, fundingOtherCosts: 31.20, sessionPnl: 2820.00, lastCyclePnl: 212.40, tradeCount: 82, winRate: "67.1%", maxDrawdown: "-4.2%", bestPair: "LINK/USDT +1 420.00 USD", worstPair: "ARB/USDT -310.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
+        "30d": ({ realized: 5120.00, unrealized: 680.00, fees: 246.50, fundingOtherCosts: 73.50, sessionPnl: 5480.00, lastCyclePnl: 310.20, tradeCount: 196, winRate: "62.8%", maxDrawdown: "-5.6%", bestPair: "BTC/USDT +2 840.00 USD", worstPair: "OP/USDT -520.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
+        "1y": ({ realized: 18450.00, unrealized: 1120.00, fees: 940.00, fundingOtherCosts: 210.00, sessionPnl: 18420.00, lastCyclePnl: 640.80, tradeCount: 1180, winRate: "60.2%", maxDrawdown: "-8.9%", bestPair: "BTC/USDT +8 900.00 USD", worstPair: "ARB/USDT -1 460.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
+        "All": ({ realized: 22600.00, unrealized: 1640.00, fees: 1180.00, fundingOtherCosts: 260.00, sessionPnl: 22800.00, lastCyclePnl: 640.80, tradeCount: 1460, winRate: "61.4%", maxDrawdown: "-9.4%", bestPair: "BTC/USDT +10 400.00 USD", worstPair: "ARB/USDT -1 720.00 USD", cycleRows: portfolioAllCycleRows.slice(0, 6) }),
+        "Custom": ({ realized: 820.00, unrealized: 95.00, fees: 36.00, fundingOtherCosts: 9.00, sessionPnl: 870.00, lastCyclePnl: 64.20, tradeCount: 21, winRate: "66.7%", maxDrawdown: "-1.9%", bestPair: "ETH/USDT +420.00 USD", worstPair: "SOL/USDT -96.00 USD", cycleRows: portfolioAllCycleRows.slice(1, 4) })
+    })
     property string lastGovernorDecision: "BTC/USDT HOLD • confidence 0.81 • NO ORDER — preview only"
     property string autonomyMode: "Supervised dry-run"
     property int autonomyLevel: 2
@@ -304,6 +362,81 @@ ApplicationWindow {
         openPaperPositions = paperOpenPositions.slice(0, 20)
         closedPaperTrades = paperClosedTrades.slice(0, 20)
         telemetryRows = paperTelemetryRows.slice(0, 12)
+        syncPortfolioPerformanceState()
+    }
+    function groupedNumber(value) {
+        var fixed = Math.abs(Number(value)).toFixed(2)
+        var parts = fixed.split(".")
+        var whole = parts[0]
+        var grouped = ""
+        while (whole.length > 3) {
+            grouped = " " + whole.slice(whole.length - 3) + grouped
+            whole = whole.slice(0, whole.length - 3)
+        }
+        return whole + grouped + "." + parts[1]
+    }
+    function formatMoney(value, currency) {
+        var numeric = Number(value)
+        var sign = numeric < 0 ? "-" : ""
+        return sign + groupedNumber(numeric) + " " + currency
+    }
+    function formatUsd(value) {
+        var numeric = Number(value)
+        var sign = numeric >= 0 ? "+" : "-"
+        return sign + groupedNumber(numeric) + " USD"
+    }
+    function portfolioCardDescription(field) {
+        if (field === "fiat") return portfolioFiatAccountLabel
+        if (field === "crypto") return portfolioCryptoAccountLabel
+        if (field === "available") return formatMoney(portfolioAvailableBalanceUsd, portfolioBaseCurrency)
+        if (field === "positions") return formatMoney(portfolioInPositionsUsd, portfolioBaseCurrency)
+        if (field === "lastCycle") return formatUsd(portfolioLastCyclePnlUsd)
+        if (field === "session") return formatUsd(portfolioSessionPnlUsd)
+        if (field === "allTime") return formatUsd(portfolioAllTimePnlUsd)
+        if (field === "winRate") return portfolioWinRate
+        if (field === "tradeCount") return String(portfolioTradeCount)
+        if (field === "fees") return formatMoney(portfolioFeesUsd, portfolioBaseCurrency)
+        if (field === "drawdown") return portfolioMaxDrawdown
+        if (field === "bestPair") return portfolioBestPair
+        if (field === "worstPair") return portfolioWorstPair
+        return "preview"
+    }
+    function recomputePortfolioTotals() {
+        portfolioNetPnlUsd = Number((portfolioRealizedPnlUsd + portfolioUnrealizedPnlUsd - portfolioFeesUsd - portfolioFundingOtherCostsUsd).toFixed(2))
+        portfolioAllTimePnlUsd = portfolioNetPnlUsd
+        portfolioTotalEquityUsd = Number((portfolioStartingEquityUsd + portfolioAllTimePnlUsd).toFixed(2))
+        portfolioTotalEquityPln = Number((portfolioTotalEquityUsd * 3.945).toFixed(2))
+        portfolioAvailableBalanceUsd = Number((portfolioTotalEquityUsd - portfolioInPositionsUsd).toFixed(2))
+        portfolioFiatAccountLabel = formatMoney(portfolioTotalEquityUsd, "USD") + " / " + formatMoney(portfolioTotalEquityPln, "PLN")
+    }
+    function applyPortfolioSnapshot(range, snapshot) {
+        portfolioSelectedRange = range
+        portfolioRangeLabel = range === "Custom" ? "Zakres własny: preview" : "Zakres: " + range + " preview"
+        portfolioRealizedPnlUsd = Number(snapshot.realized)
+        portfolioUnrealizedPnlUsd = Number(snapshot.unrealized)
+        portfolioFeesUsd = Number(snapshot.fees)
+        portfolioFundingOtherCostsUsd = Number(snapshot.fundingOtherCosts)
+        portfolioSessionPnlUsd = Number(snapshot.sessionPnl)
+        portfolioLastCyclePnlUsd = Number(snapshot.lastCyclePnl)
+        portfolioTradeCount = Number(snapshot.tradeCount)
+        portfolioWinRate = snapshot.winRate
+        portfolioMaxDrawdown = snapshot.maxDrawdown
+        portfolioBestPair = snapshot.bestPair
+        portfolioWorstPair = snapshot.worstPair
+        portfolioCycleRows = snapshot.cycleRows.slice(0, 12)
+        recomputePortfolioTotals()
+    }
+    function setPortfolioTimeRange(range) {
+        var snapshot = portfolioRangeSnapshots[range] || portfolioRangeSnapshots["24h"]
+        applyPortfolioSnapshot(range, snapshot)
+    }
+    function syncPortfolioPerformanceState() {
+        portfolioSessionPnlUsd = Number(paperPnl.toFixed(2))
+        portfolioUnrealizedPnlUsd = Number((paperPnl - portfolioRealizedPnlUsd + portfolioFeesUsd + portfolioFundingOtherCostsUsd).toFixed(2))
+        recomputePortfolioTotals()
+        previewPnl = paperPnl
+        previewEquity = portfolioTotalEquityUsd
+        paperEquity = portfolioTotalEquityUsd
     }
     function appendTerminalLog(message) {
         var logCopy = terminalLogRows.slice()
@@ -354,9 +487,10 @@ ApplicationWindow {
     function updatePaperEquityPreview(status, total) {
         var delta = status === "blocked" ? 0 : (terminalSide === "BUY" ? 7.25 : 5.10)
         paperPnl = Number((paperPnl + delta).toFixed(2))
-        paperEquity = Number((100000.0 + paperPnl).toFixed(2))
+        paperEquity = Number((portfolioStartingEquityUsd + paperPnl).toFixed(2))
         previewPnl = paperPnl
         previewEquity = paperEquity
+        syncPortfolioPerformanceState()
     }
     function updatePaperPositionPreview(event) {
         if (event.status === "blocked" || event.status === "no order")
@@ -566,7 +700,7 @@ ApplicationWindow {
         var pair = selectedPairs.length > 0 ? selectedPairs[paperSessionTicks % selectedPairs.length] : "BTC/USDT"
         var confidence = (0.60 + ((paperSessionTicks % 10) * 0.031)).toFixed(2)
         paperPnl = Number((paperPnl + (status === "simulated" ? 18.5 : (status === "blocked" ? 0 : -2.25))).toFixed(2))
-        paperEquity = Number((100000 + paperPnl).toFixed(2))
+        paperEquity = Number((portfolioStartingEquityUsd + paperPnl).toFixed(2))
         var order = ({ timestamp: previewTime(1), pair: pair, action: action, status: status, confidence: confidence, reason: status === "simulated" ? "Paper preview fill recorded locally; no real route used." : (status === "blocked" ? "Live order route blocked by preview guard." : "No order emitted by governor policy.") })
         var orders = paperOrderRows.slice()
         orders.unshift(order)
@@ -579,7 +713,7 @@ ApplicationWindow {
     function startPaperPreview() { paperSessionStatus = "running"; syncPaperBridgeState(); generatePaperTick() }
     function pausePaperPreview() { paperSessionStatus = "paused"; syncPaperBridgeState(); appendPaperTelemetry("paper session paused") }
     function stopPaperPreview() { paperSessionStatus = "stopped"; syncPaperBridgeState(); appendPaperTelemetry("paper session stopped") }
-    function resetPaperPreview() { paperSessionStatus = "stopped"; paperSessionTicks = 0; decisionSequence += 1; paperEquity = 100000.0; paperPnl = 0.0; paperOrderRows = []; paperOpenPositions = []; paperClosedTrades = []; recountOrderCounters(); addDecision("NO ORDER", "Paper preview reset; order submission remains disabled.") }
+    function resetPaperPreview() { paperSessionStatus = "stopped"; paperSessionTicks = 0; decisionSequence += 1; paperEquity = portfolioStartingEquityUsd; paperPnl = 0.0; paperOrderRows = []; paperOpenPositions = []; paperClosedTrades = []; recountOrderCounters(); addDecision("NO ORDER", "Paper preview reset; order submission remains disabled.") }
     function pingTelemetryFeed() {
         telemetryTick += 1
         telemetryHeartbeat = previewTime(telemetryTick)
@@ -616,12 +750,13 @@ ApplicationWindow {
         ({ panelId: "sidePanel", title: qsTr("Dashboard"), icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
         ({ panelId: "aiCenterPanel", title: qsTr("AI Center"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 1 }),
         ({ panelId: "tradingUniversePanel", title: qsTr("Trading Universe"), icon: "cloud", defaultColumn: 0, defaultOrder: 2 }),
-        ({ panelId: "terminalPanel", title: qsTr("Paper Terminal"), icon: "package", defaultColumn: 0, defaultOrder: 3 }),
-        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 0, defaultOrder: 4 }),
-        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), icon: "shield", defaultColumn: 0, defaultOrder: 5 }),
-        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 6 }),
-        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 7 }),
-        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 8 })
+        ({ panelId: "portfolioPerformancePanel", title: qsTr("Portfel / Wyniki"), icon: "package", defaultColumn: 0, defaultOrder: 3 }),
+        ({ panelId: "terminalPanel", title: qsTr("Paper Terminal"), icon: "package", defaultColumn: 0, defaultOrder: 4 }),
+        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), icon: "strategy_manager", defaultColumn: 0, defaultOrder: 5 }),
+        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), icon: "shield", defaultColumn: 0, defaultOrder: 6 }),
+        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), icon: "mode_wizard", defaultColumn: 0, defaultOrder: 7 }),
+        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 8 }),
+        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), icon: "diagnostics", defaultColumn: 0, defaultOrder: 9 })
     ]
 
     property var productTabs: panelMetadata
@@ -630,6 +765,7 @@ ApplicationWindow {
         "sidePanel": { title: qsTr("Dashboard"), icon: "fingerprint", component: sidePanelComponent },
         "aiCenterPanel": { title: qsTr("AI Center"), icon: "mode_wizard", component: aiCenterPanelComponent },
         "tradingUniversePanel": { title: qsTr("Trading Universe"), icon: "cloud", component: tradingUniversePanelComponent },
+        "portfolioPerformancePanel": { title: qsTr("Portfel / Wyniki"), icon: "package", component: portfolioPerformancePanelComponent },
         "terminalPanel": { title: qsTr("Paper Terminal"), icon: "package", component: terminalPanelComponent },
         "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
         "riskControlsPanel": { title: qsTr("Ryzyko"), icon: "shield", component: riskControlsPanelComponent },
@@ -882,6 +1018,16 @@ ApplicationWindow {
     Component {
         id: tradingUniversePanelComponent
         Views.TradingUniverse {
+            previewState: root
+            width: parent ? parent.width : implicitWidth
+            height: parent ? parent.height : implicitHeight
+            designSystem: rootDesignSystem
+        }
+    }
+
+    Component {
+        id: portfolioPerformancePanelComponent
+        Views.PortfolioPerformance {
             previewState: root
             width: parent ? parent.width : implicitWidth
             height: parent ? parent.height : implicitHeight

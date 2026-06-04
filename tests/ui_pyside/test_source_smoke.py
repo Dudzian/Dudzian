@@ -33,6 +33,7 @@ PANEL_AUDIT_IDS = (
     "sidePanel",
     "aiCenterPanel",
     "tradingUniversePanel",
+    "portfolioPerformancePanel",
     "terminalPanel",
     "strategiesPanel",
     "riskControlsPanel",
@@ -668,7 +669,7 @@ def test_ui_preview_7_2_dashboard_paper_cockpit_controls() -> None:
         "Reset",
         "Generate Next Tick",
         "Run 10 paper ticks",
-        "Paper PnL / equity preview",
+        "Paper session PnL / equity",
         "Paper order blotter",
         "Time",
         "Pair",
@@ -1253,3 +1254,130 @@ def test_ui_preview_7_8_shared_state_interactivity_and_responsive_terminal_contr
     assert "Flickable.HorizontalFlick" in main_window
     assert "root.showPanel(modelData.panelId)" in main_window
     assert "active ? 2 : 1" in main_window
+
+
+def test_ui_preview_8_0a_portfolio_performance_source_contract() -> None:
+    source = _qml_text()
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    portfolio = (QML_SOURCE_ROOT / "views" / "PortfolioPerformance.qml").read_text(encoding="utf-8")
+
+    assert 'panelId: "portfolioPerformancePanel", title: qsTr("Portfel / Wyniki")' in main_window
+    assert '"portfolioPerformancePanel": { title: qsTr("Portfel / Wyniki")' in main_window
+    assert "Views.PortfolioPerformance" in main_window
+    assert 'objectName: "portfolioPerformanceRoot"' in portfolio
+    assert 'objectName: "portfolioPerformanceTiles"' in portfolio
+
+    for label in (
+        "Portfel / Wyniki",
+        "Stan konta fiat",
+        "Stan konta crypto",
+        "Wolne środki",
+        "W pozycjach",
+        "PnL ostatniego cyklu",
+        "PnL sesji",
+        "PnL całkowity",
+        "Win rate",
+        "Liczba transakcji",
+        "Prowizje",
+        "Max drawdown",
+        "Najlepsza para",
+        "Najgorsza para",
+        "Rozbicie wyniku",
+        "Zrealizowany PnL",
+        "Niezrealizowany PnL",
+        "Funding / inne koszty",
+        "PnL netto",
+        "Cykle transakcyjne",
+        "czas startu",
+        "czas końca",
+        "para",
+        "strategia",
+        "wynik",
+        "fee",
+        "status",
+        "powód zamknięcia",
+        "TP",
+        "SL",
+        "AI exit",
+        "manual preview",
+        "risk guard",
+    ):
+        assert label in source
+
+    for time_filter in ('"1h"', '"24h"', '"7d"', '"30d"', '"1y"', '"All"', '"Custom"'):
+        assert time_filter in main_window
+
+    for state_token in (
+        "property string portfolioBaseCurrency",
+        "property real portfolioStartingEquityUsd",
+        "property real portfolioTotalEquityUsd",
+        "property real portfolioAvailableBalanceUsd",
+        "property real portfolioInPositionsUsd",
+        "property real portfolioRealizedPnlUsd",
+        "property real portfolioUnrealizedPnlUsd",
+        "property real portfolioSessionPnlUsd",
+        "property real portfolioLastCyclePnlUsd",
+        "property real portfolioAllTimePnlUsd",
+        "property real portfolioFeesUsd",
+        "property real portfolioFundingOtherCostsUsd",
+        "property real portfolioNetPnlUsd",
+        "property int portfolioTradeCount",
+        "property string portfolioWinRate",
+        "property string portfolioMaxDrawdown",
+        "property string portfolioBestPair",
+        "property string portfolioWorstPair",
+        "property var portfolioCycleRows",
+        "property var portfolioRangeSnapshots",
+        "function setPortfolioTimeRange",
+        "function syncPortfolioPerformanceState",
+        "function recomputePortfolioTotals",
+        "function applyPortfolioSnapshot",
+    ):
+        assert state_token in main_window
+
+    assert "previewState.setPortfolioTimeRange(modelData)" in portfolio
+    assert "runtime loop not started" in portfolio
+    assert "exchange I/O disabled" in portfolio
+    assert "order submission disabled" in portfolio
+    assert "API keys not required" in portfolio
+    assert "no secrets/env/keychain reads" in portfolio
+
+
+def test_ui_preview_8_0a_smoke_audits_portfolio_state_and_safety() -> None:
+    result = _run_ui_smoke("--exercise-preview-state")
+    payload = _smoke_payload(result)
+
+    if result.returncode != 0 and any("libGL.so.1" in issue for issue in payload["issues"]):
+        pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert payload["runtime_loop_started"] is False
+    assert payload["exchange_io"] == "disabled"
+    assert payload["order_submission"] == "disabled"
+    assert payload["api_keys_required"] is False
+    assert payload["secrets_read"] is False
+    assert payload["keychain_read"] is False
+    assert payload["env_values_read"] is False
+    assert payload["dot_env_read"] is False
+
+    panel_load_results = payload["panel_load_results"]
+    assert panel_load_results["portfolioPerformancePanel"]["loaded"] is True
+    assert panel_load_results["portfolioPerformancePanel"]["empty"] is False
+
+    audit = payload["preview_state_audit"]
+    assert audit["portfolio_fields_present"] is True
+    assert audit["portfolio_filters_count"] == 7
+    assert audit["portfolio_cycles_count"] >= 4
+    assert audit["portfolio_cards_count"] >= 13
+    assert audit["portfolio_custom_filter_updates_label"] is True
+    assert audit["portfolio_equity_formula_ok"] is True
+    assert audit["portfolio_net_pnl_formula_ok"] is True
+    assert audit["portfolio_no_double_count_ok"] is True
+    assert audit["portfolio_range_snapshot_changes_values"] is True
+    assert audit["portfolio_time_filter_does_not_mutate_paper_state"] is True
+    assert audit["portfolio_time_filter_updates_report_state"] is True
+    assert audit["portfolio_custom_filter_does_not_mutate_paper_state"] is True
+    assert audit["paper_tick_updates_paper_state"] is True
+    assert audit["dashboard_separates_paper_and_portfolio_report"] is True
+    assert audit["portfolio_money_formatting_ok"] is True
+    assert audit["safety_boundary_ok"] is True

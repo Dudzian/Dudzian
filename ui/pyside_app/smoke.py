@@ -61,6 +61,7 @@ PANEL_AUDIT_IDS = (
     "sidePanel",
     "aiCenterPanel",
     "tradingUniversePanel",
+    "portfolioPerformancePanel",
     "terminalPanel",
     "strategiesPanel",
     "riskControlsPanel",
@@ -219,6 +220,33 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     initial_orders = _sequence_length(root.property("paperOrderRows"))
     initial_decisions = _sequence_length(root.property("decisionPreviewRows"))
     initial_telemetry = _sequence_length(root.property("paperTelemetryRows"))
+    portfolio_fields = (
+        "portfolioBaseCurrency",
+        "portfolioStartingEquityUsd",
+        "portfolioTotalEquityUsd",
+        "portfolioAvailableBalanceUsd",
+        "portfolioInPositionsUsd",
+        "portfolioRealizedPnlUsd",
+        "portfolioUnrealizedPnlUsd",
+        "portfolioSessionPnlUsd",
+        "portfolioLastCyclePnlUsd",
+        "portfolioAllTimePnlUsd",
+        "portfolioFeesUsd",
+        "portfolioFundingOtherCostsUsd",
+        "portfolioNetPnlUsd",
+        "portfolioTradeCount",
+        "portfolioWinRate",
+        "portfolioMaxDrawdown",
+        "portfolioBestPair",
+        "portfolioWorstPair",
+        "portfolioRangeSnapshots",
+    )
+    audit["portfolio_fields_present"] = all(
+        root.property(field) is not None for field in portfolio_fields
+    )
+    audit["portfolio_filters_count"] = _sequence_length(root.property("portfolioTimeFilters"))
+    audit["portfolio_cycles_count"] = _sequence_length(root.property("portfolioCycleRows"))
+    audit["portfolio_cards_count"] = _sequence_length(root.property("portfolioPerformanceCards"))
 
     _invoke_qml(root, "startPaperPreview")
     after_start_ticks = int(root.property("paperSessionTicks") or 0)
@@ -270,6 +298,73 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["ping_appends_telemetry"] = (
         _sequence_length(after_ping_rows) > before_ping_telemetry
         or _first_row_repr(after_ping_rows) != before_ping_first_row
+    )
+
+    before_filter_paper_pnl = float(root.property("paperPnl") or 0)
+    before_filter_paper_equity = float(root.property("paperEquity") or 0)
+    before_range_trade_count = int(root.property("portfolioTradeCount") or 0)
+    before_range_cycles = _sequence_length(root.property("portfolioCycleRows"))
+    before_range_net = float(root.property("portfolioNetPnlUsd") or 0)
+    _invoke_qml(root, "setPortfolioTimeRange", "7d")
+    after_7d_paper_pnl = float(root.property("paperPnl") or 0)
+    after_7d_paper_equity = float(root.property("paperEquity") or 0)
+    audit["portfolio_time_filter_does_not_mutate_paper_state"] = (
+        abs(after_7d_paper_pnl - before_filter_paper_pnl) < 0.01
+        and abs(after_7d_paper_equity - before_filter_paper_equity) < 0.01
+    )
+    audit["portfolio_time_filter_updates_report_state"] = (
+        int(root.property("portfolioTradeCount") or 0) != before_range_trade_count
+        or _sequence_length(root.property("portfolioCycleRows")) != before_range_cycles
+        or abs(float(root.property("portfolioNetPnlUsd") or 0) - before_range_net) > 0.01
+    )
+    audit["portfolio_range_snapshot_changes_values"] = audit[
+        "portfolio_time_filter_updates_report_state"
+    ]
+
+    before_custom_paper_pnl = float(root.property("paperPnl") or 0)
+    before_custom_paper_equity = float(root.property("paperEquity") or 0)
+    _invoke_qml(root, "setPortfolioTimeRange", "Custom")
+    audit["portfolio_custom_filter_updates_label"] = _string_property(
+        root, "portfolioSelectedRange"
+    ) == "Custom" and "Zakres własny: preview" in _string_property(root, "portfolioRangeLabel")
+    after_custom_paper_pnl = float(root.property("paperPnl") or 0)
+    after_custom_paper_equity = float(root.property("paperEquity") or 0)
+    audit["portfolio_custom_filter_does_not_mutate_paper_state"] = (
+        abs(after_custom_paper_pnl - before_custom_paper_pnl) < 0.01
+        and abs(after_custom_paper_equity - before_custom_paper_equity) < 0.01
+    )
+    starting_equity = float(root.property("portfolioStartingEquityUsd") or 0)
+    total_equity = float(root.property("portfolioTotalEquityUsd") or 0)
+    realized = float(root.property("portfolioRealizedPnlUsd") or 0)
+    unrealized = float(root.property("portfolioUnrealizedPnlUsd") or 0)
+    fees = float(root.property("portfolioFeesUsd") or 0)
+    funding = float(root.property("portfolioFundingOtherCostsUsd") or 0)
+    net_pnl = float(root.property("portfolioNetPnlUsd") or 0)
+    all_time_pnl = float(root.property("portfolioAllTimePnlUsd") or 0)
+    paper_pnl = float(root.property("paperPnl") or 0)
+    double_count_pnl = realized + unrealized + paper_pnl
+    audit["portfolio_equity_formula_ok"] = (
+        abs(total_equity - (starting_equity + all_time_pnl)) < 0.01
+    )
+    audit["portfolio_net_pnl_formula_ok"] = (
+        abs(net_pnl - (realized + unrealized - fees - funding)) < 0.01
+    )
+    audit["portfolio_no_double_count_ok"] = abs(all_time_pnl - double_count_pnl) > 0.01
+    audit["portfolio_money_formatting_ok"] = (
+        ".00 USD" in _string_property(root, "portfolioFiatAccountLabel")
+        and " " in _string_property(root, "portfolioFiatAccountLabel").split(".")[0]
+    )
+    audit["dashboard_separates_paper_and_portfolio_report"] = _source_has_all(
+        _qml_preview_source(),
+        ("Paper session PnL / equity", "Portfolio report / selected range"),
+    )
+
+    before_paper_tick_pnl = float(root.property("paperPnl") or 0)
+    before_paper_tick_equity = float(root.property("paperEquity") or 0)
+    _invoke_qml(root, "generatePaperTick")
+    audit["paper_tick_updates_paper_state"] = (
+        abs(float(root.property("paperPnl") or 0) - before_paper_tick_pnl) > 0.01
+        or abs(float(root.property("paperEquity") or 0) - before_paper_tick_equity) > 0.01
     )
 
     _invoke_qml(root, "selectTop20Pairs")
@@ -325,6 +420,18 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "reset_clears_orders",
         "governor_updates_decision",
         "ping_appends_telemetry",
+        "portfolio_fields_present",
+        "portfolio_custom_filter_updates_label",
+        "portfolio_time_filter_does_not_mutate_paper_state",
+        "portfolio_time_filter_updates_report_state",
+        "portfolio_custom_filter_does_not_mutate_paper_state",
+        "paper_tick_updates_paper_state",
+        "dashboard_separates_paper_and_portfolio_report",
+        "portfolio_equity_formula_ok",
+        "portfolio_net_pnl_formula_ok",
+        "portfolio_no_double_count_ok",
+        "portfolio_range_snapshot_changes_values",
+        "portfolio_money_formatting_ok",
         "select_top20_propagates_terminal_pair",
         "select_all_visible_at_least_top20",
         "clear_selected_pairs_zero",
@@ -340,6 +447,9 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         and int(audit["generate_tick_delta"]) == 1
         and int(audit["run_ten_tick_delta"]) == 10
         and int(audit["select_top20_count"]) == 20
+        and int(audit["portfolio_filters_count"]) == 7
+        and int(audit["portfolio_cycles_count"]) >= 4
+        and int(audit["portfolio_cards_count"]) >= 13
         and all(audit[key] is True for key in required_true_keys)
     )
     return audit
@@ -395,6 +505,7 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     "Dashboard",
                     "AI Center",
                     "Trading Universe",
+                    "Portfel / Wyniki",
                     "Strategie",
                     "Ryzyko",
                     "Decyzje",
