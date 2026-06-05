@@ -38,9 +38,15 @@ ApplicationWindow {
             "nav.risk": "Ryzyko",
             "nav.decisions": "Decyzje",
             "nav.telemetry": "Telemetria",
-            "nav.diagnostics": "Diagnostyka",
             "nav.alerts": "Alerty",
+            "nav.diagnostics": "Diagnostyka",
+            "nav.settings": "Ustawienia",
             "nav.help": "Pomoc / Słownik",
+            "settings.title": "Ustawienia",
+            "settings.description": "Ustawienia działają lokalnie w preview. Konfiguracja runtime nie jest zapisywana.",
+            "onboarding.title": "Onboarding preview",
+            "quick.actions": "Szybkie akcje",
+            "app.status": "Status aplikacji",
             "language.label": "Język",
             "refresh.preview": "Odśwież preview",
             "help.title": "Pomoc / Słownik",
@@ -66,9 +72,15 @@ ApplicationWindow {
             "nav.risk": "Risk",
             "nav.decisions": "Decisions",
             "nav.telemetry": "Telemetry",
-            "nav.diagnostics": "Diagnostics",
             "nav.alerts": "Alerts",
+            "nav.diagnostics": "Diagnostics",
+            "nav.settings": "Settings",
             "nav.help": "Help / Glossary",
+            "settings.title": "Settings",
+            "settings.description": "Settings are local preview only. No runtime config is written.",
+            "onboarding.title": "Onboarding preview",
+            "quick.actions": "Quick actions",
+            "app.status": "App status",
             "language.label": "Language",
             "refresh.preview": "Refresh preview",
             "help.title": "Help / Glossary",
@@ -144,16 +156,38 @@ ApplicationWindow {
         "Explain event": "Buduje lokalne wyjaśnienie zdarzenia bez backend inference, sieci, API i sekretów.",
         "Severity filter": "Filtruje lokalną oś alertów według Critical, Warning albo Info.",
         "Category filter": "Filtruje lokalną oś alertów według Trading, Risk, AI, Scanner, Paper, Portfolio, Telemetry, Diagnostics albo Safety.",
-        "Alert Center": "Otwiera lokalne centrum alertów i oś zdarzeń Paper Preview."
+        "Alert Center": "Otwiera lokalne centrum alertów i oś zdarzeń Paper Preview.",
+        "Settings": "Otwiera lokalne ustawienia preview; konfiguracja runtime nie jest zapisywana.",
+        "Onboarding": "Prowadzi przez lokalny first-run preview wizard bez backendu i bez live tradingu.",
+        "Demo Preview": "Tryb demonstracyjny safe preview: wszystkie akcje pozostają lokalne.",
+        "Paper Preview": "Tryb paper trading preview: symulowane ticki i paper ordery bez giełdy.",
+        "Sandbox planned": "Planowany sandbox/testnet; w tym preview nadal brak połączeń giełda/API.",
+        "Live disabled": "Tryb live pozostaje niedostępny i zablokowany w UI Preview.",
+        "Base currency": "Waluta bazowa do lokalnego formatowania podglądu; nie zmienia runtime.",
+        "UI density": "Kompaktowość UI wyłącznie w lokalnym stanie preview.",
+        "App mode": "Wybór trybu aplikacji preview; live trading pozostaje wyłączony.",
+        "Local preview state": "Stan zapamiętany tylko w QML preview podczas sesji UI.",
+        "Reset local preview state": "Czyści lokalne ustawienia i paper state bez sekretów, backendu i runtime.",
+        "App mode selector": "Wybiera Demo Preview, Paper Preview, Sandbox planned albo Live disabled tylko lokalnie.",
+        "Base currency selector": "Wybiera PLN, USD, EUR albo USDT tylko dla preview.",
+        "UI density selector": "Wybiera Compact, Comfortable albo Large tylko dla UI preview.",
+        "Theme preview": "Dark preview działa teraz; Light planned jest tylko zapowiedzią.",
+        "Apply preview settings": "Zastosuj ustawienia tylko lokalnie; no runtime config is written.",
+        "Start onboarding": "Uruchamia local-only onboarding preview wizard.",
+        "Complete onboarding": "Kończy onboarding lokalnie i przechodzi do Dashboardu.",
+        "Open Settings": "Otwiera panel Settings/Ustawienia.",
+        "Open Alerts": "Otwiera lokalne centrum alertów.",
+        "Open Help": "Otwiera Pomoc / Słownik.",
+        "Generate diagnostic bundle": "Generuje lokalny status paczki diagnostycznej bez sekretów, backendu, giełdy i runtime."
     })
     property var glossaryCategories: [
         ({ key: "category.trading", terms: ["PnL", "ROI", "spread", "order book", "fee/prowizja", "equity", "available balance", "in positions"] }),
         ({ key: "category.risk", terms: ["drawdown", "risk guard", "kill-switch", "TP", "SL", "Custom risk", "AI Recommended risk", "confidence floor", "exposure", "daily loss limit", "cooldown", "risk override"] }),
         ({ key: "category.ai", terms: ["governor", "confidence", "Market Scanner", "AI score", "Candidate", "Rejected setup", "explainability", "audit trail", "lineage", "input snapshot", "risk check", "decision source", "alternative candidate", "paper impact"] }),
         ({ key: "category.strategies", terms: ["strategy", "Strategy match", "Trend", "Volatility", "Liquidity", "Risk score"] }),
-        ({ key: "category.paper", terms: ["paper trading", "sandbox/testnet", "Live-like paper simulation", "Simulation speed", "Market scenario", "Paper loop", "No real orders"] }),
-        ({ key: "category.exchange", terms: ["API key", "slippage", "blacklist", "whitelist", "Watchlist", "Blacklist"] }),
-        ({ key: "category.diagnostics", terms: ["Runtime loop not started", "Exchange I/O disabled", "Order submission disabled"] })
+        ({ key: "category.paper", terms: ["paper trading", "sandbox/testnet", "Demo Preview", "Paper Preview", "Sandbox planned", "Live disabled", "Live-like paper simulation", "Simulation speed", "Market scenario", "Paper loop", "No real orders", "Onboarding"] }),
+        ({ key: "category.exchange", terms: ["API key", "Base currency", "App mode", "UI density", "Local preview state", "Reset local preview state", "slippage", "blacklist", "whitelist", "Watchlist", "Blacklist"] }),
+        ({ key: "category.diagnostics", terms: ["Settings", "Runtime loop not started", "Exchange I/O disabled", "Order submission disabled"] })
     ]
     property var glossaryDescriptions: ({
         "PL": ({
@@ -211,7 +245,18 @@ ApplicationWindow {
             "muted alerts": "Wyciszone alerty jako stan preview; brak systemowych powiadomień OS.",
             "desktop notification preview": "Przełącznik demonstracyjny powiadomień desktop; nie wysyła powiadomień OS.",
             "stale heartbeat": "Heartbeat telemetryczny uznany za nieświeży w lokalnym preview.",
-            "drawdown warning": "Ostrzeżenie o spadku equity/PnL względem lokalnego limitu preview."
+            "drawdown warning": "Ostrzeżenie o spadku equity/PnL względem lokalnego limitu preview.",
+            "Settings": "Panel ustawień produktu preview; działa local-only i nie zapisuje konfiguracji runtime.",
+            "Onboarding": "Pierwszy przewodnik po wyborze języka, waluty, trybu, giełdy preview i profilu ryzyka.",
+            "Demo Preview": "Tryb demonstracyjny bez live tradingu, zleceń, sekretów i połączeń API.",
+            "Paper Preview": "Tryb lokalnej symulacji paper trading bez prawdziwych zleceń.",
+            "Sandbox planned": "Planowany sandbox/testnet; w tej wersji preview nadal wyłączony dla połączeń giełda/API.",
+            "Live disabled": "Live trading jest wyłączony i nie można go uruchomić z UI Preview.",
+            "Base currency": "Waluta bazowa lokalnego podglądu, np. PLN, USD, EUR lub USDT.",
+            "UI density": "Rozmiar i gęstość elementów UI wyłącznie w lokalnym preview.",
+            "App mode": "Lokalny wybór trybu aplikacji preview; nie uruchamia backendu ani runtime.",
+            "Local preview state": "Stan QML w pamięci UI, bez zapisu realnej konfiguracji.",
+            "Reset local preview state": "Powrót ustawień i sesji preview do bezpiecznych wartości domyślnych."
         }),
         "EN": ({
             "PnL": "Profit or loss from a trade or session.",
@@ -279,7 +324,18 @@ ApplicationWindow {
             "muted alerts": "Muted alerts as preview state only; no OS notifications are sent.",
             "desktop notification preview": "A demo desktop-notification toggle that never sends OS notifications.",
             "stale heartbeat": "Telemetry heartbeat treated as stale by local preview state.",
-            "drawdown warning": "A warning about PnL/equity drawdown against a local preview limit."
+            "drawdown warning": "A warning about PnL/equity drawdown against a local preview limit.",
+            "Settings": "Preview product settings panel; local-only and does not write runtime config.",
+            "Onboarding": "First-run guide for language, base currency, app mode, preview exchange and risk profile.",
+            "Demo Preview": "Demo mode without live trading, orders, secrets or API calls.",
+            "Paper Preview": "Local paper trading simulation without real orders.",
+            "Sandbox planned": "Planned sandbox/testnet; exchange/API connections remain disabled in this preview.",
+            "Live disabled": "Live trading is disabled and cannot be started from UI Preview.",
+            "Base currency": "Local preview base currency such as PLN, USD, EUR or USDT.",
+            "UI density": "UI element density stored only in local preview state.",
+            "App mode": "Local preview app mode selection; does not start backend or runtime.",
+            "Local preview state": "QML UI memory state with no real runtime configuration write.",
+            "Reset local preview state": "Return settings and session preview to safe defaults."
         })
     })
     readonly property var rootDesignSystem: designSystem
@@ -468,6 +524,41 @@ ApplicationWindow {
     property bool orderSubmissionDisabled: true
     property bool apiKeysRequired: false
     property bool runtimeLoopStarted: false
+    // UI-PREVIEW-8.0I settings/onboarding state. Local-only: no runtime config write, no secrets read, no exchange/API calls, no order submission.
+    property bool settingsPanelOpen: currentPanelId === "settingsPanel"
+    property string appModePreview: "Demo Preview"
+    property string baseCurrency: "USDT"
+    property string uiDensity: "Comfortable"
+    property string themeModePreview: "Dark preview"
+    property string defaultPreviewExchange: "Paper Preview Catalog"
+    property string defaultTerminalPair: "BTC/USDT"
+    property string defaultRiskProfile: "Balanced"
+    property bool settingsDirty: false
+    property string settingsLastUpdatedAt: "not applied yet"
+    property string settingsSafetySummary: "Settings are local preview only • No runtime config is written • No secrets are read • No exchange/API calls • No order submission • Live trading remains disabled • Ustawienia działają lokalnie w preview • Konfiguracja runtime nie jest zapisywana • Sekrety nie są odczytywane • Brak połączeń giełda/API • Brak składania zleceń • Live trading pozostaje wyłączony"
+    property bool firstRunWizardVisible: false
+    property int onboardingStep: 1
+    property bool onboardingCompletedPreview: false
+    property var appModePreviewOptions: ["Demo Preview", "Paper Preview", "Sandbox planned", "Live disabled"]
+    property var baseCurrencyOptions: ["PLN", "USD", "EUR", "USDT"]
+    property var uiDensityOptions: ["Compact", "Comfortable", "Large"]
+    property var themeModePreviewOptions: ["Dark preview", "Light planned"]
+    property var defaultPreviewExchangeOptions: ["Paper Preview Catalog", "Binance preview catalog", "Coinbase preview catalog", "Kraken preview catalog"]
+    property var defaultTerminalPairOptions: ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+    property var defaultRiskProfileOptions: ["Conservative", "Balanced", "Aggressive", "AI Recommended"]
+    property var onboardingSteps: [
+        "Wybierz język / Choose language",
+        "Wybierz walutę bazową / Choose base currency",
+        "Wybierz tryb / Choose app mode",
+        "Wybierz giełdę preview / Choose preview exchange",
+        "Wybierz profil ryzyka / Choose risk profile",
+        "Uruchom Paper Preview / przejdź do Dashboard"
+    ]
+    property string globalSafetyBadgeSummary: "Live trading: disabled • Exchange I/O: disabled • Order submission: disabled • API keys: not required • Runtime loop: not started • Safety: safe preview"
+    property string appStatusSummary: "Mode: " + appModePreview + " • Alerts: " + alertUnreadCount + " • Lang: " + currentLanguage + " • Base: " + baseCurrency + " • Risk: " + defaultRiskProfile + " • Simulation: " + simulationStatusLabel
+    property bool settingsRuntimeConfigWritten: false
+    property bool settingsSecretsRead: false
+    property bool topNavigationHorizontalScroll: true
     property bool marketsImported: false
     property string marketSearch: ""
     property string marketQuoteFilter: "All"
@@ -1033,6 +1124,23 @@ ApplicationWindow {
         telemetryRows = paperTelemetryRows.slice(0, 12)
         syncPortfolioPerformanceState()
     }
+    function markSettingsDirty() { settingsDirty = true }
+    function setAppModePreview(mode) { appModePreview = mode; markSettingsDirty(); if (mode === "Paper Preview") paperSessionStatus = paperSessionStatus === "stopped" ? "ready" : paperSessionStatus }
+    function setBaseCurrency(currency) { baseCurrency = currency; markSettingsDirty() }
+    function setUiDensity(density) { uiDensity = density; markSettingsDirty() }
+    function setThemeModePreview(mode) { themeModePreview = mode; markSettingsDirty() }
+    function setDefaultPreviewExchange(exchange) { defaultPreviewExchange = exchange; selectedExchanges = [exchange]; markSettingsDirty() }
+    function setDefaultTerminalPair(pair) { defaultTerminalPair = pair; terminalSelectedPair = pair; if (selectedPairs.indexOf(pair) < 0) selectedPairs = selectedPairs.concat([pair]); markSettingsDirty() }
+    function setDefaultRiskProfile(profile) { defaultRiskProfile = profile; if (profile !== "AI Recommended") applyRiskProfile(profile); else applyAiRecommendedRiskProfile(); markSettingsDirty() }
+    function applyPreviewSettings() { settingsDirty = false; settingsLastUpdatedAt = previewTime(telemetryTick + simulationTickCount + paperSessionTicks + 1); appendPreviewAlert("Info", "Settings", "Preview settings applied", settingsSafetySummary, "Settings", defaultTerminalPair, "Open Settings") }
+    function resetPreviewSettings() { appModePreview = "Demo Preview"; baseCurrency = "USDT"; uiDensity = "Comfortable"; themeModePreview = "Dark preview"; defaultPreviewExchange = "Paper Preview Catalog"; defaultTerminalPair = "BTC/USDT"; defaultRiskProfile = "Balanced"; settingsDirty = true; settingsLastUpdatedAt = "reset local preview settings" }
+    function resetLocalPreviewState() { resetPreviewSettings(); resetPaperPreview(); firstRunWizardVisible = false; onboardingStep = 1; onboardingCompletedPreview = false; appendPreviewAlert("Warning", "Settings", "Local preview state reset", settingsSafetySummary, "Settings", "—", "Open Settings") }
+    function startOnboardingPreview() { firstRunWizardVisible = true; onboardingStep = 1; onboardingCompletedPreview = false; currentPanelId = "settingsPanel" }
+    function nextOnboardingStep() { onboardingStep = Math.min(onboardingStep + 1, onboardingSteps.length) }
+    function previousOnboardingStep() { onboardingStep = Math.max(onboardingStep - 1, 1) }
+    function completeOnboardingPreview() { onboardingCompletedPreview = true; firstRunWizardVisible = false; appModePreview = appModePreview === "Demo Preview" ? "Paper Preview" : appModePreview; applyPreviewSettings(); showPanel("sidePanel") }
+    function skipOnboardingPreview() { onboardingCompletedPreview = true; firstRunWizardVisible = false; settingsLastUpdatedAt = "onboarding skipped local-only" }
+
     function setLanguage(lang) {
         for (var i = 0; i < languageOptions.length; ++i) {
             if (languageOptions[i].code === lang) {
@@ -1737,9 +1845,10 @@ ApplicationWindow {
         ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), titleKey: "nav.risk", icon: "shield", defaultColumn: 0, defaultOrder: 7 }),
         ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), titleKey: "nav.decisions", icon: "mode_wizard", defaultColumn: 0, defaultOrder: 8 }),
         ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), titleKey: "nav.telemetry", icon: "diagnostics", defaultColumn: 0, defaultOrder: 9 }),
-        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), titleKey: "nav.diagnostics", icon: "diagnostics", defaultColumn: 0, defaultOrder: 10 }),
-        ({ panelId: "alertsPanel", title: qsTr("Alerty"), titleKey: "nav.alerts", icon: "diagnostics", defaultColumn: 0, defaultOrder: 11 }),
-        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 12 })
+        ({ panelId: "alertsPanel", title: qsTr("Alerty"), titleKey: "nav.alerts", icon: "diagnostics", defaultColumn: 0, defaultOrder: 10 }),
+        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), titleKey: "nav.diagnostics", icon: "diagnostics", defaultColumn: 0, defaultOrder: 11 }),
+        ({ panelId: "settingsPanel", title: qsTr("Ustawienia"), titleKey: "nav.settings", icon: "diagnostics", defaultColumn: 0, defaultOrder: 12 }),
+        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 13 })
     ]
 
     property var productTabs: panelMetadata
@@ -1757,6 +1866,7 @@ ApplicationWindow {
         "telemetryPanel": { title: qsTr("Telemetria"), icon: "diagnostics", component: telemetryPanelComponent },
         "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
         "alertsPanel": { title: qsTr("Alerty"), icon: "diagnostics", component: alertsPanelComponent },
+        "settingsPanel": { title: qsTr("Ustawienia"), icon: "diagnostics", component: settingsPanelComponent },
         "helpGlossaryPanel": { title: qsTr("Pomoc / Słownik"), icon: "diagnostics", component: helpGlossaryPanelComponent },
         "chartView": { title: qsTr("Strumień decyzji"), icon: "cloud", component: chartViewComponent },
         "strategyWorkbench": { title: qsTr("Warsztat strategii"), icon: "package", component: strategyWorkbenchComponent },
@@ -2064,12 +2174,66 @@ ApplicationWindow {
     }
 
     Rectangle {
+        id: appStatusBar
+        objectName: "globalAppStatusBar"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.leftMargin: 16
+        anchors.rightMargin: 16
+        height: 46
+        radius: 18
+        color: Qt.rgba(0, 0, 0, 0.18)
+        border.color: designSystem.color("border")
+        border.width: 1
+        Flickable {
+            objectName: "globalSafetyBadges"
+            anchors.fill: parent
+            anchors.margins: 8
+            contentWidth: appStatusBadges.implicitWidth
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.HorizontalFlick
+            clip: true
+            Row {
+                id: appStatusBadges
+                spacing: 8
+                Repeater {
+                    model: [
+                        root.trText("app.status"),
+                        "Mode: " + root.appModePreview,
+                        "Live trading: disabled",
+                        "Exchange I/O: disabled",
+                        "Order submission: disabled",
+                        "API keys: not required",
+                        "Runtime loop: not started",
+                        "Safety: safe preview",
+                        "Alerts: " + root.alertUnreadCount,
+                        "Lang: " + root.currentLanguage,
+                        "Base: " + root.baseCurrency,
+                        "Risk: " + root.defaultRiskProfile,
+                        "Simulation: " + root.simulationStatusLabel
+                    ]
+                    delegate: Rectangle {
+                        required property string modelData
+                        height: 28
+                        width: Math.max(98, appStatusBadgeLabel.implicitWidth + 18)
+                        radius: 14
+                        color: modelData.indexOf("disabled") >= 0 || modelData.indexOf("safe preview") >= 0 ? Qt.rgba(0.35, 0.95, 0.70, 0.13) : Qt.rgba(0.33, 0.78, 1.0, 0.12)
+                        border.color: modelData.indexOf("disabled") >= 0 || modelData.indexOf("safe preview") >= 0 ? designSystem.color("accent") : designSystem.color("accent")
+                        Label { id: appStatusBadgeLabel; anchors.centerIn: parent; text: modelData; color: designSystem.color("textPrimary"); font.pixelSize: 11; font.bold: true }
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle {
         id: centralContentRoot
         objectName: "centralContentRoot"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.top: parent.top
+        anchors.top: appStatusBar.bottom
         anchors.margins: 16
         radius: 28
         color: Qt.rgba(0, 0, 0, 0.08)
@@ -2145,6 +2309,149 @@ ApplicationWindow {
         }
     }
 
+
+    Component {
+        id: settingsPanelComponent
+        Components.StyledScrollView {
+            designSystem: rootDesignSystem
+            objectName: "settingsPreviewPanel"
+            contentWidth: availableWidth
+            clip: true
+            ColumnLayout {
+                width: parent.availableWidth
+                spacing: 14
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Rectangle { objectName: "settingsTitleAccentBar"; Layout.preferredWidth: 4; Layout.fillHeight: true; radius: 2; color: designSystem.color("accent") }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Label { objectName: "settingsPreviewTitle"; text: root.trText("settings.title") + " / Settings"; font.bold: true; font.pixelSize: 24; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
+                        Label { text: root.trText("settings.description") + " Settings are local preview only • No runtime config is written • No secrets are read • No exchange/API calls • No order submission • Live trading remains disabled. Ustawienia działają lokalnie w preview • Konfiguracja runtime nie jest zapisywana • Sekrety nie są odczytywane • Brak połączeń giełda/API • Brak składania zleceń • Live trading pozostaje wyłączony."; color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    }
+                }
+                Components.PreviewCard {
+                    objectName: "settingsSafetyBoundaryCard"
+                    designSystem: rootDesignSystem
+                    title: qsTr("Safety boundary / Granice bezpieczeństwa")
+                    description: root.settingsSafetySummary
+                    Flow {
+                        objectName: "settingsGlobalSafetyBadges"
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Repeater {
+                            model: ["Live trading: disabled", "Exchange I/O: disabled", "Order submission: disabled", "API keys: not required", "Runtime loop: not started", "Safety: safe preview"]
+                            delegate: Rectangle { required property string modelData; width: Math.max(150, safetyBadgeText.implicitWidth + 20); height: 30; radius: 15; color: Qt.rgba(0.35, 0.95, 0.70, 0.12); border.color: designSystem.color("accent"); Label { id: safetyBadgeText; anchors.centerIn: parent; text: modelData; color: designSystem.color("textPrimary"); font.bold: true; font.pixelSize: 11 } }
+                        }
+                    }
+                }
+                GridLayout {
+                    objectName: "settingsStateGrid"
+                    Layout.fillWidth: true
+                    columns: width > 980 ? 2 : 1
+                    rowSpacing: 10
+                    columnSpacing: 10
+                    Components.PreviewCard {
+                        designSystem: rootDesignSystem
+                        title: qsTr("Język / Language")
+                        description: qsTr("PL / EN • local-only")
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.languageOptions; delegate: Components.IconButton { required property var modelData; designSystem: rootDesignSystem; text: modelData.display; subtle: root.currentLanguage !== modelData.code; helpText: root.tooltipText("Settings"); onClicked: root.setLanguage(modelData.code) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "baseCurrencySelector"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Waluta bazowa / Base currency")
+                        description: root.baseCurrency + " • Base currency selector • " + root.tooltipText("Base currency selector")
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.baseCurrencyOptions; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.baseCurrency !== modelData; helpText: root.tooltipText("Base currency selector"); onClicked: root.setBaseCurrency(modelData) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "themePreviewSelector"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Motyw / Theme preview")
+                        description: root.themeModePreview + " • Dark preview / Light planned"
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.themeModePreviewOptions; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.themeModePreview !== modelData; helpText: root.tooltipText("Theme preview"); onClicked: root.setThemeModePreview(modelData) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "uiDensitySelector"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Rozmiar UI / UI density")
+                        description: root.uiDensity + " • Compact / Comfortable / Large • UI density selector"
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.uiDensityOptions; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.uiDensity !== modelData; helpText: root.tooltipText("UI density selector"); onClicked: root.setUiDensity(modelData) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "appModePreviewSelector"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Tryb aplikacji / App mode")
+                        description: root.appModePreview + " • App mode selector • Demo Preview / Paper Preview / Sandbox planned / Live disabled"
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.appModePreviewOptions; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.appModePreview !== modelData; helpText: root.tooltipText("App mode selector"); onClicked: root.setAppModePreview(modelData) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "defaultPreviewExchangeSelector"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Domyślna giełda preview")
+                        description: root.defaultPreviewExchange + " • preview catalog only"
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.defaultPreviewExchangeOptions; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.defaultPreviewExchange !== modelData; helpText: root.tooltipText("Local preview state"); onClicked: root.setDefaultPreviewExchange(modelData) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "defaultTerminalPairSelector"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Domyślna para terminala")
+                        description: root.defaultTerminalPair
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.defaultTerminalPairOptions; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.defaultTerminalPair !== modelData; helpText: root.tooltipText("Local preview state"); onClicked: root.setDefaultTerminalPair(modelData) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "defaultRiskProfileSelector"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Domyślny profil ryzyka")
+                        description: root.defaultRiskProfile
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.defaultRiskProfileOptions; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.defaultRiskProfile !== modelData; helpText: root.tooltipText("AI recommended risk"); onClicked: root.setDefaultRiskProfile(modelData) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "simulationSettingsCard"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Simulation speed / Market scenario")
+                        description: qsTr("speed x%1 • scenario %2").arg(root.simulationSpeed).arg(root.simulationScenario)
+                        Flow { Layout.fillWidth: true; spacing: 8; Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Simulation speed x1"); helpText: root.tooltipText("Simulation speed"); onClicked: root.setSimulationSpeed(1) } Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Simulation speed x3"); helpText: root.tooltipText("Simulation speed"); onClicked: root.setSimulationSpeed(3) } Repeater { model: root.simulationScenarios; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.simulationScenario !== modelData; helpText: root.tooltipText("Market scenario"); onClicked: root.setSimulationScenario(modelData) } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "alertPreviewTogglesSettings"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Alert toggles preview")
+                        description: qsTr("mute/sound/desktop preview toggles are UI-only")
+                        Flow { Layout.fillWidth: true; spacing: 8; Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Mute alerts"); helpText: root.tooltipText("Mute alerts"); subtle: !root.alertsMuted; onClicked: root.toggleAlertsMuted() } Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Sound preview"); helpText: root.tooltipText("Sound preview"); subtle: !root.alertSoundPreviewEnabled; onClicked: root.toggleAlertSoundPreview() } Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Desktop notification preview"); helpText: root.tooltipText("Desktop notification preview"); subtle: !root.alertDesktopPreviewEnabled; onClicked: root.toggleAlertDesktopPreview() } }
+                    }
+                }
+                Components.PreviewCard {
+                    objectName: "settingsActionsCard"
+                    designSystem: rootDesignSystem
+                    title: qsTr("Apply / reset local preview settings")
+                    description: qsTr("dirty=%1 • last updated: %2 • settings_no_runtime_config_write • settings_no_secret_reads").arg(root.settingsDirty).arg(root.settingsLastUpdatedAt)
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Apply preview settings"); helpText: root.tooltipText("Apply preview settings"); backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: root.applyPreviewSettings() }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Reset preview settings"); helpText: root.tooltipText("Reset local preview state"); subtle: true; onClicked: root.resetPreviewSettings() }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Reset local preview state"); helpText: root.tooltipText("Reset local preview state"); subtle: true; onClicked: root.resetLocalPreviewState() }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Start onboarding preview"); helpText: root.tooltipText("Start onboarding"); onClicked: root.startOnboardingPreview() }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Export preview config planned"); helpText: root.tooltipText("Settings"); enabled: false }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Import preview config planned"); helpText: root.tooltipText("Settings"); enabled: false }
+                    }
+                }
+                Components.PreviewCard {
+                    objectName: "firstRunOnboardingPreviewWizard"
+                    visible: root.firstRunWizardVisible
+                    designSystem: rootDesignSystem
+                    title: root.trText("onboarding.title") + " — step " + root.onboardingStep + "/" + root.onboardingSteps.length
+                    description: root.onboardingSteps[root.onboardingStep - 1] + " • local-only • No runtime config is written • No secrets are read • No exchange/API calls • No order submission • Live trading remains disabled"
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Label { text: qsTr("Step 1: Wybierz język • Step 2: Wybierz walutę bazową • Step 3: Demo Preview / Paper Preview / Sandbox planned / Live disabled • Step 4: Wybierz giełdę preview • Step 5: Wybierz profil ryzyka • Step 6: Uruchom Paper Preview / przejdź do Dashboard"); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Flow { Layout.fillWidth: true; spacing: 8; Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Previous"); helpText: root.tooltipText("Onboarding"); enabled: root.onboardingStep > 1; onClicked: root.previousOnboardingStep() } Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Next"); helpText: root.tooltipText("Onboarding"); enabled: root.onboardingStep < root.onboardingSteps.length; onClicked: root.nextOnboardingStep() } Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Complete onboarding"); helpText: root.tooltipText("Complete onboarding"); backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: root.completeOnboardingPreview() } Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Skip onboarding preview"); helpText: root.tooltipText("Onboarding"); subtle: true; onClicked: root.skipOnboardingPreview() } }
+                    }
+                }
+            }
+        }
+    }
 
     Component {
         id: helpGlossaryPanelComponent

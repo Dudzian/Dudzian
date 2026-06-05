@@ -62,7 +62,7 @@ Components.StyledScrollView {
 
         Components.PreviewCard {
             designSystem: root.designSystem
-            title: qsTr("Paper / dry-run session cockpit")
+            title: qsTr("Szybkie akcje / Quick actions")
             description: qsTr("Przyciski zmieniają lokalny preview state: session status, ticks, orders, blocked, no-order, simulated, Paper PnL/equity, last governor decision i order blotter. Nie uruchamiają runtime loop ani real orders.")
             Flow {
                 Layout.fillWidth: true
@@ -72,7 +72,13 @@ Components.StyledScrollView {
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Stop"); helpText: previewState.tooltipText("Stop"); subtle: true; onClicked: previewState.stopPaperPreview() }
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Reset"); helpText: previewState.tooltipText("Reset"); subtle: true; onClicked: previewState.resetPaperPreview() }
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate Next Tick"); helpText: previewState.tooltipText("Generate Next Tick"); iconName: "refresh"; onClicked: previewState.generatePaperTick() }
-                Components.IconButton { designSystem: root.designSystem; text: qsTr("Run 10 paper ticks"); helpText: previewState.tooltipText("Run 10 paper ticks"); onClicked: previewState.runTenMockTicks() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Run 10 ticks"); helpText: previewState.tooltipText("Run 10 paper ticks"); onClicked: previewState.runTenMockTicks() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Start Scanner"); helpText: previewState.tooltipText("Start scanner"); onClicked: previewState.startMarketScannerPreview() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("AI Recommended Risk"); helpText: previewState.tooltipText("AI recommended risk"); onClicked: previewState.applyAiRecommendedRiskProfile() }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Open Alerts"); helpText: previewState.tooltipText("Open Alerts"); onClicked: previewState.showPanel("alertsPanel") }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Open Settings"); helpText: previewState.tooltipText("Open Settings"); onClicked: previewState.showPanel("settingsPanel") }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Open Help"); helpText: previewState.tooltipText("Open Help"); onClicked: previewState.showPanel("helpGlossaryPanel") }
+                Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate Diagnostic Bundle"); helpText: previewState.tooltipText("Generate diagnostic bundle"); onClicked: previewState.generateDiagnosticBundle() }
             }
             Flow {
                 Layout.fillWidth: true

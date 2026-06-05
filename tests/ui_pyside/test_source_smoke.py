@@ -42,8 +42,9 @@ PANEL_AUDIT_IDS = (
     "riskControlsPanel",
     "aiDecisionsPanel",
     "telemetryPanel",
-    "diagnosticsPanel",
     "alertsPanel",
+    "diagnosticsPanel",
+    "settingsPanel",
     "helpGlossaryPanel",
 )
 
