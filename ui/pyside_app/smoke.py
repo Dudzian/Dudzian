@@ -101,6 +101,21 @@ class UiSmokeResult:
     market_scanner_no_order_submission: bool = True
     market_scanner_no_secret_reads: bool = True
     simulation_can_use_scanner_candidate_local_only: bool = False
+    decision_explainability_state_present: bool = False
+    decision_explain_drawer_present: bool = False
+    decision_explain_open_close_works: bool = False
+    decision_explain_builds_audit_rows: bool = False
+    decision_explain_has_risk_checks: bool = False
+    decision_explain_has_input_snapshot: bool = False
+    decision_explain_has_alternatives: bool = False
+    decision_explain_has_paper_impact: bool = False
+    decision_explain_safety_boundary_ok: bool = False
+    scanner_candidate_explain_opens_shared_drawer: bool = False
+    paper_order_explain_local_only: bool = False
+    explainability_no_backend_inference: bool = True
+    explainability_no_network_api_calls: bool = True
+    explainability_no_order_submission: bool = True
+    explainability_no_secret_reads: bool = True
     top_navigation_default_order_unique: bool = False
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
@@ -700,6 +715,86 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         _bool_property(root, "orderSubmissionDisabled") is True
     )
     audit["market_scanner_no_secret_reads"] = True
+    decision_state_fields = (
+        "decisionExplainDrawerOpen",
+        "selectedDecisionId",
+        "selectedDecisionPair",
+        "selectedDecisionAction",
+        "selectedDecisionSource",
+        "selectedDecisionConfidence",
+        "selectedDecisionRiskState",
+        "selectedDecisionStrategy",
+        "selectedDecisionReason",
+        "selectedDecisionAuditRows",
+        "selectedDecisionInputSnapshot",
+        "selectedDecisionAlternatives",
+        "selectedDecisionRiskChecks",
+        "selectedDecisionLineageLinks",
+        "selectedDecisionPaperImpact",
+        "selectedDecisionSafetySummary",
+    )
+    audit["decision_explainability_state_present"] = all(
+        root.property(field) is not None for field in decision_state_fields
+    )
+    _invoke_qml(root, "openDecisionExplainDrawer", "__default__")
+    audit["decision_explain_open_close_works"] = (
+        _bool_property(root, "decisionExplainDrawerOpen") is True
+    )
+    audit["decision_explain_builds_audit_rows"] = (
+        _sequence_length(root.property("selectedDecisionAuditRows")) >= 9
+    )
+    audit["decision_explain_has_risk_checks"] = (
+        _sequence_length(root.property("selectedDecisionRiskChecks")) >= 5
+    )
+    audit["decision_explain_has_input_snapshot"] = (
+        _sequence_length(root.property("selectedDecisionInputSnapshot")) >= 5
+    )
+    audit["decision_explain_has_alternatives"] = (
+        _sequence_length(root.property("selectedDecisionAlternatives")) >= 3
+    )
+    audit["decision_explain_has_paper_impact"] = "brak" in _string_property(
+        root, "selectedDecisionPaperImpact"
+    ) or "paper" in _string_property(root, "selectedDecisionPaperImpact")
+    safety_summary = _string_property(root, "selectedDecisionSafetySummary")
+    audit["decision_explain_safety_boundary_ok"] = all(
+        label in safety_summary
+        for label in (
+            "Explanation is local preview only",
+            "No backend AI inference",
+            "No exchange/API call",
+            "No order submission",
+            "No real orders",
+            "No secrets read",
+            "Wyjaśnienie działa lokalnie w preview",
+            "Brak backendowej inferencji AI",
+            "Brak połączenia z giełdą/API",
+            "Brak składania zleceń",
+            "Brak prawdziwych zleceń",
+            "Brak odczytu sekretów",
+        )
+    )
+    _invoke_qml(root, "closeDecisionExplainDrawer")
+    audit["decision_explain_open_close_works"] = (
+        audit["decision_explain_open_close_works"]
+        and _bool_property(root, "decisionExplainDrawerOpen") is False
+    )
+    _invoke_qml(root, "explainScannerCandidateDecision", "BTC/USDT")
+    audit["scanner_candidate_explain_opens_shared_drawer"] = (
+        _bool_property(root, "decisionExplainDrawerOpen") is True
+        and _string_property(root, "selectedDecisionSource") == "Scanner"
+    )
+    _invoke_qml(root, "explainPaperOrderDecision", "__latest__")
+    audit["paper_order_explain_local_only"] = (
+        _string_property(root, "selectedDecisionSource") == "Paper Terminal"
+        and _bool_property(root, "orderSubmissionDisabled") is True
+        and _bool_property(root, "runtimeLoopStarted") is False
+    )
+    audit["explainability_no_backend_inference"] = "No backend AI inference" in safety_summary
+    audit["explainability_no_network_api_calls"] = True
+    audit["explainability_no_order_submission"] = (
+        _bool_property(root, "orderSubmissionDisabled") is True
+    )
+    audit["explainability_no_secret_reads"] = True
     audit["simulation_does_not_read_secrets"] = True
     audit["safety_boundary_ok"] = (
         audit["live_trading_disabled"] is True
@@ -794,6 +889,20 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "market_scanner_no_order_submission",
         "market_scanner_no_secret_reads",
         "simulation_can_use_scanner_candidate_local_only",
+        "decision_explainability_state_present",
+        "decision_explain_open_close_works",
+        "decision_explain_builds_audit_rows",
+        "decision_explain_has_risk_checks",
+        "decision_explain_has_input_snapshot",
+        "decision_explain_has_alternatives",
+        "decision_explain_has_paper_impact",
+        "decision_explain_safety_boundary_ok",
+        "scanner_candidate_explain_opens_shared_drawer",
+        "paper_order_explain_local_only",
+        "explainability_no_backend_inference",
+        "explainability_no_network_api_calls",
+        "explainability_no_order_submission",
+        "explainability_no_secret_reads",
         "safety_boundary_ok",
     )
     audit["passed"] = (
@@ -880,6 +989,9 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         market_scanner_rows_present = False
         market_scanner_filter_sort_threshold_present = False
         market_scanner_safety_boundary_ok = False
+        decision_explainability_state_present = False
+        decision_explain_drawer_present = False
+        decision_explain_safety_boundary_ok = False
         top_navigation_default_order_unique = False
         preview_state_audit: dict[str, object] = {}
         if qml_loaded:
@@ -955,6 +1067,14 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "Candidate",
                 "Rejected setup",
                 "Strategy match",
+                "explainability",
+                "audit trail",
+                "lineage",
+                "input snapshot",
+                "risk check",
+                "decision source",
+                "alternative candidate",
+                "paper impact",
             )
             required_tooltips = (
                 "Start Paper Preview",
@@ -1000,6 +1120,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "Watchlist",
                 "Blacklist",
                 "Explain candidate",
+                "Explain decision",
+                "Audit trail",
+                "Risk checks",
+                "Input snapshot",
+                "Paper impact",
             )
             i18n_language_selector_present = _source_has_all(
                 source, ("currentLanguage", "languageSelector", "setLanguage", "trText", "previewT")
@@ -1027,6 +1152,65 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             )
             market_scanner_tab_present = _source_has_all(
                 source, ("marketScannerPanel", "nav.marketScanner", "Okazje", "Market Scanner")
+            )
+            decision_explainability_state_present = _source_has_all(
+                source,
+                (
+                    "decisionExplainDrawerOpen",
+                    "selectedDecisionId",
+                    "selectedDecisionPair",
+                    "selectedDecisionAction",
+                    "selectedDecisionSource",
+                    "selectedDecisionConfidence",
+                    "selectedDecisionRiskState",
+                    "selectedDecisionStrategy",
+                    "selectedDecisionReason",
+                    "selectedDecisionAuditRows",
+                    "selectedDecisionInputSnapshot",
+                    "selectedDecisionAlternatives",
+                    "selectedDecisionRiskChecks",
+                    "selectedDecisionLineageLinks",
+                    "selectedDecisionPaperImpact",
+                    "selectedDecisionSafetySummary",
+                    "openDecisionExplainDrawer",
+                    "closeDecisionExplainDrawer",
+                    "explainDecisionRow",
+                    "explainScannerCandidateDecision",
+                    "explainPaperOrderDecision",
+                    "buildDecisionAuditRows",
+                    "buildDecisionRiskChecks",
+                    "buildDecisionAlternatives",
+                    "buildDecisionInputSnapshot",
+                ),
+            )
+            decision_explain_drawer_present = _source_has_all(
+                source,
+                (
+                    "decisionExplainabilityDrawer",
+                    "Dlaczego bot tak zdecydował?",
+                    "Audit trail",
+                    "Risk checks",
+                    "Input snapshot",
+                    "Alternatywy",
+                    "Paper impact",
+                ),
+            )
+            decision_explain_safety_boundary_ok = _source_has_all(
+                source,
+                (
+                    "Explanation is local preview only",
+                    "No backend AI inference",
+                    "No exchange/API call",
+                    "No order submission",
+                    "No real orders",
+                    "No secrets read",
+                    "Wyjaśnienie działa lokalnie w preview",
+                    "Brak backendowej inferencji AI",
+                    "Brak połączenia z giełdą/API",
+                    "Brak składania zleceń",
+                    "Brak prawdziwych zleceń",
+                    "Brak odczytu sekretów",
+                ),
             )
             market_scanner_state_present = _source_has_all(
                 source,
@@ -1433,6 +1617,46 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             ),
             simulation_can_use_scanner_candidate_local_only=bool(
                 preview_state_audit.get("simulation_can_use_scanner_candidate_local_only", False)
+            ),
+            decision_explainability_state_present=decision_explainability_state_present,
+            decision_explain_drawer_present=decision_explain_drawer_present,
+            decision_explain_open_close_works=bool(
+                preview_state_audit.get("decision_explain_open_close_works", False)
+            ),
+            decision_explain_builds_audit_rows=bool(
+                preview_state_audit.get("decision_explain_builds_audit_rows", False)
+            ),
+            decision_explain_has_risk_checks=bool(
+                preview_state_audit.get("decision_explain_has_risk_checks", False)
+            ),
+            decision_explain_has_input_snapshot=bool(
+                preview_state_audit.get("decision_explain_has_input_snapshot", False)
+            ),
+            decision_explain_has_alternatives=bool(
+                preview_state_audit.get("decision_explain_has_alternatives", False)
+            ),
+            decision_explain_has_paper_impact=bool(
+                preview_state_audit.get("decision_explain_has_paper_impact", False)
+            ),
+            decision_explain_safety_boundary_ok=decision_explain_safety_boundary_ok
+            and bool(preview_state_audit.get("decision_explain_safety_boundary_ok", True)),
+            scanner_candidate_explain_opens_shared_drawer=bool(
+                preview_state_audit.get("scanner_candidate_explain_opens_shared_drawer", False)
+            ),
+            paper_order_explain_local_only=bool(
+                preview_state_audit.get("paper_order_explain_local_only", False)
+            ),
+            explainability_no_backend_inference=bool(
+                preview_state_audit.get("explainability_no_backend_inference", True)
+            ),
+            explainability_no_network_api_calls=bool(
+                preview_state_audit.get("explainability_no_network_api_calls", True)
+            ),
+            explainability_no_order_submission=bool(
+                preview_state_audit.get("explainability_no_order_submission", True)
+            ),
+            explainability_no_secret_reads=bool(
+                preview_state_audit.get("explainability_no_secret_reads", True)
             ),
             top_navigation_default_order_unique=top_navigation_default_order_unique,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),

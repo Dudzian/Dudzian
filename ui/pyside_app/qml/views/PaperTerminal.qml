@@ -450,6 +450,7 @@ Components.StyledScrollView {
                             Label { text: modelData.c2; color: designSystem.color("textSecondary"); Layout.preferredWidth: 190; elide: Text.ElideRight }
                             Label { text: modelData.c3; color: designSystem.color("textSecondary"); Layout.preferredWidth: 190; elide: Text.ElideRight }
                             Label { text: modelData.c4; color: modelData.c4 && modelData.c4.indexOf("+") >= 0 ? root.buyText : designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Components.IconButton { designSystem: root.designSystem; text: qsTr("Explain"); helpText: previewState.tooltipText("Paper impact"); subtle: true; visible: modelData.sourceRow !== undefined; onClicked: previewState.explainPaperOrderDecision(modelData.sourceRow) }
                         }
                     }
                 }
@@ -482,7 +483,7 @@ Components.StyledScrollView {
         if (previewState.terminalSelectedBottomTab === "Positions")
             return previewState.paperOpenPositions.map(function(row) { return { c1: row.pair, c2: row.side + " • " + row.size, c3: row.entry ? "entry " + row.entry : "local paper position", c4: (row.pnl || "0.00") + " • " + (row.status || row.label || "paper preview") } })
         if (previewState.terminalSelectedBottomTab === "Orders")
-            return previewState.paperOrderRows.map(function(row) { return { c1: (row.time || row.timestamp) + " • " + row.pair, c2: row.side ? row.side + " " + row.type : row.action, c3: row.price ? row.price + " • " + row.amount : "confidence " + row.confidence, c4: row.status + " • " + row.reason } })
+            return previewState.paperOrderRows.map(function(row) { return { c1: (row.time || row.timestamp) + " • " + row.pair, c2: row.side ? row.side + " " + row.type : row.action, c3: row.price ? row.price + " • " + row.amount : "confidence " + row.confidence, c4: row.status + " • " + row.reason, sourceRow: row } })
         if (previewState.terminalSelectedBottomTab === "History")
             return previewState.paperClosedTrades.map(function(row) { return { c1: (row.time || row.timestamp || "paper history") + " • " + row.pair, c2: row.side, c3: row.price ? row.price + " • " + row.amount : "closed local paper trade", c4: row.result || row.pnl || row.label } })
         if (previewState.terminalSelectedBottomTab === "Reserved")
