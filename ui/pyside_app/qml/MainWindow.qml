@@ -31,6 +31,7 @@ ApplicationWindow {
             "nav.dashboard": "Dashboard",
             "nav.aiCenter": "AI Center",
             "nav.universe": "Trading Universe",
+            "nav.marketScanner": "Okazje",
             "nav.portfolio": "Portfel / Wyniki",
             "nav.terminal": "Paper Terminal",
             "nav.strategies": "Strategie",
@@ -57,6 +58,7 @@ ApplicationWindow {
             "nav.dashboard": "Dashboard",
             "nav.aiCenter": "AI Center",
             "nav.universe": "Trading Universe",
+            "nav.marketScanner": "Market Scanner",
             "nav.portfolio": "Portfolio / Results",
             "nav.terminal": "Paper Terminal",
             "nav.strategies": "Strategies",
@@ -113,15 +115,28 @@ ApplicationWindow {
         "Simulation speed": "Szybkość lokalnego timera QML; zmienia tylko interwał preview.",
         "Market scenario": "Lokalny scenariusz rynku dla mock cen: balanced, bull, bear, volatility albo range.",
         "Paper loop": "Timer QML mieli ticki, decyzje, paper ordery, PnL i telemetrię tylko w pamięci UI.",
-        "No real orders": "Żadne kliknięcie w preview nie składa prawdziwego zlecenia ani nie uruchamia runtime produkcyjnego."
+        "No real orders": "Żadne kliknięcie w preview nie składa prawdziwego zlecenia ani nie uruchamia runtime produkcyjnego.",
+        "Start scanner": "Uruchamia lokalny skaner okazji preview; nie łączy się z giełdą.",
+        "Pause scanner": "Wstrzymuje lokalny skaner bez kasowania kandydatów.",
+        "Run scan tick": "Wykonuje jeden deterministyczny scan tick na lokalnym katalogu par.",
+        "Run scan burst": "Wykonuje serię lokalnych ticków skanera bez realnych połączeń API.",
+        "AI score": "Ocena lokalnego kandydata: trend, płynność i zgodność strategii.",
+        "Risk score": "Niższa wartość oznacza bezpieczniejszy setup w preview.",
+        "Liquidity score": "Lokalna ocena czy para ma wystarczający wolumen preview.",
+        "Spread": "Preview różnicy bid/ask; szeroki spread obniża ocenę.",
+        "Volatility": "Lokalna zmienność scenariusza, wpływa na ryzyko.",
+        "Strategy match": "Strategia preview, która najlepiej pasuje do setupu.",
+        "Watchlist": "Lokalna lista obserwowanych par w tym ekranie.",
+        "Blacklist": "Lokalna blokada pary w skanerze preview.",
+        "Explain candidate": "Pokazuje nietechniczne uzasadnienie wyboru lub odrzucenia pary."
     })
     property var glossaryCategories: [
         ({ key: "category.trading", terms: ["PnL", "ROI", "spread", "order book", "fee/prowizja", "equity", "available balance", "in positions"] }),
         ({ key: "category.risk", terms: ["drawdown", "risk guard", "kill-switch", "TP", "SL", "Custom risk", "AI Recommended risk", "confidence floor", "exposure", "daily loss limit", "cooldown", "risk override"] }),
-        ({ key: "category.ai", terms: ["governor", "confidence"] }),
-        ({ key: "category.strategies", terms: ["strategy"] }),
+        ({ key: "category.ai", terms: ["governor", "confidence", "Market Scanner", "AI score", "Candidate", "Rejected setup"] }),
+        ({ key: "category.strategies", terms: ["strategy", "Strategy match", "Trend", "Volatility", "Liquidity", "Risk score"] }),
         ({ key: "category.paper", terms: ["paper trading", "sandbox/testnet", "Live-like paper simulation", "Simulation speed", "Market scenario", "Paper loop", "No real orders"] }),
-        ({ key: "category.exchange", terms: ["API key", "slippage", "blacklist", "whitelist"] }),
+        ({ key: "category.exchange", terms: ["API key", "slippage", "blacklist", "whitelist", "Watchlist", "Blacklist"] }),
         ({ key: "category.diagnostics", terms: ["Runtime loop not started", "Exchange I/O disabled", "Order submission disabled"] })
     ]
     property var glossaryDescriptions: ({
@@ -201,7 +216,18 @@ ApplicationWindow {
             "Simulation speed": "The local QML timer interval controlling preview speed.",
             "Market scenario": "A mock market regime that influences local price movement.",
             "Paper loop": "Safe paper loop inside the UI; the production runtime loop is not started.",
-            "No real orders": "No real orders, execution route, exchange API or secret material."
+            "No real orders": "No real orders, execution route, exchange API or secret material.",
+            "Market Scanner": "Product scanner that ranks local preview pairs without live trading.",
+            "AI score": "Local opportunity score for a candidate pair.",
+            "Risk score": "Local risk estimate; lower is safer in preview.",
+            "Liquidity": "How easy a local preview pair appears to trade without wide friction.",
+            "Volatility": "Local preview price movement range.",
+            "Trend": "Direction and strength of the local preview move.",
+            "Watchlist": "Pairs kept for observation in local preview.",
+            "Blacklist": "Pairs blocked or skipped by local preview.",
+            "Candidate": "A pair good enough to be reviewed by the scanner.",
+            "Rejected setup": "A weak setup ignored by the scanner.",
+            "Strategy match": "The preview strategy that best explains the candidate."
         })
     })
     readonly property var rootDesignSystem: designSystem
@@ -426,6 +452,30 @@ ApplicationWindow {
     property var previewExchanges: [
         "Binance", "Bybit", "OKX", "KuCoin", "Coinbase", "Kraken", "Bitget", "Gate.io", "MEXC", "Paper Preview Catalog"
     ]
+    // UI-PREVIEW-8.0F local-only Market Scanner / Okazje preview state. No live trading, no exchange I/O, no order submission, no API keys, no real orders, no network/API calls.
+    property string scannerStatus: "safe preview"
+    property bool scannerActive: false
+    property string scannerLastScanAt: "not scanned"
+    property int scannerTickCount: 0
+    property string scannerSelectedExchange: "Paper Preview Catalog"
+    property int scannerUniverseCount: 0
+    property int scannerCandidateCount: 0
+    property int scannerRejectedCount: 0
+    property int scannerWatchlistCount: 0
+    property var scannerWatchlistPairs: []
+    property string scannerBestOpportunity: "—"
+    property var scannerRows: []
+    property var scannerRejectedRows: []
+    property var scannerWatchlistRows: []
+    property var scannerAiCandidateRows: []
+    property string scannerFilterMode: "All"
+    property string scannerSortMode: "AI score"
+    property real scannerMinAiScore: 70
+    property real scannerMinLiquidityScore: 60
+    property real scannerMaxRiskScore: 55
+    property string scannerSelectedPair: "BTC/USDT"
+    property string scannerExplanation: "Wybierz parę albo kliknij Explain candidate. Bot pokaże, co przemawia za, co przeciw, czy ryzyko przepuszcza, jaka strategia pasuje i co zrobiłby w paper preview."
+    property string scannerSafetyBoundary: "Safe preview scanner • Live trading disabled • Exchange I/O disabled • Order submission disabled • API keys not required • No real orders • No network/API calls • Local preview catalog only"
     property var decisionPreviewRows: [
         ({ timestamp: "12:04:18Z", symbol: "BTC/USDT", action: "HOLD", confidence: "0.81", reason: "Momentum neutral; confidence floor not reached.", riskReason: "Position cap unused; drawdown guard inside preview limit.", strategy: "Momentum Guard", safety: "NO ORDER — preview only", paperState: "stopped" }),
         ({ timestamp: "12:03:42Z", symbol: "ETH/USDT", action: "WAIT", confidence: "0.74", reason: "Coverage check asks for a fresher candle batch.", riskReason: "Risk governor waits for lower slippage.", strategy: "Range Guard", safety: "Exchange route disabled", paperState: "stopped" }),
@@ -544,6 +594,35 @@ ApplicationWindow {
         }
         return out
     }
+
+    function scannerUniversePairs() {
+        var source = selectedPairs && selectedPairs.length >= 30 ? selectedPairs : previewMarketPairs
+        return source && source.length >= 30 ? source : ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "ADA/USDT", "DOGE/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT", "LTC/USDT", "BCH/USDT", "ATOM/USDT", "NEAR/USDT", "ARB/USDT", "OP/USDT", "INJ/USDT", "APT/USDT", "SUI/USDT", "TON/USDT", "PEPE/USDT", "WIF/USDT", "FET/USDT", "RENDER/USDT", "TAO/USDT", "UNI/USDT", "AAVE/USDT", "ETC/USDT", "FIL/USDT", "ICP/USDT"]
+    }
+    function scannerTrendStrength(trend) { if (trend.indexOf("strong") >= 0) return 90; if (trend.indexOf("bull") >= 0 || trend.indexOf("bear") >= 0) return 72; if (trend.indexOf("range") >= 0) return 48; return 55 }
+    function scannerScenarioAdjustments(index) { var mode = scenarioMode(simulationScenario); if (mode === "bull") return ({ trend: 10, risk: -4, volatility: 2 }); if (mode === "bear") return ({ trend: -3, risk: 12, volatility: 4 }); if (mode === "volatility") return ({ trend: 2, risk: 10, volatility: 12 }); if (mode === "sideways") return ({ trend: -8, risk: 3, volatility: -3 }); return ({ trend: index % 3, risk: 0, volatility: 0 }) }
+    function scannerRecommendation(aiScore, liquidityScore, riskScore, pair) { if (hasValue(blacklistPairs, pair)) return "BLOCKED"; if (riskScore > scannerMaxRiskScore + 18 || liquidityScore < scannerMinLiquidityScore - 15) return "IGNORE"; if (aiScore >= scannerMinAiScore && liquidityScore >= scannerMinLiquidityScore && riskScore <= scannerMaxRiskScore) return "TRADE"; if (aiScore >= scannerMinAiScore - 10 && riskScore <= scannerMaxRiskScore + 10) return "WATCH"; return "IGNORE" }
+    function scannerReason(row) { if (row.recommendation === "BLOCKED") return "Para jest na lokalnej blacklist; bot blokuje setup w preview."; if (row.recommendation === "TRADE") return "Wysoki AI score, płynność OK i ryzyko mieści się w progu."; if (row.recommendation === "WATCH") return "Setup obiecujący, ale bot czeka na lepszy trend lub niższy spread."; return "Słaby setup: wynik, płynność albo ryzyko nie spełnia lokalnych progów." }
+    function buildScannerRow(pair, index) { var adj = scannerScenarioAdjustments(index); var quote = pairQuote(pair); var exchange = selectedExchanges && selectedExchanges.length > 0 ? selectedExchanges[0] : scannerSelectedExchange; var basePrice = pair.indexOf("BTC") >= 0 ? 68240 : (pair.indexOf("ETH") >= 0 ? 3560 : (pair.indexOf("SOL") >= 0 ? 154 : 12 + index * 3.7)); var tickShift = (scannerTickCount % 9) * (index % 2 === 0 ? 0.17 : -0.11); var price = Number((basePrice * (1 + tickShift / 100)).toFixed(basePrice > 1000 ? 2 : 4)); var volumeNumber = 850000 + ((index * 137000 + scannerTickCount * 41000) % 9200000); var spreadNumber = Number((0.03 + ((index + scannerTickCount) % 11) * 0.018).toFixed(3)); var liquidityScore = Math.max(20, Math.min(99, 58 + (index * 7) % 35 - Math.round(spreadNumber * 35))); var volatility = Math.max(8, Math.min(99, 24 + (index * 5) % 42 + adj.volatility)); var trendOptions = ["strong bull", "bull", "range", "bear", "sideways", "reversal"]; var trend = trendOptions[(index + scannerTickCount + (adj.trend > 5 ? 0 : 2)) % trendOptions.length]; var trendScore = Math.max(15, Math.min(99, scannerTrendStrength(trend) + adj.trend)); var aiScore = Math.max(30, Math.min(99, Math.round((liquidityScore * 0.38) + (trendScore * 0.44) + (isAiCandidate(pair) ? 9 : 0) + (index % 9)))); var riskScore = Math.max(12, Math.min(96, Math.round(31 + volatility * 0.48 + spreadNumber * 70 - liquidityScore * 0.18 + adj.risk))); var strategy = trend.indexOf("bull") >= 0 ? "Momentum Guard" : (trend.indexOf("range") >= 0 || trend.indexOf("sideways") >= 0 ? "Range Guard" : "Volatility Breakout Preview"); var recommendation = scannerRecommendation(aiScore, liquidityScore, riskScore, pair); var row = ({ pair: pair, exchange: exchange, price: price.toFixed(basePrice > 1000 ? 2 : 4) + " " + quote, volume: (volumeNumber / 1000000).toFixed(2) + "M", volumeValue: volumeNumber, spread: spreadNumber.toFixed(3) + "%", spreadValue: spreadNumber, liquidityScore: liquidityScore, volatility: volatility, trend: trend, trendStrength: trendScore, aiScore: aiScore, riskScore: riskScore, strategyMatch: strategy, recommendation: recommendation, reason: "", safetyState: "safe preview scanner • no real orders" }); row.reason = scannerReason(row); return row }
+    function refreshScannerBuckets() { var candidates = [], rejected = [], watched = [], best = null; for (var i = 0; i < scannerRows.length; ++i) { var row = scannerRows[i]; if (row.recommendation === "TRADE" || row.aiScore >= scannerMinAiScore) candidates.push(row); if (row.recommendation === "IGNORE" || row.recommendation === "BLOCKED") rejected.push(row); if (hasValue(scannerWatchlistPairs, row.pair)) watched.push(row); if (row.recommendation !== "BLOCKED" && (!best || row.aiScore - row.riskScore > best.aiScore - best.riskScore)) best = row } scannerAiCandidateRows = candidates; scannerRejectedRows = rejected; scannerWatchlistRows = watched; scannerUniverseCount = scannerRows.length; scannerCandidateCount = candidates.length; scannerRejectedCount = rejected.length; scannerWatchlistCount = scannerWatchlistPairs.length; scannerBestOpportunity = best ? best.pair + " • AI " + best.aiScore + " • " + best.recommendation : "—" }
+    function rebuildMarketScannerRows() { var pairs = scannerUniversePairs(); var rows = []; for (var i = 0; i < pairs.length; ++i) rows.push(buildScannerRow(pairs[i], i)); scannerRows = rows; refreshScannerBuckets(); if (!scannerSelectedPair && rows.length > 0) scannerSelectedPair = rows[0].pair; explainScannerCandidate(scannerSelectedPair) }
+    function scannerRowByPair(pair) { for (var i = 0; i < scannerRows.length; ++i) if (scannerRows[i].pair === pair) return scannerRows[i]; return scannerRows.length > 0 ? scannerRows[0] : null }
+    function sortScannerRows(rows) { var copy = rows.slice(); copy.sort(function(a, b) { if (scannerSortMode === "Risk score") return a.riskScore - b.riskScore; if (scannerSortMode === "Liquidity") return b.liquidityScore - a.liquidityScore; if (scannerSortMode === "Volume") return b.volumeValue - a.volumeValue; if (scannerSortMode === "Spread") return a.spreadValue - b.spreadValue; if (scannerSortMode === "Trend strength") return b.trendStrength - a.trendStrength; return b.aiScore - a.aiScore }); return copy }
+    function visibleScannerRows() { var rows = []; for (var i = 0; i < scannerRows.length; ++i) { var row = scannerRows[i]; if (scannerFilterMode === "AI candidates" && row.aiScore < scannerMinAiScore) continue; if (scannerFilterMode === "Trade candidates" && row.recommendation !== "TRADE") continue; if (scannerFilterMode === "Watchlist" && !hasValue(scannerWatchlistPairs, row.pair)) continue; if (scannerFilterMode === "Rejected" && row.recommendation !== "IGNORE") continue; if (scannerFilterMode === "Blocked" && row.recommendation !== "BLOCKED") continue; if (scannerFilterMode === "High liquidity" && row.liquidityScore < 80) continue; if (scannerFilterMode === "Low risk" && row.riskScore > 35) continue; if (scannerFilterMode === "Top score" && row.aiScore < 85) continue; rows.push(row) } return sortScannerRows(rows) }
+    function startMarketScannerPreview() { scannerActive = true; scannerStatus = "scanning"; if (scannerRows.length === 0) rebuildMarketScannerRows(); runMarketScannerTick() }
+    function pauseMarketScannerPreview() { scannerActive = false; scannerStatus = "paused" }
+    function stopMarketScannerPreview() { scannerActive = false; scannerStatus = "stopped" }
+    function resetMarketScannerPreview() { scannerActive = false; scannerStatus = "safe preview"; scannerTickCount = 0; scannerLastScanAt = "not scanned"; scannerFilterMode = "All"; scannerSortMode = "AI score"; scannerMinAiScore = 70; scannerMinLiquidityScore = 60; scannerMaxRiskScore = 55; rebuildMarketScannerRows() }
+    function runMarketScannerTick() { scannerTickCount += 1; scannerLastScanAt = previewTime(scannerTickCount); if (scannerStatus === "stopped") scannerStatus = "safe preview"; rebuildMarketScannerRows(); var rows = visibleScannerRows(); var bestRow = rows.length > 0 ? rows[0] : scannerRowByPair(scannerSelectedPair); if (bestRow) { selectedTerminalPair = bestRow.pair; appendPaperDecision("SCANNER", "Market Scanner local candidate " + bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, bestRow.pair, "scanner preview / no order"); appendPaperTelemetry("scanner tick " + scannerTickCount + " • candidates " + scannerCandidateCount + " • rejected " + scannerRejectedCount + " • no network/API calls") } }
+    function runMarketScannerBurst(count) { var ticks = Math.max(0, Number(count) || 0); for (var i = 0; i < ticks; ++i) runMarketScannerTick() }
+    function selectScannerPair(pair) { scannerSelectedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; selectedTerminalPair = scannerSelectedPair; explainScannerCandidate(scannerSelectedPair) }
+    function addScannerPairToWatchlist(pair) { if (pair && !hasValue(scannerWatchlistPairs, pair)) scannerWatchlistPairs = scannerWatchlistPairs.concat([pair]); refreshScannerBuckets() }
+    function removeScannerPairFromWatchlist(pair) { var copy = scannerWatchlistPairs ? scannerWatchlistPairs.slice() : []; var idx = copy.indexOf(pair); if (idx >= 0) copy.splice(idx, 1); scannerWatchlistPairs = copy; refreshScannerBuckets() }
+    function blacklistScannerPair(pair) { if (pair && !hasValue(blacklistPairs, pair)) blacklistPairs = blacklistPairs.concat([pair]); rebuildMarketScannerRows() }
+    function setScannerFilterMode(mode) { scannerFilterMode = mode && mode.length > 0 ? mode : "All" }
+    function setScannerSortMode(mode) { scannerSortMode = mode && mode.length > 0 ? mode : "AI score" }
+    function setScannerThreshold(name, value) { var numberValue = Math.max(0, Math.min(100, Number(value) || 0)); if (name === "minAiScore") scannerMinAiScore = numberValue; else if (name === "minLiquidityScore") scannerMinLiquidityScore = numberValue; else if (name === "maxRiskScore") scannerMaxRiskScore = numberValue; rebuildMarketScannerRows() }
+    function explainScannerCandidate(pair) { var row = scannerRowByPair(pair); if (!row) { scannerExplanation = "Brak lokalnych wierszy skanera; uruchom scan tick preview."; return } scannerSelectedPair = row.pair; var riskPass = row.riskScore <= scannerMaxRiskScore ? "Ryzyko przepuszcza setup w lokalnym progu." : "Ryzyko nie przepuszcza setupu: score jest powyżej progu."; var paperAction = row.recommendation === "TRADE" ? "w paper preview bot pokazałby PAPER BUY/SELL jako symulację, bez realnego zlecenia" : (row.recommendation === "WATCH" ? "bot dodałby parę do obserwacji i czekał na kolejny tick" : "bot nie składałby żadnego zlecenia i zostawiłby parę poza akcją"); scannerExplanation = "Para " + row.pair + ": co przemawia za — AI score " + row.aiScore + ", płynność " + row.liquidityScore + ", trend " + row.trend + ". Co przemawia przeciw — risk score " + row.riskScore + ", zmienność " + row.volatility + ", spread " + row.spread + ". " + riskPass + " Pasująca strategia: " + row.strategyMatch + ". Rekomendacja: " + row.recommendation + ". Powód: " + row.reason + " W paper preview " + paperAction + ". Live trading disabled, order submission disabled." }
 
     function currentTerminalPair() { return selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT" }
     function setTerminalPair(pair) { selectedTerminalPair = pair && pair.length > 0 ? pair : currentTerminalPair() }
@@ -1174,6 +1253,8 @@ ApplicationWindow {
         appendSimulationEvent("tick " + simulationTickCount + " scanned " + pair + " action " + action + " price " + nextPrice.toFixed(2))
         terminalSelectedBottomTab = order ? "Orders" : "Log"
         recountOrderCounters()
+        if (simulationTickCount % 3 === 0)
+            runMarketScannerTick()
         simulationStatusLabel = "running • speed x" + simulationSpeed + " • " + simulationScenario + " • local paper loop only"
     }
     function startLiveLikePaperSimulation() {
@@ -1283,14 +1364,15 @@ ApplicationWindow {
         ({ panelId: "sidePanel", title: qsTr("Dashboard"), titleKey: "nav.dashboard", icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
         ({ panelId: "aiCenterPanel", title: qsTr("AI Center"), titleKey: "nav.aiCenter", icon: "mode_wizard", defaultColumn: 0, defaultOrder: 1 }),
         ({ panelId: "tradingUniversePanel", title: qsTr("Trading Universe"), titleKey: "nav.universe", icon: "cloud", defaultColumn: 0, defaultOrder: 2 }),
-        ({ panelId: "portfolioPerformancePanel", title: qsTr("Portfel / Wyniki"), titleKey: "nav.portfolio", icon: "package", defaultColumn: 0, defaultOrder: 3 }),
-        ({ panelId: "terminalPanel", title: qsTr("Paper Terminal"), titleKey: "nav.terminal", icon: "package", defaultColumn: 0, defaultOrder: 4 }),
-        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), titleKey: "nav.strategies", icon: "strategy_manager", defaultColumn: 0, defaultOrder: 5 }),
-        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), titleKey: "nav.risk", icon: "shield", defaultColumn: 0, defaultOrder: 6 }),
-        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), titleKey: "nav.decisions", icon: "mode_wizard", defaultColumn: 0, defaultOrder: 7 }),
-        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), titleKey: "nav.telemetry", icon: "diagnostics", defaultColumn: 0, defaultOrder: 8 }),
-        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), titleKey: "nav.diagnostics", icon: "diagnostics", defaultColumn: 0, defaultOrder: 9 }),
-        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 10 })
+        ({ panelId: "marketScannerPanel", title: qsTr("Okazje"), titleKey: "nav.marketScanner", icon: "cloud", defaultColumn: 0, defaultOrder: 3 }),
+        ({ panelId: "portfolioPerformancePanel", title: qsTr("Portfel / Wyniki"), titleKey: "nav.portfolio", icon: "package", defaultColumn: 0, defaultOrder: 4 }),
+        ({ panelId: "terminalPanel", title: qsTr("Paper Terminal"), titleKey: "nav.terminal", icon: "package", defaultColumn: 0, defaultOrder: 5 }),
+        ({ panelId: "strategiesPanel", title: qsTr("Strategie"), titleKey: "nav.strategies", icon: "strategy_manager", defaultColumn: 0, defaultOrder: 6 }),
+        ({ panelId: "riskControlsPanel", title: qsTr("Ryzyko"), titleKey: "nav.risk", icon: "shield", defaultColumn: 0, defaultOrder: 7 }),
+        ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), titleKey: "nav.decisions", icon: "mode_wizard", defaultColumn: 0, defaultOrder: 8 }),
+        ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), titleKey: "nav.telemetry", icon: "diagnostics", defaultColumn: 0, defaultOrder: 9 }),
+        ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), titleKey: "nav.diagnostics", icon: "diagnostics", defaultColumn: 0, defaultOrder: 10 }),
+        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 11 })
     ]
 
     property var productTabs: panelMetadata
@@ -1299,6 +1381,7 @@ ApplicationWindow {
         "sidePanel": { title: qsTr("Dashboard"), icon: "fingerprint", component: sidePanelComponent },
         "aiCenterPanel": { title: qsTr("AI Center"), icon: "mode_wizard", component: aiCenterPanelComponent },
         "tradingUniversePanel": { title: qsTr("Trading Universe"), icon: "cloud", component: tradingUniversePanelComponent },
+        "marketScannerPanel": { title: qsTr("Okazje"), icon: "cloud", component: marketScannerPanelComponent },
         "portfolioPerformancePanel": { title: qsTr("Portfel / Wyniki"), icon: "package", component: portfolioPerformancePanelComponent },
         "terminalPanel": { title: qsTr("Paper Terminal"), icon: "package", component: terminalPanelComponent },
         "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
@@ -1567,6 +1650,16 @@ ApplicationWindow {
     Component {
         id: tradingUniversePanelComponent
         Views.TradingUniverse {
+            previewState: root
+            width: parent ? parent.width : implicitWidth
+            height: parent ? parent.height : implicitHeight
+            designSystem: rootDesignSystem
+        }
+    }
+
+    Component {
+        id: marketScannerPanelComponent
+        Views.MarketScanner {
             previewState: root
             width: parent ? parent.width : implicitWidth
             height: parent ? parent.height : implicitHeight

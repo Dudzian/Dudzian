@@ -94,7 +94,7 @@ Components.StyledScrollView {
             columns: width > 1000 ? 3 : 1
             rowSpacing: 10
             columnSpacing: 10
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Market scanner"); description: qsTr("AI scans eligible preview pairs only; exchange route disabled.") }
+            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Market scanner"); description: qsTr("AI scans eligible preview pairs only; exchange route disabled. AI candidates: %1").arg(previewState.scannerCandidateCount) }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Strategy governor"); description: qsTr("Routes signals to enabled preview strategies.") }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Risk governor"); description: qsTr("Applies risk profile and kill-switch before any paper action.") }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Execution guard"); description: qsTr("Live route locked; order submission disabled.") }
