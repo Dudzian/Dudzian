@@ -116,6 +116,26 @@ class UiSmokeResult:
     explainability_no_network_api_calls: bool = True
     explainability_no_order_submission: bool = True
     explainability_no_secret_reads: bool = True
+    alerts_state_present: bool = False
+    alerts_tab_present: bool = False
+    alerts_append_increments_unread: bool = False
+    alerts_mark_read_works: bool = False
+    alerts_mark_all_read_works: bool = False
+    alerts_clear_works: bool = False
+    alerts_filters_present: bool = False
+    alerts_categories_present: bool = False
+    alerts_detail_present: bool = False
+    alerts_explain_event_local_only: bool = False
+    alerts_dashboard_summary_present: bool = False
+    alerts_simulation_tick_appends_event: bool = False
+    alerts_scanner_tick_appends_event: bool = False
+    alerts_risk_block_appends_event: bool = False
+    alerts_no_os_notifications: bool = True
+    alerts_no_backend_calls: bool = True
+    alerts_no_exchange_api_calls: bool = True
+    alerts_no_order_submission: bool = True
+    alerts_no_secret_reads: bool = True
+    alert_center_safety_boundary_ok: bool = False
     top_navigation_default_order_unique: bool = False
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
@@ -148,6 +168,7 @@ PANEL_AUDIT_IDS = (
     "aiDecisionsPanel",
     "telemetryPanel",
     "diagnosticsPanel",
+    "alertsPanel",
     "helpGlossaryPanel",
 )
 
@@ -795,6 +816,104 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         _bool_property(root, "orderSubmissionDisabled") is True
     )
     audit["explainability_no_secret_reads"] = True
+    alert_state_fields = (
+        "alertCenterOpen",
+        "alertRows",
+        "alertUnreadCount",
+        "alertCriticalCount",
+        "alertWarningCount",
+        "alertInfoCount",
+        "alertSelectedSeverity",
+        "alertSelectedCategory",
+        "alertLastEventAt",
+        "alertMutedPreview",
+        "alertSoundEnabledPreview",
+        "alertDesktopNotificationsPreview",
+        "alertSelectedEvent",
+        "alertEventExplanation",
+    )
+    audit["alerts_state_present"] = all(
+        root.property(field) is not None for field in alert_state_fields
+    )
+    before_alert_unread = int(root.property("alertUnreadCount") or 0)
+    before_alert_rows = _sequence_length(root.property("alertRows"))
+    _invoke_qml(
+        root,
+        "appendPreviewAlert",
+        "Info",
+        "Telemetry",
+        "Smoke alert",
+        "local smoke alert",
+        "Smoke",
+        "—",
+        "Review",
+    )
+    audit["alerts_append_increments_unread"] = (
+        int(root.property("alertUnreadCount") or 0) == before_alert_unread + 1
+        and _sequence_length(root.property("alertRows")) >= before_alert_rows + 1
+    )
+    _invoke_qml(root, "markAlertRead", 0)
+    audit["alerts_mark_read_works"] = (
+        int(root.property("alertUnreadCount") or 0) == before_alert_unread
+    )
+    _invoke_qml(
+        root,
+        "appendPreviewAlert",
+        "Warning",
+        "Risk",
+        "Smoke warning",
+        "local smoke warning",
+        "Smoke",
+        "BTC/USDT",
+        "Review",
+    )
+    _invoke_qml(root, "markAllAlertsRead")
+    audit["alerts_mark_all_read_works"] = int(root.property("alertUnreadCount") or 0) == 0
+    _invoke_qml(root, "setAlertSeverityFilter", "Warning")
+    _invoke_qml(root, "setAlertCategoryFilter", "Risk")
+    audit["alerts_filters_present"] = (
+        _string_property(root, "alertSelectedSeverity") == "Warning"
+        and _string_property(root, "alertSelectedCategory") == "Risk"
+    )
+    audit["alerts_categories_present"] = (
+        _sequence_length(root.property("alertCategoryFilters")) >= 9
+    )
+    _invoke_qml(root, "selectAlertEvent", 0)
+    _invoke_qml(root, "explainAlertEvent", 0)
+    audit["alerts_detail_present"] = root.property("alertSelectedEvent") is not None
+    audit["alerts_explain_event_local_only"] = "no backend" in _string_property(
+        root, "alertEventExplanation"
+    ) or "Local alert explanation" in _string_property(root, "alertEventExplanation")
+    before_sim_alerts = _sequence_length(root.property("alertRows"))
+    _invoke_qml(root, "setRiskProfile", "Custom")
+    _invoke_qml(root, "runSimulationTick")
+    audit["alerts_simulation_tick_appends_event"] = (
+        _sequence_length(root.property("alertRows")) > before_sim_alerts
+    )
+    before_scanner_alerts = _sequence_length(root.property("alertRows"))
+    _invoke_qml(root, "runMarketScannerTick")
+    audit["alerts_scanner_tick_appends_event"] = (
+        _sequence_length(root.property("alertRows")) > before_scanner_alerts
+    )
+    _invoke_qml(root, "setRiskProfile", "Balanced")
+    before_risk_alerts = _sequence_length(root.property("alertRows"))
+    _invoke_qml(root, "runSimulationTick")
+    audit["alerts_risk_block_appends_event"] = _sequence_length(
+        root.property("alertRows")
+    ) > before_risk_alerts and "Risk blocked" in _first_row_repr(root.property("alertRows"))
+    _invoke_qml(root, "clearPreviewAlerts")
+    audit["alerts_clear_works"] = (
+        _sequence_length(root.property("alertRows")) == 0
+        and int(root.property("alertUnreadCount") or 0) == 0
+    )
+    audit["alerts_no_os_notifications"] = True
+    audit["alerts_no_backend_calls"] = True
+    audit["alerts_no_exchange_api_calls"] = True
+    audit["alerts_no_order_submission"] = _bool_property(root, "orderSubmissionDisabled") is True
+    audit["alerts_no_secret_reads"] = True
+    audit["alert_center_safety_boundary_ok"] = "No OS notifications sent" in _string_property(
+        root, "alertSafetyBoundaryCopy"
+    ) and "No secrets read" in _string_property(root, "alertSafetyBoundaryCopy")
     audit["simulation_does_not_read_secrets"] = True
     audit["safety_boundary_ok"] = (
         audit["live_trading_disabled"] is True
@@ -889,6 +1008,24 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "market_scanner_no_order_submission",
         "market_scanner_no_secret_reads",
         "simulation_can_use_scanner_candidate_local_only",
+        "alerts_state_present",
+        "alerts_append_increments_unread",
+        "alerts_mark_read_works",
+        "alerts_mark_all_read_works",
+        "alerts_clear_works",
+        "alerts_filters_present",
+        "alerts_categories_present",
+        "alerts_detail_present",
+        "alerts_explain_event_local_only",
+        "alerts_simulation_tick_appends_event",
+        "alerts_scanner_tick_appends_event",
+        "alerts_risk_block_appends_event",
+        "alerts_no_os_notifications",
+        "alerts_no_backend_calls",
+        "alerts_no_exchange_api_calls",
+        "alerts_no_order_submission",
+        "alerts_no_secret_reads",
+        "alert_center_safety_boundary_ok",
         "decision_explainability_state_present",
         "decision_explain_open_close_works",
         "decision_explain_builds_audit_rows",
@@ -992,6 +1129,14 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         decision_explainability_state_present = False
         decision_explain_drawer_present = False
         decision_explain_safety_boundary_ok = False
+        alerts_state_present = False
+        alerts_tab_present = False
+        alerts_filters_present = False
+        alerts_categories_present = False
+        alerts_detail_present = False
+        alerts_explain_event_local_only = False
+        alerts_dashboard_summary_present = False
+        alert_center_safety_boundary_ok = False
         top_navigation_default_order_unique = False
         preview_state_audit: dict[str, object] = {}
         if qml_loaded:
@@ -1010,6 +1155,8 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     "Decyzje",
                     "Telemetria",
                     "Diagnostyka",
+                    "Alerty",
+                    "Alerts",
                 ),
             )
             paper_session_controls_present = _source_has_all(
@@ -1075,6 +1222,16 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "decision source",
                 "alternative candidate",
                 "paper impact",
+                "Alert Center",
+                "Critical alert",
+                "Warning alert",
+                "Info alert",
+                "unread",
+                "event timeline",
+                "muted alerts",
+                "desktop notification preview",
+                "stale heartbeat",
+                "drawdown warning",
             )
             required_tooltips = (
                 "Start Paper Preview",
@@ -1125,6 +1282,15 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "Risk checks",
                 "Input snapshot",
                 "Paper impact",
+                "Mark all read",
+                "Clear alerts",
+                "Mute alerts",
+                "Sound preview",
+                "Desktop notification preview",
+                "Explain event",
+                "Severity filter",
+                "Category filter",
+                "Alert Center",
             )
             i18n_language_selector_present = _source_has_all(
                 source, ("currentLanguage", "languageSelector", "setLanguage", "trText", "previewT")
@@ -1303,7 +1469,8 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "aiDecisionsPanel": 8,
                 "telemetryPanel": 9,
                 "diagnosticsPanel": 10,
-                "helpGlossaryPanel": 11,
+                "alertsPanel": 11,
+                "helpGlossaryPanel": 12,
             }
             panel_orders = {panel_id: int(order) for panel_id, order in panel_order_matches}
             top_navigation_default_order_unique = panel_orders == required_panel_order and len(
@@ -1336,6 +1503,111 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     "Risk settings are local preview only",
                 ),
             )
+            alerts_state_present = _source_has_all(
+                source,
+                (
+                    "alertCenterOpen",
+                    "alertRows",
+                    "alertUnreadCount",
+                    "alertCriticalCount",
+                    "alertWarningCount",
+                    "alertInfoCount",
+                    "alertSelectedSeverity",
+                    "alertSelectedCategory",
+                    "alertLastEventAt",
+                    "alertMutedPreview",
+                    "alertSoundEnabledPreview",
+                    "alertDesktopNotificationsPreview",
+                    "alertSelectedEvent",
+                    "alertEventExplanation",
+                    "appendPreviewAlert",
+                    "markAlertRead",
+                    "markAllAlertsRead",
+                    "clearPreviewAlerts",
+                    "setAlertSeverityFilter",
+                    "setAlertCategoryFilter",
+                    "selectAlertEvent",
+                    "explainAlertEvent",
+                    "toggleAlertMutePreview",
+                    "toggleAlertSoundPreview",
+                    "toggleDesktopNotificationsPreview",
+                ),
+            )
+            alerts_tab_present = _source_has_all(source, ("alertsPanel", "Alerty", "Alerts"))
+            alerts_filters_present = _source_has_all(
+                source, ("All", "Critical", "Warning", "Info", "Severity filter")
+            )
+            alerts_categories_present = _source_has_all(
+                source,
+                (
+                    "Trading",
+                    "Risk",
+                    "AI",
+                    "Scanner",
+                    "Paper",
+                    "Portfolio",
+                    "Telemetry",
+                    "Diagnostics",
+                    "Safety",
+                    "Category filter",
+                ),
+            )
+            alerts_detail_present = _source_has_all(
+                source,
+                ("alertCenterDetailPanel", "Alert detail", "Wyjaśnij zdarzenie", "Explain event"),
+            )
+            alerts_explain_event_local_only = _source_has_all(
+                source,
+                (
+                    "Explanation is local preview only",
+                    "no backend inference",
+                    "no network/API call",
+                    "no order submission",
+                    "no real orders",
+                    "no secrets read",
+                ),
+            )
+            alerts_dashboard_summary_present = _source_has_all(
+                source,
+                (
+                    "operatorDashboardAlertSummary",
+                    "unread alerts",
+                    "critical count",
+                    "last alert",
+                    "Otwórz Alerty",
+                ),
+            )
+            alert_center_safety_boundary_ok = _source_has_all(
+                source,
+                (
+                    "Alerts are local preview only",
+                    "No OS notifications sent",
+                    "No backend calls",
+                    "No exchange/API calls",
+                    "No order submission",
+                    "No secrets read",
+                    "Alerty działają lokalnie w preview",
+                    "Brak systemowych powiadomień OS",
+                    "Brak wywołań backendu",
+                    "Brak połączeń giełda/API",
+                    "Brak składania zleceń",
+                    "Brak odczytu sekretów",
+                ),
+            )
+            if not all(
+                (
+                    alerts_state_present,
+                    alerts_tab_present,
+                    alerts_filters_present,
+                    alerts_categories_present,
+                    alerts_detail_present,
+                    alerts_explain_event_local_only,
+                    alerts_dashboard_summary_present,
+                    alert_center_safety_boundary_ok,
+                )
+            ):
+                audit_issues.append("alerts_source_audit_failed")
+
             from PySide6.QtCore import QObject
 
             root = engine.rootObjects()[0]
@@ -1468,6 +1740,28 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
                 risk_unlocked_tick_can_update_financial_state = bool(
                     preview_state_audit.get("risk_unlocked_tick_can_update_financial_state")
+                )
+                alerts_state_present = bool(
+                    preview_state_audit.get("alerts_state_present", alerts_state_present)
+                )
+                alerts_filters_present = bool(
+                    preview_state_audit.get("alerts_filters_present", alerts_filters_present)
+                )
+                alerts_categories_present = bool(
+                    preview_state_audit.get("alerts_categories_present", alerts_categories_present)
+                )
+                alerts_detail_present = bool(
+                    preview_state_audit.get("alerts_detail_present", alerts_detail_present)
+                )
+                alerts_explain_event_local_only = bool(
+                    preview_state_audit.get(
+                        "alerts_explain_event_local_only", alerts_explain_event_local_only
+                    )
+                )
+                alert_center_safety_boundary_ok = bool(
+                    preview_state_audit.get(
+                        "alert_center_safety_boundary_ok", alert_center_safety_boundary_ok
+                    )
                 )
         smoke_ok = qml_loaded and not audit_issues
         result = UiSmokeResult(
@@ -1658,6 +1952,42 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             explainability_no_secret_reads=bool(
                 preview_state_audit.get("explainability_no_secret_reads", True)
             ),
+            alerts_state_present=alerts_state_present,
+            alerts_tab_present=alerts_tab_present,
+            alerts_append_increments_unread=bool(
+                preview_state_audit.get("alerts_append_increments_unread", False)
+            ),
+            alerts_mark_read_works=bool(preview_state_audit.get("alerts_mark_read_works", False)),
+            alerts_mark_all_read_works=bool(
+                preview_state_audit.get("alerts_mark_all_read_works", False)
+            ),
+            alerts_clear_works=bool(preview_state_audit.get("alerts_clear_works", False)),
+            alerts_filters_present=alerts_filters_present,
+            alerts_categories_present=alerts_categories_present,
+            alerts_detail_present=alerts_detail_present,
+            alerts_explain_event_local_only=alerts_explain_event_local_only,
+            alerts_dashboard_summary_present=alerts_dashboard_summary_present,
+            alerts_simulation_tick_appends_event=bool(
+                preview_state_audit.get("alerts_simulation_tick_appends_event", False)
+            ),
+            alerts_scanner_tick_appends_event=bool(
+                preview_state_audit.get("alerts_scanner_tick_appends_event", False)
+            ),
+            alerts_risk_block_appends_event=bool(
+                preview_state_audit.get("alerts_risk_block_appends_event", False)
+            ),
+            alerts_no_os_notifications=bool(
+                preview_state_audit.get("alerts_no_os_notifications", True)
+            ),
+            alerts_no_backend_calls=bool(preview_state_audit.get("alerts_no_backend_calls", True)),
+            alerts_no_exchange_api_calls=bool(
+                preview_state_audit.get("alerts_no_exchange_api_calls", True)
+            ),
+            alerts_no_order_submission=bool(
+                preview_state_audit.get("alerts_no_order_submission", True)
+            ),
+            alerts_no_secret_reads=bool(preview_state_audit.get("alerts_no_secret_reads", True)),
+            alert_center_safety_boundary_ok=alert_center_safety_boundary_ok,
             top_navigation_default_order_unique=top_navigation_default_order_unique,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,

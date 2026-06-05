@@ -213,7 +213,8 @@ def test_market_scanner_top_navigation_default_order_is_unique() -> None:
         "aiDecisionsPanel": 8,
         "telemetryPanel": 9,
         "diagnosticsPanel": 10,
-        "helpGlossaryPanel": 11,
+        "alertsPanel": 11,
+        "helpGlossaryPanel": 12,
     }
     matches = re.findall(r'panelId: "([^"]+)",[^\n]+defaultOrder: (\d+)', main_window)
     panel_orders = {panel_id: int(order) for panel_id, order in matches}
