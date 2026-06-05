@@ -128,12 +128,17 @@ ApplicationWindow {
         "Strategy match": "Strategia preview, która najlepiej pasuje do setupu.",
         "Watchlist": "Lokalna lista obserwowanych par w tym ekranie.",
         "Blacklist": "Lokalna blokada pary w skanerze preview.",
-        "Explain candidate": "Pokazuje nietechniczne uzasadnienie wyboru lub odrzucenia pary."
+        "Explain candidate": "Pokazuje nietechniczne uzasadnienie wyboru lub odrzucenia pary.",
+        "Explain decision": "Otwiera lokalny panel wyjaśnienia decyzji AI/Governora; bez backendowej inferencji i bez zleceń.",
+        "Audit trail": "Czytelna oś kroków: snapshot danych, score, risk guard, paper decision i granice bezpieczeństwa.",
+        "Risk checks": "Lista lokalnych kontroli ryzyka: profil, kill-switch, risk lock, limity i trasa zlecenia.",
+        "Input snapshot": "Lokalny podgląd danych wejściowych użytych przez preview do deterministycznego wyjaśnienia.",
+        "Paper impact": "Opisuje, czy preview zmieniłoby PnL, equity lub pozycję; nigdy nie składa realnego zlecenia."
     })
     property var glossaryCategories: [
         ({ key: "category.trading", terms: ["PnL", "ROI", "spread", "order book", "fee/prowizja", "equity", "available balance", "in positions"] }),
         ({ key: "category.risk", terms: ["drawdown", "risk guard", "kill-switch", "TP", "SL", "Custom risk", "AI Recommended risk", "confidence floor", "exposure", "daily loss limit", "cooldown", "risk override"] }),
-        ({ key: "category.ai", terms: ["governor", "confidence", "Market Scanner", "AI score", "Candidate", "Rejected setup"] }),
+        ({ key: "category.ai", terms: ["governor", "confidence", "Market Scanner", "AI score", "Candidate", "Rejected setup", "explainability", "audit trail", "lineage", "input snapshot", "risk check", "decision source", "alternative candidate", "paper impact"] }),
         ({ key: "category.strategies", terms: ["strategy", "Strategy match", "Trend", "Volatility", "Liquidity", "Risk score"] }),
         ({ key: "category.paper", terms: ["paper trading", "sandbox/testnet", "Live-like paper simulation", "Simulation speed", "Market scenario", "Paper loop", "No real orders"] }),
         ({ key: "category.exchange", terms: ["API key", "slippage", "blacklist", "whitelist", "Watchlist", "Blacklist"] }),
@@ -177,7 +182,15 @@ ApplicationWindow {
             "Simulation speed": "Interwał lokalnego timera QML sterujący szybkością preview.",
             "Market scenario": "Wybrany mock reżim rynku, który wpływa na lokalne zmiany ceny.",
             "Paper loop": "Bezpieczna pętla paper w UI; produkcyjny runtime loop nie startuje.",
-            "No real orders": "Brak prawdziwych zleceń, tras egzekucji, API giełdy i sekretów."
+            "No real orders": "Brak prawdziwych zleceń, tras egzekucji, API giełdy i sekretów.",
+            "explainability": "Warstwa prostego wyjaśnienia, dlaczego lokalny bot preview wybrał, odrzucił lub zablokował decyzję.",
+            "audit trail": "Lista kroków audytu pokazująca snapshot danych, wynik AI, risk guard, paper action i granice bezpieczeństwa.",
+            "lineage": "Powiązania decyzji z lokalnym źródłem: skanerem, governorem, ryzykiem, symulacją albo Paper Terminalem.",
+            "input snapshot": "Zapis lokalnych wartości wejściowych użytych do wyjaśnienia decyzji w preview.",
+            "risk check": "Pojedyncza kontrola ryzyka, np. profil, kill-switch, risk lock, spread albo limit pewności.",
+            "decision source": "Miejsce, z którego pochodzi decyzja: Scanner, Governor, Risk, Paper Terminal albo Simulation.",
+            "alternative candidate": "Inna para z lokalnego rankingu, która była rozważana, ale nie wygrała.",
+            "paper impact": "Wpływ wyłącznie na Paper Preview: możliwy log, paper fill lub brak zmiany PnL/equity."
         }),
         "EN": ({
             "PnL": "Profit or loss from a trade or session.",
@@ -217,6 +230,14 @@ ApplicationWindow {
             "Market scenario": "A mock market regime that influences local price movement.",
             "Paper loop": "Safe paper loop inside the UI; the production runtime loop is not started.",
             "No real orders": "No real orders, execution route, exchange API or secret material.",
+            "explainability": "A plain-language layer explaining why the local preview bot chose, rejected or blocked a decision.",
+            "audit trail": "A step list showing the data snapshot, AI score, risk guard, paper action and safety boundary.",
+            "lineage": "Links from a decision to its local source: scanner, governor, risk, simulation or Paper Terminal.",
+            "input snapshot": "Local input values used to build the deterministic preview explanation.",
+            "risk check": "One risk control, such as profile, kill-switch, risk lock, spread or confidence limit.",
+            "decision source": "Where the decision came from: Scanner, Governor, Risk, Paper Terminal or Simulation.",
+            "alternative candidate": "Another local-ranked pair that was considered but did not win.",
+            "paper impact": "Impact inside Paper Preview only: possible log, paper fill, or no PnL/equity change.",
             "Market Scanner": "Product scanner that ranks local preview pairs without live trading.",
             "AI score": "Local opportunity score for a candidate pair.",
             "Risk score": "Local risk estimate; lower is safer in preview.",
@@ -482,6 +503,23 @@ ApplicationWindow {
         ({ timestamp: "12:02:57Z", symbol: "SOL/USDT", action: "BLOCKED LIVE", confidence: "0.69", reason: "Live bridge is intentionally unavailable in preview.", riskReason: "Execution guard blocks the order route.", strategy: "Volatility Breakout Preview", safety: "Live trading disabled • Order submission disabled", paperState: "stopped" }),
         ({ timestamp: "12:01:33Z", symbol: "BNB/USDT", action: "NO ORDER", confidence: "0.61", reason: "Advisory preview rejected low confidence setup.", riskReason: "Below confidence threshold.", strategy: "Strategy governor", safety: "Preview only / no order", paperState: "stopped" })
     ]
+    // UI-PREVIEW-8.0G QML-only decision explainability/audit drawer state. Local deterministic preview only: no backend AI inference, no network/API calls, no order submission, no secret reads.
+    property bool decisionExplainDrawerOpen: false
+    property string selectedDecisionId: ""
+    property string selectedDecisionPair: "BTC/USDT"
+    property string selectedDecisionAction: "HOLD"
+    property string selectedDecisionSource: "Governor"
+    property string selectedDecisionConfidence: "0.81"
+    property string selectedDecisionRiskState: "Risk profile Balanced • kill-switch inactive • risk lock inactive"
+    property string selectedDecisionStrategy: "Momentum Guard"
+    property string selectedDecisionReason: "Bot nie kupił, bo score AI był za niski, a profil ryzyka wymaga wyższej pewności. Zmieniono tylko lokalny log preview; PnL i equity pozostają bez zmian."
+    property var selectedDecisionAuditRows: []
+    property var selectedDecisionInputSnapshot: []
+    property var selectedDecisionAlternatives: []
+    property var selectedDecisionRiskChecks: []
+    property var selectedDecisionLineageLinks: []
+    property string selectedDecisionPaperImpact: "brak fill / brak zmiany finansowej"
+    property string selectedDecisionSafetySummary: "Explanation is local preview only • No backend AI inference • No exchange/API call • No order submission • No real orders • No secrets read • Wyjaśnienie działa lokalnie w preview • Brak backendowej inferencji AI • Brak połączenia z giełdą/API • Brak składania zleceń • Brak prawdziwych zleceń • Brak odczytu sekretów"
     property string telemetryHeartbeat: "12:04:18Z"
     property int telemetryReconnects: 0
     property string telemetryDowntime: "0 ms"
@@ -565,6 +603,12 @@ ApplicationWindow {
         return copy
     }
 
+    function safeColor(token, fallback) {
+        if (designSystem && typeof designSystem.color === "function")
+            return designSystem.color(token)
+        return fallback
+    }
+
     function pairQuote(pair) { return pair.split("/")[1] || "" }
     function pairBase(pair) { return pair.split("/")[0] || pair }
     function pairCategory(pair) {
@@ -623,6 +667,126 @@ ApplicationWindow {
     function setScannerSortMode(mode) { scannerSortMode = mode && mode.length > 0 ? mode : "AI score" }
     function setScannerThreshold(name, value) { var numberValue = Math.max(0, Math.min(100, Number(value) || 0)); if (name === "minAiScore") scannerMinAiScore = numberValue; else if (name === "minLiquidityScore") scannerMinLiquidityScore = numberValue; else if (name === "maxRiskScore") scannerMaxRiskScore = numberValue; rebuildMarketScannerRows() }
     function explainScannerCandidate(pair) { var row = scannerRowByPair(pair); if (!row) { scannerExplanation = "Brak lokalnych wierszy skanera; uruchom scan tick preview."; return } scannerSelectedPair = row.pair; var riskPass = row.riskScore <= scannerMaxRiskScore ? "Ryzyko przepuszcza setup w lokalnym progu." : "Ryzyko nie przepuszcza setupu: score jest powyżej progu."; var paperAction = row.recommendation === "TRADE" ? "w paper preview bot pokazałby PAPER BUY/SELL jako symulację, bez realnego zlecenia" : (row.recommendation === "WATCH" ? "bot dodałby parę do obserwacji i czekał na kolejny tick" : "bot nie składałby żadnego zlecenia i zostawiłby parę poza akcją"); scannerExplanation = "Para " + row.pair + ": co przemawia za — AI score " + row.aiScore + ", płynność " + row.liquidityScore + ", trend " + row.trend + ". Co przemawia przeciw — risk score " + row.riskScore + ", zmienność " + row.volatility + ", spread " + row.spread + ". " + riskPass + " Pasująca strategia: " + row.strategyMatch + ". Rekomendacja: " + row.recommendation + ". Powód: " + row.reason + " W paper preview " + paperAction + ". Live trading disabled, order submission disabled." }
+
+    function decisionValue(row, key, fallback) { if (!row) return fallback; var value = row[key]; return value === undefined || value === null || String(value).length === 0 ? fallback : value }
+    function normalizedDecisionRow(row) {
+        if (!row || typeof row !== "object") return decisionPreviewRows.length > 0 ? decisionPreviewRows[0] : ({})
+        return row
+    }
+    function buildDecisionInputSnapshot(row) {
+        row = normalizedDecisionRow(row)
+        return [
+            ({ label: "Market data snapshot", value: "local preview • " + decisionValue(row, "symbol", decisionValue(row, "pair", scannerSelectedPair)) }),
+            ({ label: "AI score", value: decisionValue(row, "aiScore", Math.round(Number(decisionValue(row, "confidence", "0.70")) * 100)) }),
+            ({ label: "Risk score", value: decisionValue(row, "riskScore", riskState + " • " + riskProfile) }),
+            ({ label: "Liquidity score", value: decisionValue(row, "liquidityScore", "n/a for governor row") }),
+            ({ label: "Spread", value: decisionValue(row, "spread", "preview spread check only") }),
+            ({ label: "Strategy match", value: decisionValue(row, "strategyMatch", decisionValue(row, "strategy", "Strategy governor")) })
+        ]
+    }
+    function buildDecisionRiskChecks(row) {
+        row = normalizedDecisionRow(row)
+        var riskScoreValue = Number(decisionValue(row, "riskScore", 0))
+        var action = decisionValue(row, "action", decisionValue(row, "recommendation", "HOLD"))
+        return [
+            ({ label: "Risk profile applied", status: riskProfile, detail: "Profil ryzyka obowiązuje tylko w lokalnym preview." }),
+            ({ label: "Kill-switch", status: riskLocked ? "ACTIVE / blokada" : "inactive", detail: riskLocked ? "Bot blokuje akcję i nie zmienia PnL/equity." : "Brak blokady awaryjnej w tym ticku." }),
+            ({ label: "Risk lock", status: riskState, detail: decisionValue(row, "riskReason", "Risk guard checked local thresholds.") }),
+            ({ label: "Confidence floor", status: decisionValue(row, "confidence", "local score"), detail: "Decyzja musi przekroczyć próg pewności profilu." }),
+            ({ label: "Order route check", status: "disabled", detail: "Trasa zlecenia jest zablokowana; brak realnego zlecenia." }),
+            ({ label: "Live mode check", status: liveTradingDisabled ? "disabled" : "blocked by preview", detail: "Live mode nie jest dostępny w UI Preview." }),
+            ({ label: "Risk score threshold", status: riskScoreValue > scannerMaxRiskScore ? "watch/block" : "pass", detail: action.indexOf("BLOCK") >= 0 ? "Risk guard zablokował akcję." : "Ryzyko ocenione deterministycznie lokalnie." })
+        ]
+    }
+    function buildDecisionAuditRows(row) {
+        row = normalizedDecisionRow(row)
+        var action = decisionValue(row, "action", decisionValue(row, "recommendation", "HOLD"))
+        return [
+            ({ step: "Market data snapshot: local preview", result: "Zebrano lokalny snapshot wejść dla " + decisionValue(row, "symbol", decisionValue(row, "pair", "—")) }),
+            ({ step: "AI score computed: local deterministic preview", result: "Score policzony lokalnie, bez backendowej inferencji AI." }),
+            ({ step: "Risk profile applied", result: riskProfile + " • " + riskState }),
+            ({ step: "Risk guard result", result: decisionValue(row, "riskReason", "Risk checks evaluated locally.") }),
+            ({ step: "Order route check", result: "disabled • brak składania zleceń" }),
+            ({ step: "Live mode check", result: "disabled • safe preview only" }),
+            ({ step: "Paper action decision", result: action + " • " + selectedDecisionPaperImpact }),
+            ({ step: "Financial impact", result: selectedDecisionPaperImpact }),
+            ({ step: "Safety boundary", result: selectedDecisionSafetySummary })
+        ]
+    }
+    function buildDecisionAlternatives(row) {
+        row = normalizedDecisionRow(row)
+        var selectedPair = decisionValue(row, "symbol", decisionValue(row, "pair", scannerSelectedPair))
+        var sourceRows = scannerRows && scannerRows.length > 0 ? sortScannerRows(scannerRows).slice(0, 8) : decisionPreviewRows
+        var alternatives = []
+        for (var i = 0; i < sourceRows.length && alternatives.length < 3; ++i) {
+            var alt = sourceRows[i]
+            var altPair = decisionValue(alt, "pair", decisionValue(alt, "symbol", "—"))
+            if (altPair === selectedPair) continue
+            alternatives.push(({ pair: altPair, score: decisionValue(alt, "aiScore", decisionValue(alt, "confidence", "—")), reason: "Nie wygrała: " + decisionValue(alt, "reason", "niższy score, większe ryzyko albo słabsza płynność w lokalnym preview.") }))
+        }
+        return alternatives
+    }
+    function explainDecisionRow(row) {
+        row = normalizedDecisionRow(row)
+        var action = decisionValue(row, "action", decisionValue(row, "recommendation", "HOLD"))
+        var confidence = decisionValue(row, "confidence", decisionValue(row, "aiScore", "0.70"))
+        var aiScore = decisionValue(row, "aiScore", Math.round(Number(confidence) * 100))
+        var riskScore = decisionValue(row, "riskScore", "local risk guard")
+        var source = decisionValue(row, "source", row.pair ? "Scanner" : (action.indexOf("PAPER") >= 0 ? "Paper Terminal" : (action.indexOf("BLOCK") >= 0 ? "Risk" : "Governor")))
+        if (action.indexOf("BLOCK") >= 0 || riskLocked)
+            return "Bot zablokował akcję, bo kill-switch lub risk lock jest aktywny albo trasa live jest niedostępna. Zmieniono tylko logi i telemetrykę, bez zmiany PnL/equity. Score AI: " + aiScore + ", risk score: " + riskScore + ". Profil ryzyka " + riskProfile + " wymaga bezpieczniejszego setupu."
+        if (action.indexOf("TRADE") >= 0 || action.indexOf("PAPER") >= 0)
+            return "Bot wskazał paper action, bo lokalny score AI jest wystarczający, płynność wygląda poprawnie, a risk guard mieści się w profilu " + riskProfile + ". To nadal tylko Paper Preview: brak połączenia z giełdą i brak realnych zleceń. Źródło decyzji: " + source + "."
+        if (action.indexOf("WATCH") >= 0 || action === "SCANNER")
+            return "Bot dodał parę do obserwacji, bo trend jest dobry, ale ryzyko, zmienność albo spread wymagają kolejnego lokalnego ticka. Paper Preview nie zmienia PnL/equity i nie wysyła zleceń."
+        return "Bot nie kupił, bo score AI był za niski, spread lub ryzyko były zbyt wysokie, a profil ryzyka wymaga wyższej pewności. Decyzja jest lokalnym preview; brak fill i brak zmiany finansowej."
+    }
+    function openDecisionExplainDrawer(row) {
+        row = normalizedDecisionRow(row)
+        selectedDecisionId = decisionValue(row, "timestamp", previewTime(decisionSequence)) + " • " + decisionValue(row, "symbol", decisionValue(row, "pair", scannerSelectedPair))
+        selectedDecisionPair = decisionValue(row, "symbol", decisionValue(row, "pair", scannerSelectedPair))
+        selectedDecisionAction = decisionValue(row, "action", decisionValue(row, "recommendation", "HOLD"))
+        selectedDecisionSource = decisionValue(row, "source", row.pair ? "Scanner" : (selectedDecisionAction.indexOf("PAPER") >= 0 ? "Paper Terminal" : (selectedDecisionAction.indexOf("BLOCK") >= 0 ? "Risk" : "Governor")))
+        selectedDecisionConfidence = decisionValue(row, "confidence", decisionValue(row, "aiScore", "0.70"))
+        selectedDecisionRiskState = riskProfile + " • " + riskState + " • kill-switch " + (riskLocked ? "active" : "inactive")
+        selectedDecisionStrategy = decisionValue(row, "strategy", decisionValue(row, "strategyMatch", "Strategy governor"))
+        selectedDecisionPaperImpact = selectedDecisionAction.indexOf("PAPER") >= 0 || selectedDecisionAction === "TRADE" ? "paper preview event/log only • możliwa lokalna pozycja paper, brak realnego fill" : "brak fill / brak zmiany finansowej"
+        selectedDecisionReason = explainDecisionRow(row)
+        selectedDecisionInputSnapshot = buildDecisionInputSnapshot(row)
+        selectedDecisionRiskChecks = buildDecisionRiskChecks(row)
+        selectedDecisionAlternatives = buildDecisionAlternatives(row)
+        selectedDecisionLineageLinks = [
+            ({ label: "decision source", value: selectedDecisionSource }),
+            ({ label: "paper terminal", value: selectedDecisionAction.indexOf("PAPER") >= 0 ? "linked local paper row" : "no paper fill" }),
+            ({ label: "telemetry", value: telemetryHeartbeat + " • local audit event" })
+        ]
+        selectedDecisionAuditRows = buildDecisionAuditRows(row)
+        decisionExplainDrawerOpen = true
+        if (decisionExplainDrawer) decisionExplainDrawer.open()
+        appendPaperTelemetry("decision explainability audit opened for " + selectedDecisionPair + " • local preview only • no backend AI inference")
+    }
+    function closeDecisionExplainDrawer() {
+        decisionExplainDrawerOpen = false
+        if (decisionExplainDrawer) decisionExplainDrawer.close()
+    }
+    function explainScannerCandidateDecision(pair) {
+        var row = scannerRowByPair(pair)
+        if (!row) {
+            rebuildMarketScannerRows()
+            row = scannerRowByPair(pair)
+        }
+        if (row) {
+            explainScannerCandidate(row.pair)
+            openDecisionExplainDrawer(row)
+        }
+    }
+    function explainPaperOrderDecision(order) {
+        var row = (!order || typeof order !== "object") ? (paperOrderRows.length > 0 ? paperOrderRows[0] : null) : order
+        if (!row) row = ({ pair: selectedTerminalPair, action: "NO ORDER", confidence: "0.00", reason: "No paper order row selected.", source: "Paper Terminal" })
+        row.source = "Paper Terminal"
+        openDecisionExplainDrawer(row)
+    }
+
 
     function currentTerminalPair() { return selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT" }
     function setTerminalPair(pair) { selectedTerminalPair = pair && pair.length > 0 ? pair : currentTerminalPair() }
@@ -1399,6 +1563,106 @@ ApplicationWindow {
     StylesModule.DesignSystem {
         id: designSystem
         themeBridge: theme
+    }
+
+    Drawer {
+        id: decisionExplainDrawer
+        objectName: "decisionExplainabilityDrawer"
+        width: Math.min(root.width * 0.42, 560)
+        height: root.height
+        edge: Qt.RightEdge
+        modal: false
+        interactive: true
+        onOpened: root.decisionExplainDrawerOpen = true
+        onClosed: root.decisionExplainDrawerOpen = false
+        background: Rectangle {
+            color: root.safeColor("surface", "#10141f")
+            border.color: root.safeColor("border", "#3C3F44")
+        }
+
+        Components.StyledScrollView {
+            anchors.fill: parent
+            anchors.margins: 16
+            contentWidth: availableWidth
+            ColumnLayout {
+                width: parent.availableWidth
+                spacing: 12
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: qsTr("Dlaczego bot tak zdecydował?"); color: root.safeColor("textPrimary", "#ffffff"); font.pixelSize: 24; font.bold: true; Layout.fillWidth: true }
+                    Components.IconButton { designSystem: root.designSystem; text: qsTr("Close"); subtle: true; onClicked: root.closeDecisionExplainDrawer() }
+                }
+                Label { text: qsTr("Explanation is local preview only • Wyjaśnienie działa lokalnie w preview"); color: root.safeColor("accent", "#5BC8FF"); font.bold: true; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Rectangle {
+                    Layout.fillWidth: true
+                    radius: 14
+                    color: root.safeColor("surfaceMuted", "#242936")
+                    border.color: root.safeColor("border", "#3C3F44")
+                    implicitHeight: summaryColumn.implicitHeight + 24
+                    ColumnLayout {
+                        id: summaryColumn
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 8
+                        Label { text: root.selectedDecisionPair + " • " + root.selectedDecisionAction; color: root.safeColor("textPrimary", "#ffffff"); font.bold: true; font.pixelSize: 18; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: qsTr("source: %1 • confidence: %2").arg(root.selectedDecisionSource).arg(root.selectedDecisionConfidence); color: root.safeColor("textSecondary", "#c5cad3"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: qsTr("AI score: %1 • risk score: %2 • liquidity score: %3").arg(root.selectedDecisionInputSnapshot.length > 1 ? root.selectedDecisionInputSnapshot[1].value : "local").arg(root.selectedDecisionInputSnapshot.length > 2 ? root.selectedDecisionInputSnapshot[2].value : "local").arg(root.selectedDecisionInputSnapshot.length > 3 ? root.selectedDecisionInputSnapshot[3].value : "n/a"); color: root.safeColor("textSecondary", "#c5cad3"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: qsTr("strategy match: %1").arg(root.selectedDecisionStrategy); color: root.safeColor("textSecondary", "#c5cad3"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: qsTr("risk profile / kill-switch / risk lock: %1").arg(root.selectedDecisionRiskState); color: root.safeColor("textSecondary", "#c5cad3"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: qsTr("expected paper action: %1").arg(root.selectedDecisionAction.indexOf("PAPER") >= 0 || root.selectedDecisionAction === "TRADE" ? "local paper preview event only" : "no order / observe / wait"); color: root.safeColor("textPrimary", "#ffffff"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: qsTr("paper impact: %1").arg(root.selectedDecisionPaperImpact); color: root.safeColor("textPrimary", "#ffffff"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    }
+                }
+                Components.PreviewCard {
+                    objectName: "decisionExplainHumanExplanation"
+                    designSystem: root.designSystem
+                    title: qsTr("Human explanation")
+                    description: root.selectedDecisionReason
+                }
+                Components.PreviewCard {
+                    objectName: "decisionExplainSafetyBoundary"
+                    designSystem: root.designSystem
+                    title: qsTr("Safety / Granice bezpieczeństwa")
+                    description: qsTr("live disabled, order submission disabled, no real orders • %1").arg(root.selectedDecisionSafetySummary)
+                    Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: ["No backend AI inference", "No exchange/API call", "No order submission", "No real orders", "No secrets read", "Brak backendowej inferencji AI", "Brak połączenia z giełdą/API", "Brak składania zleceń", "Brak prawdziwych zleceń", "Brak odczytu sekretów"]; delegate: Rectangle { required property string modelData; radius: 10; height: 30; width: Math.max(145, safetyChip.implicitWidth + 18); color: Qt.rgba(0.33, 0.78, 1, 0.12); border.color: root.safeColor("border", "#3C3F44"); Label { id: safetyChip; anchors.centerIn: parent; text: modelData; color: root.safeColor("textPrimary", "#ffffff"); font.pixelSize: 11 } } } }
+                }
+                Components.PreviewCard {
+                    objectName: "decisionExplainAuditTrail"
+                    designSystem: root.designSystem
+                    title: qsTr("Audit trail")
+                    description: qsTr("Market data snapshot: local preview • AI score computed: local deterministic preview • Risk profile applied • Risk guard result • Order route check • Live mode check • Paper action decision • Financial impact • Safety boundary")
+                    ColumnLayout { Layout.fillWidth: true; spacing: 6; Repeater { model: root.selectedDecisionAuditRows; delegate: Label { required property var modelData; text: "• " + modelData.step + " — " + modelData.result; color: root.safeColor("textSecondary", "#c5cad3"); wrapMode: Text.WordWrap; Layout.fillWidth: true } } }
+                }
+                Components.PreviewCard {
+                    objectName: "decisionExplainRiskChecks"
+                    designSystem: root.designSystem
+                    title: qsTr("Risk checks")
+                    description: qsTr("Risk profile, kill-switch, risk lock, confidence floor and order route checks are local-only.")
+                    ColumnLayout { Layout.fillWidth: true; spacing: 6; Repeater { model: root.selectedDecisionRiskChecks; delegate: Label { required property var modelData; text: "• " + modelData.label + ": " + modelData.status + " — " + modelData.detail; color: root.safeColor("textSecondary", "#c5cad3"); wrapMode: Text.WordWrap; Layout.fillWidth: true } } }
+                }
+                Components.PreviewCard {
+                    objectName: "decisionExplainInputSnapshot"
+                    designSystem: root.designSystem
+                    title: qsTr("Input snapshot")
+                    description: qsTr("Local preview inputs used for this explanation; no backend inference and no API calls.")
+                    ColumnLayout { Layout.fillWidth: true; spacing: 6; Repeater { model: root.selectedDecisionInputSnapshot; delegate: Label { required property var modelData; text: "• " + modelData.label + ": " + modelData.value; color: root.safeColor("textSecondary", "#c5cad3"); wrapMode: Text.WordWrap; Layout.fillWidth: true } } }
+                }
+                Components.PreviewCard {
+                    objectName: "decisionExplainAlternatives"
+                    designSystem: root.designSystem
+                    title: qsTr("Alternatywy")
+                    description: qsTr("Top 3 alternatywne pary z local scanner/decision preview i dlaczego nie wygrały.")
+                    ColumnLayout { Layout.fillWidth: true; spacing: 6; Repeater { model: root.selectedDecisionAlternatives; delegate: Label { required property var modelData; text: "• " + modelData.pair + " — score " + modelData.score + " — " + modelData.reason; color: root.safeColor("textSecondary", "#c5cad3"); wrapMode: Text.WordWrap; Layout.fillWidth: true } } }
+                }
+                Components.PreviewCard {
+                    objectName: "decisionExplainLineageLinks"
+                    designSystem: root.designSystem
+                    title: qsTr("Lineage links")
+                    description: qsTr("Decision source, paper event link and telemetry link remain local-only.")
+                    ColumnLayout { Layout.fillWidth: true; spacing: 6; Repeater { model: root.selectedDecisionLineageLinks; delegate: Label { required property var modelData; text: "• " + modelData.label + ": " + modelData.value; color: root.safeColor("textSecondary", "#c5cad3"); wrapMode: Text.WordWrap; Layout.fillWidth: true } } }
+                }
+            }
+        }
     }
 
     Dialog {
