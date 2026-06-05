@@ -55,6 +55,15 @@ class UiSmokeResult:
     simulation_tick_updates_decision: bool = False
     simulation_tick_appends_telemetry: bool = False
     simulation_tick_updates_paper_state: bool = False
+    paper_tick_updates_operational_state: bool = False
+    paper_tick_can_update_financial_state_when_unblocked: bool = False
+    risk_blocked_tick_does_not_mutate_paper_pnl: bool = False
+    risk_blocked_tick_does_not_mutate_paper_equity: bool = False
+    risk_blocked_tick_increments_blocked_count: bool = False
+    risk_blocked_tick_appends_decision: bool = False
+    risk_blocked_tick_appends_telemetry: bool = False
+    risk_blocked_tick_creates_no_filled_order: bool = False
+    risk_unlocked_tick_can_update_financial_state: bool = False
     simulation_burst_runs_multiple_ticks: bool = False
     simulation_market_scenario_updates: bool = False
     simulation_does_not_enable_live: bool = True
@@ -62,6 +71,15 @@ class UiSmokeResult:
     simulation_does_not_enable_order_submission: bool = True
     simulation_does_not_require_api_keys: bool = True
     simulation_does_not_read_secrets: bool = True
+    risk_custom_profile_present: bool = False
+    risk_ai_recommended_present: bool = False
+    risk_ai_recommended_updates_values: bool = False
+    risk_custom_does_not_write_runtime_config: bool = True
+    risk_ai_recommended_explanation_present: bool = False
+    risk_active_limits_present: bool = False
+    risk_tooltips_present: bool = False
+    risk_safety_boundary_ok: bool = True
+    simulation_respects_risk_preview_state: bool = False
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
@@ -423,10 +441,9 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         and _string_property(root, "simulationMarketMode") == "bull"
     )
 
-    before_paper_tick_pnl = float(root.property("paperPnl") or 0)
-    before_paper_tick_equity = float(root.property("paperEquity") or 0)
     before_decision_tick = _sequence_length(root.property("decisionPreviewRows"))
     before_telemetry_tick = _sequence_length(root.property("paperTelemetryRows"))
+    before_event_tick = _sequence_length(root.property("simulationEvents"))
     _invoke_qml(root, "runSimulationTick")
     audit["simulation_tick_updates_decision"] = (
         _sequence_length(root.property("decisionPreviewRows")) > before_decision_tick
@@ -434,10 +451,12 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["simulation_tick_appends_telemetry"] = (
         _sequence_length(root.property("paperTelemetryRows")) > before_telemetry_tick
     )
-    audit["paper_tick_updates_paper_state"] = (
-        abs(float(root.property("paperPnl") or 0) - before_paper_tick_pnl) > 0.01
-        or abs(float(root.property("paperEquity") or 0) - before_paper_tick_equity) > 0.01
+    audit["paper_tick_updates_operational_state"] = (
+        audit["simulation_tick_updates_decision"] is True
+        and audit["simulation_tick_appends_telemetry"] is True
+        and _sequence_length(root.property("simulationEvents")) > before_event_tick
     )
+    audit["paper_tick_updates_paper_state"] = audit["paper_tick_updates_operational_state"]
 
     _invoke_qml(root, "selectTop20Pairs")
     top20_count = _sequence_length(root.property("selectedPairs"))
@@ -466,13 +485,99 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["risk_profile_updates"] = _string_property(root, "riskProfile") == "Aggressive"
     audit["risk_summary_updates"] = "Aggressive" in _string_property(root, "riskState")
 
+    _invoke_qml(root, "setRiskProfile", "Custom")
+    before_runtime_write_flag = _bool_property(root, "riskRuntimeConfigWritten")
+    _invoke_qml(root, "setCustomRiskValue", "confidenceFloor", "88%")
+    audit["risk_custom_state_present"] = root.property("customRiskState") is not None
+    audit["risk_custom_updates_confidence_floor"] = (
+        _string_property(root, "confidenceFloor") == "88%"
+    )
+    audit["risk_custom_does_not_write_runtime_config"] = (
+        before_runtime_write_flag is False
+        and _bool_property(root, "riskRuntimeConfigWritten") is False
+    )
+
+    _invoke_qml(root, "setSimulationScenario", "High volatility")
+    before_ai_position = _string_property(root, "maxPosition")
+    _invoke_qml(root, "applyAiRecommendedRiskProfile")
+    audit["risk_ai_recommended_updates_values"] = (
+        _string_property(root, "riskProfile") == "AI Recommended"
+        and _string_property(root, "maxPosition") != before_ai_position
+    )
+    audit["risk_ai_recommended_explanation_present"] = "AI dobrało" in _string_property(
+        root, "riskExplanation"
+    )
+    audit["risk_active_limits_present"] = _sequence_length(root.property("riskActiveLimits")) >= 10
+
+    before_risk_tick_pnl = float(root.property("paperPnl") or 0)
+    before_risk_tick_equity = float(root.property("paperEquity") or 0)
+    before_risk_tick_preview_pnl = float(root.property("previewPnl") or 0)
+    before_risk_tick_preview_equity = float(root.property("previewEquity") or 0)
+    before_risk_tick_blocked_count = int(root.property("paperBlockedCount") or 0)
+    before_risk_tick_decisions = _sequence_length(root.property("decisionPreviewRows"))
+    before_risk_tick_telemetry = _sequence_length(root.property("paperTelemetryRows"))
+    before_risk_tick_open_positions = _sequence_length(root.property("paperOpenPositions"))
+    before_risk_tick_closed_trades = _sequence_length(root.property("paperClosedTrades"))
+    _invoke_qml(root, "runSimulationTick")
+    last_decision = _first_row_repr(root.property("decisionPreviewRows"))
+    first_order = _first_row_repr(root.property("paperOrderRows"))
+    audit["risk_blocked_tick_does_not_mutate_paper_pnl"] = (
+        abs(float(root.property("paperPnl") or 0) - before_risk_tick_pnl) < 0.01
+        and abs(float(root.property("previewPnl") or 0) - before_risk_tick_preview_pnl) < 0.01
+    )
+    audit["risk_blocked_tick_does_not_mutate_paper_equity"] = (
+        abs(float(root.property("paperEquity") or 0) - before_risk_tick_equity) < 0.01
+        and abs(float(root.property("previewEquity") or 0) - before_risk_tick_preview_equity) < 0.01
+    )
+    audit["risk_blocked_tick_increments_blocked_count"] = (
+        int(root.property("paperBlockedCount") or 0) > before_risk_tick_blocked_count
+    )
+    audit["risk_blocked_tick_appends_decision"] = (
+        _sequence_length(root.property("decisionPreviewRows")) > before_risk_tick_decisions
+        and "BLOCKED" in last_decision
+    )
+    audit["risk_blocked_tick_appends_telemetry"] = (
+        _sequence_length(root.property("paperTelemetryRows")) > before_risk_tick_telemetry
+    )
+    audit["risk_blocked_tick_creates_no_filled_order"] = (
+        "blocked" in first_order
+        and "paper simulated / no real order" not in first_order
+        and _sequence_length(root.property("paperOpenPositions")) == before_risk_tick_open_positions
+        and _sequence_length(root.property("paperClosedTrades")) == before_risk_tick_closed_trades
+    )
+
+    _invoke_qml(root, "setRiskProfile", "Custom")
+    _invoke_qml(root, "setCustomRiskValue", "confidenceFloor", "1%")
+    _invoke_qml(root, "setSimulationScenario", "Bull trend")
+    before_unlocked_pnl = float(root.property("paperPnl") or 0)
+    before_unlocked_equity = float(root.property("paperEquity") or 0)
+    _invoke_qml(root, "runSimulationBurst", "6")
+    audit["risk_unlocked_tick_can_update_financial_state"] = (
+        abs(float(root.property("paperPnl") or 0) - before_unlocked_pnl) > 0.01
+        or abs(float(root.property("paperEquity") or 0) - before_unlocked_equity) > 0.01
+    )
+    audit["paper_tick_can_update_financial_state_when_unblocked"] = audit[
+        "risk_unlocked_tick_can_update_financial_state"
+    ]
+    audit["simulation_respects_risk_preview_state"] = (
+        audit["risk_blocked_tick_does_not_mutate_paper_pnl"] is True
+        and audit["risk_blocked_tick_does_not_mutate_paper_equity"] is True
+        and audit["risk_blocked_tick_increments_blocked_count"] is True
+        and audit["risk_blocked_tick_appends_decision"] is True
+        and audit["risk_blocked_tick_appends_telemetry"] is True
+        and audit["risk_blocked_tick_creates_no_filled_order"] is True
+        and audit["risk_unlocked_tick_can_update_financial_state"] is True
+    )
+
     audit["final_order_rows"] = _sequence_length(root.property("paperOrderRows"))
     audit["final_decision_rows"] = _sequence_length(root.property("decisionPreviewRows"))
     audit["final_telemetry_rows"] = _sequence_length(root.property("paperTelemetryRows"))
     audit["initial_order_rows"] = initial_orders
     audit["initial_decision_rows"] = initial_decisions
     audit["initial_telemetry_rows"] = initial_telemetry
-    audit["simulation_tick_updates_paper_state"] = audit["paper_tick_updates_paper_state"]
+    audit["simulation_tick_updates_paper_state"] = audit[
+        "paper_tick_can_update_financial_state_when_unblocked"
+    ]
     audit["simulation_does_not_enable_live"] = _bool_property(root, "liveTradingDisabled") is True
     audit["simulation_does_not_enable_exchange_io"] = (
         _bool_property(root, "exchangeIoDisabled") is True
@@ -500,6 +605,15 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "simulation_tick_updates_decision",
         "simulation_tick_appends_telemetry",
         "simulation_tick_updates_paper_state",
+        "paper_tick_updates_operational_state",
+        "paper_tick_can_update_financial_state_when_unblocked",
+        "risk_blocked_tick_does_not_mutate_paper_pnl",
+        "risk_blocked_tick_does_not_mutate_paper_equity",
+        "risk_blocked_tick_increments_blocked_count",
+        "risk_blocked_tick_appends_decision",
+        "risk_blocked_tick_appends_telemetry",
+        "risk_blocked_tick_creates_no_filled_order",
+        "risk_unlocked_tick_can_update_financial_state",
         "simulation_burst_runs_multiple_ticks",
         "simulation_market_scenario_updates",
         "simulation_does_not_enable_live",
@@ -524,7 +638,8 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "portfolio_time_filter_updates_report_state",
         "portfolio_custom_filter_does_not_mutate_paper_state",
         "portfolio_custom_range_updates_report_state",
-        "paper_tick_updates_paper_state",
+        "paper_tick_updates_operational_state",
+        "paper_tick_can_update_financial_state_when_unblocked",
         "dashboard_separates_paper_and_portfolio_report",
         "portfolio_equity_formula_ok",
         "portfolio_net_pnl_formula_ok",
@@ -539,6 +654,13 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "pair_selection_updates_decision_summary",
         "risk_profile_updates",
         "risk_summary_updates",
+        "risk_custom_state_present",
+        "risk_custom_updates_confidence_floor",
+        "risk_custom_does_not_write_runtime_config",
+        "risk_ai_recommended_updates_values",
+        "risk_ai_recommended_explanation_present",
+        "risk_active_limits_present",
+        "simulation_respects_risk_preview_state",
         "safety_boundary_ok",
     )
     audit["passed"] = (
@@ -604,6 +726,22 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         safety_boundary_ok = True
         portfolio_filters_do_not_mutate_paper_state = True
         simulation_loop_state_present = False
+        risk_blocked_tick_does_not_mutate_paper_pnl = False
+        risk_blocked_tick_does_not_mutate_paper_equity = False
+        risk_blocked_tick_increments_blocked_count = False
+        risk_blocked_tick_appends_decision = False
+        risk_blocked_tick_appends_telemetry = False
+        risk_blocked_tick_creates_no_filled_order = False
+        risk_unlocked_tick_can_update_financial_state = False
+        risk_custom_profile_present = False
+        risk_ai_recommended_present = False
+        risk_ai_recommended_updates_values = False
+        risk_custom_does_not_write_runtime_config = True
+        risk_ai_recommended_explanation_present = False
+        risk_active_limits_present = False
+        risk_tooltips_present = False
+        risk_safety_boundary_ok = True
+        simulation_respects_risk_preview_state = False
         preview_state_audit: dict[str, object] = {}
         if qml_loaded:
             source = _qml_preview_source()
@@ -658,6 +796,13 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "in positions",
                 "blacklist",
                 "whitelist",
+                "Custom risk",
+                "AI Recommended risk",
+                "confidence floor",
+                "exposure",
+                "daily loss limit",
+                "cooldown",
+                "risk override",
             )
             required_tooltips = (
                 "Start Paper Preview",
@@ -677,6 +822,17 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "Risk profile Aggressive",
                 "Custom risk",
                 "AI recommended risk",
+                "Risk profile Custom",
+                "Risk profile AI Recommended",
+                "max position",
+                "stop loss",
+                "take profit",
+                "slippage",
+                "drawdown",
+                "daily loss limit",
+                "confidence floor",
+                "kill-switch",
+                "allow AI override",
                 "Custom range",
                 "Zastosuj zakres",
             )
@@ -707,6 +863,30 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             tooltips_present = _source_has_all(
                 source, ("ToolTip.delay: 800", "helpText", "previewTooltips")
             ) and _source_has_all(source, required_tooltips)
+            risk_custom_profile_present = _source_has_all(
+                source, ("Custom", "customRiskState", "setCustomRiskValue", "riskCustomProfileCard")
+            )
+            risk_ai_recommended_present = _source_has_all(
+                source, ("AI Recommended", "applyAiRecommendedRiskProfile", "AI Recommended risk")
+            )
+            risk_ai_recommended_explanation_present = _source_has_all(
+                source, ("riskExplanationCard", "Dlaczego takie ustawienia?", "AI dobrało")
+            )
+            risk_active_limits_present = _source_has_all(
+                source, ("riskActiveLimits", "riskActiveLimitsTable", "Aktywne limity")
+            )
+            risk_tooltips_present = _source_has_all(source, required_tooltips)
+            risk_safety_boundary_ok = _source_has_all(
+                source,
+                (
+                    "Live trading disabled",
+                    "Exchange I/O disabled",
+                    "Order submission disabled",
+                    "API keys not required",
+                    "No real orders",
+                    "Risk settings are local preview only",
+                ),
+            )
             from PySide6.QtCore import QObject
 
             root = engine.rootObjects()[0]
@@ -757,6 +937,17 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ):
                 audit_issues.append("i18n_help_tooltip_audit_failed")
+            if not all(
+                (
+                    risk_custom_profile_present,
+                    risk_ai_recommended_present,
+                    risk_ai_recommended_explanation_present,
+                    risk_active_limits_present,
+                    risk_tooltips_present,
+                    risk_safety_boundary_ok,
+                )
+            ):
+                audit_issues.append("risk_profile_audit_failed")
             if options.exercise_preview_state:
                 preview_state_audit = _exercise_preview_state(root)
                 if preview_state_audit.get("passed") is not True:
@@ -766,6 +957,36 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     preview_state_audit.get("portfolio_time_filter_does_not_mutate_paper_state")
                 ) and bool(
                     preview_state_audit.get("portfolio_custom_filter_does_not_mutate_paper_state")
+                )
+                risk_ai_recommended_updates_values = bool(
+                    preview_state_audit.get("risk_ai_recommended_updates_values")
+                )
+                risk_custom_does_not_write_runtime_config = bool(
+                    preview_state_audit.get("risk_custom_does_not_write_runtime_config")
+                )
+                simulation_respects_risk_preview_state = bool(
+                    preview_state_audit.get("simulation_respects_risk_preview_state")
+                )
+                risk_blocked_tick_does_not_mutate_paper_pnl = bool(
+                    preview_state_audit.get("risk_blocked_tick_does_not_mutate_paper_pnl")
+                )
+                risk_blocked_tick_does_not_mutate_paper_equity = bool(
+                    preview_state_audit.get("risk_blocked_tick_does_not_mutate_paper_equity")
+                )
+                risk_blocked_tick_increments_blocked_count = bool(
+                    preview_state_audit.get("risk_blocked_tick_increments_blocked_count")
+                )
+                risk_blocked_tick_appends_decision = bool(
+                    preview_state_audit.get("risk_blocked_tick_appends_decision")
+                )
+                risk_blocked_tick_appends_telemetry = bool(
+                    preview_state_audit.get("risk_blocked_tick_appends_telemetry")
+                )
+                risk_blocked_tick_creates_no_filled_order = bool(
+                    preview_state_audit.get("risk_blocked_tick_creates_no_filled_order")
+                )
+                risk_unlocked_tick_can_update_financial_state = bool(
+                    preview_state_audit.get("risk_unlocked_tick_can_update_financial_state")
                 )
         smoke_ok = qml_loaded and not audit_issues
         result = UiSmokeResult(
@@ -815,6 +1036,21 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             simulation_tick_updates_paper_state=bool(
                 preview_state_audit.get("simulation_tick_updates_paper_state", False)
             ),
+            paper_tick_updates_operational_state=bool(
+                preview_state_audit.get("paper_tick_updates_operational_state", False)
+            ),
+            paper_tick_can_update_financial_state_when_unblocked=bool(
+                preview_state_audit.get(
+                    "paper_tick_can_update_financial_state_when_unblocked", False
+                )
+            ),
+            risk_blocked_tick_does_not_mutate_paper_pnl=risk_blocked_tick_does_not_mutate_paper_pnl,
+            risk_blocked_tick_does_not_mutate_paper_equity=risk_blocked_tick_does_not_mutate_paper_equity,
+            risk_blocked_tick_increments_blocked_count=risk_blocked_tick_increments_blocked_count,
+            risk_blocked_tick_appends_decision=risk_blocked_tick_appends_decision,
+            risk_blocked_tick_appends_telemetry=risk_blocked_tick_appends_telemetry,
+            risk_blocked_tick_creates_no_filled_order=risk_blocked_tick_creates_no_filled_order,
+            risk_unlocked_tick_can_update_financial_state=risk_unlocked_tick_can_update_financial_state,
             simulation_burst_runs_multiple_ticks=bool(
                 preview_state_audit.get("simulation_burst_runs_multiple_ticks", False)
             ),
@@ -836,6 +1072,15 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             simulation_does_not_read_secrets=bool(
                 preview_state_audit.get("simulation_does_not_read_secrets", True)
             ),
+            risk_custom_profile_present=risk_custom_profile_present,
+            risk_ai_recommended_present=risk_ai_recommended_present,
+            risk_ai_recommended_updates_values=risk_ai_recommended_updates_values,
+            risk_custom_does_not_write_runtime_config=risk_custom_does_not_write_runtime_config,
+            risk_ai_recommended_explanation_present=risk_ai_recommended_explanation_present,
+            risk_active_limits_present=risk_active_limits_present,
+            risk_tooltips_present=risk_tooltips_present,
+            risk_safety_boundary_ok=risk_safety_boundary_ok,
+            simulation_respects_risk_preview_state=simulation_respects_risk_preview_state,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
