@@ -39,6 +39,7 @@ ApplicationWindow {
             "nav.decisions": "Decyzje",
             "nav.telemetry": "Telemetria",
             "nav.diagnostics": "Diagnostyka",
+            "nav.alerts": "Alerty",
             "nav.help": "Pomoc / Słownik",
             "language.label": "Język",
             "refresh.preview": "Odśwież preview",
@@ -66,6 +67,7 @@ ApplicationWindow {
             "nav.decisions": "Decisions",
             "nav.telemetry": "Telemetry",
             "nav.diagnostics": "Diagnostics",
+            "nav.alerts": "Alerts",
             "nav.help": "Help / Glossary",
             "language.label": "Language",
             "refresh.preview": "Refresh preview",
@@ -133,7 +135,16 @@ ApplicationWindow {
         "Audit trail": "Czytelna oś kroków: snapshot danych, score, risk guard, paper decision i granice bezpieczeństwa.",
         "Risk checks": "Lista lokalnych kontroli ryzyka: profil, kill-switch, risk lock, limity i trasa zlecenia.",
         "Input snapshot": "Lokalny podgląd danych wejściowych użytych przez preview do deterministycznego wyjaśnienia.",
-        "Paper impact": "Opisuje, czy preview zmieniłoby PnL, equity lub pozycję; nigdy nie składa realnego zlecenia."
+        "Paper impact": "Opisuje, czy preview zmieniłoby PnL, equity lub pozycję; nigdy nie składa realnego zlecenia.",
+        "Mark all read": "Oznacza wszystkie alerty jako przeczytane tylko w lokalnym stanie preview.",
+        "Clear alerts": "Czyści lokalną oś alertów w pamięci UI; nie dotyka backendu ani giełdy.",
+        "Mute alerts": "Wycisza alerty wyłącznie jako przełącznik preview; nie używa systemowych powiadomień OS.",
+        "Sound preview": "Włącza/wyłącza wyłącznie flagę dźwięku preview; żaden dźwięk systemowy nie jest odtwarzany.",
+        "Desktop notification preview": "Włącza/wyłącza tylko lokalną flagę powiadomień desktop preview; brak systemowych powiadomień OS.",
+        "Explain event": "Buduje lokalne wyjaśnienie zdarzenia bez backend inference, sieci, API i sekretów.",
+        "Severity filter": "Filtruje lokalną oś alertów według Critical, Warning albo Info.",
+        "Category filter": "Filtruje lokalną oś alertów według Trading, Risk, AI, Scanner, Paper, Portfolio, Telemetry, Diagnostics albo Safety.",
+        "Alert Center": "Otwiera lokalne centrum alertów i oś zdarzeń Paper Preview."
     })
     property var glossaryCategories: [
         ({ key: "category.trading", terms: ["PnL", "ROI", "spread", "order book", "fee/prowizja", "equity", "available balance", "in positions"] }),
@@ -190,7 +201,17 @@ ApplicationWindow {
             "risk check": "Pojedyncza kontrola ryzyka, np. profil, kill-switch, risk lock, spread albo limit pewności.",
             "decision source": "Miejsce, z którego pochodzi decyzja: Scanner, Governor, Risk, Paper Terminal albo Simulation.",
             "alternative candidate": "Inna para z lokalnego rankingu, która była rozważana, ale nie wygrała.",
-            "paper impact": "Wpływ wyłącznie na Paper Preview: możliwy log, paper fill lub brak zmiany PnL/equity."
+            "paper impact": "Wpływ wyłącznie na Paper Preview: możliwy log, paper fill lub brak zmiany PnL/equity.",
+            "Alert Center": "Centrum alertów pokazujące lokalną oś zdarzeń Paper Preview.",
+            "Critical alert": "Alert krytyczny: kill-switch, safety boundary albo blokada ryzyka wymagają uwagi.",
+            "Warning alert": "Alert ostrzegawczy: drawdown, stale heartbeat albo odrzucony setup wymagają obserwacji.",
+            "Info alert": "Informacyjny wpis osi zdarzeń, np. heartbeat, diagnostyka albo zmiana zakresu portfela.",
+            "unread": "Liczba lokalnych alertów nieoznaczonych jako przeczytane.",
+            "event timeline": "Chronologiczna lista lokalnych zdarzeń preview.",
+            "muted alerts": "Wyciszone alerty jako stan preview; brak systemowych powiadomień OS.",
+            "desktop notification preview": "Przełącznik demonstracyjny powiadomień desktop; nie wysyła powiadomień OS.",
+            "stale heartbeat": "Heartbeat telemetryczny uznany za nieświeży w lokalnym preview.",
+            "drawdown warning": "Ostrzeżenie o spadku equity/PnL względem lokalnego limitu preview."
         }),
         "EN": ({
             "PnL": "Profit or loss from a trade or session.",
@@ -248,7 +269,17 @@ ApplicationWindow {
             "Blacklist": "Pairs blocked or skipped by local preview.",
             "Candidate": "A pair good enough to be reviewed by the scanner.",
             "Rejected setup": "A weak setup ignored by the scanner.",
-            "Strategy match": "The preview strategy that best explains the candidate."
+            "Strategy match": "The preview strategy that best explains the candidate.",
+            "Alert Center": "A local Paper Preview event center with an alert timeline.",
+            "Critical alert": "A critical alert for kill-switch, safety boundary or risk block events.",
+            "Warning alert": "A warning alert for drawdown, stale heartbeat or rejected setups.",
+            "Info alert": "An informational event timeline entry such as heartbeat, diagnostics or range changes.",
+            "unread": "The count of local alerts not yet marked read.",
+            "event timeline": "A chronological list of local preview events.",
+            "muted alerts": "Muted alerts as preview state only; no OS notifications are sent.",
+            "desktop notification preview": "A demo desktop-notification toggle that never sends OS notifications.",
+            "stale heartbeat": "Telemetry heartbeat treated as stale by local preview state.",
+            "drawdown warning": "A warning about PnL/equity drawdown against a local preview limit."
         })
     })
     readonly property var rootDesignSystem: designSystem
@@ -592,6 +623,167 @@ ApplicationWindow {
         ({ time: "12:04:03Z", message: "Runtime loop not started • order submission disabled • API keys not required" })
     ]
 
+
+    // UI-PREVIEW-8.0H Alert/Event Center state. Local-only QML preview: no OS notifications, no backend calls, no exchange/API calls, no order submission, no secrets read.
+    property bool alertCenterOpen: false
+    property var alertRows: [
+        ({ time: "12:04:30Z", severity: "Critical", category: "Risk", source: "Risk Governor", pair: "BTC/USDT", title: "Risk blocked action", message: "Risk lock blocked a local preview action; PnL/equity unchanged.", action: "Review risk controls", read: false, status: "unread" }),
+        ({ time: "12:04:24Z", severity: "Critical", category: "Safety", source: "Safety Boundary", pair: "—", title: "Kill-switch active", message: "Safety kill-switch active in safe paper preview.", action: "Keep live disabled", read: false, status: "unread" }),
+        ({ time: "12:04:18Z", severity: "Warning", category: "Portfolio", source: "Portfolio Preview", pair: "—", title: "Drawdown warning", message: "Local drawdown warning generated from preview equity/PnL state.", action: "Inspect portfolio range", read: false, status: "unread" }),
+        ({ time: "12:04:12Z", severity: "Info", category: "AI", source: "AI Governor", pair: "ETH/USDT", title: "AI decision generated", message: "AI/Governor generated a deterministic local preview decision.", action: "Explain event", read: false, status: "unread" }),
+        ({ time: "12:04:06Z", severity: "Info", category: "Scanner", source: "Market Scanner", pair: "SOL/USDT", title: "Scanner candidate found", message: "Scanner found a candidate from the local preview catalog.", action: "Open scanner", read: true, status: "read" }),
+        ({ time: "12:04:00Z", severity: "Warning", category: "Scanner", source: "Market Scanner", pair: "BNB/USDT", title: "Scanner rejected setup", message: "Scanner rejected a setup because local score/risk thresholds were not met.", action: "Review thresholds", read: true, status: "read" }),
+        ({ time: "12:03:54Z", severity: "Info", category: "Paper", source: "Paper Terminal", pair: "BTC/USDT", title: "Paper order simulated", message: "Paper order simulated locally; no real order route exists.", action: "Open Paper Terminal", read: true, status: "read" }),
+        ({ time: "12:03:48Z", severity: "Warning", category: "Paper", source: "Paper Terminal", pair: "ETH/USDT", title: "Paper order blocked", message: "Local validation or risk lock blocked a paper order preview.", action: "Inspect blocked order", read: true, status: "read" }),
+        ({ time: "12:03:42Z", severity: "Info", category: "Portfolio", source: "Paper Portfolio", pair: "—", title: "PnL changed", message: "Preview PnL/equity changed after a local simulated paper event.", action: "Open portfolio", read: true, status: "read" }),
+        ({ time: "12:03:36Z", severity: "Info", category: "Risk", source: "Risk Guard", pair: "—", title: "Risk profile changed", message: "Risk profile changed in local UI preview state.", action: "Review active limits", read: true, status: "read" }),
+        ({ time: "12:03:30Z", severity: "Info", category: "Risk", source: "AI Risk", pair: "—", title: "AI Recommended risk applied", message: "AI Recommended risk applied locally without backend inference.", action: "Explain risk", read: true, status: "read" }),
+        ({ time: "12:03:24Z", severity: "Info", category: "Portfolio", source: "Portfolio Range", pair: "—", title: "Portfolio range changed", message: "Portfolio report range changed without mutating paper session state.", action: "Review report", read: true, status: "read" }),
+        ({ time: "12:03:18Z", severity: "Info", category: "Telemetry", source: "Telemetry Feed", pair: "—", title: "Telemetry heartbeat fresh", message: "Telemetry heartbeat is fresh in local preview.", action: "Ping feed", read: true, status: "read" }),
+        ({ time: "12:03:12Z", severity: "Info", category: "Diagnostics", source: "Diagnostics", pair: "—", title: "Diagnostic bundle generated", message: "Diagnostic bundle status generated locally; secrets and environment values excluded.", action: "Open diagnostics", read: true, status: "read" }),
+        ({ time: "12:03:06Z", severity: "Info", category: "Safety", source: "Safety Boundary", pair: "—", title: "Safety boundary reminder", message: "Alerts are local preview only; no OS notifications sent; no backend calls; no exchange/API calls; no order submission; no secrets read.", action: "Read safety copy", read: true, status: "read" })
+    ]
+    property int alertUnreadCount: 4
+    property int alertCriticalCount: 2
+    property int alertWarningCount: 3
+    property int alertInfoCount: 10
+    property string alertSelectedSeverity: "All"
+    property string alertSelectedCategory: "All"
+    property string alertLastEventAt: "12:04:30Z"
+    property bool alertMutedPreview: false
+    property bool alertSoundEnabledPreview: false
+    property bool alertDesktopNotificationsPreview: false
+    property var alertSelectedEvent: alertRows.length > 0 ? alertRows[0] : ({})
+    property string alertEventExplanation: "Select an alert and click Explain event. Explanation is local preview only; no backend calls, no exchange/API calls, no order submission, no secrets read."
+    property var alertSeverityFilters: ["All", "Critical", "Warning", "Info"]
+    property var alertCategoryFilters: ["All", "Trading", "Risk", "AI", "Scanner", "Paper", "Portfolio", "Telemetry", "Diagnostics", "Safety"]
+    property string alertSafetyBoundaryCopy: "Alerts are local preview only • No OS notifications sent • No backend calls • No exchange/API calls • No order submission • No secrets read • Alerty działają lokalnie w preview • Brak systemowych powiadomień OS • Brak wywołań backendu • Brak połączeń giełda/API • Brak składania zleceń • Brak odczytu sekretów"
+
+    function normalizeAlertSeverity(severity) {
+        if (severity === "Critical" || severity === "critical") return "Critical"
+        if (severity === "Warning" || severity === "warning") return "Warning"
+        return "Info"
+    }
+    function normalizeAlertCategory(category) {
+        var allowed = ["Trading", "Risk", "AI", "Scanner", "Paper", "Portfolio", "Telemetry", "Diagnostics", "Safety"]
+        return allowed.indexOf(category) >= 0 ? category : "Trading"
+    }
+    function recomputeAlertCounts() {
+        var unread = 0, critical = 0, warning = 0, info = 0
+        for (var i = 0; i < alertRows.length; ++i) {
+            var row = alertRows[i]
+            if (!row.read) unread += 1
+            if (row.severity === "Critical") critical += 1
+            else if (row.severity === "Warning") warning += 1
+            else info += 1
+        }
+        alertUnreadCount = unread
+        alertCriticalCount = critical
+        alertWarningCount = warning
+        alertInfoCount = info
+        alertLastEventAt = alertRows.length > 0 ? alertRows[0].time : "—"
+        if (alertRows.length > 0 && (!alertSelectedEvent || !alertSelectedEvent.title))
+            alertSelectedEvent = alertRows[0]
+    }
+    function appendPreviewAlert(severity, category, title, message, source, pair, action) {
+        var normalizedSeverity = normalizeAlertSeverity(severity)
+        var normalizedCategory = normalizeAlertCategory(category)
+        var timestamp = previewTime(alertRows.length + decisionSequence + telemetryTick + paperSessionTicks + 1)
+        var row = ({ time: timestamp, severity: normalizedSeverity, category: normalizedCategory, source: source || "UI Preview", pair: pair || "—", title: title || "Preview alert", message: message || "Local preview event", action: action || "Review event", read: false, status: "unread" })
+        var rows = alertRows.slice()
+        if (rows.length === 0 || rows[0].title !== row.title || rows[0].category !== row.category || rows[0].pair !== row.pair)
+            rows.unshift(row)
+        alertRows = rows.slice(0, 60)
+        alertSelectedEvent = alertRows[0]
+        alertCenterOpen = alertCenterOpen
+        recomputeAlertCounts()
+        return row
+    }
+    function markAlertRead(index) {
+        var rows = alertRows.slice()
+        var visibleRows = visibleAlertRows()
+        var row = visibleRows[index]
+        if (!row)
+            row = rows[index]
+        if (!row)
+            return
+        for (var i = 0; i < rows.length; ++i) {
+            if (rows[i].time === row.time && rows[i].title === row.title && rows[i].pair === row.pair) {
+                rows[i].read = true
+                rows[i].status = "read"
+                alertSelectedEvent = rows[i]
+                break
+            }
+        }
+        alertRows = rows
+        recomputeAlertCounts()
+    }
+    function markAllAlertsRead() {
+        var rows = alertRows.slice()
+        for (var i = 0; i < rows.length; ++i) {
+            rows[i].read = true
+            rows[i].status = "read"
+        }
+        alertRows = rows
+        recomputeAlertCounts()
+    }
+    function clearPreviewAlerts() {
+        alertRows = []
+        alertSelectedEvent = ({})
+        alertEventExplanation = "Alert timeline cleared locally. Alerts are local preview only; no OS notifications sent; no backend calls; no exchange/API calls; no order submission; no secrets read."
+        recomputeAlertCounts()
+    }
+    function setAlertSeverityFilter(severity) {
+        alertSelectedSeverity = alertSeverityFilters.indexOf(severity) >= 0 ? severity : "All"
+    }
+    function setAlertCategoryFilter(category) {
+        alertSelectedCategory = alertCategoryFilters.indexOf(category) >= 0 ? category : "All"
+    }
+    function visibleAlertRows() {
+        var out = []
+        for (var i = 0; i < alertRows.length; ++i) {
+            var row = alertRows[i]
+            if (alertSelectedSeverity !== "All" && row.severity !== alertSelectedSeverity) continue
+            if (alertSelectedCategory !== "All" && row.category !== alertSelectedCategory) continue
+            out.push(row)
+        }
+        return out
+    }
+    function selectAlertEvent(index) {
+        var rows = visibleAlertRows()
+        var row = rows[index]
+        if (!row)
+            row = alertRows[index]
+        if (!row)
+            return
+        alertSelectedEvent = row
+    }
+    function explainAlertEvent(index) {
+        selectAlertEvent(index)
+        var row = alertSelectedEvent || ({})
+        var category = row.category || "Safety"
+        var base = "Wyjaśnij zdarzenie / Explain event: " + (row.title || "Preview alert") + " • " + category + " • " + (row.severity || "Info") + ". " + (row.message || "Local-only preview event.")
+        if (category === "AI" || category === "Scanner" || category === "Paper" || category === "Risk") {
+            alertEventExplanation = base + " Explanation is local preview only and can use the existing decision explain drawer context; no backend inference, no network/API call, no order submission, no real orders, no secrets read."
+            if (category === "AI" || category === "Scanner" || category === "Paper" || category === "Risk")
+                openDecisionExplainDrawer(({ timestamp: row.time || previewTime(0), symbol: row.pair || selectedTerminalPair, action: row.title || "ALERT", confidence: "local", reason: row.message || base, source: row.source || category, riskReason: riskState, strategy: "Alert Center", safety: alertSafetyBoundaryCopy, status: row.status || "preview" }))
+        } else {
+            alertEventExplanation = base + " Local alert explanation only; no OS notifications sent, no backend calls, no exchange/API calls, no order submission, no secrets read."
+        }
+    }
+    function toggleAlertMutePreview() {
+        alertMutedPreview = !alertMutedPreview
+        appendPreviewAlert("Info", "Safety", "Muted alerts changed", "Muted alerts preview flag is now " + (alertMutedPreview ? "on" : "off") + "; no OS notifications sent.", "Alert Center", "—", "Toggle mute")
+    }
+    function toggleAlertSoundPreview() {
+        alertSoundEnabledPreview = !alertSoundEnabledPreview
+        appendPreviewAlert("Info", "Safety", "Sound preview changed", "Sound preview flag is now " + (alertSoundEnabledPreview ? "on" : "off") + "; no system sound is played.", "Alert Center", "—", "Toggle sound")
+    }
+    function toggleDesktopNotificationsPreview() {
+        alertDesktopNotificationsPreview = !alertDesktopNotificationsPreview
+        appendPreviewAlert("Info", "Safety", "Desktop notification preview changed", "Desktop notification preview flag is now " + (alertDesktopNotificationsPreview ? "on" : "off") + "; No OS notifications sent.", "Alert Center", "—", "Toggle desktop preview")
+    }
+
     function hasValue(list, value) {
         return list && list.indexOf(value) >= 0
     }
@@ -657,7 +849,7 @@ ApplicationWindow {
     function pauseMarketScannerPreview() { scannerActive = false; scannerStatus = "paused" }
     function stopMarketScannerPreview() { scannerActive = false; scannerStatus = "stopped" }
     function resetMarketScannerPreview() { scannerActive = false; scannerStatus = "safe preview"; scannerTickCount = 0; scannerLastScanAt = "not scanned"; scannerFilterMode = "All"; scannerSortMode = "AI score"; scannerMinAiScore = 70; scannerMinLiquidityScore = 60; scannerMaxRiskScore = 55; rebuildMarketScannerRows() }
-    function runMarketScannerTick() { scannerTickCount += 1; scannerLastScanAt = previewTime(scannerTickCount); if (scannerStatus === "stopped") scannerStatus = "safe preview"; rebuildMarketScannerRows(); var rows = visibleScannerRows(); var bestRow = rows.length > 0 ? rows[0] : scannerRowByPair(scannerSelectedPair); if (bestRow) { selectedTerminalPair = bestRow.pair; appendPaperDecision("SCANNER", "Market Scanner local candidate " + bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, bestRow.pair, "scanner preview / no order"); appendPaperTelemetry("scanner tick " + scannerTickCount + " • candidates " + scannerCandidateCount + " • rejected " + scannerRejectedCount + " • no network/API calls") } }
+    function runMarketScannerTick() { scannerTickCount += 1; scannerLastScanAt = previewTime(scannerTickCount); if (scannerStatus === "stopped") scannerStatus = "safe preview"; rebuildMarketScannerRows(); var rows = visibleScannerRows(); var bestRow = rows.length > 0 ? rows[0] : scannerRowByPair(scannerSelectedPair); if (bestRow) { selectedTerminalPair = bestRow.pair; appendPaperDecision("SCANNER", "Market Scanner local candidate " + bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, bestRow.pair, "scanner preview / no order"); appendPaperTelemetry("scanner tick " + scannerTickCount + " • candidates " + scannerCandidateCount + " • rejected " + scannerRejectedCount + " • no network/API calls"); if (scannerTickCount % 2 === 1) appendPreviewAlert(bestRow.recommendation === "IGNORE" || bestRow.recommendation === "BLOCKED" ? "Warning" : "Info", "Scanner", bestRow.recommendation === "IGNORE" || bestRow.recommendation === "BLOCKED" ? "Scanner rejected setup" : "Scanner candidate found", bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, "Market Scanner", bestRow.pair, "Explain candidate") } }
     function runMarketScannerBurst(count) { var ticks = Math.max(0, Number(count) || 0); for (var i = 0; i < ticks; ++i) runMarketScannerTick() }
     function selectScannerPair(pair) { scannerSelectedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; selectedTerminalPair = scannerSelectedPair; explainScannerCandidate(scannerSelectedPair) }
     function addScannerPairToWatchlist(pair) { if (pair && !hasValue(scannerWatchlistPairs, pair)) scannerWatchlistPairs = scannerWatchlistPairs.concat([pair]); refreshScannerBuckets() }
@@ -951,6 +1143,7 @@ ApplicationWindow {
         var normalizedRange = normalizedPortfolioRange(range)
         var snapshot = portfolioRangeSnapshots[normalizedRange] || portfolioRangeSnapshots["1d"]
         applyPortfolioSnapshot(normalizedRange, snapshot)
+        appendPreviewAlert("Info", "Portfolio", "Portfolio range changed", "Portfolio report range changed to " + normalizedRange + "; paper state was not mutated.", "Portfolio Performance", "—", "Review report")
     }
     function applyPortfolioCustomRange(fromValue, toValue) {
         portfolioCustomFrom = fromValue && fromValue.length > 0 ? fromValue : portfolioCustomFrom
@@ -1052,6 +1245,7 @@ ApplicationWindow {
         appendTerminalLog(event.action + " " + event.pair + " • " + event.status + " • " + event.reason)
         appendPaperTelemetry("paper order event " + event.action + " " + event.pair + " • " + event.status)
         appendPaperDecision(event.action, event.reason, event.pair, event.status)
+        appendPreviewAlert(event.status === "blocked" ? "Warning" : "Info", "Paper", event.status === "blocked" ? "Paper order blocked" : "Paper order simulated", event.action + " " + event.pair + " • " + event.reason, "Paper Terminal", event.pair, "Explain event")
         terminalSelectedBottomTab = "Orders"
         syncPaperBridgeState()
         return event
@@ -1234,6 +1428,7 @@ ApplicationWindow {
         riskState = "AI Recommended preview • " + (cautious ? "exposure reduced" : "balanced exposure") + " • live blocked"
         refreshRiskActiveLimits("AI Recommended", ({ maxPosition: cautious ? "obniżone przez high volatility/bear/readiness guard" : "dobrane lokalnie do stabilniejszego preview", confidenceFloor: "ustawione z uwzględnieniem model readiness i coverage", cooldown: cautious ? "wydłużony przez lokalny risk guard" : "umiarkowany cooldown preview", perSymbolExposure: cautious ? "ekspozycja obniżona przez AI preview" : "ekspozycja zbalansowana" }))
         appendPaperDecision("NO ORDER", riskExplanation, "Risk profile", "AI Recommended local-only")
+        appendPreviewAlert("Info", "Risk", "AI Recommended risk applied", riskExplanation, "Risk Guard", "—", "Explain risk")
         appendPaperTelemetry("AI Recommended risk profile applied • local-only • no backend inference • no exchange I/O")
         appendTerminalLog("AI Recommended risk applied • " + maxPosition + " • confidence floor " + confidenceFloor + " • no real orders")
     }
@@ -1286,7 +1481,8 @@ ApplicationWindow {
     function generateGovernorRecommendation() {
         var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED LIVE"]
         var action = actions[decisionSequence % actions.length]
-        addDecision(action, "Governor recommendation updated the preview stream; sandbox/testnet bridge remains planned and disabled.")
+        var row = addDecision(action, "Governor recommendation updated the preview stream; sandbox/testnet bridge remains planned and disabled.")
+        appendPreviewAlert(action.indexOf("BLOCK") >= 0 ? "Warning" : "Info", "AI", "AI decision generated", row.symbol + " " + action + " • " + row.reason, "AI Governor", row.symbol, "Explain event")
     }
     function generateNextDecision() {
         var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED LIVE"]
@@ -1311,6 +1507,7 @@ ApplicationWindow {
         simulationMarketMode = scenarioMode(scenario)
         simulationStatusLabel = (simulationRunning ? "running" : (simulationPaused ? "paused" : "stopped")) + " • " + simulationScenario + " • local paper loop only"
         appendSimulationEvent("market scenario changed to " + simulationScenario + " • no exchange I/O")
+        appendPreviewAlert("Info", "Trading", "Market scenario changed", "Market scenario changed to " + simulationScenario + " in local preview.", "Simulation", "—", "Review scenario")
     }
     function setSimulationSpeed(speed) {
         var numeric = Number(speed)
@@ -1415,6 +1612,10 @@ ApplicationWindow {
         appendPaperTelemetry("heartbeat/tick " + simulationTickCount + " • simulation event " + action + " " + pair + " • no exchange I/O • order submission disabled • local paper loop only")
         appendTerminalLog("paper loop tick " + simulationTickCount + " • " + pair + " " + action + " • price " + nextPrice.toFixed(2) + " • no real orders")
         appendSimulationEvent("tick " + simulationTickCount + " scanned " + pair + " action " + action + " price " + nextPrice.toFixed(2))
+        if (riskBlocked) appendPreviewAlert("Critical", "Risk", "Risk blocked action", reason, "Risk Governor", pair, "Review risk controls")
+        else if (status === "simulated") appendPreviewAlert("Info", "Paper", "Paper order simulated", action + " " + pair + " at mock price " + nextPrice.toFixed(2) + "; no real order.", "Simulation", pair, "Explain event")
+        else if (simulationTickCount % 2 === 0) appendPreviewAlert("Info", "AI", "AI decision generated", action + " " + pair + " • " + reason, "Simulation", pair, "Explain event")
+        if (status !== "blocked" && Math.abs(delta) > 0) appendPreviewAlert(Math.abs(paperPnl) > 2500 ? "Warning" : "Info", "Portfolio", Math.abs(paperPnl) > 2500 ? "Drawdown warning" : "PnL changed", "Paper PnL now " + paperPnl.toFixed(2) + " and equity " + paperEquity.toFixed(2) + " in local preview.", "Portfolio Preview", pair, "Open portfolio")
         terminalSelectedBottomTab = order ? "Orders" : "Log"
         recountOrderCounters()
         if (simulationTickCount % 3 === 0)
@@ -1503,8 +1704,9 @@ ApplicationWindow {
             "decision stream pulse #" + telemetryTick + " • order submission disabled"
         ]
         appendPaperTelemetry(messages[telemetryTick % messages.length])
+        appendPreviewAlert(telemetryTick % 5 === 0 ? "Warning" : "Info", "Telemetry", telemetryTick % 5 === 0 ? "Telemetry heartbeat stale" : "Telemetry heartbeat fresh", telemetryFreshness + " • no backend calls", "Telemetry Feed", "—", "Ping feed")
     }
-    function generateDiagnosticBundle() { diagnosticsBundleStatus = "Last bundle path/status: var/tmp/preview-diagnostic-bundle-ui-only.zip • generated local diagnostic status • included: UI state, telemetry snapshot, governor rows, config preview metadata • excluded: secrets, env files, keychain, real environment values, exchange state" }
+    function generateDiagnosticBundle() { diagnosticsBundleStatus = "Last bundle path/status: var/tmp/preview-diagnostic-bundle-ui-only.zip • generated local diagnostic status • included: UI state, telemetry snapshot, governor rows, config preview metadata • excluded: secrets, env files, keychain, real environment values, exchange state"; appendPreviewAlert("Info", "Diagnostics", "Diagnostic bundle generated", diagnosticsBundleStatus + " • no secrets read", "Diagnostics", "—", "Open diagnostics") }
 
     function showPanel(panelId) {
         if (!panelId)
@@ -1536,7 +1738,8 @@ ApplicationWindow {
         ({ panelId: "aiDecisionsPanel", title: qsTr("Decyzje"), titleKey: "nav.decisions", icon: "mode_wizard", defaultColumn: 0, defaultOrder: 8 }),
         ({ panelId: "telemetryPanel", title: qsTr("Telemetria"), titleKey: "nav.telemetry", icon: "diagnostics", defaultColumn: 0, defaultOrder: 9 }),
         ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), titleKey: "nav.diagnostics", icon: "diagnostics", defaultColumn: 0, defaultOrder: 10 }),
-        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 11 })
+        ({ panelId: "alertsPanel", title: qsTr("Alerty"), titleKey: "nav.alerts", icon: "diagnostics", defaultColumn: 0, defaultOrder: 11 }),
+        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 12 })
     ]
 
     property var productTabs: panelMetadata
@@ -1553,6 +1756,7 @@ ApplicationWindow {
         "aiDecisionsPanel": { title: qsTr("Decyzje"), icon: "mode_wizard", component: aiDecisionsPanelComponent },
         "telemetryPanel": { title: qsTr("Telemetria"), icon: "diagnostics", component: telemetryPanelComponent },
         "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
+        "alertsPanel": { title: qsTr("Alerty"), icon: "diagnostics", component: alertsPanelComponent },
         "helpGlossaryPanel": { title: qsTr("Pomoc / Słownik"), icon: "diagnostics", component: helpGlossaryPanelComponent },
         "chartView": { title: qsTr("Strumień decyzji"), icon: "cloud", component: chartViewComponent },
         "strategyWorkbench": { title: qsTr("Warsztat strategii"), icon: "package", component: strategyWorkbenchComponent },
@@ -1999,6 +2203,131 @@ ApplicationWindow {
     }
 
     Component {
+        id: alertsPanelComponent
+        Components.StyledScrollView {
+            objectName: "alertCenterRoot"
+            designSystem: rootDesignSystem
+            contentWidth: availableWidth
+            clip: true
+            ColumnLayout {
+                width: parent.availableWidth
+                spacing: 14
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Rectangle { width: 4; Layout.fillHeight: true; radius: 2; color: designSystem.color("accent") }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Label { objectName: "alertCenterTitle"; text: qsTr("Alerty / Alerts"); font.bold: true; font.pixelSize: 24; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
+                        Label { text: root.alertSafetyBoundaryCopy; color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    }
+                }
+                GridLayout {
+                    objectName: "alertCenterSummaryCards"
+                    Layout.fillWidth: true
+                    columns: width > 980 ? 5 : 2
+                    rowSpacing: 10
+                    columnSpacing: 10
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Unread alerts"); description: String(root.alertUnreadCount); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Critical count"); description: String(root.alertCriticalCount); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Warning count"); description: String(root.alertWarningCount); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Info count"); description: String(root.alertInfoCount); Layout.fillWidth: true }
+                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Last event"); description: root.alertLastEventAt; Layout.fillWidth: true }
+                }
+                Components.PreviewCard {
+                    objectName: "alertCenterFilters"
+                    designSystem: rootDesignSystem
+                    title: qsTr("Severity filter / Category filter")
+                    description: qsTr("All • Critical • Warning • Info | Trading • Risk • AI • Scanner • Paper • Portfolio • Telemetry • Diagnostics • Safety")
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Repeater {
+                            model: root.alertSeverityFilters
+                            delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; helpText: root.tooltipText("Severity filter"); subtle: root.alertSelectedSeverity !== modelData; onClicked: root.setAlertSeverityFilter(modelData) }
+                        }
+                    }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Repeater {
+                            model: root.alertCategoryFilters
+                            delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; helpText: root.tooltipText("Category filter"); subtle: root.alertSelectedCategory !== modelData; onClicked: root.setAlertCategoryFilter(modelData) }
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Mark all read"); helpText: root.tooltipText("Mark all read"); onClicked: root.markAllAlertsRead() }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Clear alerts"); helpText: root.tooltipText("Clear alerts"); onClicked: root.clearPreviewAlerts() }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Mute alerts"); helpText: root.tooltipText("Mute alerts"); subtle: !root.alertMutedPreview; onClicked: root.toggleAlertMutePreview() }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Sound preview"); helpText: root.tooltipText("Sound preview"); subtle: !root.alertSoundEnabledPreview; onClicked: root.toggleAlertSoundPreview() }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Desktop notification preview"); helpText: root.tooltipText("Desktop notification preview"); subtle: !root.alertDesktopNotificationsPreview; onClicked: root.toggleDesktopNotificationsPreview() }
+                    }
+                }
+                Components.PreviewCard {
+                    objectName: "alertCenterTimeline"
+                    designSystem: rootDesignSystem
+                    title: qsTr("Event timeline")
+                    description: qsTr("time • severity • category • source • pair • title • message • action • status/read")
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 34
+                        radius: 10
+                        color: designSystem.color("surfaceMuted")
+                        RowLayout { anchors.fill: parent; anchors.margins: 8; Label { text: qsTr("time"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 80 } Label { text: qsTr("severity"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 80 } Label { text: qsTr("category"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 90 } Label { text: qsTr("source"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 120 } Label { text: qsTr("pair"); color: designSystem.color("textSecondary"); Layout.preferredWidth: 90 } Label { text: qsTr("title / message / action / status/read"); color: designSystem.color("textSecondary"); Layout.fillWidth: true } }
+                    }
+                    ListView {
+                        objectName: "alertCenterEventList"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 340
+                        clip: true
+                        spacing: 8
+                        model: root.visibleAlertRows()
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+                            width: ListView.view ? ListView.view.width : 1000
+                            height: alertRowLayout.implicitHeight + 18
+                            radius: 12
+                            color: modelData.read ? designSystem.color("surfaceMuted") : Qt.rgba(0.33, 0.78, 1, 0.10)
+                            border.color: modelData.severity === "Critical" ? designSystem.color("critical") : (modelData.severity === "Warning" ? designSystem.color("warning") : designSystem.color("border"))
+                            MouseArea { anchors.fill: parent; onClicked: root.selectAlertEvent(index) }
+                            RowLayout {
+                                id: alertRowLayout
+                                anchors.fill: parent
+                                anchors.margins: 9
+                                Label { text: modelData.time; color: designSystem.color("textPrimary"); Layout.preferredWidth: 80 }
+                                Label { text: modelData.severity; color: modelData.severity === "Critical" ? designSystem.color("critical") : (modelData.severity === "Warning" ? designSystem.color("warning") : designSystem.color("accent")); font.bold: true; Layout.preferredWidth: 80 }
+                                Label { text: modelData.category; color: designSystem.color("textPrimary"); Layout.preferredWidth: 90 }
+                                Label { text: modelData.source; color: designSystem.color("textSecondary"); Layout.preferredWidth: 120 }
+                                Label { text: modelData.pair; color: designSystem.color("textPrimary"); Layout.preferredWidth: 90 }
+                                Label { text: modelData.title + " — " + modelData.message + " • " + modelData.action + " • " + modelData.status; color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                Components.IconButton { designSystem: rootDesignSystem; text: qsTr("read"); helpText: root.tooltipText("Mark all read"); onClicked: root.markAlertRead(index) }
+                                Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Explain event"); helpText: root.tooltipText("Explain event"); onClicked: root.explainAlertEvent(index) }
+                            }
+                        }
+                    }
+                }
+                Components.PreviewCard {
+                    objectName: "alertCenterDetailPanel"
+                    designSystem: rootDesignSystem
+                    title: qsTr("Alert detail")
+                    description: qsTr("Wyjaśnij zdarzenie / Explain event")
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Label { text: (root.alertSelectedEvent.title || qsTr("No selected event")) + " • " + (root.alertSelectedEvent.severity || "—") + " • " + (root.alertSelectedEvent.category || "—"); color: designSystem.color("textPrimary"); font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: (root.alertSelectedEvent.time || "—") + " • " + (root.alertSelectedEvent.source || "—") + " • " + (root.alertSelectedEvent.pair || "—") + " • " + (root.alertSelectedEvent.status || "—"); color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Label { text: root.alertSelectedEvent.message || root.alertSafetyBoundaryCopy; color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Components.IconButton { designSystem: rootDesignSystem; text: qsTr("Wyjaśnij zdarzenie"); helpText: root.tooltipText("Explain event"); onClicked: root.explainAlertEvent(0) }
+                        Label { text: root.alertEventExplanation; color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    }
+                }
+            }
+        }
+    }
+
+
+    Component {
         id: terminalPanelComponent
         Views.PaperTerminal {
             previewState: root
@@ -2326,6 +2655,7 @@ ApplicationWindow {
         if (licensingController && licensingController.refreshFingerprint)
             licensingController.refreshFingerprint()
         refreshRiskActiveLimits(riskProfile)
+        recomputeAlertCounts()
         if (layoutController && layoutController.registerPanels) {
             layoutController.registerPanels(panelMetadata)
             showOperatorDashboard()
