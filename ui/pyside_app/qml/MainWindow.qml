@@ -94,8 +94,19 @@ ApplicationWindow {
         "Risk profile Conservative": "Najostrożniejsze limity: mniejsze pozycje i ciaśniejsze ryzyko.",
         "Risk profile Balanced": "Środkowy profil ryzyka dla zbalansowanego Paper Preview.",
         "Risk profile Aggressive": "Wyższe limity preview; nadal bez live tradingu i prawdziwych zleceń.",
-        "Custom risk": "Miejsce na własny profil ryzyka w preview; zmiany są lokalne.",
-        "AI recommended risk": "Placeholder rekomendacji AI dla profilu ryzyka; nie wymusza live tradingu.",
+        "Custom risk": "Własny profil: użytkownik ręcznie ustawia limity ryzyka. Zmiany są local-only preview.",
+        "AI recommended risk": "AI dobiera lokalnie ostrożne limity na podstawie scenariusza, readiness, coverage, PnL i drawdown. Brak inferencji backendowej.",
+        "Risk profile Custom": "Własny profil ryzyka: edytowalne limity tylko w pamięci UI preview.",
+        "Risk profile AI Recommended": "AI dobiera lokalnie limity i pokazuje nietechniczne uzasadnienie; nie używa API ani modelu backendowego.",
+        "max position": "Największa pojedyncza pozycja dopuszczona w lokalnym preview.",
+        "stop loss": "Preview poziomu ograniczenia straty dla pozycji.",
+        "take profit": "Preview poziomu realizacji zysku dla pozycji.",
+        "slippage": "Maksymalna różnica ceny akceptowana w lokalnej symulacji.",
+        "drawdown": "Maksymalny spadek kapitału tolerowany przez lokalny risk guard.",
+        "daily loss limit": "Dzienny limit straty w Paper Preview.",
+        "confidence floor": "Minimalna pewność lokalnej decyzji, zanim tick pokaże PAPER BUY/SELL zamiast HOLD/NO ORDER.",
+        "kill-switch": "Awaryjna blokada: tick generuje tylko BLOCKED PAPER PREVIEW/BLOCKED LIVE event.",
+        "allow AI override": "Preview przełącznik pozwalający AI nadpisać część własnych limitów; bez runtime i bez zleceń.",
         "Custom range": "Zakres raportu portfela. Nie zmienia aktywnej sesji Paper.",
         "Zastosuj zakres": "Stosuje zakres tylko do raportu Portfel / Wyniki, bez mutacji paper state.",
         "Live-like paper simulation": "Lokalna pętla paper, która wygląda jak live scanning, ale nie używa giełdy, sekretów ani prawdziwych zleceń.",
@@ -106,7 +117,7 @@ ApplicationWindow {
     })
     property var glossaryCategories: [
         ({ key: "category.trading", terms: ["PnL", "ROI", "spread", "order book", "fee/prowizja", "equity", "available balance", "in positions"] }),
-        ({ key: "category.risk", terms: ["drawdown", "risk guard", "kill-switch", "TP", "SL"] }),
+        ({ key: "category.risk", terms: ["drawdown", "risk guard", "kill-switch", "TP", "SL", "Custom risk", "AI Recommended risk", "confidence floor", "exposure", "daily loss limit", "cooldown", "risk override"] }),
         ({ key: "category.ai", terms: ["governor", "confidence"] }),
         ({ key: "category.strategies", terms: ["strategy"] }),
         ({ key: "category.paper", terms: ["paper trading", "sandbox/testnet", "Live-like paper simulation", "Simulation speed", "Market scenario", "Paper loop", "No real orders"] }),
@@ -126,6 +137,13 @@ ApplicationWindow {
             "API key": "Klucz dostępu do giełdy; w tym preview nie jest wymagany.",
             "governor": "Warstwa AI, która podpowiada lub blokuje decyzje według zasad ryzyka.",
             "confidence": "Poziom pewności modelu dla danej rekomendacji.",
+            "confidence floor": "Minimalny próg pewności wymagany, aby lokalna decyzja preview mogła pokazać PAPER BUY/SELL.",
+            "Custom risk": "Własny profil ryzyka z limitami edytowanymi wyłącznie w lokalnym UI preview.",
+            "AI Recommended risk": "Lokalny profil, w którym preview AI dobiera limity bez połączeń z backendem lub giełdą.",
+            "exposure": "Część kapitału zaangażowana w pozycję, symbol lub strategię.",
+            "daily loss limit": "Maksymalna dzienna strata dopuszczona w lokalnej symulacji paper.",
+            "cooldown": "Czas przerwy po decyzji lub blokadzie, zanim preview pokaże kolejną agresywniejszą akcję.",
+            "risk override": "Nadpisanie limitu ryzyka; w tym UI jest tylko bezpiecznym przełącznikiem preview.",
             "strategy": "Zestaw reguł mówiących, kiedy obserwować, kupić, sprzedać lub czekać.",
             "risk guard": "Bezpiecznik ograniczający zbyt ryzykowne działania.",
             "kill-switch": "Awaryjny wyłącznik blokujący handel lub akcje systemu.",
@@ -158,6 +176,13 @@ ApplicationWindow {
             "API key": "Exchange access key; not required in this preview.",
             "governor": "AI layer that recommends or blocks actions using risk rules.",
             "confidence": "How sure the model is about a recommendation.",
+            "confidence floor": "Minimum confidence required before local preview can show PAPER BUY/SELL.",
+            "Custom risk": "A user-edited risk profile stored only in local UI preview state.",
+            "AI Recommended risk": "A local AI preview profile that chooses limits without backend or exchange calls.",
+            "exposure": "Capital used by a position, symbol or strategy.",
+            "daily loss limit": "Maximum daily loss allowed in the local paper simulation.",
+            "cooldown": "Pause after a decision or block before preview shows a more aggressive action.",
+            "risk override": "Risk limit override; in this UI it is only a safe preview toggle.",
             "strategy": "Rules for when to watch, buy, sell or wait.",
             "risk guard": "Safety guard that limits risky actions.",
             "kill-switch": "Emergency stop that blocks trading or system actions.",
@@ -341,7 +366,7 @@ ApplicationWindow {
     property string modelVersionBuild: "preview-7.5 build local-2026.06"
     property bool riskLocked: true
     property string riskProfile: "Balanced"
-    property string riskState: "guarded preview • kill-switch armed • live blocked"
+    property string riskState: "guarded preview • Safety kill-switch armed • live blocked"
     property string maxPosition: "2,500 USDT"
     property int maxOpenPositions: 4
     property string stopLoss: "2.4%"
@@ -350,6 +375,16 @@ ApplicationWindow {
     property string maxDrawdown: "6.0%"
     property string dailyLossLimit: "1,200 USDT"
     property string perSymbolExposure: "18% equity"
+    property string confidenceFloor: "75%"
+    property string cooldown: "120s"
+    property string maxAllocation: "18% equity"
+    property bool allowAiOverride: false
+    property string riskLimitSource: "Balanced"
+    property string riskExplanation: "Dlaczego takie ustawienia? Balanced utrzymuje średnie limity dla lokalnego Paper Preview: umiarkowana pozycja, standardowy stop loss i aktywny daily loss limit."
+    property var aiRecommendedChangedParameters: []
+    property var customRiskState: ({ maxPosition: "2,500 USDT", maxOpenPositions: 4, stopLoss: "2.4%", takeProfit: "4.8%", maxSlippage: "0.20%", maxDrawdown: "6.0%", dailyLossLimit: "1,200 USDT", perSymbolExposure: "18% equity", confidenceFloor: "75%", cooldown: "120s", maxAllocation: "18% equity", allowAiOverride: false })
+    property var riskActiveLimits: []
+    property bool riskRuntimeConfigWritten: false
     property bool liveTradingDisabled: true
     property bool exchangeIoDisabled: true
     property bool orderSubmissionDisabled: true
@@ -872,13 +907,92 @@ ApplicationWindow {
     function setAutonomyMode(mode) { autonomyMode = mode; autonomyLevel = mode === "Advisory" ? 1 : (mode === "Supervised dry-run" ? 2 : (mode === "Autonomous paper" ? 4 : 0)) }
     function setDecisionPolicy(policy) { decisionPolicyPreview = policy }
     function setConfidenceThreshold(value) { confidenceThreshold = value }
+    function riskProfileDescription(profile) {
+        if (profile === "Conservative") return "Dlaczego takie ustawienia? Conservative ogranicza ekspozycję, liczbę pozycji, poślizg i drawdown dla ostrożnego Paper Preview."
+        if (profile === "Aggressive") return "Dlaczego takie ustawienia? Aggressive pokazuje wyższe limity preview dla bardziej aktywnej symulacji, ale live trading, exchange I/O i order submission nadal są wyłączone."
+        if (profile === "Custom") return "Dlaczego takie ustawienia? Użytkownik ręcznie ustawia wartości; zmiany są local-only preview i nie zapisują real runtime config."
+        if (profile === "AI Recommended") return riskExplanation
+        return "Dlaczego takie ustawienia? Balanced utrzymuje średnie limity dla lokalnego Paper Preview: umiarkowana pozycja, standardowy stop loss i aktywny daily loss limit."
+    }
+    function refreshRiskActiveLimits(source, comments) {
+        var localSource = source || riskProfile
+        var note = comments || ({})
+        riskActiveLimits = [
+            ({ parameter: "max position", value: maxPosition, source: localSource, comment: note.maxPosition || "limit pojedynczej pozycji preview" }),
+            ({ parameter: "max open positions", value: String(maxOpenPositions), source: localSource, comment: note.maxOpenPositions || "ile pozycji może pokazać lokalna symulacja" }),
+            ({ parameter: "stop loss", value: stopLoss, source: localSource, comment: note.stopLoss || "lokalny próg ograniczenia straty" }),
+            ({ parameter: "take profit", value: takeProfit, source: localSource, comment: note.takeProfit || "lokalny próg realizacji zysku" }),
+            ({ parameter: "max slippage", value: maxSlippage, source: localSource, comment: note.maxSlippage || "preview akceptowanego poślizgu" }),
+            ({ parameter: "max drawdown", value: maxDrawdown, source: localSource, comment: note.maxDrawdown || "lokalny limit obsunięcia kapitału" }),
+            ({ parameter: "daily loss limit", value: dailyLossLimit, source: localSource, comment: note.dailyLossLimit || "dzienny bezpiecznik Paper Preview" }),
+            ({ parameter: "per-symbol exposure", value: perSymbolExposure, source: localSource, comment: note.perSymbolExposure || "ekspozycja na jedną parę" }),
+            ({ parameter: "confidence floor", value: confidenceFloor, source: localSource, comment: note.confidenceFloor || "wpływa deterministycznie na PAPER BUY/SELL/HOLD" }),
+            ({ parameter: "cooldown", value: cooldown, source: localSource, comment: note.cooldown || "preview przerwy między ryzykowniejszymi akcjami" })
+        ]
+    }
+    function captureCustomRiskState() {
+        customRiskState = ({ maxPosition: maxPosition, maxOpenPositions: maxOpenPositions, stopLoss: stopLoss, takeProfit: takeProfit, maxSlippage: maxSlippage, maxDrawdown: maxDrawdown, dailyLossLimit: dailyLossLimit, perSymbolExposure: perSymbolExposure, confidenceFloor: confidenceFloor, cooldown: cooldown, maxAllocation: maxAllocation, allowAiOverride: allowAiOverride })
+    }
+    function setCustomRiskValue(field, value) {
+        riskProfile = "Custom"
+        riskLimitSource = "Custom"
+        if (field === "maxPosition") maxPosition = String(value)
+        else if (field === "maxOpenPositions") maxOpenPositions = Math.max(1, Number(value))
+        else if (field === "stopLoss") stopLoss = String(value)
+        else if (field === "takeProfit") takeProfit = String(value)
+        else if (field === "maxSlippage") maxSlippage = String(value)
+        else if (field === "maxDrawdown") maxDrawdown = String(value)
+        else if (field === "dailyLossLimit") dailyLossLimit = String(value)
+        else if (field === "perSymbolExposure") perSymbolExposure = String(value)
+        else if (field === "confidenceFloor") { confidenceFloor = String(value); confidenceThreshold = Math.max(1, Math.min(99, parseInt(value))) }
+        else if (field === "cooldown") cooldown = String(value)
+        else if (field === "maxAllocation") maxAllocation = String(value)
+        else if (field === "allowAiOverride") allowAiOverride = Boolean(value)
+        captureCustomRiskState()
+        riskState = "Custom preview • user-edited local limits • live blocked"
+        riskLocked = false
+        riskExplanation = riskProfileDescription("Custom")
+        refreshRiskActiveLimits("Custom")
+    }
     function setRiskProfile(profile) {
+        if (profile === "AI Recommended") { applyAiRecommendedRiskProfile(); return }
         riskProfile = profile
-        if (profile === "Conservative") { maxPosition = "1,000 USDT"; maxOpenPositions = 2; stopLoss = "1.5%"; takeProfit = "3.0%"; maxSlippage = "0.10%"; maxDrawdown = "3.0%"; dailyLossLimit = "500 USDT"; perSymbolExposure = "10% equity" }
-        else if (profile === "Aggressive") { maxPosition = "5,000 USDT"; maxOpenPositions = 8; stopLoss = "4.0%"; takeProfit = "8.0%"; maxSlippage = "0.35%"; maxDrawdown = "10.0%"; dailyLossLimit = "2,500 USDT"; perSymbolExposure = "28% equity" }
-        else { maxPosition = "2,500 USDT"; maxOpenPositions = 4; stopLoss = "2.4%"; takeProfit = "4.8%"; maxSlippage = "0.20%"; maxDrawdown = "6.0%"; dailyLossLimit = "1,200 USDT"; perSymbolExposure = "18% equity" }
+        riskLimitSource = profile
+        if (profile === "Conservative") { maxPosition = "1,000 USDT"; maxOpenPositions = 2; stopLoss = "1.5%"; takeProfit = "3.0%"; maxSlippage = "0.10%"; maxDrawdown = "3.0%"; dailyLossLimit = "500 USDT"; perSymbolExposure = "10% equity"; confidenceFloor = "82%"; cooldown = "180s"; maxAllocation = "10% equity" }
+        else if (profile === "Aggressive") { maxPosition = "5,000 USDT"; maxOpenPositions = 8; stopLoss = "4.0%"; takeProfit = "8.0%"; maxSlippage = "0.35%"; maxDrawdown = "10.0%"; dailyLossLimit = "2,500 USDT"; perSymbolExposure = "28% equity"; confidenceFloor = "68%"; cooldown = "60s"; maxAllocation = "28% equity" }
+        else if (profile === "Custom") { maxPosition = customRiskState.maxPosition; maxOpenPositions = customRiskState.maxOpenPositions; stopLoss = customRiskState.stopLoss; takeProfit = customRiskState.takeProfit; maxSlippage = customRiskState.maxSlippage; maxDrawdown = customRiskState.maxDrawdown; dailyLossLimit = customRiskState.dailyLossLimit; perSymbolExposure = customRiskState.perSymbolExposure; confidenceFloor = customRiskState.confidenceFloor; cooldown = customRiskState.cooldown; maxAllocation = customRiskState.maxAllocation; allowAiOverride = customRiskState.allowAiOverride }
+        else { maxPosition = "2,500 USDT"; maxOpenPositions = 4; stopLoss = "2.4%"; takeProfit = "4.8%"; maxSlippage = "0.20%"; maxDrawdown = "6.0%"; dailyLossLimit = "1,200 USDT"; perSymbolExposure = "18% equity"; confidenceFloor = "75%"; cooldown = "120s"; maxAllocation = "18% equity" }
+        confidenceThreshold = Math.max(1, Math.min(99, parseInt(confidenceFloor)))
         riskState = profile + " preview • daily loss limit active • live blocked"
-        riskLocked = true
+        riskLocked = profile !== "Custom"
+        riskExplanation = riskProfileDescription(profile)
+        refreshRiskActiveLimits(profile)
+    }
+    function applyAiRecommendedRiskProfile() {
+        riskProfile = "AI Recommended"
+        riskLimitSource = "AI Recommended"
+        simulationMarketMode = scenarioMode(simulationScenario)
+        var cautious = simulationMarketMode === "volatility" || simulationMarketMode === "bear" || modelReadiness < 75 || trainingCoverage < 70 || dataCoverage < 75 || portfolioMaxDrawdown.indexOf("-3") === 0 || paperPnl < 0
+        if (cautious) { maxPosition = "900 USDT"; maxOpenPositions = 2; stopLoss = "1.4%"; takeProfit = "3.2%"; maxSlippage = "0.08%"; maxDrawdown = "3.0%"; dailyLossLimit = "450 USDT"; perSymbolExposure = "8% equity"; confidenceFloor = "84%"; cooldown = "240s"; maxAllocation = "8% equity" }
+        else { maxPosition = "2,000 USDT"; maxOpenPositions = 4; stopLoss = "2.2%"; takeProfit = "4.4%"; maxSlippage = "0.16%"; maxDrawdown = "5.0%"; dailyLossLimit = "900 USDT"; perSymbolExposure = "14% equity"; confidenceFloor = "78%"; cooldown = "150s"; maxAllocation = "14% equity" }
+        confidenceThreshold = Math.max(1, Math.min(99, parseInt(confidenceFloor)))
+        allowAiOverride = false
+        riskLocked = cautious
+        var reasons = []
+        reasons.push("scenariusz rynku: " + simulationScenario + " / " + simulationMarketMode)
+        reasons.push("model readiness " + modelReadiness + "%")
+        reasons.push("training coverage " + trainingCoverage + "%")
+        reasons.push("data coverage " + dataCoverage + "%")
+        reasons.push("confidence threshold " + confidenceThreshold + "%")
+        reasons.push("paper PnL " + formatUsd(paperPnl))
+        reasons.push("portfolio max drawdown " + portfolioMaxDrawdown)
+        aiRecommendedChangedParameters = ["max position", "max open positions", "stop loss", "take profit", "max slippage", "max drawdown", "daily loss limit", "per-symbol exposure", "confidence floor", "cooldown", "max allocation"]
+        riskExplanation = "Dlaczego takie ustawienia? AI dobrało " + (cautious ? "profil ostrożny" : "profil zbalansowany") + ", ponieważ " + reasons.join(", ") + ". Zmienione parametry: " + aiRecommendedChangedParameters.join(", ") + ". To lokalny preview bez backend model inference."
+        riskState = "AI Recommended preview • " + (cautious ? "exposure reduced" : "balanced exposure") + " • live blocked"
+        refreshRiskActiveLimits("AI Recommended", ({ maxPosition: cautious ? "obniżone przez high volatility/bear/readiness guard" : "dobrane lokalnie do stabilniejszego preview", confidenceFloor: "ustawione z uwzględnieniem model readiness i coverage", cooldown: cautious ? "wydłużony przez lokalny risk guard" : "umiarkowany cooldown preview", perSymbolExposure: cautious ? "ekspozycja obniżona przez AI preview" : "ekspozycja zbalansowana" }))
+        appendPaperDecision("NO ORDER", riskExplanation, "Risk profile", "AI Recommended local-only")
+        appendPaperTelemetry("AI Recommended risk profile applied • local-only • no backend inference • no exchange I/O")
+        appendTerminalLog("AI Recommended risk applied • " + maxPosition + " • confidence floor " + confidenceFloor + " • no real orders")
     }
     function setStrategyActive(name, enabled) {
         var active = activeStrategies.slice()
@@ -895,7 +1009,7 @@ ApplicationWindow {
         return (h < 10 ? "0" + h : h) + ":" + (m < 10 ? "0" + m : m) + ":" + (sec < 10 ? "0" + sec : sec) + "Z"
     }
     function actionStatus(action) {
-        if (action === "BLOCKED LIVE") return "blocked"
+        if (action === "BLOCKED LIVE" || action === "BLOCKED PAPER PREVIEW") return "blocked"
         if (action === "NO ORDER" || action === "HOLD" || action === "WAIT") return "no order"
         return "simulated"
     }
@@ -1020,13 +1134,31 @@ ApplicationWindow {
         var action = actions[(simulationTickCount + (simulationMarketMode === "bull" ? 0 : simulationMarketMode === "bear" ? 1 : 2)) % actions.length]
         var status = actionStatus(action)
         var confidence = (0.62 + ((simulationTickCount % 9) * 0.035)).toFixed(2)
-        var reason = "simulation tick " + simulationTickCount + " • " + simulationScenario + " • mock price " + nextPrice.toFixed(2) + " • no exchange I/O"
+        var floorValue = Math.max(1, Math.min(99, parseInt(confidenceFloor || confidenceThreshold))) / 100.0
+        var confidenceNumber = Number(confidence)
+        var riskBlocked = riskLocked || riskState.indexOf("kill-switch") >= 0
+        if (riskBlocked) {
+            action = simulationTickCount % 2 === 0 ? "BLOCKED PAPER PREVIEW" : "BLOCKED LIVE"
+            status = "blocked"
+        } else if (confidenceNumber < floorValue && (action === "PAPER BUY" || action === "PAPER SELL")) {
+            action = confidenceNumber < floorValue - 0.08 ? "NO ORDER" : "HOLD"
+            status = "no order"
+        } else if (riskProfile === "AI Recommended" && (simulationMarketMode === "volatility" || simulationMarketMode === "bear") && action === "PAPER BUY") {
+            action = "HOLD"
+            status = "no order"
+        }
+        var reason = "simulation tick " + simulationTickCount + " • " + simulationScenario + " • risk profile " + riskProfile + " • confidence " + confidence + " vs floor " + confidenceFloor + " • mock price " + nextPrice.toFixed(2) + " • no exchange I/O"
+        if (riskBlocked) reason = "Risk kill-switch active; BLOCKED PAPER PREVIEW local-only event • no exchange I/O"
         simulationLastAction = action
         updateSimulationOrderBook(nextPrice)
         updateSimulationCandles(nextPrice)
         var delta = status === "simulated" ? (action === "PAPER BUY" ? 12.40 : 8.80) : (status === "blocked" ? 0.0 : -1.35)
-        paperPnl = Number((paperPnl + delta).toFixed(2))
-        paperEquity = Number((portfolioStartingEquityUsd + paperPnl).toFixed(2))
+        if (status !== "blocked") {
+            paperPnl = Number((paperPnl + delta).toFixed(2))
+            paperEquity = Number((portfolioStartingEquityUsd + paperPnl).toFixed(2))
+            previewPnl = paperPnl
+            previewEquity = paperEquity
+        }
         var order = paperOrderEventFromSimulation(action, status, pair, nextPrice, confidence, reason)
         var orders = paperOrderRows.slice()
         orders.unshift(order)
@@ -1836,6 +1968,7 @@ ApplicationWindow {
             runtimeService.loadRecentDecisions(uiConfig ? uiConfig.decision_limit : 25)
         if (licensingController && licensingController.refreshFingerprint)
             licensingController.refreshFingerprint()
+        refreshRiskActiveLimits(riskProfile)
         if (layoutController && layoutController.registerPanels) {
             layoutController.registerPanels(panelMetadata)
             showOperatorDashboard()

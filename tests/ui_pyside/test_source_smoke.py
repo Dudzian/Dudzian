@@ -1635,7 +1635,15 @@ def test_ui_preview_8_0b_smoke_audits_portfolio_state_and_safety() -> None:
     assert audit["portfolio_time_filter_does_not_mutate_paper_state"] is True
     assert audit["portfolio_time_filter_updates_report_state"] is True
     assert audit["portfolio_custom_filter_does_not_mutate_paper_state"] is True
-    assert audit["paper_tick_updates_paper_state"] is True
+    assert audit["paper_tick_updates_operational_state"] is True
+    assert audit["paper_tick_can_update_financial_state_when_unblocked"] is True
+    assert audit["risk_blocked_tick_does_not_mutate_paper_pnl"] is True
+    assert audit["risk_blocked_tick_does_not_mutate_paper_equity"] is True
+    assert audit["risk_blocked_tick_increments_blocked_count"] is True
+    assert audit["risk_blocked_tick_appends_decision"] is True
+    assert audit["risk_blocked_tick_appends_telemetry"] is True
+    assert audit["risk_blocked_tick_creates_no_filled_order"] is True
+    assert audit["risk_unlocked_tick_can_update_financial_state"] is True
     assert audit["dashboard_separates_paper_and_portfolio_report"] is True
     assert audit["portfolio_money_formatting_ok"] is True
     assert audit["safety_boundary_ok"] is True
