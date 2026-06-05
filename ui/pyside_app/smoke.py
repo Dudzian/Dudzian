@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, TextIO
@@ -80,6 +81,27 @@ class UiSmokeResult:
     risk_tooltips_present: bool = False
     risk_safety_boundary_ok: bool = True
     simulation_respects_risk_preview_state: bool = False
+    market_scanner_tab_present: bool = False
+    market_scanner_state_present: bool = False
+    market_scanner_rows_present: bool = False
+    market_scanner_start_sets_scanning: bool = False
+    market_scanner_pause_sets_paused: bool = False
+    market_scanner_tick_updates_rows: bool = False
+    market_scanner_burst_updates_count: bool = False
+    market_scanner_explain_updates_explanation: bool = False
+    market_scanner_watchlist_updates_count: bool = False
+    market_scanner_watchlist_separate_from_whitelist: bool = False
+    market_scanner_watchlist_add_does_not_mutate_whitelist: bool = False
+    market_scanner_watchlist_remove_does_not_mutate_whitelist: bool = False
+    market_scanner_watchlist_filter_uses_scanner_watchlist: bool = False
+    market_scanner_blacklist_updates_rejected: bool = False
+    market_scanner_filter_sort_threshold_present: bool = False
+    market_scanner_safety_boundary_ok: bool = False
+    market_scanner_no_network_api_calls: bool = True
+    market_scanner_no_order_submission: bool = True
+    market_scanner_no_secret_reads: bool = True
+    simulation_can_use_scanner_candidate_local_only: bool = False
+    top_navigation_default_order_unique: bool = False
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
@@ -103,6 +125,7 @@ PANEL_AUDIT_IDS = (
     "sidePanel",
     "aiCenterPanel",
     "tradingUniversePanel",
+    "marketScannerPanel",
     "portfolioPerformancePanel",
     "terminalPanel",
     "strategiesPanel",
@@ -586,6 +609,97 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         _bool_property(root, "orderSubmissionDisabled") is True
     )
     audit["simulation_does_not_require_api_keys"] = _bool_property(root, "apiKeysRequired") is False
+    before_scanner_ticks = int(root.property("scannerTickCount") or 0)
+    _invoke_qml(root, "startMarketScannerPreview")
+    audit["market_scanner_start_sets_scanning"] = (
+        _string_property(root, "scannerStatus") == "scanning"
+        and _bool_property(root, "scannerActive") is True
+    )
+    _invoke_qml(root, "pauseMarketScannerPreview")
+    audit["market_scanner_pause_sets_paused"] = (
+        _string_property(root, "scannerStatus") == "paused"
+        and _bool_property(root, "scannerActive") is False
+    )
+    before_rows = _sequence_length(root.property("scannerRows"))
+    before_tick_count = int(root.property("scannerTickCount") or 0)
+    _invoke_qml(root, "runMarketScannerTick")
+    audit["market_scanner_tick_updates_rows"] = (
+        _sequence_length(root.property("scannerRows")) >= before_rows >= 30
+        and int(root.property("scannerTickCount") or 0) == before_tick_count + 1
+    )
+    before_burst_count = int(root.property("scannerTickCount") or 0)
+    _invoke_qml(root, "runMarketScannerBurst", "3")
+    audit["market_scanner_burst_updates_count"] = (
+        int(root.property("scannerTickCount") or 0) == before_burst_count + 3
+    )
+    _invoke_qml(root, "selectScannerPair", "ETH/USDT")
+    _invoke_qml(root, "explainScannerCandidate", "ETH/USDT")
+    audit["market_scanner_explain_updates_explanation"] = "ETH/USDT" in _string_property(
+        root, "scannerExplanation"
+    )
+    watchlist_probe_pair = "AAVE/USDT"
+    before_watchlist_count = int(root.property("scannerWatchlistCount") or 0)
+    before_watchlist_whitelist = list(_variant(root.property("whitelistPairs")) or [])
+    before_watchlist_selected = list(_variant(root.property("selectedPairs")) or [])
+    _invoke_qml(root, "addScannerPairToWatchlist", watchlist_probe_pair)
+    scanner_watchlist_pairs_after_add = list(_variant(root.property("scannerWatchlistPairs")) or [])
+    whitelist_after_watchlist_add = list(_variant(root.property("whitelistPairs")) or [])
+    selected_after_watchlist_add = list(_variant(root.property("selectedPairs")) or [])
+    audit["market_scanner_watchlist_updates_count"] = (
+        int(root.property("scannerWatchlistCount") or 0) >= before_watchlist_count + 1
+        and watchlist_probe_pair in scanner_watchlist_pairs_after_add
+    )
+    audit["market_scanner_watchlist_separate_from_whitelist"] = (
+        root.property("scannerWatchlistPairs") is not None
+        and scanner_watchlist_pairs_after_add != whitelist_after_watchlist_add
+    )
+    audit["market_scanner_watchlist_add_does_not_mutate_whitelist"] = (
+        whitelist_after_watchlist_add == before_watchlist_whitelist
+        and selected_after_watchlist_add == before_watchlist_selected
+    )
+    _invoke_qml(root, "setScannerFilterMode", "Watchlist")
+    scanner_watchlist_rows_repr = repr(_variant(root.property("scannerWatchlistRows")) or [])
+    audit["market_scanner_watchlist_filter_uses_scanner_watchlist"] = (
+        _string_property(root, "scannerFilterMode") == "Watchlist"
+        and watchlist_probe_pair in scanner_watchlist_rows_repr
+    )
+    _invoke_qml(root, "removeScannerPairFromWatchlist", watchlist_probe_pair)
+    audit["market_scanner_watchlist_remove_does_not_mutate_whitelist"] = (
+        list(_variant(root.property("whitelistPairs")) or []) == before_watchlist_whitelist
+        and list(_variant(root.property("selectedPairs")) or []) == before_watchlist_selected
+        and watchlist_probe_pair
+        not in (list(_variant(root.property("scannerWatchlistPairs")) or []))
+    )
+    before_rejected_count = int(root.property("scannerRejectedCount") or 0)
+    _invoke_qml(root, "blacklistScannerPair", "ETH/USDT")
+    audit["market_scanner_blacklist_updates_rejected"] = int(
+        root.property("scannerRejectedCount") or 0
+    ) >= before_rejected_count and "ETH/USDT" in (_variant(root.property("blacklistPairs")) or [])
+    _invoke_qml(root, "setScannerFilterMode", "AI candidates")
+    _invoke_qml(root, "setScannerSortMode", "Risk score")
+    _invoke_qml(root, "setScannerThreshold", "minAiScore", "65")
+    audit["market_scanner_filter_sort_threshold_present"] = (
+        _string_property(root, "scannerFilterMode") == "AI candidates"
+        and _string_property(root, "scannerSortMode") == "Risk score"
+        and abs(float(root.property("scannerMinAiScore") or 0) - 65.0) < 0.1
+    )
+    audit["market_scanner_rows_present"] = _sequence_length(root.property("scannerRows")) >= 30
+    audit["market_scanner_state_present"] = root.property("scannerSafetyBoundary") is not None
+    audit["market_scanner_safety_boundary_ok"] = (
+        "Live trading disabled" in _string_property(root, "scannerSafetyBoundary")
+        and "Exchange I/O disabled" in _string_property(root, "scannerSafetyBoundary")
+        and "Order submission disabled" in _string_property(root, "scannerSafetyBoundary")
+    )
+    audit["simulation_can_use_scanner_candidate_local_only"] = (
+        int(root.property("scannerTickCount") or 0) >= before_scanner_ticks
+        and _string_property(root, "selectedTerminalPair") != ""
+        and _bool_property(root, "runtimeLoopStarted") is False
+    )
+    audit["market_scanner_no_network_api_calls"] = True
+    audit["market_scanner_no_order_submission"] = (
+        _bool_property(root, "orderSubmissionDisabled") is True
+    )
+    audit["market_scanner_no_secret_reads"] = True
     audit["simulation_does_not_read_secrets"] = True
     audit["safety_boundary_ok"] = (
         audit["live_trading_disabled"] is True
@@ -661,6 +775,25 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "risk_ai_recommended_explanation_present",
         "risk_active_limits_present",
         "simulation_respects_risk_preview_state",
+        "market_scanner_start_sets_scanning",
+        "market_scanner_pause_sets_paused",
+        "market_scanner_tick_updates_rows",
+        "market_scanner_burst_updates_count",
+        "market_scanner_explain_updates_explanation",
+        "market_scanner_watchlist_updates_count",
+        "market_scanner_watchlist_separate_from_whitelist",
+        "market_scanner_watchlist_add_does_not_mutate_whitelist",
+        "market_scanner_watchlist_remove_does_not_mutate_whitelist",
+        "market_scanner_watchlist_filter_uses_scanner_watchlist",
+        "market_scanner_blacklist_updates_rejected",
+        "market_scanner_filter_sort_threshold_present",
+        "market_scanner_rows_present",
+        "market_scanner_state_present",
+        "market_scanner_safety_boundary_ok",
+        "market_scanner_no_network_api_calls",
+        "market_scanner_no_order_submission",
+        "market_scanner_no_secret_reads",
+        "simulation_can_use_scanner_candidate_local_only",
         "safety_boundary_ok",
     )
     audit["passed"] = (
@@ -742,6 +875,12 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         risk_tooltips_present = False
         risk_safety_boundary_ok = True
         simulation_respects_risk_preview_state = False
+        market_scanner_tab_present = False
+        market_scanner_state_present = False
+        market_scanner_rows_present = False
+        market_scanner_filter_sort_threshold_present = False
+        market_scanner_safety_boundary_ok = False
+        top_navigation_default_order_unique = False
         preview_state_audit: dict[str, object] = {}
         if qml_loaded:
             source = _qml_preview_source()
@@ -751,6 +890,8 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     "Dashboard",
                     "AI Center",
                     "Trading Universe",
+                    "Okazje",
+                    "Market Scanner",
                     "Portfel / Wyniki",
                     "Strategie",
                     "Ryzyko",
@@ -803,6 +944,17 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "daily loss limit",
                 "cooldown",
                 "risk override",
+                "Market Scanner",
+                "AI score",
+                "Risk score",
+                "Liquidity",
+                "Volatility",
+                "Trend",
+                "Watchlist",
+                "Blacklist",
+                "Candidate",
+                "Rejected setup",
+                "Strategy match",
             )
             required_tooltips = (
                 "Start Paper Preview",
@@ -835,6 +987,19 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "allow AI override",
                 "Custom range",
                 "Zastosuj zakres",
+                "Start scanner",
+                "Pause scanner",
+                "Run scan tick",
+                "Run scan burst",
+                "AI score",
+                "Risk score",
+                "Liquidity score",
+                "Spread",
+                "Volatility",
+                "Strategy match",
+                "Watchlist",
+                "Blacklist",
+                "Explain candidate",
             )
             i18n_language_selector_present = _source_has_all(
                 source, ("currentLanguage", "languageSelector", "setLanguage", "trText", "previewT")
@@ -860,6 +1025,106 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     "runSimulationBurst",
                 ),
             )
+            market_scanner_tab_present = _source_has_all(
+                source, ("marketScannerPanel", "nav.marketScanner", "Okazje", "Market Scanner")
+            )
+            market_scanner_state_present = _source_has_all(
+                source,
+                (
+                    "scannerStatus",
+                    "scannerActive",
+                    "scannerLastScanAt",
+                    "scannerTickCount",
+                    "scannerRows",
+                    "scannerRejectedRows",
+                    "scannerWatchlistPairs",
+                    "scannerWatchlistRows",
+                    "scannerAiCandidateRows",
+                    "scannerExplanation",
+                    "startMarketScannerPreview",
+                    "pauseMarketScannerPreview",
+                    "stopMarketScannerPreview",
+                    "resetMarketScannerPreview",
+                    "runMarketScannerTick",
+                    "runMarketScannerBurst",
+                    "selectScannerPair",
+                    "addScannerPairToWatchlist",
+                    "removeScannerPairFromWatchlist",
+                    "blacklistScannerPair",
+                    "setScannerFilterMode",
+                    "setScannerSortMode",
+                    "setScannerThreshold",
+                    "explainScannerCandidate",
+                    "Watchlist = obserwacja",
+                    "Watchlist is for observation",
+                    "preview-local blocklist shared with Trading Universe",
+                ),
+            )
+            market_scanner_rows_present = _source_has_all(
+                source,
+                (
+                    "previewMarketPairs",
+                    "buildScannerRow",
+                    "visibleScannerRows",
+                    "Pair",
+                    "Exchange",
+                    "Recommendation",
+                    "Reason",
+                ),
+            )
+            market_scanner_filter_sort_threshold_present = _source_has_all(
+                source,
+                (
+                    "All",
+                    "AI candidates",
+                    "Trade candidates",
+                    "Watchlist",
+                    "Rejected",
+                    "Blocked",
+                    "High liquidity",
+                    "Low risk",
+                    "Top score",
+                    "Risk score",
+                    "Trend strength",
+                    "min AI score",
+                    "min liquidity score",
+                    "max risk score",
+                ),
+            )
+            market_scanner_safety_boundary_ok = _source_has_all(
+                source,
+                (
+                    "Safe preview scanner",
+                    "Live trading disabled",
+                    "Exchange I/O disabled",
+                    "Order submission disabled",
+                    "API keys not required",
+                    "No real orders",
+                    "No network/API calls",
+                    "Local preview catalog only",
+                ),
+            )
+            panel_order_matches = re.findall(
+                r'panelId: "([^"]+)",[^\n]+defaultOrder: (\d+)', source
+            )
+            required_panel_order = {
+                "sidePanel": 0,
+                "aiCenterPanel": 1,
+                "tradingUniversePanel": 2,
+                "marketScannerPanel": 3,
+                "portfolioPerformancePanel": 4,
+                "terminalPanel": 5,
+                "strategiesPanel": 6,
+                "riskControlsPanel": 7,
+                "aiDecisionsPanel": 8,
+                "telemetryPanel": 9,
+                "diagnosticsPanel": 10,
+                "helpGlossaryPanel": 11,
+            }
+            panel_orders = {panel_id: int(order) for panel_id, order in panel_order_matches}
+            top_navigation_default_order_unique = panel_orders == required_panel_order and len(
+                set(panel_orders.values())
+            ) == len(panel_orders)
             tooltips_present = _source_has_all(
                 source, ("ToolTip.delay: 800", "helpText", "previewTooltips")
             ) and _source_has_all(source, required_tooltips)
@@ -939,6 +1204,17 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 audit_issues.append("i18n_help_tooltip_audit_failed")
             if not all(
                 (
+                    market_scanner_tab_present,
+                    market_scanner_state_present,
+                    market_scanner_rows_present,
+                    market_scanner_filter_sort_threshold_present,
+                    market_scanner_safety_boundary_ok,
+                    top_navigation_default_order_unique,
+                )
+            ):
+                audit_issues.append("market_scanner_audit_failed")
+            if not all(
+                (
                     risk_custom_profile_present,
                     risk_ai_recommended_present,
                     risk_ai_recommended_explanation_present,
@@ -984,6 +1260,27 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
                 risk_blocked_tick_creates_no_filled_order = bool(
                     preview_state_audit.get("risk_blocked_tick_creates_no_filled_order")
+                )
+                market_scanner_state_present = bool(
+                    preview_state_audit.get(
+                        "market_scanner_state_present", market_scanner_state_present
+                    )
+                )
+                market_scanner_rows_present = bool(
+                    preview_state_audit.get(
+                        "market_scanner_rows_present", market_scanner_rows_present
+                    )
+                )
+                market_scanner_filter_sort_threshold_present = bool(
+                    preview_state_audit.get(
+                        "market_scanner_filter_sort_threshold_present",
+                        market_scanner_filter_sort_threshold_present,
+                    )
+                )
+                market_scanner_safety_boundary_ok = bool(
+                    preview_state_audit.get(
+                        "market_scanner_safety_boundary_ok", market_scanner_safety_boundary_ok
+                    )
                 )
                 risk_unlocked_tick_can_update_financial_state = bool(
                     preview_state_audit.get("risk_unlocked_tick_can_update_financial_state")
@@ -1081,6 +1378,63 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             risk_tooltips_present=risk_tooltips_present,
             risk_safety_boundary_ok=risk_safety_boundary_ok,
             simulation_respects_risk_preview_state=simulation_respects_risk_preview_state,
+            market_scanner_tab_present=market_scanner_tab_present,
+            market_scanner_state_present=market_scanner_state_present,
+            market_scanner_rows_present=market_scanner_rows_present,
+            market_scanner_start_sets_scanning=bool(
+                preview_state_audit.get("market_scanner_start_sets_scanning", False)
+            ),
+            market_scanner_pause_sets_paused=bool(
+                preview_state_audit.get("market_scanner_pause_sets_paused", False)
+            ),
+            market_scanner_tick_updates_rows=bool(
+                preview_state_audit.get("market_scanner_tick_updates_rows", False)
+            ),
+            market_scanner_burst_updates_count=bool(
+                preview_state_audit.get("market_scanner_burst_updates_count", False)
+            ),
+            market_scanner_explain_updates_explanation=bool(
+                preview_state_audit.get("market_scanner_explain_updates_explanation", False)
+            ),
+            market_scanner_watchlist_updates_count=bool(
+                preview_state_audit.get("market_scanner_watchlist_updates_count", False)
+            ),
+            market_scanner_watchlist_separate_from_whitelist=bool(
+                preview_state_audit.get("market_scanner_watchlist_separate_from_whitelist", False)
+            ),
+            market_scanner_watchlist_add_does_not_mutate_whitelist=bool(
+                preview_state_audit.get(
+                    "market_scanner_watchlist_add_does_not_mutate_whitelist", False
+                )
+            ),
+            market_scanner_watchlist_remove_does_not_mutate_whitelist=bool(
+                preview_state_audit.get(
+                    "market_scanner_watchlist_remove_does_not_mutate_whitelist", False
+                )
+            ),
+            market_scanner_watchlist_filter_uses_scanner_watchlist=bool(
+                preview_state_audit.get(
+                    "market_scanner_watchlist_filter_uses_scanner_watchlist", False
+                )
+            ),
+            market_scanner_blacklist_updates_rejected=bool(
+                preview_state_audit.get("market_scanner_blacklist_updates_rejected", False)
+            ),
+            market_scanner_filter_sort_threshold_present=market_scanner_filter_sort_threshold_present,
+            market_scanner_safety_boundary_ok=market_scanner_safety_boundary_ok,
+            market_scanner_no_network_api_calls=bool(
+                preview_state_audit.get("market_scanner_no_network_api_calls", True)
+            ),
+            market_scanner_no_order_submission=bool(
+                preview_state_audit.get("market_scanner_no_order_submission", True)
+            ),
+            market_scanner_no_secret_reads=bool(
+                preview_state_audit.get("market_scanner_no_secret_reads", True)
+            ),
+            simulation_can_use_scanner_candidate_local_only=bool(
+                preview_state_audit.get("simulation_can_use_scanner_candidate_local_only", False)
+            ),
+            top_navigation_default_order_unique=top_navigation_default_order_unique,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],

@@ -35,6 +35,7 @@ PANEL_AUDIT_IDS = (
     "sidePanel",
     "aiCenterPanel",
     "tradingUniversePanel",
+    "marketScannerPanel",
     "portfolioPerformancePanel",
     "terminalPanel",
     "strategiesPanel",
