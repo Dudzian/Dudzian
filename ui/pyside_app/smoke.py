@@ -137,6 +137,23 @@ class UiSmokeResult:
     alerts_no_secret_reads: bool = True
     alert_center_safety_boundary_ok: bool = False
     top_navigation_default_order_unique: bool = False
+    settings_tab_present: bool = False
+    settings_state_present: bool = False
+    settings_apply_local_only: bool = False
+    settings_reset_local_only: bool = False
+    settings_no_runtime_config_write: bool = True
+    settings_no_secret_reads: bool = True
+    app_status_bar_present: bool = False
+    app_mode_preview_present: bool = False
+    onboarding_state_present: bool = False
+    onboarding_steps_present: bool = False
+    onboarding_next_previous_works: bool = False
+    onboarding_complete_local_only: bool = False
+    top_navigation_order_unique_with_settings: bool = False
+    top_navigation_scroll_or_compact_present: bool = False
+    dashboard_quick_actions_present: bool = False
+    global_safety_badges_present: bool = False
+    settings_safety_boundary_ok: bool = False
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
@@ -167,8 +184,9 @@ PANEL_AUDIT_IDS = (
     "riskControlsPanel",
     "aiDecisionsPanel",
     "telemetryPanel",
-    "diagnosticsPanel",
     "alertsPanel",
+    "diagnosticsPanel",
+    "settingsPanel",
     "helpGlossaryPanel",
 )
 
@@ -914,6 +932,97 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["alert_center_safety_boundary_ok"] = "No OS notifications sent" in _string_property(
         root, "alertSafetyBoundaryCopy"
     ) and "No secrets read" in _string_property(root, "alertSafetyBoundaryCopy")
+    source = _qml_preview_source()
+    before_mode = _string_property(root, "appModePreview")
+    before_runtime_config = _bool_property(root, "settingsRuntimeConfigWritten")
+    before_secret_reads = _bool_property(root, "settingsSecretsRead")
+    _invoke_qml(root, "setAppModePreview", "Paper Preview")
+    _invoke_qml(root, "applyPreviewSettings")
+    audit["settings_apply_local_only"] = (
+        _string_property(root, "appModePreview") == "Paper Preview"
+        and _bool_property(root, "settingsRuntimeConfigWritten") == before_runtime_config
+        and _bool_property(root, "settingsSecretsRead") == before_secret_reads
+    )
+    _invoke_qml(root, "resetPreviewSettings")
+    audit["settings_reset_local_only"] = (
+        _string_property(root, "appModePreview") == "Demo Preview"
+        and _bool_property(root, "settingsRuntimeConfigWritten") == before_runtime_config
+        and _bool_property(root, "settingsSecretsRead") == before_secret_reads
+    )
+    _invoke_qml(root, "startOnboardingPreview")
+    _invoke_qml(root, "nextOnboardingStep")
+    step_after_next = int(root.property("onboardingStep") or 0)
+    _invoke_qml(root, "previousOnboardingStep")
+    audit["onboarding_next_previous_works"] = (
+        step_after_next == 2 and int(root.property("onboardingStep") or 0) == 1
+    )
+    _invoke_qml(root, "completeOnboardingPreview")
+    audit["onboarding_complete_local_only"] = (
+        _bool_property(root, "onboardingCompletedPreview")
+        and not _bool_property(root, "runtimeLoopStarted")
+        and _bool_property(root, "settingsRuntimeConfigWritten") == before_runtime_config
+        and _bool_property(root, "settingsSecretsRead") == before_secret_reads
+    )
+    if before_mode:
+        _invoke_qml(root, "setAppModePreview", before_mode)
+    audit["settings_tab_present"] = "settingsPanel" in source and "Ustawienia" in source
+    audit["settings_state_present"] = all(
+        root.property(field) is not None
+        for field in (
+            "appModePreview",
+            "baseCurrency",
+            "uiDensity",
+            "themeModePreview",
+            "defaultPreviewExchange",
+            "defaultTerminalPair",
+            "defaultRiskProfile",
+            "settingsDirty",
+            "settingsLastUpdatedAt",
+            "settingsSafetySummary",
+        )
+    )
+    audit["settings_no_runtime_config_write"] = not _bool_property(
+        root, "settingsRuntimeConfigWritten"
+    )
+    audit["settings_no_secret_reads"] = not _bool_property(root, "settingsSecretsRead")
+    audit["app_status_bar_present"] = "globalAppStatusBar" in source
+    audit["app_mode_preview_present"] = "appModePreviewOptions" in source
+    audit["onboarding_state_present"] = all(
+        root.property(field) is not None
+        for field in ("firstRunWizardVisible", "onboardingStep", "onboardingCompletedPreview")
+    )
+    audit["onboarding_steps_present"] = _sequence_length(root.property("onboardingSteps")) == 6
+    audit["top_navigation_order_unique_with_settings"] = "settingsPanel" in source
+    audit["top_navigation_scroll_or_compact_present"] = (
+        "productPreviewTabBar" in source and "HorizontalFlick" in source
+    )
+    audit["dashboard_quick_actions_present"] = all(
+        token in source
+        for token in (
+            "Start Paper Preview",
+            "Pause",
+            "Stop",
+            "Run 10 ticks",
+            "Start Scanner",
+            "AI Recommended Risk",
+            "Open Alerts",
+            "Open Settings",
+            "Open Help",
+            "Generate Diagnostic Bundle",
+        )
+    )
+    audit["global_safety_badges_present"] = "globalSafetyBadges" in source
+    audit["settings_safety_boundary_ok"] = all(
+        token in _string_property(root, "settingsSafetySummary")
+        for token in (
+            "Settings are local preview only",
+            "No runtime config is written",
+            "No secrets are read",
+            "No exchange/API calls",
+            "No order submission",
+            "Live trading remains disabled",
+        )
+    )
     audit["simulation_does_not_read_secrets"] = True
     audit["safety_boundary_ok"] = (
         audit["live_trading_disabled"] is True
@@ -1026,6 +1135,23 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "alerts_no_order_submission",
         "alerts_no_secret_reads",
         "alert_center_safety_boundary_ok",
+        "settings_tab_present",
+        "settings_state_present",
+        "settings_apply_local_only",
+        "settings_reset_local_only",
+        "settings_no_runtime_config_write",
+        "settings_no_secret_reads",
+        "app_status_bar_present",
+        "app_mode_preview_present",
+        "onboarding_state_present",
+        "onboarding_steps_present",
+        "onboarding_next_previous_works",
+        "onboarding_complete_local_only",
+        "top_navigation_order_unique_with_settings",
+        "top_navigation_scroll_or_compact_present",
+        "dashboard_quick_actions_present",
+        "global_safety_badges_present",
+        "settings_safety_boundary_ok",
         "decision_explainability_state_present",
         "decision_explain_open_close_works",
         "decision_explain_builds_audit_rows",
@@ -1138,6 +1264,23 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         alerts_dashboard_summary_present = False
         alert_center_safety_boundary_ok = False
         top_navigation_default_order_unique = False
+        settings_tab_present = False
+        settings_state_present = False
+        settings_apply_local_only = False
+        settings_reset_local_only = False
+        settings_no_runtime_config_write = True
+        settings_no_secret_reads = True
+        app_status_bar_present = False
+        app_mode_preview_present = False
+        onboarding_state_present = False
+        onboarding_steps_present = False
+        onboarding_next_previous_works = False
+        onboarding_complete_local_only = False
+        top_navigation_order_unique_with_settings = False
+        top_navigation_scroll_or_compact_present = False
+        dashboard_quick_actions_present = False
+        global_safety_badges_present = False
+        settings_safety_boundary_ok = False
         preview_state_audit: dict[str, object] = {}
         if qml_loaded:
             source = _qml_preview_source()
@@ -1154,9 +1297,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     "Ryzyko",
                     "Decyzje",
                     "Telemetria",
-                    "Diagnostyka",
                     "Alerty",
                     "Alerts",
+                    "Diagnostyka",
+                    "Ustawienia",
+                    "Settings",
                 ),
             )
             paper_session_controls_present = _source_has_all(
@@ -1232,6 +1377,17 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "desktop notification preview",
                 "stale heartbeat",
                 "drawdown warning",
+                "Settings",
+                "Onboarding",
+                "Demo Preview",
+                "Paper Preview",
+                "Sandbox planned",
+                "Live disabled",
+                "Base currency",
+                "UI density",
+                "App mode",
+                "Local preview state",
+                "Reset local preview state",
             )
             required_tooltips = (
                 "Start Paper Preview",
@@ -1291,6 +1447,17 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "Severity filter",
                 "Category filter",
                 "Alert Center",
+                "App mode selector",
+                "Base currency selector",
+                "UI density selector",
+                "Theme preview",
+                "Reset local preview state",
+                "Apply preview settings",
+                "Start onboarding",
+                "Complete onboarding",
+                "Open Settings",
+                "Open Alerts",
+                "Open Help",
             )
             i18n_language_selector_present = _source_has_all(
                 source, ("currentLanguage", "languageSelector", "setLanguage", "trText", "previewT")
@@ -1468,14 +1635,114 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "riskControlsPanel": 7,
                 "aiDecisionsPanel": 8,
                 "telemetryPanel": 9,
-                "diagnosticsPanel": 10,
-                "alertsPanel": 11,
-                "helpGlossaryPanel": 12,
+                "alertsPanel": 10,
+                "diagnosticsPanel": 11,
+                "settingsPanel": 12,
+                "helpGlossaryPanel": 13,
             }
             panel_orders = {panel_id: int(order) for panel_id, order in panel_order_matches}
             top_navigation_default_order_unique = panel_orders == required_panel_order and len(
                 set(panel_orders.values())
             ) == len(panel_orders)
+            settings_tab_present = _source_has_all(
+                source, ("settingsPanel", "nav.settings", "Ustawienia", "Settings")
+            )
+            settings_state_present = _source_has_all(
+                source,
+                (
+                    "settingsPanelOpen",
+                    "appModePreview",
+                    "baseCurrency",
+                    "uiDensity",
+                    "themeModePreview",
+                    "defaultPreviewExchange",
+                    "defaultTerminalPair",
+                    "defaultRiskProfile",
+                    "settingsDirty",
+                    "settingsLastUpdatedAt",
+                    "settingsSafetySummary",
+                ),
+            )
+            app_mode_preview_present = _source_has_all(
+                source,
+                (
+                    "Demo Preview",
+                    "Paper Preview",
+                    "Sandbox planned",
+                    "Live disabled",
+                    "appModePreviewOptions",
+                ),
+            )
+            onboarding_state_present = _source_has_all(
+                source, ("firstRunWizardVisible", "onboardingStep", "onboardingCompletedPreview")
+            )
+            onboarding_steps_present = _source_has_all(
+                source,
+                (
+                    "Wybierz język",
+                    "Wybierz walutę bazową",
+                    "Wybierz tryb",
+                    "Wybierz giełdę preview",
+                    "Wybierz profil ryzyka",
+                    "Uruchom Paper Preview",
+                ),
+            )
+            app_status_bar_present = _source_has_all(
+                source,
+                ("globalAppStatusBar", "appStatusSummary", "Alerts: ", "Base: ", "Simulation: "),
+            )
+            global_safety_badges_present = _source_has_all(
+                source,
+                (
+                    "globalSafetyBadges",
+                    "Live trading: disabled",
+                    "Exchange I/O: disabled",
+                    "Order submission: disabled",
+                    "API keys: not required",
+                    "Runtime loop: not started",
+                    "Safety: safe preview",
+                ),
+            )
+            top_navigation_order_unique_with_settings = top_navigation_default_order_unique
+            top_navigation_scroll_or_compact_present = (
+                _source_has_all(source, ("productPreviewTabBar", "Flickable", "HorizontalFlick"))
+                or "topNavigationHorizontalScroll" in source
+            )
+            dashboard_quick_actions_present = _source_has_all(
+                source,
+                (
+                    "Szybkie akcje",
+                    "Start Paper Preview",
+                    "Pause",
+                    "Stop",
+                    "Run 10 ticks",
+                    "Start Scanner",
+                    "AI Recommended Risk",
+                    "Open Alerts",
+                    "Open Settings",
+                    "Open Help",
+                    "Generate Diagnostic Bundle",
+                ),
+            )
+            settings_safety_boundary_ok = _source_has_all(
+                source,
+                (
+                    "Settings are local preview only",
+                    "No runtime config is written",
+                    "No secrets are read",
+                    "No exchange/API calls",
+                    "No order submission",
+                    "Live trading remains disabled",
+                    "Ustawienia działają lokalnie w preview",
+                    "Konfiguracja runtime nie jest zapisywana",
+                    "Sekrety nie są odczytywane",
+                    "Brak połączeń giełda/API",
+                    "Brak składania zleceń",
+                    "Live trading pozostaje wyłączony",
+                ),
+            )
+            settings_no_runtime_config_write = "settingsRuntimeConfigWritten = true" not in source
+            settings_no_secret_reads = "settingsSecretsRead = true" not in source
             tooltips_present = _source_has_all(
                 source, ("ToolTip.delay: 800", "helpText", "previewTooltips")
             ) and _source_has_all(source, required_tooltips)
@@ -1647,6 +1914,48 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 and _bool_property(root, "apiKeysRequired") == before_api_keys_required
             )
             _invoke_qml(root, "setLanguage", before_language or "PL")
+            before_mode = str(root.property("appModePreview") or "")
+            before_runtime_config = _bool_property(root, "settingsRuntimeConfigWritten")
+            before_secret_reads = _bool_property(root, "settingsSecretsRead")
+            before_step = int(root.property("onboardingStep") or 0)
+            _invoke_qml(root, "setAppModePreview", "Paper Preview")
+            _invoke_qml(root, "applyPreviewSettings")
+            settings_apply_local_only = (
+                str(root.property("appModePreview") or "") == "Paper Preview"
+                and _bool_property(root, "settingsRuntimeConfigWritten") == before_runtime_config
+                and _bool_property(root, "settingsSecretsRead") == before_secret_reads
+            )
+            _invoke_qml(root, "resetPreviewSettings")
+            settings_reset_local_only = (
+                str(root.property("appModePreview") or "") == "Demo Preview"
+                and _bool_property(root, "settingsRuntimeConfigWritten") == before_runtime_config
+                and _bool_property(root, "settingsSecretsRead") == before_secret_reads
+            )
+            _invoke_qml(root, "startOnboardingPreview")
+            _invoke_qml(root, "nextOnboardingStep")
+            step_after_next = int(root.property("onboardingStep") or 0)
+            _invoke_qml(root, "previousOnboardingStep")
+            onboarding_next_previous_works = (
+                step_after_next == 2 and int(root.property("onboardingStep") or 0) == 1
+            )
+            _invoke_qml(root, "completeOnboardingPreview")
+            onboarding_complete_local_only = (
+                _bool_property(root, "onboardingCompletedPreview")
+                and not _bool_property(root, "runtimeLoopStarted")
+                and _bool_property(root, "settingsRuntimeConfigWritten") == before_runtime_config
+                and _bool_property(root, "settingsSecretsRead") == before_secret_reads
+            )
+            if before_mode:
+                _invoke_qml(root, "setAppModePreview", before_mode)
+            if before_step:
+                root.setProperty("onboardingStep", before_step)
+            settings_no_runtime_config_write = (
+                settings_no_runtime_config_write
+                and not _bool_property(root, "settingsRuntimeConfigWritten")
+            )
+            settings_no_secret_reads = settings_no_secret_reads and not _bool_property(
+                root, "settingsSecretsRead"
+            )
             if not all(
                 (
                     i18n_language_selector_present,
@@ -1658,6 +1967,28 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ):
                 audit_issues.append("i18n_help_tooltip_audit_failed")
+            if not all(
+                (
+                    settings_tab_present,
+                    settings_state_present,
+                    settings_apply_local_only,
+                    settings_reset_local_only,
+                    app_status_bar_present,
+                    app_mode_preview_present,
+                    onboarding_state_present,
+                    onboarding_steps_present,
+                    onboarding_next_previous_works,
+                    onboarding_complete_local_only,
+                    top_navigation_order_unique_with_settings,
+                    top_navigation_scroll_or_compact_present,
+                    dashboard_quick_actions_present,
+                    global_safety_badges_present,
+                    settings_safety_boundary_ok,
+                    settings_no_runtime_config_write,
+                    settings_no_secret_reads,
+                )
+            ):
+                audit_issues.append("settings_onboarding_audit_failed")
             if not all(
                 (
                     market_scanner_tab_present,
@@ -1989,6 +2320,23 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             alerts_no_secret_reads=bool(preview_state_audit.get("alerts_no_secret_reads", True)),
             alert_center_safety_boundary_ok=alert_center_safety_boundary_ok,
             top_navigation_default_order_unique=top_navigation_default_order_unique,
+            settings_tab_present=settings_tab_present,
+            settings_state_present=settings_state_present,
+            settings_apply_local_only=settings_apply_local_only,
+            settings_reset_local_only=settings_reset_local_only,
+            settings_no_runtime_config_write=settings_no_runtime_config_write,
+            settings_no_secret_reads=settings_no_secret_reads,
+            app_status_bar_present=app_status_bar_present,
+            app_mode_preview_present=app_mode_preview_present,
+            onboarding_state_present=onboarding_state_present,
+            onboarding_steps_present=onboarding_steps_present,
+            onboarding_next_previous_works=onboarding_next_previous_works,
+            onboarding_complete_local_only=onboarding_complete_local_only,
+            top_navigation_order_unique_with_settings=top_navigation_order_unique_with_settings,
+            top_navigation_scroll_or_compact_present=top_navigation_scroll_or_compact_present,
+            dashboard_quick_actions_present=dashboard_quick_actions_present,
+            global_safety_badges_present=global_safety_badges_present,
+            settings_safety_boundary_ok=settings_safety_boundary_ok,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
