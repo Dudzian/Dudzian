@@ -356,6 +356,80 @@ def test_ui_preview_8_0d_live_like_paper_simulation_contract() -> None:
         assert token not in scoped_source
 
 
+def test_ui_preview_8_0j_final_top_level_panel_registry_and_order_contract() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    expected_panels = (
+        ("sidePanel", "Dashboard", 0),
+        ("aiCenterPanel", "AI Center", 1),
+        ("tradingUniversePanel", "Trading Universe", 2),
+        ("marketScannerPanel", "Okazje / Market Scanner", 3),
+        ("portfolioPerformancePanel", "Portfel / Wyniki", 4),
+        ("terminalPanel", "Paper Terminal", 5),
+        ("strategiesPanel", "Strategie", 6),
+        ("riskControlsPanel", "Ryzyko", 7),
+        ("aiDecisionsPanel", "Decyzje", 8),
+        ("telemetryPanel", "Telemetria", 9),
+        ("alertsPanel", "Alerty", 10),
+        ("diagnosticsPanel", "Diagnostyka", 11),
+        ("settingsPanel", "Ustawienia", 12),
+        ("helpGlossaryPanel", "Pomoc / Słownik", 13),
+    )
+
+    assert tuple(panel_id for panel_id, _title, _order in expected_panels) == PANEL_AUDIT_IDS
+
+    metadata_matches = re.findall(
+        r'panelId: "([^"]+)", title: qsTr\("([^"]+)"\),[^\n]+defaultOrder: (\d+)',
+        main_window,
+    )
+    metadata = {panel_id: (title, int(order)) for panel_id, title, order in metadata_matches}
+    assert set(metadata) >= {panel_id for panel_id, _title, _order in expected_panels}
+
+    default_orders = []
+    for panel_id, title, default_order in expected_panels:
+        assert metadata[panel_id] == (title, default_order)
+        assert f'"{panel_id}": {{ title: qsTr("{title}")' in main_window
+        default_orders.append(default_order)
+
+    assert default_orders == list(range(len(expected_panels)))
+    assert len(default_orders) == len(set(default_orders))
+
+
+def test_ui_preview_8_0j_final_status_navigation_and_forbidden_token_contract() -> None:
+    source = "\n".join(path.read_text(encoding="utf-8") for path in [*_qml_sources(), SMOKE_SOURCE])
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert 'objectName: "productPreviewTabBar"' in main_window
+    assert "Flickable.HorizontalFlick" in main_window
+    assert "Menu {" not in main_window
+    assert "MenuItem {" not in main_window
+    assert "readonly property bool active: root.currentPanelId === modelData.panelId" in main_window
+    assert "active ? 2 : 1" in main_window
+
+    for badge in (
+        'objectName: "globalAppStatusBar"',
+        'objectName: "globalSafetyBadges"',
+        "Mode: ",
+        "Live trading: disabled",
+        "Exchange I/O: disabled",
+        "Order submission: disabled",
+        "API keys: not required",
+        "Runtime loop: not started",
+        "Safety: safe preview",
+        "Alerts: ",
+        "Lang: ",
+        "Base: ",
+        "Risk: ",
+        "Simulation: ",
+    ):
+        assert badge in main_window
+
+    assert "Safety badges below confirm local-only preview boundaries." in main_window
+    assert "Alerty / Alerts" not in main_window
+
+    for token in FORBIDDEN_SOURCE_TOKENS:
+        assert token not in source
+
+
 def test_ai_decisions_view_preserves_timeline_count_contract() -> None:
     decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
 
