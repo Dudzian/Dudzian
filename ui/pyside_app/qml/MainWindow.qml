@@ -31,7 +31,7 @@ ApplicationWindow {
             "nav.dashboard": "Dashboard",
             "nav.aiCenter": "AI Center",
             "nav.universe": "Trading Universe",
-            "nav.marketScanner": "Okazje",
+            "nav.marketScanner": "Okazje / Market Scanner",
             "nav.portfolio": "Portfel / Wyniki",
             "nav.terminal": "Paper Terminal",
             "nav.strategies": "Strategie",
@@ -1838,7 +1838,7 @@ ApplicationWindow {
         ({ panelId: "sidePanel", title: qsTr("Dashboard"), titleKey: "nav.dashboard", icon: "fingerprint", defaultColumn: 0, defaultOrder: 0 }),
         ({ panelId: "aiCenterPanel", title: qsTr("AI Center"), titleKey: "nav.aiCenter", icon: "mode_wizard", defaultColumn: 0, defaultOrder: 1 }),
         ({ panelId: "tradingUniversePanel", title: qsTr("Trading Universe"), titleKey: "nav.universe", icon: "cloud", defaultColumn: 0, defaultOrder: 2 }),
-        ({ panelId: "marketScannerPanel", title: qsTr("Okazje"), titleKey: "nav.marketScanner", icon: "cloud", defaultColumn: 0, defaultOrder: 3 }),
+        ({ panelId: "marketScannerPanel", title: qsTr("Okazje / Market Scanner"), titleKey: "nav.marketScanner", icon: "cloud", defaultColumn: 0, defaultOrder: 3 }),
         ({ panelId: "portfolioPerformancePanel", title: qsTr("Portfel / Wyniki"), titleKey: "nav.portfolio", icon: "package", defaultColumn: 0, defaultOrder: 4 }),
         ({ panelId: "terminalPanel", title: qsTr("Paper Terminal"), titleKey: "nav.terminal", icon: "package", defaultColumn: 0, defaultOrder: 5 }),
         ({ panelId: "strategiesPanel", title: qsTr("Strategie"), titleKey: "nav.strategies", icon: "strategy_manager", defaultColumn: 0, defaultOrder: 6 }),
@@ -1857,7 +1857,7 @@ ApplicationWindow {
         "sidePanel": { title: qsTr("Dashboard"), icon: "fingerprint", component: sidePanelComponent },
         "aiCenterPanel": { title: qsTr("AI Center"), icon: "mode_wizard", component: aiCenterPanelComponent },
         "tradingUniversePanel": { title: qsTr("Trading Universe"), icon: "cloud", component: tradingUniversePanelComponent },
-        "marketScannerPanel": { title: qsTr("Okazje"), icon: "cloud", component: marketScannerPanelComponent },
+        "marketScannerPanel": { title: qsTr("Okazje / Market Scanner"), icon: "cloud", component: marketScannerPanelComponent },
         "portfolioPerformancePanel": { title: qsTr("Portfel / Wyniki"), icon: "package", component: portfolioPerformancePanelComponent },
         "terminalPanel": { title: qsTr("Paper Terminal"), icon: "package", component: terminalPanelComponent },
         "strategiesPanel": { title: qsTr("Strategie"), icon: "strategy_manager", component: strategiesPanelComponent },
@@ -2327,7 +2327,7 @@ ApplicationWindow {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { objectName: "settingsPreviewTitle"; text: root.trText("settings.title") + " / Settings"; font.bold: true; font.pixelSize: 24; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
-                        Label { text: root.trText("settings.description") + " Settings are local preview only • No runtime config is written • No secrets are read • No exchange/API calls • No order submission • Live trading remains disabled. Ustawienia działają lokalnie w preview • Konfiguracja runtime nie jest zapisywana • Sekrety nie są odczytywane • Brak połączeń giełda/API • Brak składania zleceń • Live trading pozostaje wyłączony."; color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Label { text: root.trText("settings.description") + " " + qsTr("Safety badges below confirm local-only preview boundaries."); color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     }
                 }
                 Components.PreviewCard {
@@ -2525,7 +2525,7 @@ ApplicationWindow {
                     Rectangle { width: 4; Layout.fillHeight: true; radius: 2; color: designSystem.color("accent") }
                     ColumnLayout {
                         Layout.fillWidth: true
-                        Label { objectName: "alertCenterTitle"; text: qsTr("Alerty / Alerts"); font.bold: true; font.pixelSize: 24; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
+                        Label { objectName: "alertCenterTitle"; text: root.trText("nav.alerts"); font.bold: true; font.pixelSize: 24; color: designSystem.color("textPrimary"); Layout.fillWidth: true }
                         Label { text: root.alertSafetyBoundaryCopy; color: designSystem.color("textSecondary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     }
                 }
