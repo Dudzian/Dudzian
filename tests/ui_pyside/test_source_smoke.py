@@ -175,6 +175,10 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
 
     assert audit["start_sets_running"] is True
     assert audit["start_tick_delta"] >= 1
+    assert audit["paper_session_started_telemetry_event"] is True
+    assert audit["paper_session_started_alert_event"] is True
+    assert audit["preview_state_contract_helpers_present"] is True
+    assert audit["paper_session_snapshot_matches_state"] is True
     assert audit["generate_tick_delta"] == 1
     assert audit["generate_tick_appended_order"] is True
     assert audit["generate_tick_appended_decision"] is True
@@ -185,7 +189,37 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["reset_sets_stopped"] is True
     assert audit["reset_ticks_zero"] is True
     assert audit["reset_clears_orders"] is True
+    assert audit["reset_keeps_single_reset_telemetry_event"] is True
+    assert audit["reset_clears_scanner_rows_to_local_catalog"] is True
+    assert audit["reset_contract_snapshot_consistent"] is True
+    assert audit["scanner_generates_candidates_from_local_catalog"] is True
+    assert audit["dashboard_scanner_uses_shared_state"] is True
+    assert audit["dashboard_best_matches_scanner_snapshot"] is True
     assert audit["governor_updates_decision"] is True
+    assert audit["governor_uses_scanner_and_risk_state"] is True
+    assert audit["ai_center_dashboard_decisions_share_governor_state"] is True
+    assert audit["dashboard_ai_decision_matches_governor_snapshot"] is True
+    assert audit["simulate_order_updates_blotter_portfolio_telemetry"] is True
+    assert audit["terminal_blotter_updates_portfolio_snapshot"] is True
+    assert audit["risk_block_generates_blocked_event_and_alert"] is True
+    assert audit["blocked_semantics_no_legacy_generated"] is True
+    assert audit["risk_reason_shared_by_decision_alert_telemetry"] is True
+    assert audit["bounded_feed_contracts_hold_after_many_actions"] is True
+    assert audit["cross_panel_shared_state_snapshots_match"] is True
+    assert audit["telemetry_latest_matches_last_blocked_action"] is True
+    assert audit["final_reset_contract_after_cross_panel_sequence"] is True
+    assert audit["risk_gate_confidence_floor_blocks_locally"] is True
+    assert audit["risk_gate_scanner_score_blocks_locally"] is True
+    assert audit["risk_gate_daily_loss_blocks_locally"] is True
+    assert audit["risk_gate_max_position_blocks_locally"] is True
+    assert audit["risk_gate_kill_switch_blocks_locally"] is True
+    assert audit["blocked_reason_shared_across_panels_for_each_risk_path"] is True
+    assert audit["no_legacy_blocked_actions_generated_by_risk_paths"] is True
+    assert audit["mock_terminal_orders_bounded_after_risk_paths"] is True
+    assert audit["mock_terminal_orders_match_latest_blocked_order"] is True
+    assert audit["per_panel_runtime_snapshots_match_after_risk_paths"] is True
+    assert audit["paper_session_naming_helpers_normalize_state"] is True
+    assert audit["optional_preview_feed_limits_hold"] is True
     assert audit["ping_appends_telemetry"] is True
 
     assert audit["select_top20_count"] == 20
@@ -1245,6 +1279,28 @@ def test_ui_preview_7_7_local_paper_bridge_state_contract() -> None:
         "submitLocalPaperOrder",
         "updatePaperPositionPreview",
         "updatePaperEquityPreview",
+        "previewSessionIsActive",
+        "previewRuntimeBoundaryOk",
+        "currentPaperSessionSnapshot",
+        "currentScannerSnapshot",
+        "currentGovernorSnapshot",
+        "currentPortfolioSnapshot",
+        "currentAlertTelemetrySnapshot",
+        "currentPerPanelRuntimeSnapshot",
+        "normalizedPaperSessionState",
+        "evaluateLocalRiskGate",
+        "exerciseRiskGatePreviewPath",
+        "previewRiskGateScenarioInput",
+        "setLocalRiskKillSwitch",
+        "riskBlockReason",
+        "previewTelemetryFeedLimit",
+        "previewAlertFeedLimit",
+        "previewDecisionFeedLimit",
+        "previewPaperOrderFeedLimit",
+        "previewScannerRowsLimit",
+        "previewTerminalLogLimit",
+        "previewOpenPositionFeedLimit",
+        "previewClosedTradeFeedLimit",
     )
     for token in required_state_tokens:
         assert token in main_window
@@ -1313,6 +1369,31 @@ def test_ui_preview_7_7_local_paper_bridge_state_contract() -> None:
     )
     for token in forbidden_tokens:
         assert token not in guarded_sources
+
+
+def test_func_preview_1_1_blocked_and_bounded_contract_source() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    decisions = (QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml").read_text(encoding="utf-8")
+
+    assert 'return "BLOCKED"' in main_window
+    assert 'action = "BLOCKED"' in main_window
+    assert '"BLOCKED LIVE"' in main_window
+    assert '"BLOCKED PAPER PREVIEW"' in main_window
+    assert 'row.action !== "BLOCKED" && row.action !== "BLOCKED LIVE"' in decisions
+    assert 'action === "BLOCKED" || action === "BLOCKED LIVE"' in decisions
+    assert "previewTelemetryFeedLimit" in main_window
+    assert "previewAlertFeedLimit" in main_window
+    assert "previewDecisionFeedLimit" in main_window
+    assert "previewPaperOrderFeedLimit" in main_window
+    assert "previewScannerRowsLimit" in main_window
+    assert "previewTerminalLogLimit" in main_window
+    assert "previewOpenPositionFeedLimit" in main_window
+    assert "previewClosedTradeFeedLimit" in main_window
+    assert "exerciseRiskGatePreviewPath" in main_window
+    assert "previewRiskGateScenarioInput" in main_window
+    assert "currentPerPanelRuntimeSnapshot" in main_window
+    assert "normalizedPaperSessionState" in main_window
+    assert "Risk gate blocked" in main_window
 
 
 def test_ui_preview_7_4_product_ux_source_contract() -> None:

@@ -121,7 +121,7 @@ ApplicationWindow {
         "drawdown": "Maksymalny spadek kapitału tolerowany przez lokalny risk guard.",
         "daily loss limit": "Dzienny limit straty w Paper Preview.",
         "confidence floor": "Minimalna pewność lokalnej decyzji, zanim tick pokaże PAPER BUY/SELL zamiast HOLD/NO ORDER.",
-        "kill-switch": "Awaryjna blokada: tick generuje tylko BLOCKED PAPER PREVIEW/BLOCKED LIVE event.",
+        "kill-switch": "Awaryjna blokada: tick generuje tylko BLOCKED local preview event.",
         "allow AI override": "Preview przełącznik pozwalający AI nadpisać część własnych limitów; bez runtime i bez zleceń.",
         "Custom range": "Zakres raportu portfela. Nie zmienia aktywnej sesji Paper.",
         "Zastosuj zakres": "Stosuje zakres tylko do raportu Portfel / Wyniki, bez mutacji paper state.",
@@ -350,6 +350,14 @@ ApplicationWindow {
     property int paperTicks: 0
     property int decisionSequence: 0
     property int telemetryTick: 0
+    readonly property int previewTelemetryFeedLimit: 12
+    readonly property int previewAlertFeedLimit: 12
+    readonly property int previewDecisionFeedLimit: 12
+    readonly property int previewPaperOrderFeedLimit: 12
+    readonly property int previewScannerRowsLimit: 60
+    readonly property int previewTerminalLogLimit: 12
+    readonly property int previewOpenPositionFeedLimit: 12
+    readonly property int previewClosedTradeFeedLimit: 12
     property real previewEquity: 102020.0
     property real previewPnl: 2020.0
     property alias mockEquity: root.previewEquity
@@ -498,9 +506,10 @@ ApplicationWindow {
     property string decisionPolicyPreview: "Polityka zbalansowana"
     property string activeGovernorEngine: "Dudzian Governor Ensemble"
     property string modelVersionBuild: "preview-7.5 build local-2026.06"
-    property bool riskLocked: true
+    property bool riskLocked: false
     property string riskProfile: "Balanced"
-    property string riskState: "guarded preview • Safety kill-switch armed • live blocked"
+    property string riskState: "Balanced preview • daily loss limit active • live blocked"
+    property string riskBlockReason: "Risk gate clear: Balanced local preview limits allow paper actions within confidence, position and drawdown constraints."
     property string maxPosition: "2,500 USDT"
     property int maxOpenPositions: 4
     property string stopLoss: "2.4%"
@@ -622,7 +631,7 @@ ApplicationWindow {
     property var decisionPreviewRows: [
         ({ timestamp: "12:04:18Z", symbol: "BTC/USDT", action: "HOLD", confidence: "0.81", reason: "Momentum neutral; confidence floor not reached.", riskReason: "Position cap unused; drawdown guard inside preview limit.", strategy: "Momentum Guard", safety: "NO ORDER — preview only", paperState: "stopped" }),
         ({ timestamp: "12:03:42Z", symbol: "ETH/USDT", action: "WAIT", confidence: "0.74", reason: "Coverage check asks for a fresher candle batch.", riskReason: "Risk governor waits for lower slippage.", strategy: "Range Guard", safety: "Exchange route disabled", paperState: "stopped" }),
-        ({ timestamp: "12:02:57Z", symbol: "SOL/USDT", action: "BLOCKED LIVE", confidence: "0.69", reason: "Live bridge is intentionally unavailable in preview.", riskReason: "Execution guard blocks the order route.", strategy: "Volatility Breakout Preview", safety: "Live trading disabled • Order submission disabled", paperState: "stopped" }),
+        ({ timestamp: "12:02:57Z", symbol: "SOL/USDT", action: "BLOCKED", confidence: "0.69", reason: "Live bridge is intentionally unavailable in preview.", riskReason: "Execution guard blocks the order route.", strategy: "Volatility Breakout Preview", safety: "Live trading disabled • Order submission disabled", paperState: "stopped" }),
         ({ timestamp: "12:01:33Z", symbol: "BNB/USDT", action: "NO ORDER", confidence: "0.61", reason: "Advisory preview rejected low confidence setup.", riskReason: "Below confidence threshold.", strategy: "Strategy governor", safety: "Preview only / no order", paperState: "stopped" })
     ]
     // UI-PREVIEW-8.0G QML-only decision explainability/audit drawer state. Local deterministic preview only: no backend AI inference, no network/API calls, no order submission, no secret reads.
@@ -784,7 +793,7 @@ ApplicationWindow {
         var rows = alertRows.slice()
         if (rows.length === 0 || rows[0].title !== row.title || rows[0].category !== row.category || rows[0].pair !== row.pair)
             rows.unshift(row)
-        alertRows = rows.slice(0, 60)
+        alertRows = rows.slice(0, previewAlertFeedLimit)
         alertSelectedEvent = alertRows[0]
         alertCenterOpen = alertCenterOpen
         recomputeAlertCounts()
@@ -886,6 +895,136 @@ ApplicationWindow {
         return copy
     }
 
+    function boundedRows(rows, limit) {
+        var source = rows ? rows.slice() : []
+        return source.slice(0, limit)
+    }
+
+    function parsePreviewNumber(value, fallbackValue) {
+        var text = String(value || "").replace(/[^0-9.\-]/g, "")
+        var parsed = Number(text)
+        return isNaN(parsed) ? fallbackValue : parsed
+    }
+
+    function normalizePreviewAction(action) {
+        if (action === "BLOCKED LIVE" || action === "BLOCKED PAPER PREVIEW")
+            return "BLOCKED"
+        return action || "NO ORDER"
+    }
+
+    function previewSessionIsActive() {
+        return paperSessionStatus === "running" || paperSessionStatus === "active preview"
+    }
+
+    function previewRuntimeBoundaryOk() {
+        return liveTradingDisabled && exchangeIoDisabled && orderSubmissionDisabled && !apiKeysRequired && !runtimeLoopStarted
+    }
+
+    function normalizedPaperSessionState() {
+        if (paperSessionStatus === "running" || paperSessionState === "running")
+            return "running"
+        if (paperSessionStatus === "paused" || paperSessionState === "paused")
+            return "paused"
+        if (simulationStatusLabel.indexOf("running") >= 0)
+            return "running"
+        return "stopped"
+    }
+
+    function currentPaperSessionSnapshot() {
+        return ({
+            status: paperSessionStatus,
+            state: paperSessionState,
+            active: previewSessionIsActive(),
+            normalizedState: normalizedPaperSessionState(),
+            simulationStatusLabel: simulationStatusLabel,
+            ticks: paperSessionTicks,
+            simulatedCount: paperSimulatedCount,
+            blockedCount: paperBlockedCount,
+            noOrderCount: paperNoOrderCount,
+            orderRows: paperOrderRows.length,
+            latestOrderAction: paperOrderRows.length > 0 ? normalizePreviewAction(paperOrderRows[0].action) : "—",
+            latestOrderStatus: paperOrderRows.length > 0 ? paperOrderRows[0].status : "—"
+        })
+    }
+
+    function currentScannerSnapshot() {
+        return ({
+            status: scannerStatus,
+            active: scannerActive,
+            tickCount: scannerTickCount,
+            rows: scannerRows.length,
+            candidates: scannerCandidateCount,
+            rejected: scannerRejectedCount,
+            bestOpportunity: scannerBestOpportunity,
+            selectedPair: scannerSelectedPair
+        })
+    }
+
+    function currentGovernorSnapshot() {
+        var latest = decisionPreviewRows.length > 0 ? decisionPreviewRows[0] : ({})
+        return ({
+            lastDecision: lastGovernorDecision,
+            latestAction: latest.action ? normalizePreviewAction(latest.action) : "—",
+            latestSymbol: latest.symbol || "—",
+            latestReason: latest.reason || "—",
+            riskProfile: riskProfile,
+            riskState: riskState,
+            riskBlockReason: riskBlockReason,
+            decisionRows: decisionPreviewRows.length
+        })
+    }
+
+    function currentPortfolioSnapshot() {
+        return ({
+            equity: paperEquity,
+            pnl: paperPnl,
+            startingEquity: portfolioStartingEquityUsd,
+            orders: paperOrderRows.length,
+            simulatedCount: paperSimulatedCount,
+            blockedCount: paperBlockedCount,
+            openPositions: paperOpenPositions.length,
+            closedTrades: paperClosedTrades.length
+        })
+    }
+
+    function currentAlertTelemetrySnapshot() {
+        return ({
+            alertRows: alertRows.length,
+            unreadAlerts: alertUnreadCount,
+            criticalAlerts: alertCriticalCount,
+            warningAlerts: alertWarningCount,
+            infoAlerts: alertInfoCount,
+            latestAlertTitle: alertRows.length > 0 ? alertRows[0].title : "—",
+            telemetryRows: paperTelemetryRows.length,
+            latestTelemetry: paperTelemetryRows.length > 0 ? paperTelemetryRows[0].message : "—",
+            telemetryTick: telemetryTick
+        })
+    }
+
+    function currentPerPanelRuntimeSnapshot() {
+        var latestDecision = decisionPreviewRows.length > 0 ? decisionPreviewRows[0] : ({})
+        var latestOrder = paperOrderRows.length > 0 ? paperOrderRows[0] : ({})
+        var latestTelemetry = paperTelemetryRows.length > 0 ? paperTelemetryRows[0].message : "—"
+        var latestAlert = alertRows.length > 0 ? alertRows[0].message : "—"
+        return ({
+            dashboardBestScannerOpportunity: scannerBestOpportunity,
+            dashboardLastGovernorDecision: lastGovernorDecision,
+            aiCenterLastGovernorDecision: lastGovernorDecision,
+            aiCenterRiskProfile: riskProfile,
+            decisionLatestAction: latestDecision.action ? normalizePreviewAction(latestDecision.action) : "—",
+            decisionLatestReason: latestDecision.reason || "—",
+            terminalLatestOrderAction: latestOrder.action ? normalizePreviewAction(latestOrder.action) : "—",
+            terminalLatestOrderStatus: latestOrder.status || "—",
+            terminalLatestOrderReason: latestOrder.reason || "—",
+            portfolioOrderCount: paperOrderRows.length,
+            portfolioPnl: paperPnl,
+            portfolioEquity: paperEquity,
+            alertsLatestMessage: latestAlert,
+            telemetryLatestMessage: latestTelemetry,
+            riskBlockReason: riskBlockReason
+        })
+    }
+
     function safeColor(token, fallback) {
         if (designSystem && typeof designSystem.color === "function")
             return designSystem.color(token)
@@ -924,7 +1063,8 @@ ApplicationWindow {
 
     function scannerUniversePairs() {
         var source = selectedPairs && selectedPairs.length >= 30 ? selectedPairs : previewMarketPairs
-        return source && source.length >= 30 ? source : ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "ADA/USDT", "DOGE/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT", "LTC/USDT", "BCH/USDT", "ATOM/USDT", "NEAR/USDT", "ARB/USDT", "OP/USDT", "INJ/USDT", "APT/USDT", "SUI/USDT", "TON/USDT", "PEPE/USDT", "WIF/USDT", "FET/USDT", "RENDER/USDT", "TAO/USDT", "UNI/USDT", "AAVE/USDT", "ETC/USDT", "FIL/USDT", "ICP/USDT"]
+        if (source && source.length >= 30) return source.slice(0, previewScannerRowsLimit)
+        return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "ADA/USDT", "DOGE/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT", "LTC/USDT", "BCH/USDT", "ATOM/USDT", "NEAR/USDT", "ARB/USDT", "OP/USDT", "INJ/USDT", "APT/USDT", "SUI/USDT", "TON/USDT", "PEPE/USDT", "WIF/USDT", "FET/USDT", "RENDER/USDT", "TAO/USDT", "UNI/USDT", "AAVE/USDT", "ETC/USDT", "FIL/USDT", "ICP/USDT"].slice(0, previewScannerRowsLimit)
     }
     function scannerTrendStrength(trend) { if (trend.indexOf("strong") >= 0) return 90; if (trend.indexOf("bull") >= 0 || trend.indexOf("bear") >= 0) return 72; if (trend.indexOf("range") >= 0) return 48; return 55 }
     function scannerScenarioAdjustments(index) { var mode = scenarioMode(simulationScenario); if (mode === "bull") return ({ trend: 10, risk: -4, volatility: 2 }); if (mode === "bear") return ({ trend: -3, risk: 12, volatility: 4 }); if (mode === "volatility") return ({ trend: 2, risk: 10, volatility: 12 }); if (mode === "sideways") return ({ trend: -8, risk: 3, volatility: -3 }); return ({ trend: index % 3, risk: 0, volatility: 0 }) }
@@ -940,7 +1080,22 @@ ApplicationWindow {
     function pauseMarketScannerPreview() { scannerActive = false; scannerStatus = "paused" }
     function stopMarketScannerPreview() { scannerActive = false; scannerStatus = "stopped" }
     function resetMarketScannerPreview() { scannerActive = false; scannerStatus = "safe preview"; scannerTickCount = 0; scannerLastScanAt = "not scanned"; scannerFilterMode = "All"; scannerSortMode = "AI score"; scannerMinAiScore = 70; scannerMinLiquidityScore = 60; scannerMaxRiskScore = 55; rebuildMarketScannerRows() }
-    function runMarketScannerTick() { scannerTickCount += 1; scannerLastScanAt = previewTime(scannerTickCount); if (scannerStatus === "stopped") scannerStatus = "safe preview"; rebuildMarketScannerRows(); var rows = visibleScannerRows(); var bestRow = rows.length > 0 ? rows[0] : scannerRowByPair(scannerSelectedPair); if (bestRow) { selectedTerminalPair = bestRow.pair; appendPaperDecision("SCANNER", "Market Scanner local candidate " + bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, bestRow.pair, "scanner preview / no order"); appendPaperTelemetry("scanner tick " + scannerTickCount + " • candidates " + scannerCandidateCount + " • rejected " + scannerRejectedCount + " • no network/API calls"); if (scannerTickCount % 2 === 1) appendPreviewAlert(bestRow.recommendation === "IGNORE" || bestRow.recommendation === "BLOCKED" ? "Warning" : "Info", "Scanner", bestRow.recommendation === "IGNORE" || bestRow.recommendation === "BLOCKED" ? "Scanner rejected setup" : "Scanner candidate found", bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, "Market Scanner", bestRow.pair, "Explain candidate") } }
+    function runMarketScannerTick() {
+        scannerTickCount += 1
+        scannerLastScanAt = previewTime(scannerTickCount)
+        if (scannerStatus === "stopped")
+            scannerStatus = "safe preview"
+        rebuildMarketScannerRows()
+        var rows = visibleScannerRows()
+        var bestRow = rows.length > 0 ? rows[0] : scannerRowByPair(scannerSelectedPair)
+        if (!bestRow)
+            return
+        selectedTerminalPair = bestRow.pair
+        var rejected = bestRow.recommendation === "IGNORE" || bestRow.recommendation === "BLOCKED"
+        appendPaperDecision("SCANNER", "Market Scanner local candidate " + bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, bestRow.pair, "scanner preview / no order")
+        appendPaperTelemetry("scanner tick " + scannerTickCount + " • candidates " + scannerCandidateCount + " • rejected " + scannerRejectedCount + " • no network/API calls")
+        appendPreviewAlert(rejected ? "Warning" : "Info", "Scanner", rejected ? "Scanner rejected setup" : "Scanner candidate found", bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, "Market Scanner", bestRow.pair, "Explain candidate")
+    }
     function runMarketScannerBurst(count) { var ticks = Math.max(0, Number(count) || 0); for (var i = 0; i < ticks; ++i) runMarketScannerTick() }
     function selectScannerPair(pair) { scannerSelectedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; selectedTerminalPair = scannerSelectedPair; explainScannerCandidate(scannerSelectedPair) }
     function addScannerPairToWatchlist(pair) { if (pair && !hasValue(scannerWatchlistPairs, pair)) scannerWatchlistPairs = scannerWatchlistPairs.concat([pair]); refreshScannerBuckets() }
@@ -1107,7 +1262,7 @@ ApplicationWindow {
         recalcTerminalTotal()
         var logCopy = terminalLogRows.slice()
         logCopy.unshift(({ time: previewTime(logCopy.length + 1), message: "Applied local paper percent chip " + pct + "% • no real orders" }))
-        terminalLogRows = logCopy.slice(0, 12)
+        terminalLogRows = logCopy.slice(0, previewTerminalLogLimit)
     }
     function syncPaperBridgeState() {
         paperSessionState = paperSessionStatus
@@ -1118,10 +1273,10 @@ ApplicationWindow {
         noOrderCount = paperNoOrderCount
         simulatedOrdersCount = paperSimulatedCount
         paperOrdersCount = paperOrderRows.length
-        paperOrdersPreview = paperOrderRows.slice(0, 20)
-        openPaperPositions = paperOpenPositions.slice(0, 20)
-        closedPaperTrades = paperClosedTrades.slice(0, 20)
-        telemetryRows = paperTelemetryRows.slice(0, 12)
+        paperOrdersPreview = paperOrderRows.slice(0, previewPaperOrderFeedLimit)
+        openPaperPositions = paperOpenPositions.slice(0, previewOpenPositionFeedLimit)
+        closedPaperTrades = paperClosedTrades.slice(0, previewClosedTradeFeedLimit)
+        telemetryRows = paperTelemetryRows.slice(0, previewTelemetryFeedLimit)
         syncPortfolioPerformanceState()
     }
     function markSettingsDirty() { settingsDirty = true }
@@ -1264,7 +1419,7 @@ ApplicationWindow {
     function appendTerminalLog(message) {
         var logCopy = terminalLogRows.slice()
         logCopy.unshift(({ time: previewTime(logCopy.length + paperSessionTicks + 1), message: message }))
-        terminalLogRows = logCopy.slice(0, 12)
+        terminalLogRows = logCopy.slice(0, previewTerminalLogLimit)
     }
     function appendPaperTelemetry(message) {
         telemetryTick += 1
@@ -1272,20 +1427,20 @@ ApplicationWindow {
         telemetryFreshness = "freshness status: paper bridge event #" + telemetryTick + " • " + telemetryHeartbeat
         var rows = paperTelemetryRows.slice()
         rows.unshift(({ timestamp: telemetryHeartbeat, message: message + " • local-only paper bridge/state • exchange I/O disabled • runtime loop not started" }))
-        paperTelemetryRows = rows.slice(0, 12)
-        telemetryRows = paperTelemetryRows.slice(0, 12)
+        paperTelemetryRows = rows.slice(0, previewTelemetryFeedLimit)
+        telemetryRows = paperTelemetryRows.slice(0, previewTelemetryFeedLimit)
     }
     function appendPaperDecision(action, reason, pair, status) {
         decisionSequence += 1
         var symbol = pair && pair.length > 0 ? pair : currentTerminalPair()
         var strategy = activeStrategies.length > 0 ? activeStrategies[decisionSequence % activeStrategies.length] : "Strategy governor"
         var confidence = action === "BLOCKED" || action === "NO ORDER" ? "0.00" : (0.70 + ((decisionSequence % 7) * 0.021)).toFixed(2)
-        var normalizedAction = action === "BLOCKED" ? "BLOCKED LIVE" : action
-        var row = ({ timestamp: previewTime(decisionSequence + paperSessionTicks), symbol: symbol, action: normalizedAction, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Paper Preview only • Live trading disabled • Exchange I/O disabled • Order submission disabled", paperState: paperSessionStatus, status: status, orderEvent: status && status.indexOf("paper simulated") >= 0 ? "Paper Terminal order event for " + symbol : "no real order emitted" })
+        var normalizedAction = normalizePreviewAction(action)
+        var row = ({ timestamp: previewTime(decisionSequence + paperSessionTicks), symbol: symbol, action: normalizedAction, confidence: confidence, reason: reason, riskReason: riskBlockReason, strategy: strategy, safety: "Paper Preview only • Live trading disabled • Exchange I/O disabled • Order submission disabled", paperState: paperSessionStatus, status: status, orderEvent: status && status.indexOf("paper simulated") >= 0 ? "Paper Terminal order event for " + symbol : "no real order emitted" })
         var rows = decisionPreviewRows.slice()
         if (rows.length === 0 || rows[0].timestamp !== row.timestamp || rows[0].action !== row.action || rows[0].symbol !== row.symbol)
             rows.unshift(row)
-        decisionPreviewRows = rows.slice(0, 20)
+        decisionPreviewRows = rows.slice(0, previewDecisionFeedLimit)
         lastGovernorDecision = symbol + " " + normalizedAction + " • confidence " + confidence + " • " + reason
         return row
     }
@@ -1303,9 +1458,13 @@ ApplicationWindow {
         }
         if (total > paperEquity)
             return ({ ok: false, action: "NO ORDER", status: "no order", reason: "Local validation failed: total exceeds paper balance." })
-        if (riskLocked)
-            return ({ ok: false, action: "BLOCKED", status: "blocked", reason: "Risk kill-switch active; paper bridge recorded a blocked local preview event." })
-        return ({ ok: true, action: terminalSide === "SELL" ? "PAPER SELL" : "PAPER BUY", status: "paper simulated / no real order", reason: "Paper simulated order accepted locally; live trading disabled and order submission disabled." })
+        var action = terminalSide === "SELL" ? "PAPER SELL" : "PAPER BUY"
+        var scannerRow = scannerRowByPair(selectedTerminalPair || currentTerminalPair())
+        var riskGate = evaluateLocalRiskGate(action, scannerRow, 0.86, total)
+        riskState = riskProfile + " preview • daily loss limit active • paper actions evaluated by local risk gate • live blocked • " + riskBlockReason
+        if (riskGate.blocked)
+            return ({ ok: false, action: "BLOCKED", status: "blocked", reason: riskGate.reason })
+        return ({ ok: true, action: action, status: "paper simulated / no real order", reason: "Paper simulated order accepted locally; " + riskGate.reason + " Live trading disabled and order submission disabled." })
     }
     function updatePaperEquityPreview(status, total) {
         var delta = status === "blocked" ? 0 : (terminalSide === "BUY" ? 7.25 : 5.10)
@@ -1321,11 +1480,11 @@ ApplicationWindow {
         if (event.action === "PAPER BUY") {
             var positions = paperOpenPositions.slice()
             positions.unshift(({ pair: event.pair, side: "paper long", size: event.amount, pnl: paperPnl >= 0 ? "+" + paperPnl.toFixed(2) : paperPnl.toFixed(2), label: "paper simulated" }))
-            paperOpenPositions = positions.slice(0, 12)
+            paperOpenPositions = positions.slice(0, previewOpenPositionFeedLimit)
         } else {
             var trades = paperClosedTrades.slice()
             trades.unshift(({ pair: event.pair, side: "paper sell", pnl: paperPnl >= 0 ? "+" + paperPnl.toFixed(2) : paperPnl.toFixed(2), label: "paper simulated" }))
-            paperClosedTrades = trades.slice(0, 12)
+            paperClosedTrades = trades.slice(0, previewClosedTradeFeedLimit)
         }
     }
     function submitLocalPaperOrder() {
@@ -1338,10 +1497,10 @@ ApplicationWindow {
         var event = ({ timestamp: timestamp, time: timestamp, pair: selectedTerminalPair, action: validation.action, side: terminalSide, type: terminalOrderType, price: terminalOrderType === "MARKET" ? "paper market preview" : terminalPrice, amount: terminalAmount, total: terminalTotal, status: validation.status, confidence: validation.ok ? "0.86" : "0.00", reason: validation.reason })
         var orderRows = paperOrderRows.slice()
         orderRows.unshift(event)
-        paperOrderRows = orderRows.slice(0, 20)
+        paperOrderRows = orderRows.slice(0, previewPaperOrderFeedLimit)
         var terminalRows = mockTerminalOrders.slice()
         terminalRows.unshift(event)
-        mockTerminalOrders = terminalRows.slice(0, 20)
+        mockTerminalOrders = terminalRows.slice(0, previewPaperOrderFeedLimit)
         if (event.status === "blocked")
             paperBlockedCount += 1
         else if (event.status === "no order")
@@ -1365,7 +1524,7 @@ ApplicationWindow {
         recalcTerminalTotal()
         var logCopy = terminalLogRows.slice()
         logCopy.unshift(({ time: previewTime(logCopy.length + 1), message: "Copied mock order book price " + price + " into local Order Form • exchange I/O disabled" }))
-        terminalLogRows = logCopy.slice(0, 12)
+        terminalLogRows = logCopy.slice(0, previewTerminalLogLimit)
     }
 
 
@@ -1499,6 +1658,20 @@ ApplicationWindow {
         riskExplanation = riskProfileDescription("Custom")
         refreshRiskActiveLimits("Custom")
     }
+    function setLocalRiskKillSwitch(enabled, reason) {
+        riskLocked = enabled === true || enabled === "true" || enabled === "1"
+        riskBlockReason = riskLocked ? (reason || "Risk gate blocked: local preview kill-switch enabled for smoke/risk validation.") : "Risk gate clear: local preview kill-switch inactive."
+        riskState = riskProfile + " preview • daily loss limit active • paper actions evaluated by local risk gate • live blocked • " + riskBlockReason
+    }
+
+    function setLocalPaperPnlForRiskPreview(value) {
+        paperPnl = Number(value)
+        paperEquity = Number((portfolioStartingEquityUsd + paperPnl).toFixed(2))
+        previewPnl = paperPnl
+        previewEquity = paperEquity
+        syncPortfolioPerformanceState()
+    }
+
     function setRiskProfile(profile) {
         if (profile === "AI Recommended") { applyAiRecommendedRiskProfile(); return }
         riskProfile = profile
@@ -1508,8 +1681,9 @@ ApplicationWindow {
         else if (profile === "Custom") { maxPosition = customRiskState.maxPosition; maxOpenPositions = customRiskState.maxOpenPositions; stopLoss = customRiskState.stopLoss; takeProfit = customRiskState.takeProfit; maxSlippage = customRiskState.maxSlippage; maxDrawdown = customRiskState.maxDrawdown; dailyLossLimit = customRiskState.dailyLossLimit; perSymbolExposure = customRiskState.perSymbolExposure; confidenceFloor = customRiskState.confidenceFloor; cooldown = customRiskState.cooldown; maxAllocation = customRiskState.maxAllocation; allowAiOverride = customRiskState.allowAiOverride }
         else { maxPosition = "2,500 USDT"; maxOpenPositions = 4; stopLoss = "2.4%"; takeProfit = "4.8%"; maxSlippage = "0.20%"; maxDrawdown = "6.0%"; dailyLossLimit = "1,200 USDT"; perSymbolExposure = "18% equity"; confidenceFloor = "75%"; cooldown = "120s"; maxAllocation = "18% equity" }
         confidenceThreshold = Math.max(1, Math.min(99, parseInt(confidenceFloor)))
-        riskState = profile + " preview • daily loss limit active • live blocked"
-        riskLocked = profile !== "Custom"
+        riskLocked = false
+        riskBlockReason = "Risk gate clear: " + profile + " local preview limits allow paper actions unless confidence, position, risk-score or daily-loss limits are breached."
+        riskState = profile + " preview • daily loss limit active • paper actions evaluated by local risk gate • live blocked • " + riskBlockReason
         riskExplanation = riskProfileDescription(profile)
         refreshRiskActiveLimits(profile)
     }
@@ -1533,7 +1707,8 @@ ApplicationWindow {
         reasons.push("portfolio max drawdown " + portfolioMaxDrawdown)
         aiRecommendedChangedParameters = ["max position", "max open positions", "stop loss", "take profit", "max slippage", "max drawdown", "daily loss limit", "per-symbol exposure", "confidence floor", "cooldown", "max allocation"]
         riskExplanation = "Dlaczego takie ustawienia? AI dobrało " + (cautious ? "profil ostrożny" : "profil zbalansowany") + ", ponieważ " + reasons.join(", ") + ". Zmienione parametry: " + aiRecommendedChangedParameters.join(", ") + ". To lokalny preview bez backend model inference."
-        riskState = "AI Recommended preview • " + (cautious ? "exposure reduced" : "balanced exposure") + " • live blocked"
+        riskBlockReason = "Risk gate clear: AI Recommended local preview uses " + (cautious ? "reduced exposure and stricter confidence limits" : "balanced exposure limits") + " unless scanner risk or daily-loss limits are breached."
+        riskState = "AI Recommended preview • " + (cautious ? "exposure reduced" : "balanced exposure") + " • live blocked • " + riskBlockReason
         refreshRiskActiveLimits("AI Recommended", ({ maxPosition: cautious ? "obniżone przez high volatility/bear/readiness guard" : "dobrane lokalnie do stabilniejszego preview", confidenceFloor: "ustawione z uwzględnieniem model readiness i coverage", cooldown: cautious ? "wydłużony przez lokalny risk guard" : "umiarkowany cooldown preview", perSymbolExposure: cautious ? "ekspozycja obniżona przez AI preview" : "ekspozycja zbalansowana" }))
         appendPaperDecision("NO ORDER", riskExplanation, "Risk profile", "AI Recommended local-only")
         appendPreviewAlert("Info", "Risk", "AI Recommended risk applied", riskExplanation, "Risk Guard", "—", "Explain risk")
@@ -1555,10 +1730,107 @@ ApplicationWindow {
         return (h < 10 ? "0" + h : h) + ":" + (m < 10 ? "0" + m : m) + ":" + (sec < 10 ? "0" + sec : sec) + "Z"
     }
     function actionStatus(action) {
-        if (action === "BLOCKED LIVE" || action === "BLOCKED PAPER PREVIEW") return "blocked"
+        if (action === "BLOCKED" || action === "BLOCKED LIVE" || action === "BLOCKED PAPER PREVIEW") return "blocked"
         if (action === "NO ORDER" || action === "HOLD" || action === "WAIT") return "no order"
         return "simulated"
     }
+    function riskDailyLossLimitValue() {
+        return parsePreviewNumber(dailyLossLimit, 0)
+    }
+
+    function riskPositionLimitValue() {
+        return parsePreviewNumber(maxPosition, paperEquity)
+    }
+
+    function evaluateLocalRiskGate(action, scannerRow, confidenceValue, orderTotal) {
+        var normalizedAction = normalizePreviewAction(action)
+        var confidenceNumber = Number(confidenceValue)
+        if (confidenceNumber > 1)
+            confidenceNumber = confidenceNumber / 100.0
+        var floorNumber = Math.max(1, Math.min(99, parseInt(confidenceFloor || confidenceThreshold))) / 100.0
+        var riskScore = scannerRow && scannerRow.riskScore !== undefined ? Number(scannerRow.riskScore) : 0
+        var total = Number(orderTotal || 0)
+        var dailyLimit = riskDailyLossLimitValue()
+        var positionLimit = riskPositionLimitValue()
+        if (riskLocked || riskState.indexOf("kill-switch") >= 0) {
+            riskBlockReason = "Risk gate blocked: local kill-switch/risk lock is active after preview risk evaluation; only BLOCKED/no-order preview events are allowed."
+            return ({ blocked: true, reason: riskBlockReason })
+        }
+        if ((normalizedAction === "PAPER BUY" || normalizedAction === "PAPER SELL") && confidenceNumber > 0 && confidenceNumber < floorNumber) {
+            riskBlockReason = "Risk gate blocked: confidence " + confidenceNumber.toFixed(2) + " is below floor " + confidenceFloor + " for " + riskProfile + "."
+            return ({ blocked: true, reason: riskBlockReason })
+        }
+        if (riskScore > 0 && riskScore > scannerMaxRiskScore) {
+            riskBlockReason = "Risk gate blocked: scanner risk score " + riskScore + " exceeds local limit " + scannerMaxRiskScore + " for " + riskProfile + "."
+            return ({ blocked: true, reason: riskBlockReason })
+        }
+        if (total > 0 && total > positionLimit) {
+            riskBlockReason = "Risk gate blocked: local order total " + formatUsd(total) + " exceeds max position " + maxPosition + " for " + riskProfile + "."
+            return ({ blocked: true, reason: riskBlockReason })
+        }
+        if (dailyLimit > 0 && paperPnl <= -dailyLimit) {
+            riskBlockReason = "Risk gate blocked: paper session PnL " + formatUsd(paperPnl) + " breached daily loss limit " + dailyLossLimit + "."
+            return ({ blocked: true, reason: riskBlockReason })
+        }
+        if (riskProfile === "Custom" && !allowAiOverride && normalizedAction === "PAPER BUY" && riskScore > Math.max(1, scannerMaxRiskScore - 8)) {
+            riskBlockReason = "Risk gate blocked: Custom profile has AI override off and scanner risk score " + riskScore + " is too close to limit " + scannerMaxRiskScore + "."
+            return ({ blocked: true, reason: riskBlockReason })
+        }
+        riskBlockReason = "Risk gate clear: " + riskProfile + " local preview limits passed for " + normalizedAction + "."
+        return ({ blocked: false, reason: riskBlockReason })
+    }
+
+    function previewRiskGateScenarioInput(path) {
+        setRiskProfile("Custom")
+        setLocalRiskKillSwitch(false, "Risk gate clear: preparing local risk path " + path + ".")
+        scannerMaxRiskScore = 55
+        setCustomRiskValue("confidenceFloor", "70%")
+        setCustomRiskValue("maxPosition", "2,500 USDT")
+        setCustomRiskValue("dailyLossLimit", "1,200 USDT")
+        setLocalPaperPnlForRiskPreview(0)
+        var row = ({ pair: selectedTerminalPair || currentTerminalPair(), recommendation: "TRADE", aiScore: 92, riskScore: 20, reason: "local risk gate scenario " + path })
+        var action = "PAPER BUY"
+        var confidence = 0.92
+        var orderTotal = 250
+        if (path === "confidence_floor") {
+            setCustomRiskValue("confidenceFloor", "99%")
+            confidence = 0.50
+        } else if (path === "scanner_score") {
+            row.riskScore = 95
+        } else if (path === "daily_loss") {
+            setCustomRiskValue("dailyLossLimit", "100 USDT")
+            setLocalPaperPnlForRiskPreview(-150)
+        } else if (path === "max_position") {
+            setCustomRiskValue("maxPosition", "100 USDT")
+            orderTotal = 500
+        } else if (path === "kill_switch") {
+            setLocalRiskKillSwitch(true, "Risk gate blocked: local preview kill-switch enabled for " + path + ".")
+        }
+        return ({ path: path, action: action, scannerRow: row, confidence: confidence, orderTotal: orderTotal })
+    }
+
+    function exerciseRiskGatePreviewPath(path) {
+        var input = previewRiskGateScenarioInput(path)
+        var gate = evaluateLocalRiskGate(input.action, input.scannerRow, input.confidence, input.orderTotal)
+        if (!gate.blocked)
+            return ({ path: path, blocked: false, reason: gate.reason })
+        var pair = input.scannerRow.pair
+        var timestamp = previewTime(paperSessionTicks + telemetryTick + decisionSequence + 1)
+        var event = ({ timestamp: timestamp, time: timestamp, pair: pair, action: "BLOCKED", side: terminalSide, type: "PAPER", price: terminalPrice, amount: terminalAmount, total: String(input.orderTotal), status: "blocked", confidence: "0.00", reason: gate.reason })
+        var orderRows = paperOrderRows.slice()
+        orderRows.unshift(event)
+        paperOrderRows = orderRows.slice(0, previewPaperOrderFeedLimit)
+        var terminalRows = mockTerminalOrders.slice()
+        terminalRows.unshift(event)
+        mockTerminalOrders = terminalRows.slice(0, previewPaperOrderFeedLimit)
+        appendPaperDecision("BLOCKED", gate.reason, pair, "blocked")
+        appendPaperTelemetry("risk gate " + path + " BLOCKED " + pair + " • " + gate.reason)
+        appendPreviewAlert("Warning", "Risk", "Risk gate blocked " + path, gate.reason, "Risk Governor", pair, "Review risk controls")
+        appendTerminalLog("risk gate " + path + " BLOCKED " + pair + " • " + gate.reason)
+        recountOrderCounters()
+        return ({ path: path, blocked: true, action: "BLOCKED", reason: gate.reason, pair: pair })
+    }
+
     function recountOrderCounters() {
         var blocked = 0, none = 0, simulated = 0
         for (var i = 0; i < paperOrderRows.length; ++i) {
@@ -1581,20 +1853,52 @@ ApplicationWindow {
         var row = ({ timestamp: previewTime(decisionSequence), symbol: pair, action: action, confidence: confidence, reason: reason, riskReason: riskState, strategy: strategy, safety: "Live trading disabled • Exchange route disabled • Order submission disabled", paperState: paperSessionStatus, orderEvent: action.indexOf("PAPER") >= 0 ? "Paper Terminal order event preview" : "no order / blocked live" })
         var rows = decisionPreviewRows.slice()
         rows.unshift(row)
-        decisionPreviewRows = rows.slice(0, 20)
+        decisionPreviewRows = rows.slice(0, previewDecisionFeedLimit)
         lastGovernorDecision = pair + " " + action + " • confidence " + confidence + " • " + reason
         appendPaperTelemetry("paper decision row " + action + " " + pair)
         return row
     }
+    function buildGovernorPreviewDecisionReason(scannerRow, action) {
+        var pair = scannerRow ? scannerRow.pair : currentTerminalPair()
+        var scannerPart = scannerRow ? ("scanner " + scannerRow.recommendation + " • AI " + scannerRow.aiScore + " • risk " + scannerRow.riskScore) : "scanner state unavailable"
+        var riskPart = "risk profile " + riskProfile + " • confidence floor " + confidenceFloor + " • " + riskState
+        if (action === "BLOCKED")
+            return "Risk gate blocked " + pair + " because " + riskPart + " • " + scannerPart + " • no real order emitted."
+        if (action === "NO ORDER" || action === "HOLD" || action === "WAIT")
+            return "Governor chose " + action + " for " + pair + " from local " + scannerPart + " and " + riskPart + " • no order emitted."
+        return "Governor selected " + action + " for " + pair + " from local " + scannerPart + " and " + riskPart + " • paper recommendation only."
+    }
+    function chooseGovernorPreviewAction(scannerRow) {
+        if (!scannerRow)
+            return "WAIT"
+        var floorValue = Math.max(1, Math.min(99, parseInt(confidenceFloor || confidenceThreshold)))
+        var candidateAction = "HOLD"
+        if (scannerRow.recommendation === "TRADE" && scannerRow.aiScore >= floorValue)
+            candidateAction = decisionSequence % 2 === 0 ? "PAPER BUY" : "PAPER SELL"
+        else if (scannerRow.recommendation === "WATCH" || scannerRow.aiScore >= floorValue - 8)
+            candidateAction = "WAIT"
+        else
+            candidateAction = "NO ORDER"
+        var gate = evaluateLocalRiskGate(candidateAction, scannerRow, scannerRow.aiScore / 100.0, 0)
+        riskState = riskProfile + " preview • daily loss limit active • paper actions evaluated by local risk gate • live blocked • " + riskBlockReason
+        if (scannerRow.recommendation === "BLOCKED" || gate.blocked)
+            return "BLOCKED"
+        if (scannerRow.aiScore < floorValue)
+            return candidateAction
+        return candidateAction
+    }
     function generateGovernorRecommendation() {
-        var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED LIVE"]
-        var action = actions[decisionSequence % actions.length]
-        var row = addDecision(action, "Governor recommendation updated the preview stream; sandbox/testnet bridge remains planned and disabled.")
-        appendPreviewAlert(action.indexOf("BLOCK") >= 0 ? "Warning" : "Info", "AI", "AI decision generated", row.symbol + " " + action + " • " + row.reason, "AI Governor", row.symbol, "Explain event")
+        if (scannerRows.length === 0)
+            rebuildMarketScannerRows()
+        var scannerRow = scannerRowByPair(scannerSelectedPair) || (scannerAiCandidateRows.length > 0 ? scannerAiCandidateRows[0] : (scannerRows.length > 0 ? scannerRows[0] : null))
+        var action = chooseGovernorPreviewAction(scannerRow)
+        var pair = scannerRow ? scannerRow.pair : currentTerminalPair()
+        var row = appendPaperDecision(action, buildGovernorPreviewDecisionReason(scannerRow, action), pair, actionStatus(action))
+        appendPaperTelemetry("governor decision " + action + " " + pair + " • scanner candidates " + scannerCandidateCount + " • risk profile " + riskProfile)
+        appendPreviewAlert(action === "BLOCKED" ? "Warning" : "Info", action === "BLOCKED" ? "Risk" : "AI", action === "BLOCKED" ? "Governor decision blocked" : "AI decision generated", row.symbol + " " + action + " • " + row.reason, "AI Governor", row.symbol, "Explain event")
     }
     function generateNextDecision() {
-        var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED LIVE"]
-        addDecision(actions[decisionSequence % actions.length], "Generated from selected pairs and active strategy preview state.")
+        generateGovernorRecommendation()
     }
     function scenarioMode(scenario) {
         if (scenario === "Bull trend") return "bull"
@@ -1628,7 +1932,7 @@ ApplicationWindow {
     function appendSimulationEvent(message) {
         var rows = simulationEvents.slice()
         rows.unshift(({ timestamp: previewTime(simulationTickCount + 1), message: message + " • local paper simulation • no real orders" }))
-        simulationEvents = rows.slice(0, 20)
+        simulationEvents = rows.slice(0, previewDecisionFeedLimit)
     }
     function updateSimulationOrderBook(lastPrice) {
         var asks = []
@@ -1678,15 +1982,18 @@ ApplicationWindow {
         simulationPrices = prices
         simulationLastTickAt = previewTime(simulationTickCount)
         simulationLastPair = pair
-        var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED LIVE"]
+        var actions = ["PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED"]
         var action = actions[(simulationTickCount + (simulationMarketMode === "bull" ? 0 : simulationMarketMode === "bear" ? 1 : 2)) % actions.length]
         var status = actionStatus(action)
         var confidence = (0.62 + ((simulationTickCount % 9) * 0.035)).toFixed(2)
         var floorValue = Math.max(1, Math.min(99, parseInt(confidenceFloor || confidenceThreshold))) / 100.0
         var confidenceNumber = Number(confidence)
-        var riskBlocked = riskLocked || riskState.indexOf("kill-switch") >= 0
+        var selectedScannerRow = scannerRowByPair(pair)
+        var riskGate = evaluateLocalRiskGate(action, selectedScannerRow, confidenceNumber, action === "PAPER BUY" || action === "PAPER SELL" ? nextPrice * 0.01 : 0)
+        riskState = riskProfile + " preview • daily loss limit active • paper actions evaluated by local risk gate • live blocked • " + riskBlockReason
+        var riskBlocked = riskGate.blocked
         if (riskBlocked) {
-            action = simulationTickCount % 2 === 0 ? "BLOCKED PAPER PREVIEW" : "BLOCKED LIVE"
+            action = "BLOCKED"
             status = "blocked"
         } else if (confidenceNumber < floorValue && (action === "PAPER BUY" || action === "PAPER SELL")) {
             action = confidenceNumber < floorValue - 0.08 ? "NO ORDER" : "HOLD"
@@ -1696,7 +2003,7 @@ ApplicationWindow {
             status = "no order"
         }
         var reason = "simulation tick " + simulationTickCount + " • " + simulationScenario + " • risk profile " + riskProfile + " • confidence " + confidence + " vs floor " + confidenceFloor + " • mock price " + nextPrice.toFixed(2) + " • no exchange I/O"
-        if (riskBlocked) reason = "Risk kill-switch active; BLOCKED PAPER PREVIEW local-only event • no exchange I/O"
+        if (riskBlocked) reason = riskGate.reason + " • BLOCKED local-only event • no exchange I/O"
         simulationLastAction = action
         updateSimulationOrderBook(nextPrice)
         updateSimulationCandles(nextPrice)
@@ -1710,12 +2017,12 @@ ApplicationWindow {
         var order = paperOrderEventFromSimulation(action, status, pair, nextPrice, confidence, reason)
         var orders = paperOrderRows.slice()
         orders.unshift(order)
-        paperOrderRows = orders.slice(0, 20)
+        paperOrderRows = orders.slice(0, previewPaperOrderFeedLimit)
         var terminalOrders = mockTerminalOrders.slice()
         terminalOrders.unshift(order)
-        mockTerminalOrders = terminalOrders.slice(0, 20)
+        mockTerminalOrders = terminalOrders.slice(0, previewPaperOrderFeedLimit)
         updatePaperPositionPreview(order)
-        simulationLastOrder = status === "simulated" ? order.action + " " + order.pair + " @ " + order.price : (status === "blocked" ? "blocked live route" : "no order emitted")
+        simulationLastOrder = status === "simulated" ? order.action + " " + order.pair + " @ " + order.price : (status === "blocked" ? "blocked local preview route" : "no order emitted")
         appendPaperDecision(action, reason, pair, order ? order.status : status)
         appendPaperTelemetry("heartbeat/tick " + simulationTickCount + " • simulation event " + action + " " + pair + " • no exchange I/O • order submission disabled • local paper loop only")
         appendTerminalLog("paper loop tick " + simulationTickCount + " • " + pair + " " + action + " • price " + nextPrice.toFixed(2) + " • no real orders")
@@ -1736,6 +2043,8 @@ ApplicationWindow {
         paperSessionStatus = "running"
         paperSessionState = "running"
         simulationStatusLabel = "running • speed x" + simulationSpeed + " • " + simulationScenario + " • local paper loop only"
+        appendPaperTelemetry("paper session started • local preview state running • production runtime loop not started")
+        appendPreviewAlert("Info", "Paper", "Paper session started", "Local Paper Preview session started; live trading disabled, exchange I/O disabled, no real orders.", "Paper Preview", selectedTerminalPair || currentTerminalPair(), "Open Dashboard")
         syncPaperBridgeState()
         simulationTimer.restart()
         runSimulationTick()
@@ -1785,8 +2094,14 @@ ApplicationWindow {
         mockTerminalOrders = []
         terminalLogRows = []
         decisionPreviewRows = []
-        paperTelemetryRows = []
-        telemetryRows = []
+        telemetryTick = 0
+        telemetryHeartbeat = previewTime(0)
+        paperTelemetryRows = [({ timestamp: telemetryHeartbeat, message: "paper preview state reset • ticks 0 • orders 0 • scanner rows reset to local catalog baseline • local-only bounded feed" })]
+        telemetryRows = paperTelemetryRows.slice(0, previewTelemetryFeedLimit)
+        resetMarketScannerPreview()
+        alertRows = []
+        recomputeAlertCounts()
+        appendPreviewAlert("Info", "Paper", "Paper preview reset", "Local preview state reset: ticks 0, orders 0, scanner rows rebuilt, telemetry kept a single reset event, alerts kept exactly this reset alert.", "Paper Preview", "—", "Open Dashboard")
         recountOrderCounters()
         syncPaperBridgeState()
     }

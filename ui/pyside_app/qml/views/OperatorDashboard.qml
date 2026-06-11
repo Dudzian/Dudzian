@@ -116,7 +116,7 @@ Components.StyledScrollView {
         Components.PreviewCard {
             designSystem: root.designSystem
             title: qsTr("Paper order blotter")
-            description: qsTr("Trading table with Time, Pair, Action, Status, Confidence, Reason. status chips: simulated, blocked, no order. action chips: PAPER BUY, PAPER SELL, HOLD, WAIT, NO ORDER, BLOCKED LIVE.")
+            description: qsTr("Trading table with Time, Pair, Action, Status, Confidence, Reason. status chips: simulated, blocked, no order. action chips: PAPER BUY, PAPER SELL, HOLD, WAIT, NO ORDER, BLOCKED.")
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: 34
