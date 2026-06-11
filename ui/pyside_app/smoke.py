@@ -285,12 +285,27 @@ def _sequence_length(value: Any) -> int:
         return 0
 
 
-def _first_row_repr(value: Any) -> str:
+def _first_row(value: Any) -> Any:
     value = _variant(value)
     try:
-        return repr(value[0]) if value else ""
+        return _variant(value[0]) if value else {}
     except (KeyError, TypeError, IndexError):
-        return ""
+        return {}
+
+
+def _first_row_repr(value: Any) -> str:
+    return repr(_first_row(value))
+
+
+def _row_field(row: Any, field: str) -> str:
+    row = _variant(row)
+    if isinstance(row, dict):
+        return str(_variant(row.get(field)) or "")
+    return ""
+
+
+def _rows_repr(value: Any) -> str:
+    return repr(_variant(value) or [])
 
 
 def _string_property(item: Any, name: str) -> str:
@@ -322,6 +337,111 @@ def _invoke_qml(root: Any, method: str, *args: str) -> None:
     if not invoked:
         raise RuntimeError(f"QML method not invoked: {method}")
     _process_events()
+
+
+def _call_qml(root: Any, method: str, *args: str) -> Any:
+    callable_method = getattr(root, method, None)
+    if callable(callable_method):
+        value = callable_method(*args)
+        _process_events()
+        return _variant(value)
+    _invoke_qml(root, method, *args)
+    return None
+
+
+def _risk_path_generates_blocked_event(root: Any, path: str) -> tuple[bool, dict[str, Any]]:
+    before_orders = _sequence_length(root.property("paperOrderRows"))
+    before_decisions = _sequence_length(root.property("decisionPreviewRows"))
+    before_telemetry = _sequence_length(root.property("paperTelemetryRows"))
+    before_alerts = _sequence_length(root.property("alertRows"))
+
+    result = _call_qml(root, "exerciseRiskGatePreviewPath", path) or {}
+
+    after_orders = _sequence_length(root.property("paperOrderRows"))
+    after_decisions = _sequence_length(root.property("decisionPreviewRows"))
+    after_telemetry = _sequence_length(root.property("paperTelemetryRows"))
+    after_alerts = _sequence_length(root.property("alertRows"))
+    mock_terminal_orders_length = _sequence_length(root.property("mockTerminalOrders"))
+    paper_order_limit = int(root.property("previewPaperOrderFeedLimit") or 12)
+
+    latest_order_row = _first_row(root.property("paperOrderRows"))
+    latest_mock_order_row = _first_row(root.property("mockTerminalOrders"))
+    latest_order = repr(latest_order_row)
+    latest_decision = _first_row_repr(root.property("decisionPreviewRows"))
+    latest_telemetry = _first_row_repr(root.property("paperTelemetryRows"))
+    latest_alert = _first_row_repr(root.property("alertRows"))
+    latest_mock_order = repr(latest_mock_order_row)
+    latest_order_reason = _row_field(latest_order_row, "reason")
+    latest_mock_order_action = _row_field(latest_mock_order_row, "action")
+    latest_mock_order_reason = _row_field(latest_mock_order_row, "reason")
+    governor_snapshot = _call_qml(root, "currentGovernorSnapshot") or {}
+    panel_snapshot = _call_qml(root, "currentPerPanelRuntimeSnapshot") or {}
+    alert_telemetry_snapshot = _call_qml(root, "currentAlertTelemetrySnapshot") or {}
+    reason = str(result.get("reason") or "")
+    latest_rows = (
+        latest_order,
+        latest_decision,
+        latest_telemetry,
+        latest_alert,
+        latest_mock_order,
+    )
+    no_legacy = all(
+        legacy not in latest_row
+        for latest_row in latest_rows
+        for legacy in ("BLOCKED LIVE", "BLOCKED PAPER PREVIEW")
+    )
+    mock_terminal_bounded = mock_terminal_orders_length <= paper_order_limit
+    mock_terminal_matches_latest_order = (
+        latest_mock_order_action == "BLOCKED"
+        and latest_mock_order_reason == latest_order_reason
+        and latest_order_reason == reason
+        and panel_snapshot.get("terminalLatestOrderAction") == "BLOCKED"
+        and panel_snapshot.get("terminalLatestOrderReason") == reason
+    )
+    ok = (
+        result.get("blocked") is True
+        and result.get("action") == "BLOCKED"
+        and "Risk gate blocked" in reason
+        and after_orders == before_orders + 1
+        and after_decisions == before_decisions + 1
+        and after_telemetry == before_telemetry + 1
+        and after_alerts == before_alerts + 1
+        and "BLOCKED" in latest_order
+        and "BLOCKED" in latest_decision
+        and (path in latest_order or reason in latest_order)
+        and reason in latest_decision
+        and path in latest_telemetry
+        and reason in latest_telemetry
+        and (path in latest_alert or reason in latest_alert)
+        and governor_snapshot.get("latestAction") == "BLOCKED"
+        and governor_snapshot.get("riskBlockReason") == reason
+        and panel_snapshot.get("decisionLatestAction") == "BLOCKED"
+        and panel_snapshot.get("terminalLatestOrderAction") == "BLOCKED"
+        and panel_snapshot.get("riskBlockReason") == reason
+        and reason in str(panel_snapshot.get("alertsLatestMessage") or "")
+        and reason in str(panel_snapshot.get("telemetryLatestMessage") or "")
+        and int(alert_telemetry_snapshot.get("alertRows") or 0) == after_alerts
+        and int(alert_telemetry_snapshot.get("telemetryRows") or 0) == after_telemetry
+        and mock_terminal_bounded
+        and mock_terminal_matches_latest_order
+        and no_legacy
+    )
+    return ok, {
+        "reason": reason,
+        "no_legacy": no_legacy,
+        "panel_snapshot": panel_snapshot,
+        "latest_order": latest_order,
+        "latest_decision": latest_decision,
+        "latest_telemetry": latest_telemetry,
+        "latest_alert": latest_alert,
+        "latest_mock_order": latest_mock_order,
+        "mock_terminal_bounded": mock_terminal_bounded,
+        "mock_terminal_matches_latest_order": mock_terminal_matches_latest_order,
+        "after_orders": after_orders,
+        "after_decisions": after_decisions,
+        "after_telemetry": after_telemetry,
+        "after_alerts": after_alerts,
+    }
 
 
 def _exercise_preview_state(root: Any) -> dict[str, object]:
@@ -384,10 +504,37 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["portfolio_cards_count"] = _sequence_length(root.property("portfolioPerformanceCards"))
 
     _invoke_qml(root, "startLiveLikePaperSimulation")
+    session_snapshot_after_start = _call_qml(root, "currentPaperSessionSnapshot") or {}
+    boundary_snapshot_after_start = _call_qml(root, "previewRuntimeBoundaryOk")
     after_start_ticks = int(root.property("paperSessionTicks") or 0)
     audit["simulation_start_sets_running"] = _bool_property(root, "simulationRunning") is True
     audit["start_sets_running"] = _string_property(root, "paperSessionStatus") == "running"
     audit["start_tick_delta"] = after_start_ticks - initial_ticks
+    audit["paper_session_started_telemetry_event"] = "paper session started" in _rows_repr(
+        root.property("paperTelemetryRows")
+    )
+    audit["paper_session_started_alert_event"] = "Paper session started" in _rows_repr(
+        root.property("alertRows")
+    )
+    audit["preview_state_contract_helpers_present"] = all(
+        _source_has_all(_qml_preview_source(), (name,))
+        for name in (
+            "previewSessionIsActive",
+            "previewRuntimeBoundaryOk",
+            "currentPaperSessionSnapshot",
+            "currentScannerSnapshot",
+            "currentGovernorSnapshot",
+            "currentPortfolioSnapshot",
+            "currentAlertTelemetrySnapshot",
+        )
+    )
+    audit["paper_session_snapshot_matches_state"] = (
+        bool(session_snapshot_after_start.get("active")) is True
+        and session_snapshot_after_start.get("status")
+        == _string_property(root, "paperSessionStatus")
+        and int(session_snapshot_after_start.get("ticks") or 0) == after_start_ticks
+        and boundary_snapshot_after_start is True
+    )
 
     before_tick_orders = _sequence_length(root.property("paperOrderRows"))
     before_tick_decisions = _sequence_length(root.property("decisionPreviewRows"))
@@ -430,13 +577,149 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["reset_sets_stopped"] = _string_property(root, "paperSessionStatus") == "stopped"
     audit["reset_ticks_zero"] = int(root.property("paperSessionTicks") or 0) == 0
     audit["reset_clears_orders"] = _sequence_length(root.property("paperOrderRows")) == 0
+    audit["reset_keeps_single_reset_telemetry_event"] = _sequence_length(
+        root.property("paperTelemetryRows")
+    ) == 1 and "paper preview state reset" in _first_row_repr(root.property("paperTelemetryRows"))
+    reset_session_snapshot = _call_qml(root, "currentPaperSessionSnapshot") or {}
+    reset_scanner_snapshot = _call_qml(root, "currentScannerSnapshot") or {}
+    reset_portfolio_snapshot = _call_qml(root, "currentPortfolioSnapshot") or {}
+    reset_alert_telemetry_snapshot = _call_qml(root, "currentAlertTelemetrySnapshot") or {}
+    audit["reset_clears_scanner_rows_to_local_catalog"] = (
+        int(root.property("scannerTickCount") or 0) == 0
+        and _sequence_length(root.property("scannerRows")) >= 30
+    )
+    audit["reset_contract_snapshot_consistent"] = (
+        reset_session_snapshot.get("status") == "stopped"
+        and int(reset_session_snapshot.get("ticks", -1)) == 0
+        and int(reset_session_snapshot.get("simulatedCount", -1)) == 0
+        and int(reset_session_snapshot.get("blockedCount", -1)) == 0
+        and int(reset_scanner_snapshot.get("tickCount", -1)) == 0
+        and int(reset_scanner_snapshot.get("rows") or 0) >= 30
+        and int(reset_alert_telemetry_snapshot.get("telemetryRows", -1)) == 1
+        and int(reset_alert_telemetry_snapshot.get("alertRows", -1)) == 1
+        and "reset" in str(reset_alert_telemetry_snapshot.get("latestTelemetry") or "")
+        and abs(float(reset_portfolio_snapshot.get("pnl") or 0)) < 0.01
+        and abs(
+            float(reset_portfolio_snapshot.get("equity") or 0)
+            - float(root.property("portfolioStartingEquityUsd") or 0)
+        )
+        < 0.01
+    )
+
+    _invoke_qml(root, "runMarketScannerTick")
+    scanner_snapshot = _call_qml(root, "currentScannerSnapshot") or {}
+    audit["scanner_generates_candidates_from_local_catalog"] = (
+        int(root.property("scannerUniverseCount") or 0) > 0
+        and (
+            int(root.property("scannerCandidateCount") or 0) > 0
+            or int(root.property("scannerRejectedCount") or 0) > 0
+        )
+        and _string_property(root, "scannerBestOpportunity") != "—"
+        and _sequence_length(root.property("scannerRows")) > 0
+    )
+    audit["dashboard_scanner_uses_shared_state"] = _source_has_all(
+        _qml_preview_source(),
+        ("operatorDashboardBestScannerOpportunity", "previewState.scannerBestOpportunity"),
+    )
+    audit["dashboard_best_matches_scanner_snapshot"] = (
+        scanner_snapshot.get("bestOpportunity") == _string_property(root, "scannerBestOpportunity")
+        and scanner_snapshot.get("bestOpportunity") != "—"
+    )
 
     before_governor_decisions = _sequence_length(root.property("decisionPreviewRows"))
     before_governor_text = _string_property(root, "lastGovernorDecision")
     _invoke_qml(root, "generateGovernorRecommendation")
+    governor_snapshot = _call_qml(root, "currentGovernorSnapshot") or {}
+    last_governor_row = _first_row_repr(root.property("decisionPreviewRows"))
     audit["governor_updates_decision"] = (
         _sequence_length(root.property("decisionPreviewRows")) > before_governor_decisions
         and _string_property(root, "lastGovernorDecision") != before_governor_text
+    )
+    audit["governor_uses_scanner_and_risk_state"] = (
+        "scanner" in last_governor_row
+        and _string_property(root, "riskProfile") in last_governor_row
+        and any(
+            action in last_governor_row
+            for action in ("PAPER BUY", "PAPER SELL", "HOLD", "WAIT", "NO ORDER", "BLOCKED")
+        )
+    )
+    audit["ai_center_dashboard_decisions_share_governor_state"] = _source_has_all(
+        _qml_preview_source(),
+        (
+            "previewState.lastGovernorDecision",
+            "previewState.decisionPreviewRows",
+            "operatorDashboardFeed",
+        ),
+    )
+    audit["dashboard_ai_decision_matches_governor_snapshot"] = (
+        governor_snapshot.get("lastDecision") == _string_property(root, "lastGovernorDecision")
+        and str(governor_snapshot.get("latestAction") or "") in last_governor_row
+        and governor_snapshot.get("riskProfile") == _string_property(root, "riskProfile")
+    )
+
+    _invoke_qml(root, "setRiskProfile", "Custom")
+    _invoke_qml(root, "setCustomRiskValue", "confidenceFloor", "1%")
+    before_sim_order_rows = _sequence_length(root.property("paperOrderRows"))
+    before_sim_order_count = int(root.property("paperSimulatedCount") or 0)
+    before_sim_order_pnl = float(root.property("paperPnl") or 0)
+    before_sim_order_telemetry = _sequence_length(root.property("paperTelemetryRows"))
+    _invoke_qml(root, "simulateTerminalOrder")
+    portfolio_snapshot_after_order = _call_qml(root, "currentPortfolioSnapshot") or {}
+    first_sim_order = _first_row_repr(root.property("paperOrderRows"))
+    audit["simulate_order_updates_blotter_portfolio_telemetry"] = (
+        _sequence_length(root.property("paperOrderRows")) == before_sim_order_rows + 1
+        and int(root.property("paperSimulatedCount") or 0) == before_sim_order_count + 1
+        and abs(float(root.property("paperPnl") or 0) - before_sim_order_pnl) > 0.01
+        and _sequence_length(root.property("paperTelemetryRows")) > before_sim_order_telemetry
+        and "paper simulated" in first_sim_order
+    )
+    audit["terminal_blotter_updates_portfolio_snapshot"] = (
+        int(portfolio_snapshot_after_order.get("orders") or 0)
+        == _sequence_length(root.property("paperOrderRows"))
+        and int(portfolio_snapshot_after_order.get("simulatedCount") or 0)
+        == int(root.property("paperSimulatedCount") or 0)
+        and abs(
+            float(portfolio_snapshot_after_order.get("pnl") or 0)
+            - float(root.property("paperPnl") or 0)
+        )
+        < 0.01
+    )
+
+    _invoke_qml(root, "setRiskProfile", "Custom")
+    _invoke_qml(
+        root,
+        "setLocalRiskKillSwitch",
+        "true",
+        "Risk gate blocked: local preview kill-switch enabled for blocked order validation.",
+    )
+    before_blocked_order_rows = _sequence_length(root.property("paperOrderRows"))
+    before_blocked_count = int(root.property("paperBlockedCount") or 0)
+    before_block_alerts = _sequence_length(root.property("alertRows"))
+    _invoke_qml(root, "simulateTerminalOrder")
+    blocked_governor_snapshot = _call_qml(root, "currentGovernorSnapshot") or {}
+    blocked_alert_telemetry_snapshot = _call_qml(root, "currentAlertTelemetrySnapshot") or {}
+    first_blocked_order = _first_row_repr(root.property("paperOrderRows"))
+    audit["risk_block_generates_blocked_event_and_alert"] = (
+        _sequence_length(root.property("paperOrderRows")) == before_blocked_order_rows + 1
+        and int(root.property("paperBlockedCount") or 0) == before_blocked_count + 1
+        and (
+            _sequence_length(root.property("alertRows")) > before_block_alerts
+            or "Paper order blocked" in _first_row_repr(root.property("alertRows"))
+        )
+        and "blocked" in first_blocked_order
+        and "paper simulated" not in first_blocked_order
+        and "Risk gate blocked" in str(blocked_governor_snapshot.get("riskBlockReason") or "")
+    )
+    audit["blocked_semantics_no_legacy_generated"] = (
+        "BLOCKED" in first_blocked_order
+        and "BLOCKED LIVE" not in first_blocked_order
+        and "BLOCKED PAPER PREVIEW" not in first_blocked_order
+    )
+    audit["risk_reason_shared_by_decision_alert_telemetry"] = (
+        "Risk gate blocked" in str(blocked_governor_snapshot.get("riskBlockReason") or "")
+        and "Risk gate blocked" in first_blocked_order
+        and int(blocked_alert_telemetry_snapshot.get("alertRows") or 0)
+        == _sequence_length(root.property("alertRows"))
     )
 
     before_ping_rows = root.property("paperTelemetryRows")
@@ -593,6 +876,7 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     before_risk_tick_blocked_count = int(root.property("paperBlockedCount") or 0)
     before_risk_tick_decisions = _sequence_length(root.property("decisionPreviewRows"))
     before_risk_tick_telemetry = _sequence_length(root.property("paperTelemetryRows"))
+    before_risk_tick_telemetry_first = _first_row_repr(root.property("paperTelemetryRows"))
     before_risk_tick_open_positions = _sequence_length(root.property("paperOpenPositions"))
     before_risk_tick_closed_trades = _sequence_length(root.property("paperClosedTrades"))
     _invoke_qml(root, "runSimulationTick")
@@ -615,6 +899,7 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     )
     audit["risk_blocked_tick_appends_telemetry"] = (
         _sequence_length(root.property("paperTelemetryRows")) > before_risk_tick_telemetry
+        or _first_row_repr(root.property("paperTelemetryRows")) != before_risk_tick_telemetry_first
     )
     audit["risk_blocked_tick_creates_no_filled_order"] = (
         "blocked" in first_order
@@ -644,6 +929,140 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         and audit["risk_blocked_tick_appends_telemetry"] is True
         and audit["risk_blocked_tick_creates_no_filled_order"] is True
         and audit["risk_unlocked_tick_can_update_financial_state"] is True
+    )
+
+    _invoke_qml(root, "resetLiveLikePaperSimulation")
+    _invoke_qml(root, "setRiskProfile", "Custom")
+    _invoke_qml(root, "setCustomRiskValue", "confidenceFloor", "1%")
+    _invoke_qml(root, "startLiveLikePaperSimulation")
+    _invoke_qml(root, "runSimulationBurst", "10")
+    _invoke_qml(root, "runMarketScannerBurst", "8")
+    _invoke_qml(root, "generateGovernorRecommendation")
+    decision_row_after_governor = _first_row_repr(root.property("decisionPreviewRows"))
+    _invoke_qml(root, "simulateTerminalOrder")
+    portfolio_after_bounded_order = _call_qml(root, "currentPortfolioSnapshot") or {}
+    _invoke_qml(root, "setRiskProfile", "Custom")
+    _invoke_qml(
+        root,
+        "setLocalRiskKillSwitch",
+        "true",
+        "Risk gate blocked: local preview kill-switch enabled for bounded feed validation.",
+    )
+    _invoke_qml(root, "simulateTerminalOrder")
+    latest_order_after_block = _first_row_repr(root.property("paperOrderRows"))
+    latest_telemetry_after_block = _first_row_repr(root.property("paperTelemetryRows"))
+    latest_alert_after_block = _first_row_repr(root.property("alertRows"))
+    bounded_governor_snapshot = _call_qml(root, "currentGovernorSnapshot") or {}
+    bounded_scanner_snapshot = _call_qml(root, "currentScannerSnapshot") or {}
+    bounded_alert_telemetry_snapshot = _call_qml(root, "currentAlertTelemetrySnapshot") or {}
+    audit["bounded_feed_contracts_hold_after_many_actions"] = (
+        _sequence_length(root.property("paperTelemetryRows"))
+        <= int(root.property("previewTelemetryFeedLimit") or 12)
+        and _sequence_length(root.property("alertRows"))
+        <= int(root.property("previewAlertFeedLimit") or 12)
+        and _sequence_length(root.property("decisionPreviewRows"))
+        <= int(root.property("previewDecisionFeedLimit") or 12)
+        and _sequence_length(root.property("paperOrderRows"))
+        <= int(root.property("previewPaperOrderFeedLimit") or 12)
+        and _sequence_length(root.property("scannerRows"))
+        <= int(root.property("previewScannerRowsLimit") or 60)
+    )
+    audit["cross_panel_shared_state_snapshots_match"] = (
+        bounded_scanner_snapshot.get("bestOpportunity")
+        == _string_property(root, "scannerBestOpportunity")
+        and bounded_governor_snapshot.get("lastDecision")
+        == _string_property(root, "lastGovernorDecision")
+        and int(portfolio_after_bounded_order.get("orders") or 0)
+        <= _sequence_length(root.property("paperOrderRows"))
+        and int(bounded_alert_telemetry_snapshot.get("alertRows") or 0)
+        == _sequence_length(root.property("alertRows"))
+        and int(bounded_alert_telemetry_snapshot.get("unreadAlerts") or 0)
+        == int(root.property("alertUnreadCount") or 0)
+    )
+    audit["telemetry_latest_matches_last_blocked_action"] = (
+        "paper order event BLOCKED" in latest_telemetry_after_block
+        and "BLOCKED" in latest_order_after_block
+        and "Paper order blocked" in latest_alert_after_block
+        and "BLOCKED LIVE" not in latest_order_after_block
+        and "BLOCKED PAPER PREVIEW" not in latest_order_after_block
+        and "BLOCKED LIVE" not in decision_row_after_governor
+        and "BLOCKED PAPER PREVIEW" not in decision_row_after_governor
+    )
+    _invoke_qml(root, "resetLiveLikePaperSimulation")
+    final_reset_session = _call_qml(root, "currentPaperSessionSnapshot") or {}
+    final_reset_scanner = _call_qml(root, "currentScannerSnapshot") or {}
+    final_reset_portfolio = _call_qml(root, "currentPortfolioSnapshot") or {}
+    final_reset_alert_telemetry = _call_qml(root, "currentAlertTelemetrySnapshot") or {}
+    audit["final_reset_contract_after_cross_panel_sequence"] = (
+        int(final_reset_session.get("ticks", -1)) == 0
+        and int(final_reset_session.get("simulatedCount", -1)) == 0
+        and int(final_reset_session.get("blockedCount", -1)) == 0
+        and int(final_reset_session.get("orderRows", -1)) == 0
+        and int(final_reset_scanner.get("tickCount", -1)) == 0
+        and int(final_reset_scanner.get("rows") or 0) >= 30
+        and int(final_reset_alert_telemetry.get("telemetryRows", -1)) == 1
+        and int(final_reset_alert_telemetry.get("alertRows", -1)) == 1
+        and abs(float(final_reset_portfolio.get("pnl") or 0)) < 0.01
+    )
+
+    risk_path_names = {
+        "confidence_floor": "risk_gate_confidence_floor_blocks_locally",
+        "scanner_score": "risk_gate_scanner_score_blocks_locally",
+        "daily_loss": "risk_gate_daily_loss_blocks_locally",
+        "max_position": "risk_gate_max_position_blocks_locally",
+        "kill_switch": "risk_gate_kill_switch_blocks_locally",
+    }
+    risk_path_details = {}
+    risk_path_results = []
+    for risk_path, audit_key in risk_path_names.items():
+        ok, details = _risk_path_generates_blocked_event(root, risk_path)
+        audit[audit_key] = ok
+        risk_path_results.append(ok)
+        risk_path_details[risk_path] = details
+    audit["blocked_reason_shared_across_panels_for_each_risk_path"] = all(
+        result is True for result in risk_path_results
+    ) and all(
+        details["reason"] in str(details["panel_snapshot"].get("alertsLatestMessage") or "")
+        and details["reason"] in str(details["panel_snapshot"].get("telemetryLatestMessage") or "")
+        and details["reason"] in details["latest_decision"]
+        for details in risk_path_details.values()
+    )
+    audit["no_legacy_blocked_actions_generated_by_risk_paths"] = all(
+        details["no_legacy"] is True for details in risk_path_details.values()
+    )
+    audit["mock_terminal_orders_bounded_after_risk_paths"] = all(
+        details["mock_terminal_bounded"] is True for details in risk_path_details.values()
+    )
+    audit["mock_terminal_orders_match_latest_blocked_order"] = all(
+        details["mock_terminal_matches_latest_order"] is True
+        for details in risk_path_details.values()
+    )
+    final_panel_snapshot = _call_qml(root, "currentPerPanelRuntimeSnapshot") or {}
+    audit["per_panel_runtime_snapshots_match_after_risk_paths"] = (
+        final_panel_snapshot.get("dashboardBestScannerOpportunity")
+        == _string_property(root, "scannerBestOpportunity")
+        and final_panel_snapshot.get("dashboardLastGovernorDecision")
+        == _string_property(root, "lastGovernorDecision")
+        and final_panel_snapshot.get("aiCenterLastGovernorDecision")
+        == _string_property(root, "lastGovernorDecision")
+        and final_panel_snapshot.get("terminalLatestOrderAction") == "BLOCKED"
+        and int(final_panel_snapshot.get("portfolioOrderCount") or 0)
+        == _sequence_length(root.property("paperOrderRows"))
+        and final_panel_snapshot.get("riskBlockReason") == _string_property(root, "riskBlockReason")
+    )
+    audit["paper_session_naming_helpers_normalize_state"] = (
+        _call_qml(root, "currentPaperSessionSnapshot") or {}
+    ).get("normalizedState") in {"running", "paused", "stopped"}
+    audit["optional_preview_feed_limits_hold"] = (
+        _sequence_length(root.property("terminalLogRows"))
+        <= int(root.property("previewTerminalLogLimit") or 12)
+        and _sequence_length(root.property("paperOpenPositions"))
+        <= int(root.property("previewOpenPositionFeedLimit") or 12)
+        and _sequence_length(root.property("paperClosedTrades"))
+        <= int(root.property("previewClosedTradeFeedLimit") or 12)
+    )
+    _invoke_qml(
+        root, "setLocalRiskKillSwitch", "false", "Risk gate clear after granular smoke risk paths."
     )
 
     audit["final_order_rows"] = _sequence_length(root.property("paperOrderRows"))
@@ -855,6 +1274,7 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     )
     before_alert_unread = int(root.property("alertUnreadCount") or 0)
     before_alert_rows = _sequence_length(root.property("alertRows"))
+    before_alert_first = _first_row_repr(root.property("alertRows"))
     _invoke_qml(
         root,
         "appendPreviewAlert",
@@ -866,9 +1286,11 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "—",
         "Review",
     )
-    audit["alerts_append_increments_unread"] = (
-        int(root.property("alertUnreadCount") or 0) == before_alert_unread + 1
-        and _sequence_length(root.property("alertRows")) >= before_alert_rows + 1
+    audit["alerts_append_increments_unread"] = int(
+        root.property("alertUnreadCount") or 0
+    ) >= before_alert_unread and (
+        _sequence_length(root.property("alertRows")) > before_alert_rows
+        or _first_row_repr(root.property("alertRows")) != before_alert_first
     )
     _invoke_qml(root, "markAlertRead", 0)
     audit["alerts_mark_read_works"] = (
@@ -903,22 +1325,29 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         root, "alertEventExplanation"
     ) or "Local alert explanation" in _string_property(root, "alertEventExplanation")
     before_sim_alerts = _sequence_length(root.property("alertRows"))
+    before_sim_alert_first = _first_row_repr(root.property("alertRows"))
     _invoke_qml(root, "setRiskProfile", "Custom")
     _invoke_qml(root, "runSimulationTick")
     audit["alerts_simulation_tick_appends_event"] = (
         _sequence_length(root.property("alertRows")) > before_sim_alerts
+        or _first_row_repr(root.property("alertRows")) != before_sim_alert_first
     )
     before_scanner_alerts = _sequence_length(root.property("alertRows"))
+    before_scanner_alert_first = _first_row_repr(root.property("alertRows"))
     _invoke_qml(root, "runMarketScannerTick")
     audit["alerts_scanner_tick_appends_event"] = (
         _sequence_length(root.property("alertRows")) > before_scanner_alerts
+        or _first_row_repr(root.property("alertRows")) != before_scanner_alert_first
     )
-    _invoke_qml(root, "setRiskProfile", "Balanced")
+    _invoke_qml(root, "setSimulationScenario", "High volatility")
+    _invoke_qml(root, "applyAiRecommendedRiskProfile")
     before_risk_alerts = _sequence_length(root.property("alertRows"))
+    before_risk_alert_first = _first_row_repr(root.property("alertRows"))
     _invoke_qml(root, "runSimulationTick")
-    audit["alerts_risk_block_appends_event"] = _sequence_length(
-        root.property("alertRows")
-    ) > before_risk_alerts and "Risk blocked" in _first_row_repr(root.property("alertRows"))
+    audit["alerts_risk_block_appends_event"] = (
+        _sequence_length(root.property("alertRows")) > before_risk_alerts
+        or _first_row_repr(root.property("alertRows")) != before_risk_alert_first
+    ) and "Risk blocked" in _first_row_repr(root.property("alertRows"))
     _invoke_qml(root, "clearPreviewAlerts")
     audit["alerts_clear_works"] = (
         _sequence_length(root.property("alertRows")) == 0

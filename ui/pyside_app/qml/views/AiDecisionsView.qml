@@ -101,7 +101,7 @@ Components.StyledScrollView {
         for (var i = 0; i < rows.length; ++i) {
             var row = rows[i]
             if (decisionFilter === "paper" && row.action.indexOf("PAPER") < 0) continue
-            if (decisionFilter === "blocked" && row.action !== "BLOCKED LIVE") continue
+            if (decisionFilter === "blocked" && row.action !== "BLOCKED" && row.action !== "BLOCKED LIVE") continue
             if (decisionFilter === "no-order" && row.action !== "NO ORDER" && row.action !== "HOLD" && row.action !== "WAIT") continue
             if (decisionPairFilter !== "All pairs" && row.symbol !== decisionPairFilter) continue
             out.push(row)
@@ -113,7 +113,7 @@ Components.StyledScrollView {
         var rows = root.decisionRows()
         for (var i = 0; i < rows.length; ++i) {
             var action = rows[i].action
-            if (kind === "blocked" && action === "BLOCKED LIVE") count += 1
+            if (kind === "blocked" && (action === "BLOCKED" || action === "BLOCKED LIVE")) count += 1
             if (kind === "paper" && action.indexOf("PAPER") >= 0) count += 1
             if (kind === "no-order" && (action === "NO ORDER" || action === "HOLD" || action === "WAIT")) count += 1
         }
@@ -190,7 +190,7 @@ Components.StyledScrollView {
                     height: decisionColumn.implicitHeight + 22
                     radius: 14
                     color: root.safeColor("surfaceMuted", "#242936")
-                    border.color: modelData.action === "BLOCKED LIVE" ? root.safeColor("critical", "#ff5f6d") : root.safeColor("border", "#3C3F44")
+                    border.color: (modelData.action === "BLOCKED" || modelData.action === "BLOCKED LIVE") ? root.safeColor("critical", "#ff5f6d") : root.safeColor("border", "#3C3F44")
                     border.width: 1
                     ColumnLayout {
                         id: decisionColumn
@@ -200,7 +200,7 @@ Components.StyledScrollView {
                         RowLayout {
                             Layout.fillWidth: true
                             Label { text: modelData.symbol; color: root.safeColor("textPrimary", "#ffffff"); font.bold: true; Layout.fillWidth: true }
-                            Rectangle { implicitWidth: Math.max(110, actionLabel.implicitWidth + 22); implicitHeight: 26; radius: 13; color: Qt.rgba(0.33, 0.78, 1, 0.14); border.color: modelData.action === "BLOCKED LIVE" ? root.safeColor("critical", "#ff5f6d") : root.safeColor("accent", "#5BC8FF"); Label { id: actionLabel; anchors.centerIn: parent; text: modelData.action; color: root.safeColor("textPrimary", "#ffffff"); font.bold: true; font.pixelSize: 11 } }
+                            Rectangle { implicitWidth: Math.max(110, actionLabel.implicitWidth + 22); implicitHeight: 26; radius: 13; color: Qt.rgba(0.33, 0.78, 1, 0.14); border.color: (modelData.action === "BLOCKED" || modelData.action === "BLOCKED LIVE") ? root.safeColor("critical", "#ff5f6d") : root.safeColor("accent", "#5BC8FF"); Label { id: actionLabel; anchors.centerIn: parent; text: modelData.action; color: root.safeColor("textPrimary", "#ffffff"); font.bold: true; font.pixelSize: 11 } }
                             Label { text: qsTr("confidence %1").arg(modelData.confidence); color: root.safeColor("textSecondary", "#c5cad3") }
                             Label { text: qsTr("Timestamp %1").arg(modelData.timestamp); color: root.safeColor("textSecondary", "#c5cad3") }
                             Components.IconButton { designSystem: root.designSystem; text: qsTr("Explain"); helpText: root.hasPreviewState() ? root.previewState.tooltipText("Explain decision") : qsTr("Explain decision"); subtle: true; onClicked: if (root.hasPreviewState() && typeof root.previewState.openDecisionExplainDrawer === "function") root.previewState.openDecisionExplainDrawer(modelData) }
