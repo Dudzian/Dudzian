@@ -364,6 +364,12 @@ TYPED_PREVIEW_BRIDGE_AUDIT_KEYS = (
     "typed_preview_bridge_matches_qml_portfolio_snapshot",
     "typed_preview_bridge_matches_qml_alert_telemetry_snapshot",
     "typed_preview_bridge_runtime_boundary_local_only",
+    "typed_preview_bridge_qml_consumer_visible",
+    "typed_preview_bridge_qml_consumer_schema_ok_visible",
+    "typed_preview_bridge_qml_consumer_runtime_boundary_visible",
+    "typed_preview_bridge_qml_consumer_matches_paper_snapshot",
+    "typed_preview_bridge_qml_consumer_matches_scanner_snapshot",
+    "typed_preview_bridge_qml_consumer_matches_governor_snapshot",
 )
 
 
@@ -446,6 +452,17 @@ def _audit_typed_preview_bridge(
     bridge_boundary = _variant_map(
         _safe_bridge_property(typed_preview_bridge, "runtimeBoundaryStatus")
     )
+    _process_events()
+    consumer_values = {
+        "contract": _read_visible_panel_object(
+            root, "sidePanel", "previewTypedBridgeContractLabel"
+        ),
+        "paper": _read_visible_panel_object(root, "sidePanel", "previewTypedBridgePaperLabel"),
+        "scanner": _read_visible_panel_object(root, "sidePanel", "previewTypedBridgeScannerLabel"),
+        "governor": _read_visible_panel_object(
+            root, "sidePanel", "previewTypedBridgeGovernorLabel"
+        ),
+    }
     return {
         "typed_preview_bridge_registered": True,
         "typed_preview_bridge_is_qml_context_instance": is_qml_context_instance,
@@ -466,6 +483,32 @@ def _audit_typed_preview_bridge(
         == qml_snapshots["alert_telemetry"],
         "typed_preview_bridge_runtime_boundary_local_only": bridge_boundary == runtime_boundary
         and bool(_safe_bridge_property(typed_preview_bridge, "runtimeBoundaryLocalOnly")),
+        "typed_preview_bridge_qml_consumer_visible": all(consumer_values.values()),
+        "typed_preview_bridge_qml_consumer_schema_ok_visible": "schema ok"
+        in consumer_values["contract"],
+        "typed_preview_bridge_qml_consumer_runtime_boundary_visible": "local-only boundary ok"
+        in consumer_values["contract"],
+        "typed_preview_bridge_qml_consumer_matches_paper_snapshot": _contains_tokens(
+            consumer_values["paper"],
+            (
+                bridge_snapshots["paper_session"].get("normalizedState"),
+                bridge_snapshots["paper_session"].get("orderRows"),
+            ),
+        ),
+        "typed_preview_bridge_qml_consumer_matches_scanner_snapshot": _contains_tokens(
+            consumer_values["scanner"],
+            (
+                bridge_snapshots["scanner"].get("bestOpportunity"),
+                bridge_snapshots["scanner"].get("candidates"),
+            ),
+        ),
+        "typed_preview_bridge_qml_consumer_matches_governor_snapshot": _contains_tokens(
+            consumer_values["governor"],
+            (
+                bridge_snapshots["governor"].get("latestAction"),
+                bridge_snapshots["governor"].get("latestSymbol"),
+            ),
+        ),
     }
 
 
@@ -1916,6 +1959,12 @@ def _exercise_preview_state(
         "typed_preview_bridge_matches_qml_portfolio_snapshot",
         "typed_preview_bridge_matches_qml_alert_telemetry_snapshot",
         "typed_preview_bridge_runtime_boundary_local_only",
+        "typed_preview_bridge_qml_consumer_visible",
+        "typed_preview_bridge_qml_consumer_schema_ok_visible",
+        "typed_preview_bridge_qml_consumer_runtime_boundary_visible",
+        "typed_preview_bridge_qml_consumer_matches_paper_snapshot",
+        "typed_preview_bridge_qml_consumer_matches_scanner_snapshot",
+        "typed_preview_bridge_qml_consumer_matches_governor_snapshot",
         "safety_boundary_ok",
     )
     audit["passed"] = (
