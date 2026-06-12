@@ -26,6 +26,7 @@ TYPED_PREVIEW_BRIDGE_PRECOMMIT_FILES = (
     "ui/pyside_app/qml_bridge.py",
     "ui/pyside_app/preview_state_bridge.py",
     "ui/pyside_app/smoke.py",
+    "ui/pyside_app/qml/MainWindow.qml",
 )
 TYPED_PREVIEW_BRIDGE_MYPY_FILES = (
     "tests/ui_pyside/test_source_smoke.py",
@@ -139,6 +140,34 @@ def test_typed_preview_bridge_source_contract_is_registered() -> None:
     assert "typed_preview_bridge_matches_qml_portfolio_snapshot" in smoke_source
     assert "typed_preview_bridge_matches_qml_alert_telemetry_snapshot" in smoke_source
     assert "typed_preview_bridge_runtime_boundary_local_only" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_visible" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_schema_ok_visible" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_runtime_boundary_visible" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_matches_paper_snapshot" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_matches_scanner_snapshot" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_matches_governor_snapshot" in smoke_source
+
+
+def test_typed_preview_bridge_qml_consumer_object_names_are_declared() -> None:
+    dashboard_source = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(
+        encoding="utf-8"
+    )
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    for object_name in (
+        "previewTypedBridgeContractLabel",
+        "previewTypedBridgePaperLabel",
+        "previewTypedBridgeScannerLabel",
+        "previewTypedBridgeGovernorLabel",
+    ):
+        assert f'"{object_name}"' in dashboard_source
+
+    assert "typedPreviewBridge.schemaContractValid" in dashboard_source
+    assert "typedPreviewBridge.runtimeBoundaryLocalOnly" in dashboard_source
+    assert "typedPreviewBridge.paperSessionSnapshot" in dashboard_source
+    assert "typedPreviewBridge.scannerSnapshot" in dashboard_source
+    assert "typedPreviewBridge.governorSnapshot" in dashboard_source
+    assert "previewTypedBridgeContractLabel" in smoke_source
 
 
 def test_typed_preview_bridge_audit_fails_closed_without_valid_bridge() -> None:
@@ -252,6 +281,12 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["typed_preview_bridge_matches_qml_portfolio_snapshot"] is True
     assert audit["typed_preview_bridge_matches_qml_alert_telemetry_snapshot"] is True
     assert audit["typed_preview_bridge_runtime_boundary_local_only"] is True
+    assert audit["typed_preview_bridge_qml_consumer_visible"] is True
+    assert audit["typed_preview_bridge_qml_consumer_schema_ok_visible"] is True
+    assert audit["typed_preview_bridge_qml_consumer_runtime_boundary_visible"] is True
+    assert audit["typed_preview_bridge_qml_consumer_matches_paper_snapshot"] is True
+    assert audit["typed_preview_bridge_qml_consumer_matches_scanner_snapshot"] is True
+    assert audit["typed_preview_bridge_qml_consumer_matches_governor_snapshot"] is True
     assert audit["paper_session_snapshot_matches_state"] is True
     assert audit["generate_tick_delta"] == 1
     assert audit["generate_tick_appended_order"] is True
@@ -342,6 +377,10 @@ def test_preview_visible_object_names_are_stable_source_contract() -> None:
         "previewAlertsLatestMessageLabel",
         "previewTelemetryLatestMessageLabel",
         "previewScannerRowsView",
+        "previewTypedBridgeContractLabel",
+        "previewTypedBridgePaperLabel",
+        "previewTypedBridgeScannerLabel",
+        "previewTypedBridgeGovernorLabel",
     ):
         assert f'"{object_name}"' in sources
 
