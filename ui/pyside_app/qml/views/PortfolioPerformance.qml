@@ -133,9 +133,10 @@ Components.StyledScrollView {
 
             Components.PreviewCard {
                 objectName: "portfolioPaperSessionCard"
+                descriptionObjectName: "previewPortfolioSummaryLabel"
                 designSystem: root.designSystem
                 title: qsTr("Bieżąca sesja Paper")
-                description: qsTr("Ten blok czyta aktywną sesję Paper oddzielnie od raportu portfolio; filtry czasu nie modyfikują tych wartości.")
+                description: qsTr("Paper session equity: %1 • Paper session PnL: %2 • orders: %3 • simulated: %4 • blocked: %5").arg(previewState.formatMoney(previewState.paperEquity, "USD")).arg(previewState.formatUsd(previewState.paperPnl)).arg(previewState.paperOrderRows.length).arg(previewState.paperSimulatedCount).arg(previewState.paperBlockedCount)
                 GridLayout {
                     Layout.fillWidth: true
                     columns: 2

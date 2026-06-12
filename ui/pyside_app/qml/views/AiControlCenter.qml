@@ -85,7 +85,7 @@ Components.StyledScrollView {
             RowLayout {
                 Layout.fillWidth: true
                 Components.IconButton { designSystem: root.designSystem; text: qsTr("Generate governor recommendation"); helpText: previewState.tooltipText("Generate governor recommendation"); iconName: "mode_wizard"; backgroundColor: designSystem.color("accent"); foregroundColor: designSystem.color("surface"); onClicked: previewState.generateGovernorRecommendation() }
-                Label { text: previewState.lastGovernorDecision; color: designSystem.color("textPrimary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { objectName: "previewAiCenterGovernorDecisionLabel"; text: previewState.lastGovernorDecision; color: designSystem.color("textPrimary"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }
 

@@ -10,6 +10,8 @@ Rectangle {
     property int cardPadding: 16
     property string title: ""
     property string description: ""
+    property string titleObjectName: ""
+    property string descriptionObjectName: ""
     property color cardColor: designSystem ? designSystem.color("surface") : "#1b2130"
 
     Layout.fillWidth: true
@@ -38,6 +40,7 @@ Rectangle {
             }
             Label {
                 id: cardTitle
+                objectName: card.titleObjectName
                 text: card.title
                 font.bold: true
                 font.pixelSize: 16
@@ -48,6 +51,7 @@ Rectangle {
         }
 
         Label {
+            objectName: card.descriptionObjectName
             visible: card.description.length > 0
             text: card.description
             color: card.designSystem ? card.designSystem.color("textSecondary") : "#b5bfd8"

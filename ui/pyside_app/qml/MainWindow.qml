@@ -2854,7 +2854,7 @@ ApplicationWindow {
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Critical count"); description: String(root.alertCriticalCount); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Warning count"); description: String(root.alertWarningCount); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Info count"); description: String(root.alertInfoCount); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Last event"); description: root.alertLastEventAt; Layout.fillWidth: true }
+                    Components.PreviewCard { descriptionObjectName: "previewAlertsLatestMessageLabel"; designSystem: rootDesignSystem; title: qsTr("Last event"); description: root.alertRows.length > 0 ? root.alertRows[0].message : root.alertLastEventAt; Layout.fillWidth: true }
                 }
                 Components.PreviewCard {
                     objectName: "alertCenterFilters"
@@ -2989,7 +2989,7 @@ ApplicationWindow {
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("exchange route"); description: qsTr("disabled"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("paper bridge"); description: qsTr("local-only paper bridge/state • no real orders"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("session ticks"); description: String(root.paperSessionTicks); Layout.fillWidth: true }
-                    Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("last paper event"); description: root.paperTelemetryRows.length > 0 ? root.paperTelemetryRows[0].message : qsTr("no paper telemetry yet"); Layout.fillWidth: true }
+                    Components.PreviewCard { descriptionObjectName: "previewTelemetryLatestMessageLabel"; designSystem: rootDesignSystem; title: qsTr("last paper event"); description: root.paperTelemetryRows.length > 0 ? root.paperTelemetryRows[0].message : qsTr("no paper telemetry yet"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Last heartbeat"); description: root.telemetryHeartbeat; Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Data freshness"); description: root.telemetryFreshness; Layout.fillWidth: true }
                 }

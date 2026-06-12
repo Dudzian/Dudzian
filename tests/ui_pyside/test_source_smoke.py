@@ -221,6 +221,16 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["paper_session_naming_helpers_normalize_state"] is True
     assert audit["optional_preview_feed_limits_hold"] is True
     assert audit["ping_appends_telemetry"] is True
+    assert audit["visible_ui_objects_found_for_preview_panels"] is True
+    assert audit["visible_dashboard_matches_scanner_snapshot"] is True
+    assert audit["visible_dashboard_matches_governor_snapshot"] is True
+    assert audit["visible_ai_center_matches_governor_snapshot"] is True
+    assert audit["visible_decisions_match_latest_governor_action"] is True
+    assert audit["visible_terminal_matches_latest_paper_order"] is True
+    assert audit["visible_portfolio_matches_portfolio_snapshot"] is True
+    assert audit["visible_alerts_match_alert_snapshot"] is True
+    assert audit["visible_telemetry_matches_telemetry_snapshot"] is True
+    assert audit["visible_ui_updates_after_preview_mutations"] is True
 
     assert audit["select_top20_count"] == 20
     assert audit["select_top20_propagates_terminal_pair"] is True
@@ -231,6 +241,38 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["pair_selection_updates_decision_summary"] is True
     assert audit["risk_profile_updates"] is True
     assert audit["risk_summary_updates"] is True
+
+
+def test_preview_visible_object_names_are_stable_source_contract() -> None:
+    sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            QML_SOURCE_ROOT / "components" / "PreviewCard.qml",
+            QML_SOURCE_ROOT / "MainWindow.qml",
+            QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml",
+            QML_SOURCE_ROOT / "views" / "AiControlCenter.qml",
+            QML_SOURCE_ROOT / "views" / "AiDecisionsView.qml",
+            QML_SOURCE_ROOT / "views" / "PaperTerminal.qml",
+            QML_SOURCE_ROOT / "views" / "PortfolioPerformance.qml",
+            QML_SOURCE_ROOT / "views" / "MarketScanner.qml",
+        )
+    )
+
+    for object_name in (
+        "previewDashboardBestOpportunityLabel",
+        "previewDashboardGovernorDecisionLabel",
+        "previewAiCenterGovernorDecisionLabel",
+        "previewAiDecisionLatestActionLabel",
+        "previewTerminalLatestOrderLabel",
+        "previewPortfolioSummaryLabel",
+        "previewAlertsLatestMessageLabel",
+        "previewTelemetryLatestMessageLabel",
+        "previewScannerRowsView",
+    ):
+        assert f'"{object_name}"' in sources
+
+    assert "descriptionObjectName" in sources
+    assert "_visible_preview_object_values" in SMOKE_SOURCE.read_text(encoding="utf-8")
 
 
 def test_smoke_blocks_live_runtime_flag_without_qt_bootstrap() -> None:
