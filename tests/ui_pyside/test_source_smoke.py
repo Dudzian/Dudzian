@@ -11,13 +11,29 @@ from pathlib import Path
 import pytest
 
 from ui.pyside_app.app import AppOptions
+from ui.pyside_app.smoke import TYPED_PREVIEW_BRIDGE_AUDIT_KEYS, _audit_typed_preview_bridge
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SMOKE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "smoke.py"
 PLAN_SOURCE = REPO_ROOT / "scripts" / "ui_preview_launch_plan.py"
 APP_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "app.py"
+BRIDGE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "preview_state_bridge.py"
+QML_BRIDGE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "qml_bridge.py"
 QML_SOURCE_ROOT = REPO_ROOT / "ui" / "pyside_app" / "qml"
 PALETTE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "theme" / "palette.json"
+TYPED_PREVIEW_BRIDGE_PRECOMMIT_FILES = (
+    "tests/ui_pyside/test_source_smoke.py",
+    "ui/pyside_app/qml_bridge.py",
+    "ui/pyside_app/preview_state_bridge.py",
+    "ui/pyside_app/smoke.py",
+)
+TYPED_PREVIEW_BRIDGE_MYPY_FILES = (
+    "tests/ui_pyside/test_source_smoke.py",
+    "ui/pyside_app/smoke.py",
+    "ui/pyside_app/qml_bridge.py",
+    "ui/pyside_app/preview_state_bridge.py",
+)
+
 FORBIDDEN_SOURCE_TOKENS = (
     "create" + "_" + "order",
     "fetch" + "_" + "balance",
@@ -95,6 +111,55 @@ def test_smoke_flags_are_available_in_parser() -> None:
         ]
     )
     assert exercise_options.exercise_preview_state is True
+
+
+def test_typed_preview_bridge_source_contract_is_registered() -> None:
+    bridge_source = BRIDGE_SOURCE.read_text(encoding="utf-8")
+    qml_bridge_source = QML_BRIDGE_SOURCE.read_text(encoding="utf-8")
+
+    assert "class LocalPreviewStateBridge(QObject)" in bridge_source
+    assert '@Property("QVariantMap"' in bridge_source
+    assert "def updateSnapshots" in bridge_source
+    assert "def validate_runtime_boundary" in bridge_source
+    assert "liveTradingDisabled" in bridge_source
+    assert "exchangeIoDisabled" in bridge_source
+    assert "orderSubmissionDisabled" in bridge_source
+    assert "apiKeysRequired" in bridge_source
+    assert "runtimeLoopStarted" in bridge_source
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert "LocalPreviewStateBridge" in qml_bridge_source
+    assert "typedPreviewBridge" in qml_bridge_source
+    assert "typed_preview_bridge_registered" in smoke_source
+    assert "typed_preview_bridge_is_qml_context_instance" in smoke_source
+    assert "typed_preview_bridge_schema_contract_valid" in smoke_source
+    assert "typed_preview_bridge_matches_qml_paper_session_snapshot" in smoke_source
+    assert "typed_preview_bridge_matches_qml_scanner_snapshot" in smoke_source
+    assert "typed_preview_bridge_matches_qml_governor_snapshot" in smoke_source
+    assert "typed_preview_bridge_matches_qml_portfolio_snapshot" in smoke_source
+    assert "typed_preview_bridge_matches_qml_alert_telemetry_snapshot" in smoke_source
+    assert "typed_preview_bridge_runtime_boundary_local_only" in smoke_source
+
+
+def test_typed_preview_bridge_audit_fails_closed_without_valid_bridge() -> None:
+    for invalid_bridge in (None, object()):
+        audit = _audit_typed_preview_bridge(
+            root=None,
+            typed_preview_bridge=invalid_bridge,
+            qml_context_bridge_instance=None,
+        )
+
+        assert set(audit) == set(TYPED_PREVIEW_BRIDGE_AUDIT_KEYS)
+        assert all(value is False for value in audit.values())
+
+
+def test_typed_preview_bridge_file_is_in_reported_precommit_and_mypy_commands() -> None:
+    bridge_path = "ui/pyside_app/preview_state_bridge.py"
+
+    assert bridge_path in TYPED_PREVIEW_BRIDGE_PRECOMMIT_FILES
+    assert bridge_path in TYPED_PREVIEW_BRIDGE_MYPY_FILES
+    assert "ui/pyside_app/qml_bridge.py" in TYPED_PREVIEW_BRIDGE_PRECOMMIT_FILES
+    assert "ui/pyside_app/qml_bridge.py" in TYPED_PREVIEW_BRIDGE_MYPY_FILES
 
 
 def test_source_smoke_finishes_and_reports_safety_contract() -> None:
@@ -178,6 +243,15 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["paper_session_started_telemetry_event"] is True
     assert audit["paper_session_started_alert_event"] is True
     assert audit["preview_state_contract_helpers_present"] is True
+    assert audit["typed_preview_bridge_registered"] is True
+    assert audit["typed_preview_bridge_is_qml_context_instance"] is True
+    assert audit["typed_preview_bridge_schema_contract_valid"] is True
+    assert audit["typed_preview_bridge_matches_qml_paper_session_snapshot"] is True
+    assert audit["typed_preview_bridge_matches_qml_scanner_snapshot"] is True
+    assert audit["typed_preview_bridge_matches_qml_governor_snapshot"] is True
+    assert audit["typed_preview_bridge_matches_qml_portfolio_snapshot"] is True
+    assert audit["typed_preview_bridge_matches_qml_alert_telemetry_snapshot"] is True
+    assert audit["typed_preview_bridge_runtime_boundary_local_only"] is True
     assert audit["paper_session_snapshot_matches_state"] is True
     assert audit["generate_tick_delta"] == 1
     assert audit["generate_tick_appended_order"] is True

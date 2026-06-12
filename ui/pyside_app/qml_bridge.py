@@ -7,6 +7,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from ui.backend import DiagnosticsController, LicensingController, RuntimeService
 
 from .config import UiAppConfig
+from .preview_state_bridge import LocalPreviewStateBridge
 from .controllers import (
     LayoutProfileController,
     ModeWizardController,
@@ -43,6 +44,7 @@ class QmlContextBridge:
         self.strategy_management_controller = StrategyManagementController()
         registry = load_default_theme()
         self.theme_bridge = ThemeBridge(registry, palette=config.theme_palette)
+        self.typed_preview_bridge = LocalPreviewStateBridge()
 
     def install(self) -> None:
         context = self._engine.rootContext()
@@ -58,3 +60,4 @@ class QmlContextBridge:
             "strategyManagementController", self.strategy_management_controller
         )
         context.setContextProperty("theme", self.theme_bridge)
+        context.setContextProperty("typedPreviewBridge", self.typed_preview_bridge)
