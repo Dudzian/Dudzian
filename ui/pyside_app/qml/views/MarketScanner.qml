@@ -59,7 +59,7 @@ Components.StyledScrollView {
             }
         }
         Components.PreviewCard {
-            objectName: "marketScannerOpportunitiesTable"
+            objectName: "previewScannerRowsView"
             designSystem: root.designSystem
             title: qsTr("Okazje — Market Scanner table")
             description: qsTr("Pair • Exchange • Price • Volume • Trend • Spread • Liquidity • AI score • Risk • Strategy • Recommendation • Reason")

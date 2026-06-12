@@ -415,9 +415,10 @@ Components.StyledScrollView {
 
         Components.PreviewCard {
             objectName: "paperTerminalBottomTabs"
+            descriptionObjectName: "previewTerminalLatestOrderLabel"
             designSystem: root.designSystem
             title: qsTr("Positions / Orders / History / Reserved / Strategy / Log / Messages")
-            description: qsTr("Local tab strip with non-empty paper content and active style. Positions, Orders, History, Reserved, Strategy, Log, Messages never call external services.")
+            description: previewState.paperOrderRows.length > 0 ? qsTr("Latest paper order: %1 • %2 • %3 • %4").arg(previewState.paperOrderRows[0].pair).arg(previewState.paperOrderRows[0].action).arg(previewState.paperOrderRows[0].status).arg(previewState.paperOrderRows[0].reason) : qsTr("Local tab strip with non-empty paper content and active style. Positions, Orders, History, Reserved, Strategy, Log, Messages never call external services.")
             Layout.fillWidth: true
 
             Flow {

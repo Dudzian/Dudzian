@@ -197,7 +197,7 @@ def _process_events() -> None:
     qt_app = QGuiApplication.instance()
     if qt_app is None:
         return
-    for _ in range(3):
+    for _ in range(12):
         qt_app.processEvents()
 
 
@@ -347,6 +347,119 @@ def _call_qml(root: Any, method: str, *args: str) -> Any:
         return _variant(value)
     _invoke_qml(root, method, *args)
     return None
+
+
+def _qt_object_is_valid(item: Any) -> bool:
+    if item is None:
+        return False
+    try:
+        import shiboken6
+    except ImportError:
+        return True
+    return bool(shiboken6.isValid(item))
+
+
+def _qml_visual_children(item: Any) -> list[Any]:
+    children: list[Any] = []
+    for accessor_name in ("children", "childItems"):
+        accessor = getattr(item, accessor_name, None)
+        if callable(accessor):
+            try:
+                children.extend(list(accessor()))
+            except RuntimeError:
+                continue
+    return children
+
+
+def _find_qml_object_in_tree(item: Any, object_name: str) -> Any:
+    if item is None:
+        return None
+    try:
+        if str(item.property("objectName") or "") == object_name:
+            return item
+    except RuntimeError:
+        return None
+    for child in _qml_visual_children(item):
+        found = _find_qml_object_in_tree(child, object_name)
+        if found is not None:
+            return found
+    return None
+
+
+def _find_qml_object(root: Any, object_name: str) -> Any:
+    from PySide6.QtCore import QObject
+
+    try:
+        central_loader = root.findChild(QObject, "centralContentLoader")
+    except RuntimeError:
+        central_loader = None
+    if central_loader is not None:
+        try:
+            loaded_item = central_loader.property("item")
+        except RuntimeError:
+            loaded_item = None
+        found = _find_qml_object_in_tree(loaded_item, object_name)
+        if found is not None:
+            return found
+    found = _find_qml_object_in_tree(root, object_name)
+    if found is not None:
+        return found
+    try:
+        return root.findChild(QObject, object_name)
+    except RuntimeError:
+        return None
+
+
+def _qml_object_value(item: Any) -> str:
+    if item is None:
+        return ""
+    try:
+        for property_name in ("text", "title", "description", "currentText"):
+            value = item.property(property_name)
+            if value not in (None, ""):
+                return str(_variant(value))
+        model = item.property("model")
+        model_count = _sequence_length(model)
+        if model_count:
+            return str(model_count)
+        row_count = getattr(model, "rowCount", None)
+        if callable(row_count):
+            return str(row_count())
+        count = item.property("count")
+        if count is not None:
+            return str(_variant(count))
+    except RuntimeError:
+        return ""
+    return ""
+
+
+def _read_visible_panel_object(root: Any, panel_id: str, object_name: str) -> str:
+    _invoke_show_panel(root, panel_id)
+    _process_events()
+    return _qml_object_value(_find_qml_object(root, object_name))
+
+
+def _contains_tokens(value: str, tokens: tuple[object, ...]) -> bool:
+    normalized = value.lower()
+    return all(str(token).lower() in normalized for token in tokens if str(token or ""))
+
+
+def _visible_preview_object_values(root: Any) -> dict[str, str]:
+    object_panels = {
+        "dashboard_scanner": ("sidePanel", "previewDashboardBestOpportunityLabel"),
+        "dashboard_governor": ("sidePanel", "previewDashboardGovernorDecisionLabel"),
+        "ai_center_governor": ("aiCenterPanel", "previewAiCenterGovernorDecisionLabel"),
+        "decisions_latest_action": ("aiDecisionsPanel", "previewAiDecisionLatestActionLabel"),
+        "terminal_latest_order": ("terminalPanel", "previewTerminalLatestOrderLabel"),
+        "portfolio_summary": ("portfolioPerformancePanel", "previewPortfolioSummaryLabel"),
+        "alerts_latest_message": ("alertsPanel", "previewAlertsLatestMessageLabel"),
+        "telemetry_latest_message": ("telemetryPanel", "previewTelemetryLatestMessageLabel"),
+        "scanner_rows": ("marketScannerPanel", "previewScannerRowsView"),
+    }
+    return {
+        key: _read_visible_panel_object(root, panel_id, object_name)
+        for key, (panel_id, object_name) in object_panels.items()
+    }
 
 
 def _risk_path_generates_blocked_event(root: Any, path: str) -> tuple[bool, dict[str, Any]]:
@@ -730,6 +843,78 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
     audit["ping_appends_telemetry"] = (
         _sequence_length(after_ping_rows) > before_ping_telemetry
         or _first_row_repr(after_ping_rows) != before_ping_first_row
+    )
+
+    visible_values = _visible_preview_object_values(root)
+    scanner_snapshot = _call_qml(root, "currentScannerSnapshot") or {}
+    governor_snapshot = _call_qml(root, "currentGovernorSnapshot") or {}
+    paper_session_snapshot = _call_qml(root, "currentPaperSessionSnapshot") or {}
+    portfolio_snapshot = _call_qml(root, "currentPortfolioSnapshot") or {}
+    alert_telemetry_snapshot = _call_qml(root, "currentAlertTelemetrySnapshot") or {}
+    panel_runtime_snapshot = _call_qml(root, "currentPerPanelRuntimeSnapshot") or {}
+    latest_order_row = _first_row(root.property("paperOrderRows"))
+    audit["visible_ui_object_values"] = visible_values
+    audit["visible_ui_objects_found_for_preview_panels"] = all(
+        bool(value) for value in visible_values.values()
+    )
+    audit["visible_dashboard_matches_scanner_snapshot"] = _contains_tokens(
+        visible_values["dashboard_scanner"],
+        (
+            scanner_snapshot.get("bestOpportunity"),
+            scanner_snapshot.get("candidates"),
+        ),
+    )
+    audit["visible_dashboard_matches_governor_snapshot"] = _contains_tokens(
+        visible_values["dashboard_governor"],
+        (governor_snapshot.get("latestAction"), governor_snapshot.get("latestSymbol")),
+    ) or visible_values["dashboard_governor"] == str(governor_snapshot.get("lastDecision") or "")
+    audit["visible_ai_center_matches_governor_snapshot"] = visible_values[
+        "ai_center_governor"
+    ] == str(governor_snapshot.get("lastDecision") or "")
+    audit["visible_decisions_match_latest_governor_action"] = _contains_tokens(
+        visible_values["decisions_latest_action"],
+        (governor_snapshot.get("latestAction"), governor_snapshot.get("latestSymbol")),
+    )
+    audit["visible_terminal_matches_latest_paper_order"] = _contains_tokens(
+        visible_values["terminal_latest_order"],
+        (
+            _row_field(latest_order_row, "pair"),
+            paper_session_snapshot.get("latestOrderAction"),
+            paper_session_snapshot.get("latestOrderStatus"),
+            panel_runtime_snapshot.get("terminalLatestOrderReason"),
+        ),
+    )
+    audit["visible_portfolio_matches_portfolio_snapshot"] = _contains_tokens(
+        visible_values["portfolio_summary"],
+        (
+            "equity",
+            "pnl",
+            "orders",
+            portfolio_snapshot.get("orders"),
+            portfolio_snapshot.get("simulatedCount"),
+            portfolio_snapshot.get("blockedCount"),
+        ),
+    )
+    audit["visible_alerts_match_alert_snapshot"] = _contains_tokens(
+        visible_values["alerts_latest_message"],
+        (panel_runtime_snapshot.get("alertsLatestMessage"),),
+    )
+    audit["visible_telemetry_matches_telemetry_snapshot"] = _contains_tokens(
+        visible_values["telemetry_latest_message"],
+        (alert_telemetry_snapshot.get("latestTelemetry"),),
+    )
+    audit["visible_ui_updates_after_preview_mutations"] = all(
+        bool(audit[key])
+        for key in (
+            "visible_dashboard_matches_scanner_snapshot",
+            "visible_dashboard_matches_governor_snapshot",
+            "visible_ai_center_matches_governor_snapshot",
+            "visible_decisions_match_latest_governor_action",
+            "visible_terminal_matches_latest_paper_order",
+            "visible_portfolio_matches_portfolio_snapshot",
+            "visible_alerts_match_alert_snapshot",
+            "visible_telemetry_matches_telemetry_snapshot",
+        )
     )
 
     before_filter_paper_pnl = float(root.property("paperPnl") or 0)

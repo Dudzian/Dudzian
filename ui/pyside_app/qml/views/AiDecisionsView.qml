@@ -146,7 +146,7 @@ Components.StyledScrollView {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Last decision"); description: root.lastGovernorDecisionValue(); Layout.fillWidth: true }
+            Components.PreviewCard { descriptionObjectName: "previewAiDecisionLatestActionLabel"; designSystem: root.designSystem; title: qsTr("Last decision"); description: root.lastGovernorDecisionValue(); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("blocked live count"); description: String(root.countAction("blocked")); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("paper simulated orders count"); description: String(root.countAction("paper")); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("no order count"); description: String(root.countAction("no-order")); Layout.fillWidth: true }
