@@ -349,6 +349,126 @@ def _call_qml(root: Any, method: str, *args: str) -> Any:
     return None
 
 
+def _variant_map(value: Any) -> dict[str, object]:
+    value = _variant(value)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+TYPED_PREVIEW_BRIDGE_AUDIT_KEYS = (
+    "typed_preview_bridge_registered",
+    "typed_preview_bridge_is_qml_context_instance",
+    "typed_preview_bridge_schema_contract_valid",
+    "typed_preview_bridge_matches_qml_paper_session_snapshot",
+    "typed_preview_bridge_matches_qml_scanner_snapshot",
+    "typed_preview_bridge_matches_qml_governor_snapshot",
+    "typed_preview_bridge_matches_qml_portfolio_snapshot",
+    "typed_preview_bridge_matches_qml_alert_telemetry_snapshot",
+    "typed_preview_bridge_runtime_boundary_local_only",
+)
+
+
+def _typed_preview_bridge_false_audit() -> dict[str, object]:
+    return {key: False for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+
+
+def _safe_bridge_property(typed_preview_bridge: Any, property_name: str) -> object:
+    try:
+        property_reader = getattr(typed_preview_bridge, "property", None)
+        if not callable(property_reader):
+            return None
+        return property_reader(property_name)
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+
+
+def _audit_typed_preview_bridge(
+    root: Any,
+    typed_preview_bridge: Any,
+    qml_context_bridge_instance: Any,
+) -> dict[str, object]:
+    audit = _typed_preview_bridge_false_audit()
+    if typed_preview_bridge is None:
+        return audit
+
+    required_methods = ("updateSnapshots", "updateRuntimeBoundary", "property")
+    if not all(
+        callable(getattr(typed_preview_bridge, method_name, None))
+        for method_name in required_methods
+    ):
+        return audit
+
+    from .preview_state_bridge import LocalPreviewStateBridge
+
+    is_qml_context_instance = (
+        isinstance(typed_preview_bridge, LocalPreviewStateBridge)
+        and typed_preview_bridge is qml_context_bridge_instance
+    )
+    if not is_qml_context_instance:
+        return audit
+
+    qml_snapshots = {
+        "paper_session": _variant_map(_call_qml(root, "currentPaperSessionSnapshot") or {}),
+        "scanner": _variant_map(_call_qml(root, "currentScannerSnapshot") or {}),
+        "governor": _variant_map(_call_qml(root, "currentGovernorSnapshot") or {}),
+        "portfolio": _variant_map(_call_qml(root, "currentPortfolioSnapshot") or {}),
+        "alert_telemetry": _variant_map(_call_qml(root, "currentAlertTelemetrySnapshot") or {}),
+    }
+    runtime_boundary = {
+        "liveTradingDisabled": _bool_property(root, "liveTradingDisabled"),
+        "exchangeIoDisabled": _bool_property(root, "exchangeIoDisabled"),
+        "orderSubmissionDisabled": _bool_property(root, "orderSubmissionDisabled"),
+        "apiKeysRequired": _bool_property(root, "apiKeysRequired"),
+        "runtimeLoopStarted": _bool_property(root, "runtimeLoopStarted"),
+    }
+    try:
+        typed_preview_bridge.updateSnapshots(
+            qml_snapshots["paper_session"],
+            qml_snapshots["scanner"],
+            qml_snapshots["governor"],
+            qml_snapshots["portfolio"],
+            qml_snapshots["alert_telemetry"],
+        )
+        typed_preview_bridge.updateRuntimeBoundary(runtime_boundary)
+    except (AttributeError, RuntimeError, TypeError):
+        return audit
+
+    bridge_snapshots = {
+        "paper_session": _variant_map(
+            _safe_bridge_property(typed_preview_bridge, "paperSessionSnapshot")
+        ),
+        "scanner": _variant_map(_safe_bridge_property(typed_preview_bridge, "scannerSnapshot")),
+        "governor": _variant_map(_safe_bridge_property(typed_preview_bridge, "governorSnapshot")),
+        "portfolio": _variant_map(_safe_bridge_property(typed_preview_bridge, "portfolioSnapshot")),
+        "alert_telemetry": _variant_map(
+            _safe_bridge_property(typed_preview_bridge, "alertTelemetrySnapshot")
+        ),
+    }
+    bridge_boundary = _variant_map(
+        _safe_bridge_property(typed_preview_bridge, "runtimeBoundaryStatus")
+    )
+    return {
+        "typed_preview_bridge_registered": True,
+        "typed_preview_bridge_is_qml_context_instance": is_qml_context_instance,
+        "typed_preview_bridge_schema_contract_valid": bool(
+            _safe_bridge_property(typed_preview_bridge, "schemaContractValid")
+        ),
+        "typed_preview_bridge_matches_qml_paper_session_snapshot": bridge_snapshots["paper_session"]
+        == qml_snapshots["paper_session"],
+        "typed_preview_bridge_matches_qml_scanner_snapshot": bridge_snapshots["scanner"]
+        == qml_snapshots["scanner"],
+        "typed_preview_bridge_matches_qml_governor_snapshot": bridge_snapshots["governor"]
+        == qml_snapshots["governor"],
+        "typed_preview_bridge_matches_qml_portfolio_snapshot": bridge_snapshots["portfolio"]
+        == qml_snapshots["portfolio"],
+        "typed_preview_bridge_matches_qml_alert_telemetry_snapshot": bridge_snapshots[
+            "alert_telemetry"
+        ]
+        == qml_snapshots["alert_telemetry"],
+        "typed_preview_bridge_runtime_boundary_local_only": bridge_boundary == runtime_boundary
+        and bool(_safe_bridge_property(typed_preview_bridge, "runtimeBoundaryLocalOnly")),
+    }
+
+
 def _qt_object_is_valid(item: Any) -> bool:
     if item is None:
         return False
@@ -557,7 +677,11 @@ def _risk_path_generates_blocked_event(root: Any, path: str) -> tuple[bool, dict
     }
 
 
-def _exercise_preview_state(root: Any) -> dict[str, object]:
+def _exercise_preview_state(
+    root: Any,
+    typed_preview_bridge: Any,
+    qml_context_bridge_instance: Any,
+) -> dict[str, object]:
     """Mutate only the smoke-loaded local PreviewState/PaperState and return audit facts."""
 
     audit: dict[str, object] = {
@@ -569,6 +693,9 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "order_submission_disabled": _bool_property(root, "orderSubmissionDisabled"),
         "api_keys_required": _bool_property(root, "apiKeysRequired"),
     }
+    audit.update(
+        _audit_typed_preview_bridge(root, typed_preview_bridge, qml_context_bridge_instance)
+    )
     simulation_state_fields = (
         "simulationRunning",
         "simulationPaused",
@@ -1780,6 +1907,15 @@ def _exercise_preview_state(root: Any) -> dict[str, object]:
         "explainability_no_network_api_calls",
         "explainability_no_order_submission",
         "explainability_no_secret_reads",
+        "typed_preview_bridge_registered",
+        "typed_preview_bridge_is_qml_context_instance",
+        "typed_preview_bridge_schema_contract_valid",
+        "typed_preview_bridge_matches_qml_paper_session_snapshot",
+        "typed_preview_bridge_matches_qml_scanner_snapshot",
+        "typed_preview_bridge_matches_qml_governor_snapshot",
+        "typed_preview_bridge_matches_qml_portfolio_snapshot",
+        "typed_preview_bridge_matches_qml_alert_telemetry_snapshot",
+        "typed_preview_bridge_runtime_boundary_local_only",
         "safety_boundary_ok",
     )
     audit["passed"] = (
@@ -1844,6 +1980,8 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         tooltips_present = False
         safety_boundary_ok = True
         portfolio_filters_do_not_mutate_paper_state = True
+        typed_preview_bridge: Any | None = None
+        qml_context_bridge_instance: Any | None = None
         simulation_loop_state_present = False
         risk_blocked_tick_does_not_mutate_paper_pnl = False
         risk_blocked_tick_does_not_mutate_paper_equity = False
@@ -2492,6 +2630,9 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             from PySide6.QtCore import QObject
 
             root = engine.rootObjects()[0]
+            typed_preview_bridge = engine.rootContext().contextProperty("typedPreviewBridge")
+            qml_context_bridge = getattr(app, "_bridge", None)
+            qml_context_bridge_instance = getattr(qml_context_bridge, "typed_preview_bridge", None)
             active_panel_id = str(root.property("currentPanelId") or "")
             dashboard = root.findChild(QObject, "operatorDashboardRoot")
             central_loader = root.findChild(QObject, "centralContentLoader")
@@ -2626,7 +2767,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             ):
                 audit_issues.append("risk_profile_audit_failed")
             if options.exercise_preview_state:
-                preview_state_audit = _exercise_preview_state(root)
+                preview_state_audit = _exercise_preview_state(
+                    root,
+                    typed_preview_bridge,
+                    qml_context_bridge_instance,
+                )
                 if preview_state_audit.get("passed") is not True:
                     audit_issues.append("preview_state_exercise_failed")
                 safety_boundary_ok = bool(preview_state_audit.get("safety_boundary_ok"))
