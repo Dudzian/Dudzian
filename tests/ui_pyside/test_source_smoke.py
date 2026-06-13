@@ -13,6 +13,7 @@ import pytest
 from ui.pyside_app.app import AppOptions
 from ui.pyside_app.smoke import (
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
+    TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS,
     _audit_typed_preview_bridge,
     _typed_preview_bridge_consumer_evidence,
 )
@@ -228,15 +229,83 @@ def test_typed_preview_bridge_qml_consumer_evidence_summary_contract() -> None:
     assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is True
     assert evidence["failed_checks"] == []
 
-    missing_audit = dict(full_audit)
-    del missing_audit["typed_preview_bridge_qml_consumer_fallback_state_safe"]
-    missing_evidence = _typed_preview_bridge_consumer_evidence(missing_audit)
 
-    assert missing_evidence["all_typed_preview_bridge_consumer_checks_passed"] is False
-    assert missing_evidence["fallback_state"] is False
-    assert missing_evidence["failed_checks"] == [
-        "typed_preview_bridge_qml_consumer_fallback_state_safe"
+@pytest.mark.parametrize(
+    ("broken_key", "broken_value"),
+    (
+        ("typed_preview_bridge_qml_consumer_fallback_state_safe", None),
+        ("typed_preview_bridge_qml_consumer_updates_after_snapshot_a", False),
+        ("typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens", "true"),
+        ("typed_preview_bridge_qml_consumer_visible", 1),
+    ),
+)
+def test_typed_preview_bridge_qml_consumer_evidence_negative_value_matrix(
+    broken_key: str, broken_value: object
+) -> None:
+    full_audit = {key: True for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+    broken_audit = dict(full_audit)
+    broken_audit[broken_key] = broken_value
+
+    evidence = _typed_preview_bridge_consumer_evidence(broken_audit)
+
+    assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is False
+    assert broken_key in evidence["failed_checks"]
+    assert evidence["failed_checks"] == [broken_key]
+
+
+def test_typed_preview_bridge_qml_consumer_evidence_negative_missing_key_matrix() -> None:
+    full_audit = {key: True for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+    missing_audit = dict(full_audit)
+    first_missing_key = "typed_preview_bridge_qml_consumer_fallback_state_safe"
+    second_missing_key = "typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens"
+    del missing_audit[second_missing_key]
+    del missing_audit[first_missing_key]
+
+    evidence = _typed_preview_bridge_consumer_evidence(missing_audit)
+
+    expected_failed_checks = [
+        key
+        for key in TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS
+        if key in {first_missing_key, second_missing_key}
     ]
+    assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is False
+    assert first_missing_key in evidence["failed_checks"]
+    assert second_missing_key in evidence["failed_checks"]
+    assert evidence["failed_checks"] == expected_failed_checks
+
+
+@pytest.mark.parametrize(
+    ("broken_key", "summary_field"),
+    (
+        ("typed_preview_bridge_qml_consumer_fallback_state_safe", "fallback_state"),
+        ("typed_preview_bridge_qml_consumer_updates_after_snapshot_a", "lifecycle_sequence"),
+        (
+            "typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens",
+            "stale_replacement",
+        ),
+        (
+            "typed_preview_bridge_qml_consumer_restores_baseline_snapshot",
+            "baseline_restore",
+        ),
+        (
+            "typed_preview_bridge_qml_consumer_diagnostic_marker_visible",
+            "diagnostic_marker",
+        ),
+        ("typed_preview_bridge_qml_consumer_visible", "visible_consumer"),
+    ),
+)
+def test_typed_preview_bridge_qml_consumer_evidence_group_fields_fail_closed(
+    broken_key: str, summary_field: str
+) -> None:
+    full_audit = {key: True for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+    broken_audit = dict(full_audit)
+    broken_audit[broken_key] = False
+
+    evidence = _typed_preview_bridge_consumer_evidence(broken_audit)
+
+    assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is False
+    assert evidence[summary_field] is False
+    assert evidence["failed_checks"] == [broken_key]
 
 
 def test_typed_preview_bridge_audit_fails_closed_without_valid_bridge() -> None:
