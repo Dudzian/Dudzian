@@ -372,6 +372,9 @@ TYPED_PREVIEW_BRIDGE_AUDIT_KEYS = (
     "typed_preview_bridge_qml_consumer_matches_paper_snapshot",
     "typed_preview_bridge_qml_consumer_matches_scanner_snapshot",
     "typed_preview_bridge_qml_consumer_matches_governor_snapshot",
+    "typed_preview_bridge_qml_consumer_fallback_state_visible",
+    "typed_preview_bridge_qml_consumer_fallback_state_safe",
+    "typed_preview_bridge_qml_consumer_fallback_state_no_type_error",
 )
 
 
@@ -387,6 +390,75 @@ def _safe_bridge_property(typed_preview_bridge: Any, property_name: str) -> obje
         return property_reader(property_name)
     except (AttributeError, RuntimeError, TypeError):
         return None
+
+
+def _typed_preview_consumer_values(root: Any) -> dict[str, str]:
+    return {
+        "contract": _read_visible_panel_object(
+            root, "sidePanel", "previewTypedBridgeContractLabel"
+        ),
+        "paper": _read_visible_panel_object(root, "sidePanel", "previewTypedBridgePaperLabel"),
+        "scanner": _read_visible_panel_object(root, "sidePanel", "previewTypedBridgeScannerLabel"),
+        "governor": _read_visible_panel_object(
+            root, "sidePanel", "previewTypedBridgeGovernorLabel"
+        ),
+        "diagnostic_marker": _read_visible_panel_object(
+            root, "sidePanel", "previewTypedBridgeDiagnosticMarkerLabel"
+        ),
+    }
+
+
+def _audit_typed_preview_bridge_fallback_state(
+    root: Any,
+    typed_preview_bridge: Any,
+    qml_snapshots: dict[str, dict[str, object]],
+) -> dict[str, bool]:
+    fallback_audit = {
+        "typed_preview_bridge_qml_consumer_fallback_state_visible": False,
+        "typed_preview_bridge_qml_consumer_fallback_state_safe": False,
+        "typed_preview_bridge_qml_consumer_fallback_state_no_type_error": False,
+    }
+    try:
+        typed_preview_bridge.updateSnapshots(
+            {"normalizedState": "", "orderRows": []},
+            {"bestOpportunity": "", "candidates": []},
+            {"latestAction": "", "latestSymbol": ""},
+            {},
+            {},
+        )
+        _process_events()
+        fallback_values = _typed_preview_consumer_values(root)
+        fallback_audit["typed_preview_bridge_qml_consumer_fallback_state_visible"] = all(
+            fallback_values.values()
+        )
+        fallback_audit["typed_preview_bridge_qml_consumer_fallback_state_safe"] = (
+            _contains_tokens(fallback_values["paper"], ("Bridge paper", "—", "orders"))
+            and "0" in fallback_values["paper"]
+            and _contains_tokens(fallback_values["scanner"], ("Bridge scanner", "—", "candidates"))
+            and "0" in fallback_values["scanner"]
+            and _contains_tokens(fallback_values["governor"], ("Bridge governor", "—"))
+            and _contains_tokens(fallback_values["contract"], ("Typed bridge", "schema"))
+            and _contains_tokens(
+                fallback_values["diagnostic_marker"],
+                ("local", "preview", "read-only", "diagnostic"),
+            )
+        )
+        fallback_audit["typed_preview_bridge_qml_consumer_fallback_state_no_type_error"] = True
+    except (AttributeError, RuntimeError, TypeError):
+        return fallback_audit
+    finally:
+        try:
+            typed_preview_bridge.updateSnapshots(
+                qml_snapshots["paper_session"],
+                qml_snapshots["scanner"],
+                qml_snapshots["governor"],
+                qml_snapshots["portfolio"],
+                qml_snapshots["alert_telemetry"],
+            )
+            _process_events()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+    return fallback_audit
 
 
 def _audit_typed_preview_bridge(
@@ -455,20 +527,11 @@ def _audit_typed_preview_bridge(
         _safe_bridge_property(typed_preview_bridge, "runtimeBoundaryStatus")
     )
     _process_events()
-    consumer_values = {
-        "contract": _read_visible_panel_object(
-            root, "sidePanel", "previewTypedBridgeContractLabel"
-        ),
-        "paper": _read_visible_panel_object(root, "sidePanel", "previewTypedBridgePaperLabel"),
-        "scanner": _read_visible_panel_object(root, "sidePanel", "previewTypedBridgeScannerLabel"),
-        "governor": _read_visible_panel_object(
-            root, "sidePanel", "previewTypedBridgeGovernorLabel"
-        ),
-        "diagnostic_marker": _read_visible_panel_object(
-            root, "sidePanel", "previewTypedBridgeDiagnosticMarkerLabel"
-        ),
-    }
-    return {
+    consumer_values = _typed_preview_consumer_values(root)
+    fallback_audit = _audit_typed_preview_bridge_fallback_state(
+        root, typed_preview_bridge, qml_snapshots
+    )
+    audit_result = {
         "typed_preview_bridge_registered": True,
         "typed_preview_bridge_is_qml_context_instance": is_qml_context_instance,
         "typed_preview_bridge_schema_contract_valid": bool(
@@ -522,6 +585,8 @@ def _audit_typed_preview_bridge(
             ),
         ),
     }
+    audit_result.update(fallback_audit)
+    return audit_result
 
 
 def _qt_object_is_valid(item: Any) -> bool:
@@ -1979,6 +2044,9 @@ def _exercise_preview_state(
         "typed_preview_bridge_qml_consumer_matches_paper_snapshot",
         "typed_preview_bridge_qml_consumer_matches_scanner_snapshot",
         "typed_preview_bridge_qml_consumer_matches_governor_snapshot",
+        "typed_preview_bridge_qml_consumer_fallback_state_visible",
+        "typed_preview_bridge_qml_consumer_fallback_state_safe",
+        "typed_preview_bridge_qml_consumer_fallback_state_no_type_error",
         "safety_boundary_ok",
     )
     audit["passed"] = (

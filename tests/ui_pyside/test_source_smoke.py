@@ -148,6 +148,9 @@ def test_typed_preview_bridge_source_contract_is_registered() -> None:
     assert "typed_preview_bridge_qml_consumer_matches_paper_snapshot" in smoke_source
     assert "typed_preview_bridge_qml_consumer_matches_scanner_snapshot" in smoke_source
     assert "typed_preview_bridge_qml_consumer_matches_governor_snapshot" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_fallback_state_visible" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_fallback_state_safe" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_fallback_state_no_type_error" in smoke_source
 
 
 def test_typed_preview_bridge_qml_consumer_object_names_are_declared() -> None:
@@ -186,6 +189,9 @@ def test_typed_preview_bridge_qml_consumer_uses_safe_snapshot_accessors() -> Non
 
     assert "function snapshotValue(snapshot, key, fallback)" in dashboard_source
     assert "function typedBridgeValue(key, fallback)" in dashboard_source
+    assert '"—"' in dashboard_source
+    assert ", 0)" in dashboard_source
+    assert "Array.isArray(value) && value.length === 0" in dashboard_source
     for forbidden_nested_read in (
         ".paperSessionSnapshot.normalizedState",
         ".paperSessionSnapshot.orderRows",
@@ -318,6 +324,9 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["typed_preview_bridge_qml_consumer_matches_paper_snapshot"] is True
     assert audit["typed_preview_bridge_qml_consumer_matches_scanner_snapshot"] is True
     assert audit["typed_preview_bridge_qml_consumer_matches_governor_snapshot"] is True
+    assert audit["typed_preview_bridge_qml_consumer_fallback_state_visible"] is True
+    assert audit["typed_preview_bridge_qml_consumer_fallback_state_safe"] is True
+    assert audit["typed_preview_bridge_qml_consumer_fallback_state_no_type_error"] is True
     assert audit["paper_session_snapshot_matches_state"] is True
     assert audit["generate_tick_delta"] == 1
     assert audit["generate_tick_appended_order"] is True
