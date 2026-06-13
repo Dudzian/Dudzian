@@ -12,9 +12,11 @@ import pytest
 
 from ui.pyside_app.app import AppOptions
 from ui.pyside_app.smoke import (
+    PREVIEW_LAUNCH_READINESS_CHECKS,
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
     TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS,
     _audit_typed_preview_bridge,
+    _preview_launch_readiness_evidence,
     _typed_preview_bridge_consumer_evidence,
 )
 
@@ -104,6 +106,163 @@ def _tracked_artifact_snapshot() -> dict[Path, bytes | None]:
         REPO_ROOT / "var" / "ui_layouts.json",
     )
     return {path: path.read_bytes() if path.exists() else None for path in artifact_paths}
+
+
+def _preview_launch_ready_payload() -> dict[str, object]:
+    return {
+        "ui_loaded": True,
+        "qml_loaded": True,
+        "operator_dashboard_present": True,
+        "operator_dashboard_default": True,
+        "panel_load_results": {"sidePanel": {"loaded": True, "empty": False}},
+        "preview_state_exercised": True,
+        "runtime_loop_started": False,
+        "exchange_io": "disabled",
+        "order_submission": "disabled",
+        "api_keys_required": False,
+        "live_mode_allowed": False,
+        "secrets_read": False,
+        "keychain_read": False,
+        "env_values_read": False,
+        "dot_env_read": False,
+        "safety_boundary_ok": True,
+        "tracked_artifacts_clean": True,
+        "preview_state_audit": {
+            "runtime_loop_started": False,
+            "live_trading_disabled": True,
+            "exchange_io_disabled": True,
+            "order_submission_disabled": True,
+            "safety_boundary_ok": True,
+            "network_api_calls": "disabled",
+            "api_keys_required": False,
+            "typed_preview_bridge_qml_consumer_evidence": {
+                "all_typed_preview_bridge_consumer_checks_passed": True,
+                "failed_checks": [],
+            },
+        },
+    }
+
+
+def test_preview_launch_readiness_evidence_helper_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert "def _preview_launch_readiness_evidence" in smoke_source
+    assert "preview_launch_readiness_evidence" in smoke_source
+    assert "all_preview_launch_readiness_checks_passed" in smoke_source
+    assert "failed_checks" in smoke_source
+    assert set(PREVIEW_LAUNCH_READINESS_CHECKS) == {
+        "qml_loaded",
+        "root_objects_present",
+        "preview_state_exercised",
+        "runtime_loop_not_started",
+        "typed_bridge_evidence_green",
+        "local_only_boundary",
+        "no_live_runtime_side_effects",
+        "tracked_artifacts_clean",
+    }
+
+
+def test_preview_launch_readiness_evidence_all_green() -> None:
+    evidence = _preview_launch_readiness_evidence(_preview_launch_ready_payload())
+
+    assert evidence["all_preview_launch_readiness_checks_passed"] is True
+    assert evidence["failed_checks"] == []
+    for check in PREVIEW_LAUNCH_READINESS_CHECKS:
+        assert evidence[check] is True
+
+
+def test_preview_launch_readiness_evidence_ignores_unrelated_keys() -> None:
+    payload = _preview_launch_ready_payload()
+    payload["some_unrelated_key"] = False
+    assert _preview_launch_readiness_evidence(payload) == _preview_launch_readiness_evidence(
+        _preview_launch_ready_payload()
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "failed_check"),
+    (
+        (("qml_loaded",), False, "qml_loaded"),
+        (("preview_state_exercised",), None, "preview_state_exercised"),
+        (("tracked_artifacts_clean",), 1, "tracked_artifacts_clean"),
+        (
+            (
+                "preview_state_audit",
+                "typed_preview_bridge_qml_consumer_evidence",
+                "all_typed_preview_bridge_consumer_checks_passed",
+            ),
+            "true",
+            "typed_bridge_evidence_green",
+        ),
+    ),
+)
+def test_preview_launch_readiness_evidence_negative_value_matrix(
+    path: tuple[str, ...], value: object, failed_check: str
+) -> None:
+    payload = _preview_launch_ready_payload()
+    target = payload
+    for key in path[:-1]:
+        nested = target[key]
+        assert isinstance(nested, dict)
+        target = nested
+    target[path[-1]] = value
+
+    evidence = _preview_launch_readiness_evidence(payload)
+
+    assert evidence[failed_check] is False
+    assert failed_check in evidence["failed_checks"]
+    assert evidence["all_preview_launch_readiness_checks_passed"] is False
+
+
+def test_preview_launch_readiness_requires_side_panel_loaded_and_non_empty() -> None:
+    missing_side_panel = _preview_launch_ready_payload()
+    missing_side_panel["panel_load_results"] = {}
+    missing_evidence = _preview_launch_readiness_evidence(missing_side_panel)
+
+    loaded_false = _preview_launch_ready_payload()
+    loaded_false["panel_load_results"] = {"sidePanel": {"loaded": False, "empty": False}}
+    loaded_false_evidence = _preview_launch_readiness_evidence(loaded_false)
+
+    empty_true = _preview_launch_ready_payload()
+    empty_true["panel_load_results"] = {"sidePanel": {"loaded": True, "empty": True}}
+    empty_true_evidence = _preview_launch_readiness_evidence(empty_true)
+
+    assert missing_evidence["root_objects_present"] is False
+    assert loaded_false_evidence["root_objects_present"] is False
+    assert empty_true_evidence["root_objects_present"] is False
+    assert "root_objects_present" in missing_evidence["failed_checks"]
+    assert "root_objects_present" in loaded_false_evidence["failed_checks"]
+    assert "root_objects_present" in empty_true_evidence["failed_checks"]
+
+
+def test_preview_launch_readiness_fails_when_tracked_artifacts_not_clean() -> None:
+    payload = _preview_launch_ready_payload()
+    payload["tracked_artifacts_clean"] = False
+
+    evidence = _preview_launch_readiness_evidence(payload)
+
+    assert evidence["tracked_artifacts_clean"] is False
+    assert "tracked_artifacts_clean" in evidence["failed_checks"]
+    assert evidence["all_preview_launch_readiness_checks_passed"] is False
+
+
+def test_preview_launch_readiness_evidence_negative_missing_key_matrix() -> None:
+    payload = _preview_launch_ready_payload()
+    del payload["operator_dashboard_present"]
+    del payload["preview_state_audit"]["runtime_loop_started"]  # type: ignore[index]
+    del payload["preview_state_audit"]["exchange_io_disabled"]  # type: ignore[index]
+
+    evidence = _preview_launch_readiness_evidence(payload)
+
+    assert evidence["root_objects_present"] is False
+    assert evidence["runtime_loop_not_started"] is False
+    assert evidence["local_only_boundary"] is False
+    assert set(evidence["failed_checks"]) >= {
+        "root_objects_present",
+        "runtime_loop_not_started",
+        "local_only_boundary",
+    }
+    assert evidence["all_preview_launch_readiness_checks_passed"] is False
 
 
 def test_ui_smoke_does_not_dirty_tracked_artifacts() -> None:
@@ -543,6 +702,15 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["typed_preview_bridge_qml_consumer_survives_panel_navigation"] is True
     assert audit["typed_preview_bridge_qml_consumer_restores_baseline_snapshot"] is True
     assert audit["typed_preview_bridge_qml_consumer_lifecycle_sequence_completed"] is True
+    readiness_evidence = payload["preview_launch_readiness_evidence"]
+    assert isinstance(readiness_evidence, dict)
+    assert readiness_evidence["all_preview_launch_readiness_checks_passed"] is True
+    assert readiness_evidence["failed_checks"] == []
+    assert readiness_evidence["typed_bridge_evidence_green"] is True
+    assert readiness_evidence["runtime_loop_not_started"] is True
+    assert readiness_evidence["no_live_runtime_side_effects"] is True
+    assert readiness_evidence["root_objects_present"] is True
+    assert readiness_evidence["tracked_artifacts_clean"] is True
     evidence = audit["typed_preview_bridge_qml_consumer_evidence"]
     assert isinstance(evidence, dict)
     assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is True
