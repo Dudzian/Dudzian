@@ -30,6 +30,8 @@ Components.StyledScrollView {
         if (snapshot === undefined || snapshot === null) return fallback
         var value = snapshot[key]
         if (value === undefined || value === null || value === "") return fallback
+        if (Array.isArray(value) && value.length === 0) return fallback
+        if (value.length !== undefined && value.length === 0) return fallback
         return value
     }
 
