@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, TextIO
@@ -2276,6 +2278,30 @@ def _exercise_preview_state(
     return audit
 
 
+@contextmanager
+def _smoke_artifact_paths() -> Any:
+    """Redirect smoke-only generated artifacts away from tracked repo paths."""
+
+    env_keys = ("BOT_CORE_UI_FEED_LATENCY_PATH", "BOT_CORE_UI_LAYOUTS_PATH")
+    previous = {key: getattr(os, "environ").get(key) for key in env_keys}
+    with tempfile.TemporaryDirectory(prefix="bot-core-ui-smoke-") as temp_dir:
+        temp_root = Path(temp_dir)
+        getattr(os, "environ")["BOT_CORE_UI_FEED_LATENCY_PATH"] = str(
+            temp_root / "reports" / "ci" / "decision_feed_metrics.json"
+        )
+        getattr(os, "environ")["BOT_CORE_UI_LAYOUTS_PATH"] = str(
+            temp_root / "var" / "ui_layouts.json"
+        )
+        try:
+            yield
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    getattr(os, "environ").pop(key, None)
+                else:
+                    getattr(os, "environ")[key] = value
+
+
 def _force_offscreen_platform() -> None:
     """Select Qt's offscreen platform before QGuiApplication is created."""
 
@@ -2298,8 +2324,10 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
 
     qml_warnings: list[str] = []
     audit_issues: list[str] = []
-    app = BotPysideApplication(options)
+    artifact_paths = _smoke_artifact_paths()
+    artifact_paths.__enter__()
     try:
+        app = BotPysideApplication(options)
         engine = app.load(warning_sink=qml_warnings.append)
         from PySide6.QtGui import QGuiApplication
 
@@ -3452,3 +3480,5 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         result = UiSmokeResult(status="error", issues=qml_warnings + audit_issues + [issue])
         print(result.to_json(), file=output)
         return 1
+    finally:
+        artifact_paths.__exit__(None, None, None)
