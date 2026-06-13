@@ -375,6 +375,12 @@ TYPED_PREVIEW_BRIDGE_AUDIT_KEYS = (
     "typed_preview_bridge_qml_consumer_fallback_state_visible",
     "typed_preview_bridge_qml_consumer_fallback_state_safe",
     "typed_preview_bridge_qml_consumer_fallback_state_no_type_error",
+    "typed_preview_bridge_qml_consumer_updates_after_snapshot_a",
+    "typed_preview_bridge_qml_consumer_updates_after_snapshot_b",
+    "typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens",
+    "typed_preview_bridge_qml_consumer_survives_panel_navigation",
+    "typed_preview_bridge_qml_consumer_restores_baseline_snapshot",
+    "typed_preview_bridge_qml_consumer_lifecycle_sequence_completed",
 )
 
 
@@ -406,6 +412,138 @@ def _typed_preview_consumer_values(root: Any) -> dict[str, str]:
             root, "sidePanel", "previewTypedBridgeDiagnosticMarkerLabel"
         ),
     }
+
+
+def _preview_lifecycle_snapshot_variants(
+    baseline_snapshots: dict[str, dict[str, object]],
+) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+    snapshot_a = {key: dict(value) for key, value in baseline_snapshots.items()}
+    snapshot_b = {key: dict(value) for key, value in baseline_snapshots.items()}
+    snapshot_a["paper_session"].update({"normalizedState": "running", "orderRows": 1})
+    snapshot_a["scanner"].update({"bestOpportunity": "BTC/USDT", "candidates": 3})
+    snapshot_a["governor"].update({"latestAction": "PAPER BUY", "latestSymbol": "BTC/USDT"})
+    snapshot_b["paper_session"].update({"normalizedState": "paused", "orderRows": 2})
+    snapshot_b["scanner"].update({"bestOpportunity": "ETH/USDT", "candidates": 7})
+    snapshot_b["governor"].update({"latestAction": "BLOCKED", "latestSymbol": "ETH/USDT"})
+    return snapshot_a, snapshot_b
+
+
+def _update_typed_preview_bridge_snapshots(
+    typed_preview_bridge: Any,
+    snapshots: dict[str, dict[str, object]],
+) -> None:
+    typed_preview_bridge.updateSnapshots(
+        snapshots["paper_session"],
+        snapshots["scanner"],
+        snapshots["governor"],
+        snapshots["portfolio"],
+        snapshots["alert_telemetry"],
+    )
+    _process_events()
+
+
+def _typed_preview_consumer_matches_lifecycle_snapshot(
+    consumer_values: dict[str, str],
+    snapshots: dict[str, dict[str, object]],
+) -> bool:
+    return (
+        all(consumer_values.values())
+        and _contains_tokens(
+            consumer_values["paper"],
+            (
+                snapshots["paper_session"].get("normalizedState"),
+                snapshots["paper_session"].get("orderRows"),
+            ),
+        )
+        and _contains_tokens(
+            consumer_values["scanner"],
+            (
+                snapshots["scanner"].get("bestOpportunity"),
+                snapshots["scanner"].get("candidates"),
+            ),
+        )
+        and _contains_tokens(
+            consumer_values["governor"],
+            (
+                snapshots["governor"].get("latestAction"),
+                snapshots["governor"].get("latestSymbol"),
+            ),
+        )
+    )
+
+
+def _typed_preview_consumer_has_stale_snapshot_a_tokens(
+    consumer_values: dict[str, str],
+) -> bool:
+    return (
+        "running" in consumer_values["paper"].lower()
+        or "btc/usdt" in consumer_values["scanner"].lower()
+        or "paper buy" in consumer_values["governor"].lower()
+        or "btc/usdt" in consumer_values["governor"].lower()
+    )
+
+
+def _audit_typed_preview_bridge_consumer_lifecycle(
+    root: Any,
+    typed_preview_bridge: Any,
+    baseline_snapshots: dict[str, dict[str, object]],
+) -> dict[str, bool]:
+    lifecycle_audit = {
+        "typed_preview_bridge_qml_consumer_updates_after_snapshot_a": False,
+        "typed_preview_bridge_qml_consumer_updates_after_snapshot_b": False,
+        "typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens": False,
+        "typed_preview_bridge_qml_consumer_survives_panel_navigation": False,
+        "typed_preview_bridge_qml_consumer_restores_baseline_snapshot": False,
+        "typed_preview_bridge_qml_consumer_lifecycle_sequence_completed": False,
+    }
+    try:
+        snapshot_a, snapshot_b = _preview_lifecycle_snapshot_variants(baseline_snapshots)
+        _update_typed_preview_bridge_snapshots(typed_preview_bridge, snapshot_a)
+        snapshot_a_values = _typed_preview_consumer_values(root)
+        lifecycle_audit["typed_preview_bridge_qml_consumer_updates_after_snapshot_a"] = (
+            _typed_preview_consumer_matches_lifecycle_snapshot(snapshot_a_values, snapshot_a)
+        )
+
+        _update_typed_preview_bridge_snapshots(typed_preview_bridge, snapshot_b)
+        snapshot_b_values = _typed_preview_consumer_values(root)
+        lifecycle_audit["typed_preview_bridge_qml_consumer_updates_after_snapshot_b"] = (
+            _typed_preview_consumer_matches_lifecycle_snapshot(snapshot_b_values, snapshot_b)
+        )
+        lifecycle_audit[
+            "typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens"
+        ] = not _typed_preview_consumer_has_stale_snapshot_a_tokens(snapshot_b_values)
+
+        _invoke_show_panel(root, "marketScannerPanel")
+        _process_events()
+        _invoke_show_panel(root, "sidePanel")
+        _process_events()
+        post_navigation_values = _typed_preview_consumer_values(root)
+        lifecycle_audit["typed_preview_bridge_qml_consumer_survives_panel_navigation"] = (
+            _typed_preview_consumer_matches_lifecycle_snapshot(post_navigation_values, snapshot_b)
+        )
+
+        typed_preview_bridge.updateSnapshots(
+            {"normalizedState": "", "orderRows": []},
+            {"bestOpportunity": "", "candidates": []},
+            {"latestAction": "", "latestSymbol": ""},
+            {},
+            {},
+        )
+        _process_events()
+        _update_typed_preview_bridge_snapshots(typed_preview_bridge, baseline_snapshots)
+        restored_values = _typed_preview_consumer_values(root)
+        lifecycle_audit["typed_preview_bridge_qml_consumer_restores_baseline_snapshot"] = (
+            _typed_preview_consumer_matches_lifecycle_snapshot(restored_values, baseline_snapshots)
+        )
+        lifecycle_audit["typed_preview_bridge_qml_consumer_lifecycle_sequence_completed"] = True
+    except (AttributeError, RuntimeError, TypeError):
+        return lifecycle_audit
+    finally:
+        try:
+            _update_typed_preview_bridge_snapshots(typed_preview_bridge, baseline_snapshots)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+    return lifecycle_audit
 
 
 def _audit_typed_preview_bridge_fallback_state(
@@ -531,6 +669,9 @@ def _audit_typed_preview_bridge(
     fallback_audit = _audit_typed_preview_bridge_fallback_state(
         root, typed_preview_bridge, qml_snapshots
     )
+    lifecycle_audit = _audit_typed_preview_bridge_consumer_lifecycle(
+        root, typed_preview_bridge, qml_snapshots
+    )
     audit_result = {
         "typed_preview_bridge_registered": True,
         "typed_preview_bridge_is_qml_context_instance": is_qml_context_instance,
@@ -586,6 +727,7 @@ def _audit_typed_preview_bridge(
         ),
     }
     audit_result.update(fallback_audit)
+    audit_result.update(lifecycle_audit)
     return audit_result
 
 

@@ -151,6 +151,12 @@ def test_typed_preview_bridge_source_contract_is_registered() -> None:
     assert "typed_preview_bridge_qml_consumer_fallback_state_visible" in smoke_source
     assert "typed_preview_bridge_qml_consumer_fallback_state_safe" in smoke_source
     assert "typed_preview_bridge_qml_consumer_fallback_state_no_type_error" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_updates_after_snapshot_a" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_updates_after_snapshot_b" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_survives_panel_navigation" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_restores_baseline_snapshot" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_lifecycle_sequence_completed" in smoke_source
 
 
 def test_typed_preview_bridge_qml_consumer_object_names_are_declared() -> None:
@@ -327,6 +333,12 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["typed_preview_bridge_qml_consumer_fallback_state_visible"] is True
     assert audit["typed_preview_bridge_qml_consumer_fallback_state_safe"] is True
     assert audit["typed_preview_bridge_qml_consumer_fallback_state_no_type_error"] is True
+    assert audit["typed_preview_bridge_qml_consumer_updates_after_snapshot_a"] is True
+    assert audit["typed_preview_bridge_qml_consumer_updates_after_snapshot_b"] is True
+    assert audit["typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens"] is True
+    assert audit["typed_preview_bridge_qml_consumer_survives_panel_navigation"] is True
+    assert audit["typed_preview_bridge_qml_consumer_restores_baseline_snapshot"] is True
+    assert audit["typed_preview_bridge_qml_consumer_lifecycle_sequence_completed"] is True
     assert audit["paper_session_snapshot_matches_state"] is True
     assert audit["generate_tick_delta"] == 1
     assert audit["generate_tick_appended_order"] is True
