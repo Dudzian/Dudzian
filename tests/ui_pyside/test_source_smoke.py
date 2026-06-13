@@ -143,6 +143,8 @@ def test_typed_preview_bridge_source_contract_is_registered() -> None:
     assert "typed_preview_bridge_qml_consumer_visible" in smoke_source
     assert "typed_preview_bridge_qml_consumer_schema_ok_visible" in smoke_source
     assert "typed_preview_bridge_qml_consumer_runtime_boundary_visible" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_diagnostic_marker_visible" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only" in smoke_source
     assert "typed_preview_bridge_qml_consumer_matches_paper_snapshot" in smoke_source
     assert "typed_preview_bridge_qml_consumer_matches_scanner_snapshot" in smoke_source
     assert "typed_preview_bridge_qml_consumer_matches_governor_snapshot" in smoke_source
@@ -156,18 +158,43 @@ def test_typed_preview_bridge_qml_consumer_object_names_are_declared() -> None:
 
     for object_name in (
         "previewTypedBridgeContractLabel",
+        "previewTypedBridgeDiagnosticMarkerLabel",
         "previewTypedBridgePaperLabel",
         "previewTypedBridgeScannerLabel",
         "previewTypedBridgeGovernorLabel",
     ):
         assert f'"{object_name}"' in dashboard_source
 
-    assert "typedPreviewBridge.schemaContractValid" in dashboard_source
-    assert "typedPreviewBridge.runtimeBoundaryLocalOnly" in dashboard_source
-    assert "typedPreviewBridge.paperSessionSnapshot" in dashboard_source
-    assert "typedPreviewBridge.scannerSnapshot" in dashboard_source
-    assert "typedPreviewBridge.governorSnapshot" in dashboard_source
+    assert 'typedBridgeValue("schemaContractValid", false)' in dashboard_source
+    assert 'typedBridgeValue("runtimeBoundaryLocalOnly", false)' in dashboard_source
+    assert "snapshotValue" in dashboard_source
+    assert 'typedBridgeValue("paperSessionSnapshot", null)' in dashboard_source
+    assert 'typedBridgeValue("scannerSnapshot", null)' in dashboard_source
+    assert 'typedBridgeValue("governorSnapshot", null)' in dashboard_source
+    assert "local" in dashboard_source.lower()
+    assert "preview" in dashboard_source.lower()
+    assert "read-only" in dashboard_source.lower()
+    assert "diagnostic" in dashboard_source.lower()
+    assert "previewTypedBridgeDiagnosticMarkerLabel" in smoke_source
     assert "previewTypedBridgeContractLabel" in smoke_source
+
+
+def test_typed_preview_bridge_qml_consumer_uses_safe_snapshot_accessors() -> None:
+    dashboard_source = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "function snapshotValue(snapshot, key, fallback)" in dashboard_source
+    assert "function typedBridgeValue(key, fallback)" in dashboard_source
+    for forbidden_nested_read in (
+        ".paperSessionSnapshot.normalizedState",
+        ".paperSessionSnapshot.orderRows",
+        ".scannerSnapshot.bestOpportunity",
+        ".scannerSnapshot.candidates",
+        ".governorSnapshot.latestAction",
+        ".governorSnapshot.latestSymbol",
+    ):
+        assert forbidden_nested_read not in dashboard_source
 
 
 def test_typed_preview_bridge_audit_fails_closed_without_valid_bridge() -> None:
@@ -199,6 +226,7 @@ def test_source_smoke_finishes_and_reports_safety_contract() -> None:
         pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
 
     assert result.returncode == 0, result.stderr or result.stdout
+    assert "TypeError" not in result.stderr
     assert payload["status"] == "ok"
     assert payload["ui_loaded"] is True
     assert payload["qml_loaded"] is True
@@ -242,6 +270,7 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
         pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
 
     assert result.returncode == 0, result.stderr or result.stdout
+    assert "TypeError" not in result.stderr
     assert payload["status"] == "ok"
     assert payload["preview_state_exercised"] is True
     assert payload["runtime_loop_started"] is False
@@ -284,6 +313,8 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["typed_preview_bridge_qml_consumer_visible"] is True
     assert audit["typed_preview_bridge_qml_consumer_schema_ok_visible"] is True
     assert audit["typed_preview_bridge_qml_consumer_runtime_boundary_visible"] is True
+    assert audit["typed_preview_bridge_qml_consumer_diagnostic_marker_visible"] is True
+    assert audit["typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only"] is True
     assert audit["typed_preview_bridge_qml_consumer_matches_paper_snapshot"] is True
     assert audit["typed_preview_bridge_qml_consumer_matches_scanner_snapshot"] is True
     assert audit["typed_preview_bridge_qml_consumer_matches_governor_snapshot"] is True
@@ -378,6 +409,7 @@ def test_preview_visible_object_names_are_stable_source_contract() -> None:
         "previewTelemetryLatestMessageLabel",
         "previewScannerRowsView",
         "previewTypedBridgeContractLabel",
+        "previewTypedBridgeDiagnosticMarkerLabel",
         "previewTypedBridgePaperLabel",
         "previewTypedBridgeScannerLabel",
         "previewTypedBridgeGovernorLabel",
