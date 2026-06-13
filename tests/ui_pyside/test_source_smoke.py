@@ -265,6 +265,71 @@ def test_preview_launch_readiness_evidence_negative_missing_key_matrix() -> None
     assert evidence["all_preview_launch_readiness_checks_passed"] is False
 
 
+def test_preview_launch_readiness_audit_passed_does_not_mask_failed_required_checks() -> None:
+    payload = _preview_launch_ready_payload()
+    audit = payload["preview_state_audit"]
+    assert isinstance(audit, dict)
+    audit["passed"] = True
+    audit["safety_boundary_ok"] = False
+
+    evidence = _preview_launch_readiness_evidence(payload)
+
+    assert evidence["local_only_boundary"] is False
+    assert evidence["failed_checks"] == ["local_only_boundary"]
+    assert evidence["all_preview_launch_readiness_checks_passed"] is False
+
+
+def test_preview_launch_readiness_reports_exactly_one_failed_required_check() -> None:
+    payload = _preview_launch_ready_payload()
+    payload["operator_dashboard_present"] = False
+
+    evidence = _preview_launch_readiness_evidence(payload)
+
+    assert evidence["root_objects_present"] is False
+    assert evidence["failed_checks"] == ["root_objects_present"]
+    assert evidence["all_preview_launch_readiness_checks_passed"] is False
+
+
+def test_preview_launch_readiness_reports_all_failed_required_checks() -> None:
+    payload = _preview_launch_ready_payload()
+    payload["ui_loaded"] = False
+    payload["preview_state_exercised"] = False
+    payload["tracked_artifacts_clean"] = False
+    audit = payload["preview_state_audit"]
+    assert isinstance(audit, dict)
+    audit["runtime_loop_started"] = True
+    typed_evidence = audit["typed_preview_bridge_qml_consumer_evidence"]
+    assert isinstance(typed_evidence, dict)
+    typed_evidence["all_typed_preview_bridge_consumer_checks_passed"] = False
+
+    evidence = _preview_launch_readiness_evidence(payload)
+
+    assert evidence["failed_checks"] == [
+        "qml_loaded",
+        "preview_state_exercised",
+        "runtime_loop_not_started",
+        "typed_bridge_evidence_green",
+        "tracked_artifacts_clean",
+    ]
+    assert evidence["all_preview_launch_readiness_checks_passed"] is False
+
+
+def test_preview_launch_readiness_ignores_unknown_false_diagnostics() -> None:
+    payload = _preview_launch_ready_payload()
+    payload["diagnostic_probe_failed"] = False
+    audit = payload["preview_state_audit"]
+    assert isinstance(audit, dict)
+    audit["non_required_diagnostic"] = False
+    typed_evidence = audit["typed_preview_bridge_qml_consumer_evidence"]
+    assert isinstance(typed_evidence, dict)
+    typed_evidence["extra_visible_widget_diagnostic"] = False
+
+    evidence = _preview_launch_readiness_evidence(payload)
+
+    assert evidence["failed_checks"] == []
+    assert evidence["all_preview_launch_readiness_checks_passed"] is True
+
+
 def test_ui_smoke_does_not_dirty_tracked_artifacts() -> None:
     before = _tracked_artifact_snapshot()
 
@@ -635,6 +700,12 @@ def test_source_smoke_finishes_and_reports_safety_contract() -> None:
     assert payload["safety_boundary_ok"] is True
     assert payload["portfolio_filters_do_not_mutate_paper_state"] is True
     assert payload["issues"] == []
+    assert payload["preview_launch_readiness_evaluated"] is False
+    assert payload["preview_launch_readiness_requires_exercise_preview_state"] is True
+    readiness_evidence = payload["preview_launch_readiness_evidence"]
+    assert isinstance(readiness_evidence, dict)
+    assert readiness_evidence["all_preview_launch_readiness_checks_passed"] is False
+    assert readiness_evidence["failed_checks"] != []
 
 
 def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
@@ -647,6 +718,8 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert result.returncode == 0, result.stderr or result.stdout
     assert "TypeError" not in result.stderr
     assert payload["status"] == "ok"
+    assert payload["preview_launch_readiness_evaluated"] is True
+    assert payload["preview_launch_readiness_requires_exercise_preview_state"] is False
     assert payload["preview_state_exercised"] is True
     assert payload["runtime_loop_started"] is False
     assert payload["exchange_io"] == "disabled"
