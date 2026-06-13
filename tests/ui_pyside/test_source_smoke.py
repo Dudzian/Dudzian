@@ -230,6 +230,90 @@ def test_typed_preview_bridge_qml_consumer_evidence_summary_contract() -> None:
     assert evidence["failed_checks"] == []
 
 
+def test_typed_preview_bridge_qml_consumer_evidence_checks_cover_audit_keys() -> None:
+    assert len(TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS) == len(
+        set(TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS)
+    )
+    assert set(TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS) <= set(
+        TYPED_PREVIEW_BRIDGE_AUDIT_KEYS
+    )
+
+    relevant_qml_consumer_audit_keys = {
+        key
+        for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS
+        if key.startswith("typed_preview_bridge_qml_consumer_")
+        and key != "typed_preview_bridge_qml_consumer_evidence"
+    }
+    assert relevant_qml_consumer_audit_keys <= set(
+        TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS
+    )
+
+
+def test_typed_preview_bridge_qml_consumer_evidence_output_schema_is_stable() -> None:
+    full_audit = {key: True for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+
+    evidence = _typed_preview_bridge_consumer_evidence(full_audit)
+
+    assert set(evidence) == {
+        "registered",
+        "qml_context_identity",
+        "visible_consumer",
+        "diagnostic_marker",
+        "fallback_state",
+        "lifecycle_sequence",
+        "stale_replacement",
+        "baseline_restore",
+        "all_typed_preview_bridge_consumer_checks_passed",
+        "failed_checks",
+    }
+
+
+def test_typed_preview_bridge_qml_consumer_evidence_field_types_are_stable() -> None:
+    full_audit = {key: True for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+
+    evidence = _typed_preview_bridge_consumer_evidence(full_audit)
+
+    assert isinstance(evidence["failed_checks"], list)
+    assert isinstance(evidence["all_typed_preview_bridge_consumer_checks_passed"], bool)
+    for field, value in evidence.items():
+        if field == "failed_checks":
+            continue
+        assert isinstance(value, bool), field
+
+
+def test_typed_preview_bridge_qml_consumer_evidence_multiple_failure_ordering() -> None:
+    full_audit = {key: True for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+    broken_audit = dict(full_audit)
+    broken_values = {
+        "typed_preview_bridge_qml_consumer_visible": False,
+        "typed_preview_bridge_qml_consumer_diagnostic_marker_visible": "true",
+        "typed_preview_bridge_qml_consumer_fallback_state_safe": 1,
+        "typed_preview_bridge_qml_consumer_restores_baseline_snapshot": False,
+    }
+    broken_audit.update(broken_values)
+    del broken_audit["typed_preview_bridge_qml_consumer_lifecycle_sequence_completed"]
+
+    evidence = _typed_preview_bridge_consumer_evidence(broken_audit)
+
+    expected_failed_checks = [
+        key
+        for key in TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS
+        if key in {*broken_values, "typed_preview_bridge_qml_consumer_lifecycle_sequence_completed"}
+    ]
+    assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is False
+    assert evidence["failed_checks"] == expected_failed_checks
+
+
+def test_typed_preview_bridge_qml_consumer_evidence_ignores_unrelated_audit_keys() -> None:
+    full_audit = {key: True for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+    full_audit["some_unrelated_key"] = False
+
+    evidence = _typed_preview_bridge_consumer_evidence(full_audit)
+
+    assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is True
+    assert evidence["failed_checks"] == []
+
+
 @pytest.mark.parametrize(
     ("broken_key", "broken_value"),
     (
