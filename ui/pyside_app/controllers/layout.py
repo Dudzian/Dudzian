@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping
@@ -40,7 +41,9 @@ class LayoutProfileController(QObject):
         super().__init__(parent)
         repo_root = Path(__file__).resolve().parents[3]
         default_path = repo_root / "var" / "ui_layouts.json"
-        self._storage_path = (storage_path or default_path).expanduser()
+        storage_path_env = getattr(os, "environ").get("BOT_CORE_UI_LAYOUTS_PATH")
+        configured_path = Path(storage_path_env).expanduser() if storage_path_env else None
+        self._storage_path = (storage_path or configured_path or default_path).expanduser()
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._storage: MutableMapping[str, Any] = self._load_storage()
         profiles = self._storage.setdefault("profiles", {})

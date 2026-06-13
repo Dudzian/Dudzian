@@ -98,6 +98,27 @@ def _smoke_payload(result: subprocess.CompletedProcess[str]) -> dict[str, object
     return json.loads(result.stdout)
 
 
+def _tracked_artifact_snapshot() -> dict[Path, bytes | None]:
+    artifact_paths = (
+        REPO_ROOT / "reports" / "ci" / "decision_feed_metrics.json",
+        REPO_ROOT / "var" / "ui_layouts.json",
+    )
+    return {path: path.read_bytes() if path.exists() else None for path in artifact_paths}
+
+
+def test_ui_smoke_does_not_dirty_tracked_artifacts() -> None:
+    before = _tracked_artifact_snapshot()
+
+    result = _run_ui_smoke("--exercise-preview-state")
+    payload = _smoke_payload(result)
+
+    if result.returncode != 0 and any("libGL.so.1" in issue for issue in payload["issues"]):
+        pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert _tracked_artifact_snapshot() == before
+
+
 def test_smoke_flags_are_available_in_parser() -> None:
     options = AppOptions.parse(
         ["--config", "ui/config/preview_local.yaml", "--smoke", "--offscreen"]
