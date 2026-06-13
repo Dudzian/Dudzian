@@ -11,7 +11,11 @@ from pathlib import Path
 import pytest
 
 from ui.pyside_app.app import AppOptions
-from ui.pyside_app.smoke import TYPED_PREVIEW_BRIDGE_AUDIT_KEYS, _audit_typed_preview_bridge
+from ui.pyside_app.smoke import (
+    TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
+    _audit_typed_preview_bridge,
+    _typed_preview_bridge_consumer_evidence,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SMOKE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "smoke.py"
@@ -209,6 +213,32 @@ def test_typed_preview_bridge_qml_consumer_uses_safe_snapshot_accessors() -> Non
         assert forbidden_nested_read not in dashboard_source
 
 
+def test_typed_preview_bridge_qml_consumer_evidence_summary_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert "def _typed_preview_bridge_consumer_evidence" in smoke_source
+    assert "typed_preview_bridge_qml_consumer_evidence" in smoke_source
+    assert "all_typed_preview_bridge_consumer_checks_passed" in smoke_source
+    assert "failed_checks" in smoke_source
+    assert "TYPED_PREVIEW_BRIDGE_AUDIT_KEYS" in smoke_source
+
+    full_audit = {key: True for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
+    evidence = _typed_preview_bridge_consumer_evidence(full_audit)
+
+    assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is True
+    assert evidence["failed_checks"] == []
+
+    missing_audit = dict(full_audit)
+    del missing_audit["typed_preview_bridge_qml_consumer_fallback_state_safe"]
+    missing_evidence = _typed_preview_bridge_consumer_evidence(missing_audit)
+
+    assert missing_evidence["all_typed_preview_bridge_consumer_checks_passed"] is False
+    assert missing_evidence["fallback_state"] is False
+    assert missing_evidence["failed_checks"] == [
+        "typed_preview_bridge_qml_consumer_fallback_state_safe"
+    ]
+
+
 def test_typed_preview_bridge_audit_fails_closed_without_valid_bridge() -> None:
     for invalid_bridge in (None, object()):
         audit = _audit_typed_preview_bridge(
@@ -339,6 +369,14 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["typed_preview_bridge_qml_consumer_survives_panel_navigation"] is True
     assert audit["typed_preview_bridge_qml_consumer_restores_baseline_snapshot"] is True
     assert audit["typed_preview_bridge_qml_consumer_lifecycle_sequence_completed"] is True
+    evidence = audit["typed_preview_bridge_qml_consumer_evidence"]
+    assert isinstance(evidence, dict)
+    assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is True
+    assert evidence["failed_checks"] == []
+    assert evidence["fallback_state"] is True
+    assert evidence["lifecycle_sequence"] is True
+    assert evidence["baseline_restore"] is True
+    assert evidence["stale_replacement"] is True
     assert audit["paper_session_snapshot_matches_state"] is True
     assert audit["generate_tick_delta"] == 1
     assert audit["generate_tick_appended_order"] is True
