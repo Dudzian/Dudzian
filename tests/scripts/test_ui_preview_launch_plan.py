@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "ui_preview_launch_plan.py"
 VISIBLE_LAUNCHER = REPO_ROOT / "scripts" / "windows" / "run_ui_preview_visible.bat"
 VISIBLE_CONFIG = REPO_ROOT / "ui" / "config" / "preview_local.yaml"
+SMOKE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "smoke.py"
 FORBIDDEN_SOURCE_TOKENS = (
     "create_order",
     "fetch_balance",
@@ -110,6 +111,16 @@ def test_build_launch_plan_does_not_depend_on_cwd(tmp_path: Path, monkeypatch) -
     assert payload["ui_entrypoint_found"] is True
     assert payload["ui_entrypoint_path"] == "ui/pyside_app/__main__.py"
     assert payload["command_execution_allowed"] is False
+
+
+def test_preview_launch_readiness_evidence_is_in_smoke_payload_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert "_preview_launch_readiness_evidence" in smoke_source
+    assert "preview_launch_readiness_evidence" in smoke_source
+    assert "all_preview_launch_readiness_checks_passed" in smoke_source
+    assert "typed_bridge_evidence_green" in smoke_source
+    assert "no_live_runtime_side_effects" in smoke_source
 
 
 def test_plan_only_source_has_no_forbidden_runtime_or_secret_calls() -> None:

@@ -158,6 +158,7 @@ class UiSmokeResult:
     settings_safety_boundary_ok: bool = False
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
+    preview_launch_readiness_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -173,6 +174,19 @@ def _qml_preview_source() -> str:
 
 def _source_has_all(source: str, labels: tuple[str, ...]) -> bool:
     return all(label in source for label in labels)
+
+
+def _tracked_artifact_snapshot() -> dict[Path, bytes | None]:
+    repo_root = Path(__file__).resolve().parents[2]
+    artifact_paths = (
+        repo_root / "reports" / "ci" / "decision_feed_metrics.json",
+        repo_root / "var" / "ui_layouts.json",
+    )
+    return {path: path.read_bytes() if path.exists() else None for path in artifact_paths}
+
+
+def _tracked_artifacts_unchanged(before: dict[Path, bytes | None]) -> bool:
+    return _tracked_artifact_snapshot() == before
 
 
 PANEL_AUDIT_IDS = (
@@ -451,6 +465,72 @@ def _typed_preview_bridge_consumer_evidence(audit: dict[str, object]) -> dict[st
             "typed_preview_bridge_qml_consumer_restores_baseline_snapshot"
         ),
         "all_typed_preview_bridge_consumer_checks_passed": not failed_checks,
+        "failed_checks": failed_checks,
+    }
+
+
+PREVIEW_LAUNCH_READINESS_CHECKS = (
+    "qml_loaded",
+    "root_objects_present",
+    "preview_state_exercised",
+    "runtime_loop_not_started",
+    "typed_bridge_evidence_green",
+    "local_only_boundary",
+    "no_live_runtime_side_effects",
+    "tracked_artifacts_clean",
+)
+
+
+def _preview_launch_readiness_evidence(payload: dict[str, object]) -> dict[str, object]:
+    """Summarize fail-closed local preview/demo launch readiness from smoke facts."""
+
+    audit = payload.get("preview_state_audit")
+    if not isinstance(audit, dict):
+        audit = {}
+    typed_bridge_evidence = audit.get("typed_preview_bridge_qml_consumer_evidence")
+    if not isinstance(typed_bridge_evidence, dict):
+        typed_bridge_evidence = {}
+    panel_load_results = payload.get("panel_load_results")
+    side_panel_loaded = False
+    if isinstance(panel_load_results, dict):
+        side_panel = panel_load_results.get("sidePanel")
+        if isinstance(side_panel, dict):
+            side_panel_loaded = (
+                side_panel.get("loaded") is True and side_panel.get("empty") is False
+            )
+
+    checks = {
+        "qml_loaded": payload.get("qml_loaded") is True and payload.get("ui_loaded") is True,
+        "root_objects_present": payload.get("operator_dashboard_present") is True
+        and side_panel_loaded is True,
+        "preview_state_exercised": payload.get("preview_state_exercised") is True,
+        "runtime_loop_not_started": payload.get("runtime_loop_started") is False
+        and audit.get("runtime_loop_started") is False,
+        "typed_bridge_evidence_green": typed_bridge_evidence.get(
+            "all_typed_preview_bridge_consumer_checks_passed"
+        )
+        is True,
+        "local_only_boundary": payload.get("safety_boundary_ok") is True
+        and payload.get("live_mode_allowed") is False
+        and audit.get("live_trading_disabled") is True
+        and audit.get("exchange_io_disabled") is True
+        and audit.get("order_submission_disabled") is True
+        and audit.get("safety_boundary_ok") is True,
+        "no_live_runtime_side_effects": payload.get("exchange_io") == "disabled"
+        and payload.get("order_submission") == "disabled"
+        and payload.get("api_keys_required") is False
+        and payload.get("secrets_read") is False
+        and payload.get("keychain_read") is False
+        and payload.get("env_values_read") is False
+        and payload.get("dot_env_read") is False
+        and audit.get("network_api_calls") == "disabled"
+        and audit.get("api_keys_required") is False,
+        "tracked_artifacts_clean": payload.get("tracked_artifacts_clean") is True,
+    }
+    failed_checks = [key for key in PREVIEW_LAUNCH_READINESS_CHECKS if checks.get(key) is not True]
+    return {
+        **checks,
+        "all_preview_launch_readiness_checks_passed": not failed_checks,
         "failed_checks": failed_checks,
     }
 
@@ -2325,8 +2405,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
     qml_warnings: list[str] = []
     audit_issues: list[str] = []
     artifact_paths = _smoke_artifact_paths()
-    artifact_paths.__enter__()
+    artifact_paths_entered = False
     try:
+        artifact_paths.__enter__()
+        artifact_paths_entered = True
+        tracked_artifacts_before = _tracked_artifact_snapshot()
         app = BotPysideApplication(options)
         engine = app.load(warning_sink=qml_warnings.append)
         from PySide6.QtGui import QGuiApplication
@@ -3227,6 +3310,30 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     )
                 )
         smoke_ok = qml_loaded and not audit_issues
+        tracked_artifacts_clean = _tracked_artifacts_unchanged(tracked_artifacts_before)
+        preview_launch_payload: dict[str, object] = {
+            "ui_loaded": qml_loaded,
+            "qml_loaded": qml_loaded,
+            "operator_dashboard_present": operator_dashboard_present,
+            "operator_dashboard_default": operator_dashboard_default,
+            "panel_load_results": panel_load_results,
+            "preview_state_exercised": options.exercise_preview_state and bool(preview_state_audit),
+            "preview_state_audit": preview_state_audit,
+            "runtime_loop_started": False,
+            "exchange_io": "disabled",
+            "order_submission": "disabled",
+            "api_keys_required": False,
+            "live_mode_allowed": False,
+            "secrets_read": False,
+            "keychain_read": False,
+            "env_values_read": False,
+            "dot_env_read": False,
+            "safety_boundary_ok": safety_boundary_ok,
+            "tracked_artifacts_clean": tracked_artifacts_clean,
+        }
+        preview_launch_readiness_evidence = _preview_launch_readiness_evidence(
+            preview_launch_payload
+        )
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -3471,6 +3578,7 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             settings_safety_boundary_ok=settings_safety_boundary_ok,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,
+            preview_launch_readiness_evidence=preview_launch_readiness_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)
@@ -3481,4 +3589,5 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         print(result.to_json(), file=output)
         return 1
     finally:
-        artifact_paths.__exit__(None, None, None)
+        if artifact_paths_entered:
+            artifact_paths.__exit__(None, None, None)
