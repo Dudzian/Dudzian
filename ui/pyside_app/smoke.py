@@ -384,6 +384,75 @@ TYPED_PREVIEW_BRIDGE_AUDIT_KEYS = (
 )
 
 
+TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS = (
+    "typed_preview_bridge_registered",
+    "typed_preview_bridge_is_qml_context_instance",
+    "typed_preview_bridge_qml_consumer_visible",
+    "typed_preview_bridge_qml_consumer_schema_ok_visible",
+    "typed_preview_bridge_qml_consumer_runtime_boundary_visible",
+    "typed_preview_bridge_qml_consumer_diagnostic_marker_visible",
+    "typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only",
+    "typed_preview_bridge_qml_consumer_matches_paper_snapshot",
+    "typed_preview_bridge_qml_consumer_matches_scanner_snapshot",
+    "typed_preview_bridge_qml_consumer_matches_governor_snapshot",
+    "typed_preview_bridge_qml_consumer_fallback_state_visible",
+    "typed_preview_bridge_qml_consumer_fallback_state_safe",
+    "typed_preview_bridge_qml_consumer_fallback_state_no_type_error",
+    "typed_preview_bridge_qml_consumer_updates_after_snapshot_a",
+    "typed_preview_bridge_qml_consumer_updates_after_snapshot_b",
+    "typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens",
+    "typed_preview_bridge_qml_consumer_survives_panel_navigation",
+    "typed_preview_bridge_qml_consumer_restores_baseline_snapshot",
+    "typed_preview_bridge_qml_consumer_lifecycle_sequence_completed",
+)
+
+
+def _typed_preview_bridge_consumer_evidence(audit: dict[str, object]) -> dict[str, object]:
+    def all_true(*keys: str) -> bool:
+        return all(audit.get(key) is True for key in keys)
+
+    failed_checks = [
+        key
+        for key in TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS
+        if audit.get(key) is not True
+    ]
+    return {
+        "registered": all_true("typed_preview_bridge_registered"),
+        "qml_context_identity": all_true("typed_preview_bridge_is_qml_context_instance"),
+        "visible_consumer": all_true(
+            "typed_preview_bridge_qml_consumer_visible",
+            "typed_preview_bridge_qml_consumer_schema_ok_visible",
+            "typed_preview_bridge_qml_consumer_runtime_boundary_visible",
+            "typed_preview_bridge_qml_consumer_matches_paper_snapshot",
+            "typed_preview_bridge_qml_consumer_matches_scanner_snapshot",
+            "typed_preview_bridge_qml_consumer_matches_governor_snapshot",
+        ),
+        "diagnostic_marker": all_true(
+            "typed_preview_bridge_qml_consumer_diagnostic_marker_visible",
+            "typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only",
+        ),
+        "fallback_state": all_true(
+            "typed_preview_bridge_qml_consumer_fallback_state_visible",
+            "typed_preview_bridge_qml_consumer_fallback_state_safe",
+            "typed_preview_bridge_qml_consumer_fallback_state_no_type_error",
+        ),
+        "lifecycle_sequence": all_true(
+            "typed_preview_bridge_qml_consumer_updates_after_snapshot_a",
+            "typed_preview_bridge_qml_consumer_updates_after_snapshot_b",
+            "typed_preview_bridge_qml_consumer_survives_panel_navigation",
+            "typed_preview_bridge_qml_consumer_lifecycle_sequence_completed",
+        ),
+        "stale_replacement": all_true(
+            "typed_preview_bridge_qml_consumer_replaces_stale_snapshot_tokens"
+        ),
+        "baseline_restore": all_true(
+            "typed_preview_bridge_qml_consumer_restores_baseline_snapshot"
+        ),
+        "all_typed_preview_bridge_consumer_checks_passed": not failed_checks,
+        "failed_checks": failed_checks,
+    }
+
+
 def _typed_preview_bridge_false_audit() -> dict[str, object]:
     return {key: False for key in TYPED_PREVIEW_BRIDGE_AUDIT_KEYS}
 
@@ -957,6 +1026,9 @@ def _exercise_preview_state(
     }
     audit.update(
         _audit_typed_preview_bridge(root, typed_preview_bridge, qml_context_bridge_instance)
+    )
+    audit["typed_preview_bridge_qml_consumer_evidence"] = _typed_preview_bridge_consumer_evidence(
+        audit
     )
     simulation_state_fields = (
         "simulationRunning",
