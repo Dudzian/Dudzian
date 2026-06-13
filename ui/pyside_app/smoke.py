@@ -367,6 +367,8 @@ TYPED_PREVIEW_BRIDGE_AUDIT_KEYS = (
     "typed_preview_bridge_qml_consumer_visible",
     "typed_preview_bridge_qml_consumer_schema_ok_visible",
     "typed_preview_bridge_qml_consumer_runtime_boundary_visible",
+    "typed_preview_bridge_qml_consumer_diagnostic_marker_visible",
+    "typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only",
     "typed_preview_bridge_qml_consumer_matches_paper_snapshot",
     "typed_preview_bridge_qml_consumer_matches_scanner_snapshot",
     "typed_preview_bridge_qml_consumer_matches_governor_snapshot",
@@ -462,6 +464,9 @@ def _audit_typed_preview_bridge(
         "governor": _read_visible_panel_object(
             root, "sidePanel", "previewTypedBridgeGovernorLabel"
         ),
+        "diagnostic_marker": _read_visible_panel_object(
+            root, "sidePanel", "previewTypedBridgeDiagnosticMarkerLabel"
+        ),
     }
     return {
         "typed_preview_bridge_registered": True,
@@ -488,6 +493,13 @@ def _audit_typed_preview_bridge(
         in consumer_values["contract"],
         "typed_preview_bridge_qml_consumer_runtime_boundary_visible": "local-only boundary ok"
         in consumer_values["contract"],
+        "typed_preview_bridge_qml_consumer_diagnostic_marker_visible": bool(
+            consumer_values["diagnostic_marker"]
+        ),
+        "typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only": _contains_tokens(
+            consumer_values["diagnostic_marker"],
+            ("local", "preview", "read-only", "diagnostic"),
+        ),
         "typed_preview_bridge_qml_consumer_matches_paper_snapshot": _contains_tokens(
             consumer_values["paper"],
             (
@@ -1962,6 +1974,8 @@ def _exercise_preview_state(
         "typed_preview_bridge_qml_consumer_visible",
         "typed_preview_bridge_qml_consumer_schema_ok_visible",
         "typed_preview_bridge_qml_consumer_runtime_boundary_visible",
+        "typed_preview_bridge_qml_consumer_diagnostic_marker_visible",
+        "typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only",
         "typed_preview_bridge_qml_consumer_matches_paper_snapshot",
         "typed_preview_bridge_qml_consumer_matches_scanner_snapshot",
         "typed_preview_bridge_qml_consumer_matches_governor_snapshot",

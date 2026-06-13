@@ -19,6 +19,20 @@ Components.StyledScrollView {
         return designSystem.color("warning")
     }
 
+    function typedBridgeValue(key, fallback) {
+        if (typeof typedPreviewBridge === "undefined" || typedPreviewBridge === null) return fallback
+        var value = typedPreviewBridge[key]
+        if (value === undefined || value === null || value === "") return fallback
+        return value
+    }
+
+    function snapshotValue(snapshot, key, fallback) {
+        if (snapshot === undefined || snapshot === null) return fallback
+        var value = snapshot[key]
+        if (value === undefined || value === null || value === "") return fallback
+        return value
+    }
+
     ColumnLayout {
         width: root.availableWidth
         spacing: 14
@@ -47,10 +61,11 @@ Components.StyledScrollView {
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Selected exchanges"); description: qsTr("%1 selected: %2").arg(previewState.selectedExchanges.length).arg(previewState.selectedExchanges.join(", ")); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Selected coins/pairs"); description: qsTr("%1 selected from %2 preview pairs: %3").arg(previewState.selectedPairs.length).arg(previewState.previewMarketPairs.length).arg(previewState.selectedPairs.slice(0, 8).join(", ")); Layout.fillWidth: true }
 
-            Components.PreviewCard { objectName: "operatorDashboardTypedBridgeContract"; descriptionObjectName: "previewTypedBridgeContractLabel"; designSystem: root.designSystem; title: qsTr("Typed preview bridge contract"); description: qsTr("Typed bridge: %1 • %2").arg(typedPreviewBridge.schemaContractValid ? "schema ok" : "schema missing").arg(typedPreviewBridge.runtimeBoundaryLocalOnly ? "local-only boundary ok" : "local-only boundary blocked"); Layout.fillWidth: true }
-            Components.PreviewCard { objectName: "operatorDashboardTypedBridgePaper"; descriptionObjectName: "previewTypedBridgePaperLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge paper snapshot"); description: qsTr("Bridge paper: %1 • orders %2").arg(typedPreviewBridge.paperSessionSnapshot.normalizedState || "—").arg(typedPreviewBridge.paperSessionSnapshot.orderRows || 0); Layout.fillWidth: true }
-            Components.PreviewCard { objectName: "operatorDashboardTypedBridgeScanner"; descriptionObjectName: "previewTypedBridgeScannerLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge scanner snapshot"); description: qsTr("Bridge scanner: %1 • candidates %2").arg(typedPreviewBridge.scannerSnapshot.bestOpportunity || "—").arg(typedPreviewBridge.scannerSnapshot.candidates || 0); Layout.fillWidth: true }
-            Components.PreviewCard { objectName: "operatorDashboardTypedBridgeGovernor"; descriptionObjectName: "previewTypedBridgeGovernorLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge governor snapshot"); description: qsTr("Bridge governor: %1 • %2").arg(typedPreviewBridge.governorSnapshot.latestAction || "—").arg(typedPreviewBridge.governorSnapshot.latestSymbol || "—"); Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "operatorDashboardTypedBridgeContract"; descriptionObjectName: "previewTypedBridgeContractLabel"; designSystem: root.designSystem; title: qsTr("Typed preview bridge contract"); description: qsTr("Typed bridge: %1 • %2").arg(typedBridgeValue("schemaContractValid", false) ? "schema ok" : "schema missing").arg(typedBridgeValue("runtimeBoundaryLocalOnly", false) ? "local-only boundary ok" : "local-only boundary blocked"); Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "operatorDashboardTypedBridgeDiagnosticMarker"; descriptionObjectName: "previewTypedBridgeDiagnosticMarkerLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge diagnostic marker"); description: qsTr("Local preview read-only diagnostic consumer • offscreen smoke only • not a live trading control path"); Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "operatorDashboardTypedBridgePaper"; descriptionObjectName: "previewTypedBridgePaperLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge paper snapshot"); description: qsTr("Bridge paper: %1 • orders %2").arg(snapshotValue(typedBridgeValue("paperSessionSnapshot", null), "normalizedState", "—")).arg(snapshotValue(typedBridgeValue("paperSessionSnapshot", null), "orderRows", 0)); Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "operatorDashboardTypedBridgeScanner"; descriptionObjectName: "previewTypedBridgeScannerLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge scanner snapshot"); description: qsTr("Bridge scanner: %1 • candidates %2").arg(snapshotValue(typedBridgeValue("scannerSnapshot", null), "bestOpportunity", "—")).arg(snapshotValue(typedBridgeValue("scannerSnapshot", null), "candidates", 0)); Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "operatorDashboardTypedBridgeGovernor"; descriptionObjectName: "previewTypedBridgeGovernorLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge governor snapshot"); description: qsTr("Bridge governor: %1 • %2").arg(snapshotValue(typedBridgeValue("governorSnapshot", null), "latestAction", "—")).arg(snapshotValue(typedBridgeValue("governorSnapshot", null), "latestSymbol", "—")); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardBestScannerOpportunity"; descriptionObjectName: "previewDashboardBestOpportunityLabel"; designSystem: root.designSystem; title: qsTr("Best scanner opportunity"); description: qsTr("%1 • candidates %2 • safe preview scanner").arg(previewState.scannerBestOpportunity).arg(previewState.scannerCandidateCount); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Active strategies"); description: qsTr("%1 active strategies: %2").arg(previewState.activeStrategies.length).arg(previewState.activeStrategies.join(", ")); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardFeed"; descriptionObjectName: "previewDashboardGovernorDecisionLabel"; designSystem: root.designSystem; title: qsTr("Last AI/governor decision"); description: previewState.lastGovernorDecision; Layout.fillWidth: true; Components.IconButton { designSystem: root.designSystem; text: qsTr("Wyjaśnij ostatnią decyzję"); helpText: previewState.tooltipText("Explain decision"); onClicked: previewState.openDecisionExplainDrawer(previewState.decisionPreviewRows.length > 0 ? previewState.decisionPreviewRows[0] : null) } }
