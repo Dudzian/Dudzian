@@ -158,6 +158,8 @@ class UiSmokeResult:
     settings_safety_boundary_ok: bool = False
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
+    preview_launch_readiness_evaluated: bool = False
+    preview_launch_readiness_requires_exercise_preview_state: bool = True
     preview_launch_readiness_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
@@ -3578,6 +3580,8 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             settings_safety_boundary_ok=settings_safety_boundary_ok,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,
+            preview_launch_readiness_evaluated=options.exercise_preview_state,
+            preview_launch_readiness_requires_exercise_preview_state=not options.exercise_preview_state,
             preview_launch_readiness_evidence=preview_launch_readiness_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
