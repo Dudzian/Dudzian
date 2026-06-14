@@ -161,6 +161,17 @@ class UiSmokeResult:
     preview_launch_readiness_evaluated: bool = False
     preview_launch_readiness_requires_exercise_preview_state: bool = True
     preview_launch_readiness_evidence: dict[str, object] = field(default_factory=dict)
+    frontend_live_parity_dashboard_present: bool = False
+    frontend_live_parity_market_scanner_present: bool = False
+    frontend_live_parity_ai_governor_present: bool = False
+    frontend_live_parity_decisions_present: bool = False
+    frontend_live_parity_terminal_order_panel_present: bool = False
+    frontend_live_parity_portfolio_present: bool = False
+    frontend_live_parity_alerts_telemetry_present: bool = False
+    frontend_live_parity_live_safety_boundary_visible: bool = False
+    frontend_live_parity_no_fake_live_actions: bool = False
+    frontend_live_parity_all_required_sections_present: bool = False
+    frontend_live_parity_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -534,6 +545,133 @@ def _preview_launch_readiness_evidence(payload: dict[str, object]) -> dict[str, 
         **checks,
         "all_preview_launch_readiness_checks_passed": not failed_checks,
         "failed_checks": failed_checks,
+    }
+
+
+FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
+    "dashboard": (
+        "operator_dashboard_visible",
+        "dashboard_scanner_uses_shared_state",
+        "dashboard_ai_decision_matches_governor_snapshot",
+        "risk_summary_updates",
+        "visible_terminal_matches_latest_paper_order",
+        "alerts_dashboard_summary_present",
+        "global_safety_badges_present",
+    ),
+    "market_scanner": (
+        "market_scanner_rows_present",
+        "market_scanner_filter_sort_threshold_present",
+        "market_scanner_explain_updates_explanation",
+        "simulation_can_use_scanner_candidate_local_only",
+    ),
+    "ai_governor": (
+        "governor_updates_decision",
+        "governor_uses_scanner_and_risk_state",
+        "visible_ai_center_matches_governor_snapshot",
+        "risk_ai_recommended_explanation_present",
+        "explainability_no_order_submission",
+    ),
+    "ai_decisions": (
+        "decision_explainability_state_present",
+        "visible_decisions_match_latest_governor_action",
+        "decision_explain_has_risk_checks",
+        "paper_order_explain_local_only",
+    ),
+    "terminal_order_panel": (
+        "simulate_order_updates_blotter_portfolio_telemetry",
+        "terminal_blotter_updates_portfolio_snapshot",
+        "risk_block_generates_blocked_event_and_alert",
+        "blocked_semantics_no_legacy_generated",
+        "simulation_does_not_enable_order_submission",
+    ),
+    "portfolio": (
+        "portfolio_fields_present",
+        "portfolio_equity_formula_ok",
+        "portfolio_net_pnl_formula_ok",
+        "portfolio_time_filter_does_not_mutate_paper_state",
+        "portfolio_custom_filter_does_not_mutate_paper_state",
+        "visible_portfolio_matches_portfolio_snapshot",
+    ),
+    "alerts_telemetry": (
+        "alerts_state_present",
+        "alerts_detail_present",
+        "alerts_risk_block_appends_event",
+        "ping_appends_telemetry",
+        "visible_alerts_match_alert_snapshot",
+        "visible_telemetry_matches_telemetry_snapshot",
+        "alert_center_safety_boundary_ok",
+    ),
+    "live_safety_boundary": (
+        "live_trading_disabled",
+        "exchange_io_disabled",
+        "order_submission_disabled",
+        "runtime_loop_started_false",
+        "api_keys_not_required",
+        "simulation_does_not_read_secrets",
+        "typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only",
+        "safety_boundary_ok",
+    ),
+}
+
+FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
+    "frontend_live_parity_dashboard_present",
+    "frontend_live_parity_market_scanner_present",
+    "frontend_live_parity_ai_governor_present",
+    "frontend_live_parity_decisions_present",
+    "frontend_live_parity_terminal_order_panel_present",
+    "frontend_live_parity_portfolio_present",
+    "frontend_live_parity_alerts_telemetry_present",
+    "frontend_live_parity_live_safety_boundary_visible",
+    "frontend_live_parity_no_fake_live_actions",
+    "frontend_live_parity_all_required_sections_present",
+)
+
+
+def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build a pure checklist for live-equivalent preview frontend completeness."""
+
+    normalized_audit = {
+        **audit,
+        "runtime_loop_started_false": audit.get("runtime_loop_started") is False,
+        "api_keys_not_required": audit.get("api_keys_required") is False,
+    }
+    section_results = {
+        section: all(normalized_audit.get(key) is True for key in keys)
+        for section, keys in FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS.items()
+    }
+    missing_sections = [
+        section
+        for section in FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS
+        if section_results.get(section) is not True
+    ]
+    no_fake_live_actions = (
+        normalized_audit.get("live_trading_disabled") is True
+        and normalized_audit.get("exchange_io_disabled") is True
+        and normalized_audit.get("order_submission_disabled") is True
+        and normalized_audit.get("runtime_loop_started_false") is True
+        and normalized_audit.get("api_keys_not_required") is True
+        and normalized_audit.get("simulation_does_not_read_secrets") is True
+    )
+    return {
+        "frontend_live_parity_required_sections": list(FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS),
+        "frontend_live_parity_section_results": section_results,
+        "frontend_live_parity_missing_sections": missing_sections,
+        "frontend_live_parity_dashboard_present": section_results["dashboard"],
+        "frontend_live_parity_market_scanner_present": section_results["market_scanner"],
+        "frontend_live_parity_ai_governor_present": section_results["ai_governor"],
+        "frontend_live_parity_decisions_present": section_results["ai_decisions"],
+        "frontend_live_parity_terminal_order_panel_present": section_results[
+            "terminal_order_panel"
+        ],
+        "frontend_live_parity_portfolio_present": section_results["portfolio"],
+        "frontend_live_parity_alerts_telemetry_present": section_results["alerts_telemetry"],
+        "frontend_live_parity_live_safety_boundary_visible": section_results[
+            "live_safety_boundary"
+        ],
+        "frontend_live_parity_no_fake_live_actions": no_fake_live_actions,
+        "frontend_live_parity_all_required_sections_present": (
+            not missing_sections and no_fake_live_actions
+        ),
     }
 
 
@@ -2182,6 +2320,33 @@ def _exercise_preview_state(
             "Live trading remains disabled",
         )
     )
+    _invoke_show_panel(root, "sidePanel")
+    _process_events()
+    operator_dashboard_item = _find_qml_object(root, "operatorDashboardRoot")
+    audit["operator_dashboard_visible"] = (
+        operator_dashboard_item is not None
+        and _bool_property(operator_dashboard_item, "visible") is True
+        and max(
+            _number_property(operator_dashboard_item, "width"),
+            _number_property(operator_dashboard_item, "implicitWidth"),
+        )
+        > 0
+        and max(
+            _number_property(operator_dashboard_item, "height"),
+            _number_property(operator_dashboard_item, "implicitHeight"),
+        )
+        > 0
+    )
+    alert_summary_value = _read_visible_panel_object(
+        root, "sidePanel", "operatorDashboardAlertSummary"
+    )
+    audit["alerts_dashboard_summary_object_visible"] = _contains_tokens(
+        alert_summary_value, ("Alert Center summary",)
+    )
+    audit["alerts_dashboard_summary_source_present"] = "operatorDashboardAlertSummary" in source
+    audit["alerts_dashboard_summary_present"] = (
+        audit["alerts_dashboard_summary_object_visible"] is True
+    )
     audit["simulation_does_not_read_secrets"] = True
     audit["safety_boundary_ok"] = (
         audit["live_trading_disabled"] is True
@@ -2191,6 +2356,12 @@ def _exercise_preview_state(
         and audit["runtime_loop_started"] is False
         and audit["network_api_calls"] == "disabled"
     )
+    frontend_live_parity_evidence = _build_frontend_live_parity_evidence(audit)
+    audit["frontend_live_parity_evidence"] = frontend_live_parity_evidence
+    audit.update(
+        {key: frontend_live_parity_evidence[key] for key in FRONTEND_LIVE_PARITY_SMOKE_KEYS}
+    )
+
     required_true_keys = (
         "simulation_loop_state_present",
         "simulation_start_sets_running",
@@ -2346,6 +2517,16 @@ def _exercise_preview_state(
         "typed_preview_bridge_qml_consumer_fallback_state_safe",
         "typed_preview_bridge_qml_consumer_fallback_state_no_type_error",
         "safety_boundary_ok",
+        "frontend_live_parity_dashboard_present",
+        "frontend_live_parity_market_scanner_present",
+        "frontend_live_parity_ai_governor_present",
+        "frontend_live_parity_decisions_present",
+        "frontend_live_parity_terminal_order_panel_present",
+        "frontend_live_parity_portfolio_present",
+        "frontend_live_parity_alerts_telemetry_present",
+        "frontend_live_parity_live_safety_boundary_visible",
+        "frontend_live_parity_no_fake_live_actions",
+        "frontend_live_parity_all_required_sections_present",
     )
     audit["passed"] = (
         int(audit["start_tick_delta"]) >= 1
@@ -3336,6 +3517,9 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         preview_launch_readiness_evidence = _preview_launch_readiness_evidence(
             preview_launch_payload
         )
+        frontend_live_parity_evidence = preview_state_audit.get("frontend_live_parity_evidence", {})
+        if not isinstance(frontend_live_parity_evidence, dict):
+            frontend_live_parity_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -3583,6 +3767,49 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             preview_launch_readiness_evaluated=options.exercise_preview_state,
             preview_launch_readiness_requires_exercise_preview_state=not options.exercise_preview_state,
             preview_launch_readiness_evidence=preview_launch_readiness_evidence,
+            frontend_live_parity_dashboard_present=bool(
+                frontend_live_parity_evidence.get("frontend_live_parity_dashboard_present", False)
+            ),
+            frontend_live_parity_market_scanner_present=bool(
+                frontend_live_parity_evidence.get(
+                    "frontend_live_parity_market_scanner_present", False
+                )
+            ),
+            frontend_live_parity_ai_governor_present=bool(
+                frontend_live_parity_evidence.get("frontend_live_parity_ai_governor_present", False)
+            ),
+            frontend_live_parity_decisions_present=bool(
+                frontend_live_parity_evidence.get("frontend_live_parity_decisions_present", False)
+            ),
+            frontend_live_parity_terminal_order_panel_present=bool(
+                frontend_live_parity_evidence.get(
+                    "frontend_live_parity_terminal_order_panel_present", False
+                )
+            ),
+            frontend_live_parity_portfolio_present=bool(
+                frontend_live_parity_evidence.get("frontend_live_parity_portfolio_present", False)
+            ),
+            frontend_live_parity_alerts_telemetry_present=bool(
+                frontend_live_parity_evidence.get(
+                    "frontend_live_parity_alerts_telemetry_present", False
+                )
+            ),
+            frontend_live_parity_live_safety_boundary_visible=bool(
+                frontend_live_parity_evidence.get(
+                    "frontend_live_parity_live_safety_boundary_visible", False
+                )
+            ),
+            frontend_live_parity_no_fake_live_actions=bool(
+                frontend_live_parity_evidence.get(
+                    "frontend_live_parity_no_fake_live_actions", False
+                )
+            ),
+            frontend_live_parity_all_required_sections_present=bool(
+                frontend_live_parity_evidence.get(
+                    "frontend_live_parity_all_required_sections_present", False
+                )
+            ),
+            frontend_live_parity_evidence=frontend_live_parity_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)

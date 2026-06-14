@@ -13,9 +13,12 @@ import pytest
 from ui.pyside_app.app import AppOptions
 from ui.pyside_app.smoke import (
     PREVIEW_LAUNCH_READINESS_CHECKS,
+    FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS,
+    FRONTEND_LIVE_PARITY_SMOKE_KEYS,
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
     TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS,
     _audit_typed_preview_bridge,
+    _build_frontend_live_parity_evidence,
     _preview_launch_readiness_evidence,
     _typed_preview_bridge_consumer_evidence,
 )
@@ -341,6 +344,73 @@ def test_ui_smoke_does_not_dirty_tracked_artifacts() -> None:
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert _tracked_artifact_snapshot() == before
+
+
+def _frontend_live_parity_green_audit() -> dict[str, object]:
+    audit = {key: True for keys in FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS.values() for key in keys}
+    audit["runtime_loop_started"] = False
+    audit["api_keys_required"] = False
+    audit["network_api_calls"] = "disabled"
+    return audit
+
+
+def test_frontend_live_parity_evidence_helper_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert "def _build_frontend_live_parity_evidence" in smoke_source
+    assert "frontend_live_parity_evidence" in smoke_source
+    assert 'audit["operator_dashboard_visible"] = True' not in smoke_source
+    assert 'root, "sidePanel", "operatorDashboardAlertSummary"' in smoke_source
+    assert 'audit["alerts_dashboard_summary_source_present"]' in smoke_source
+    assert (
+        'audit["alerts_dashboard_summary_present"] = (\n'
+        '        audit["alerts_dashboard_summary_object_visible"] is True\n'
+        "    )"
+    ) in smoke_source
+    assert 'or audit["alerts_dashboard_summary_source_present"] is True' not in smoke_source
+    for key in FRONTEND_LIVE_PARITY_SMOKE_KEYS:
+        assert key in smoke_source
+
+
+def test_frontend_live_parity_evidence_all_required_sections_present() -> None:
+    evidence = _build_frontend_live_parity_evidence(_frontend_live_parity_green_audit())
+
+    assert evidence["frontend_live_parity_missing_sections"] == []
+    assert evidence["frontend_live_parity_all_required_sections_present"] is True
+    for key in FRONTEND_LIVE_PARITY_SMOKE_KEYS:
+        assert evidence[key] is True
+
+
+def test_frontend_live_parity_evidence_reports_exact_missing_section() -> None:
+    audit = _frontend_live_parity_green_audit()
+    first_dashboard_key = FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS["dashboard"][0]
+    audit[first_dashboard_key] = False
+
+    evidence = _build_frontend_live_parity_evidence(audit)
+
+    assert evidence["frontend_live_parity_missing_sections"] == ["dashboard"]
+    assert evidence["frontend_live_parity_dashboard_present"] is False
+    assert evidence["frontend_live_parity_all_required_sections_present"] is False
+
+
+def test_frontend_live_parity_evidence_ignores_extra_diagnostics() -> None:
+    audit = _frontend_live_parity_green_audit()
+    baseline = _build_frontend_live_parity_evidence(audit)
+    audit["extra_visible_widget_diagnostic"] = False
+
+    assert _build_frontend_live_parity_evidence(audit) == baseline
+
+
+def test_frontend_live_parity_dashboard_requires_runtime_alert_summary() -> None:
+    audit = _frontend_live_parity_green_audit()
+    audit["alerts_dashboard_summary_present"] = False
+    audit["alerts_dashboard_summary_source_present"] = True
+
+    evidence = _build_frontend_live_parity_evidence(audit)
+
+    assert evidence["frontend_live_parity_missing_sections"] == ["dashboard"]
+    assert evidence["frontend_live_parity_dashboard_present"] is False
+    assert evidence["frontend_live_parity_all_required_sections_present"] is False
 
 
 def test_smoke_flags_are_available_in_parser() -> None:
@@ -784,6 +854,14 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert readiness_evidence["no_live_runtime_side_effects"] is True
     assert readiness_evidence["root_objects_present"] is True
     assert readiness_evidence["tracked_artifacts_clean"] is True
+    frontend_evidence = audit["frontend_live_parity_evidence"]
+    assert isinstance(frontend_evidence, dict)
+    assert frontend_evidence["frontend_live_parity_missing_sections"] == []
+    for key in FRONTEND_LIVE_PARITY_SMOKE_KEYS:
+        assert payload[key] is True
+        assert audit[key] is True
+        assert frontend_evidence[key] is True
+    assert payload["frontend_live_parity_evidence"] == frontend_evidence
     evidence = audit["typed_preview_bridge_qml_consumer_evidence"]
     assert isinstance(evidence, dict)
     assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is True
