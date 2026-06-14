@@ -172,6 +172,8 @@ class UiSmokeResult:
     frontend_live_parity_no_fake_live_actions: bool = False
     frontend_live_parity_all_required_sections_present: bool = False
     frontend_live_parity_evidence: dict[str, object] = field(default_factory=dict)
+    terminal_order_form_live_shape_complete: bool = False
+    terminal_order_form_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -583,6 +585,7 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
         "risk_block_generates_blocked_event_and_alert",
         "blocked_semantics_no_legacy_generated",
         "simulation_does_not_enable_order_submission",
+        "terminal_order_form_live_shape_complete",
     ),
     "portfolio": (
         "portfolio_fields_present",
@@ -612,6 +615,38 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
         "safety_boundary_ok",
     ),
 }
+
+FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS = (
+    "terminal_order_form_visible",
+    "terminal_order_mode_local_preview_visible",
+    "terminal_order_symbol_visible",
+    "terminal_order_side_controls_present",
+    "terminal_order_type_controls_present",
+    "terminal_order_price_amount_total_present",
+    "terminal_order_percent_chips_present",
+    "terminal_order_submission_disabled_visible",
+    "terminal_order_latest_status_visible",
+    "terminal_order_blocked_state_visible",
+    "terminal_order_simulated_state_visible",
+    "terminal_order_no_order_state_visible",
+    "terminal_order_rejected_disabled_placeholder_visible",
+    "terminal_order_updates_blotter_portfolio_telemetry",
+)
+
+
+def _build_terminal_order_form_parity_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build a pure live-shape checklist for the preview terminal order form."""
+
+    missing_checks = [
+        key for key in FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS if audit.get(key) is not True
+    ]
+    return {
+        "terminal_order_form_required_checks": list(FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS),
+        "terminal_order_form_missing_checks": missing_checks,
+        "terminal_order_form_live_shape_complete": not missing_checks,
+        **{key: audit.get(key) is True for key in FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS},
+    }
+
 
 FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
     "frontend_live_parity_dashboard_present",
@@ -1104,6 +1139,16 @@ def _qml_object_value(item: Any) -> str:
     except RuntimeError:
         return ""
     return ""
+
+
+def _qml_object_visible_with_size(root: Any, object_name: str) -> bool:
+    item = _find_qml_object(root, object_name)
+    if item is None or _bool_property(item, "visible") is not True:
+        return False
+    return (
+        max(_number_property(item, "width"), _number_property(item, "implicitWidth")) > 0
+        and max(_number_property(item, "height"), _number_property(item, "implicitHeight")) > 0
+    )
 
 
 def _read_visible_panel_object(root: Any, panel_id: str, object_name: str) -> str:
@@ -2356,6 +2401,111 @@ def _exercise_preview_state(
         and audit["runtime_loop_started"] is False
         and audit["network_api_calls"] == "disabled"
     )
+    _invoke_show_panel(root, "terminalPanel")
+    _process_events()
+    terminal_root_item = _find_qml_object(root, "paperTerminalRoot")
+    audit["terminal_order_form_visible"] = (
+        terminal_root_item is not None
+        and _qml_object_visible_with_size(root, "paperTerminalOrderForm")
+    )
+    audit["terminal_order_mode_local_preview_visible"] = _source_has_all(
+        source,
+        (
+            "paperTerminalSafetyBoundary",
+            "Paper Preview only",
+            "Live trading disabled",
+            "Exchange I/O disabled",
+            "No real orders",
+        ),
+    )
+    audit["terminal_order_symbol_visible"] = (
+        "paperTerminalPairSelector" in source
+        and "selectedTerminalPair" in source
+        and bool(_string_property(root, "selectedTerminalPair"))
+    )
+    audit["terminal_order_side_controls_source_present"] = _source_has_all(
+        source, ("paperTerminalSideControls", "BUY", "SELL", "setTerminalSide")
+    )
+    audit["terminal_order_side_controls_present"] = _qml_object_visible_with_size(
+        root, "paperTerminalSideControls"
+    )
+    audit["terminal_order_type_controls_source_present"] = _source_has_all(
+        source, ("paperTerminalOrderTypeControls", "LIMIT", "MARKET", "setTerminalOrderType")
+    )
+    audit["terminal_order_type_controls_present"] = _qml_object_visible_with_size(
+        root, "paperTerminalOrderTypeControls"
+    )
+    audit["terminal_order_price_amount_total_source_present"] = _source_has_all(
+        source,
+        (
+            "paperTerminalPriceInput",
+            "paperTerminalAmountInput",
+            "paperTerminalTotalInput",
+            "terminalPrice",
+            "terminalAmount",
+            "terminalTotal",
+        ),
+    )
+    audit["terminal_order_price_amount_total_present"] = all(
+        _qml_object_visible_with_size(root, object_name)
+        for object_name in (
+            "paperTerminalPriceInput",
+            "paperTerminalAmountInput",
+            "paperTerminalTotalInput",
+        )
+    )
+    audit["terminal_order_percent_chips_source_present"] = _source_has_all(
+        source, ("paperTerminalPercentChips", "applyTerminalPercent", "[10, 25, 50, 75, 100]")
+    )
+    audit["terminal_order_percent_chips_present"] = _qml_object_visible_with_size(
+        root, "paperTerminalPercentChips"
+    )
+    audit["terminal_order_submission_disabled_source_present"] = _source_has_all(
+        source,
+        (
+            "paperTerminalSubmissionDisabledWarning",
+            "order submission disabled",
+            "no real order",
+            "paper simulation only",
+        ),
+    )
+    audit["terminal_order_submission_disabled_visible"] = (
+        _qml_object_visible_with_size(root, "paperTerminalSubmissionDisabledWarning")
+        and audit["terminal_order_submission_disabled_source_present"] is True
+    )
+    latest_order_text = _read_visible_panel_object(
+        root, "terminalPanel", "previewTerminalLatestOrderLabel"
+    )
+    audit["terminal_order_latest_status_source_present"] = _source_has_all(
+        source, ("previewTerminalLatestOrderLabel", "Latest paper order", "status", "reason")
+    )
+    audit["terminal_order_latest_status_visible"] = _qml_object_visible_with_size(
+        root, "previewTerminalLatestOrderLabel"
+    ) and _contains_tokens(latest_order_text, ("Latest paper order", "blocked", "Risk gate"))
+    audit["terminal_order_blocked_state_visible"] = (
+        audit.get("risk_block_generates_blocked_event_and_alert") is True
+        and "blocked" in first_blocked_order
+        and "Risk gate blocked" in first_blocked_order
+    )
+    audit["terminal_order_simulated_state_visible"] = (
+        audit.get("simulate_order_updates_blotter_portfolio_telemetry") is True
+        and "paper simulated" in first_sim_order
+    )
+    audit["terminal_order_no_order_state_visible"] = _source_has_all(
+        source, ("no paper fill", "NO ORDER", "No real orders")
+    )
+    audit["terminal_order_rejected_disabled_placeholder_visible"] = _source_has_all(
+        source, ("order submission disabled", "Risk gate blocked", "blocked")
+    )
+    audit["terminal_order_updates_blotter_portfolio_telemetry"] = (
+        audit.get("simulate_order_updates_blotter_portfolio_telemetry") is True
+        and audit.get("terminal_blotter_updates_portfolio_snapshot") is True
+        and audit.get("risk_block_generates_blocked_event_and_alert") is True
+    )
+    terminal_order_form_evidence = _build_terminal_order_form_parity_evidence(audit)
+    audit["terminal_order_form_evidence"] = terminal_order_form_evidence
+    audit.update(terminal_order_form_evidence)
+
     frontend_live_parity_evidence = _build_frontend_live_parity_evidence(audit)
     audit["frontend_live_parity_evidence"] = frontend_live_parity_evidence
     audit.update(
@@ -2527,6 +2677,7 @@ def _exercise_preview_state(
         "frontend_live_parity_live_safety_boundary_visible",
         "frontend_live_parity_no_fake_live_actions",
         "frontend_live_parity_all_required_sections_present",
+        "terminal_order_form_live_shape_complete",
     )
     audit["passed"] = (
         int(audit["start_tick_delta"]) >= 1
@@ -3520,6 +3671,9 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         frontend_live_parity_evidence = preview_state_audit.get("frontend_live_parity_evidence", {})
         if not isinstance(frontend_live_parity_evidence, dict):
             frontend_live_parity_evidence = {}
+        terminal_order_form_evidence = preview_state_audit.get("terminal_order_form_evidence", {})
+        if not isinstance(terminal_order_form_evidence, dict):
+            terminal_order_form_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -3810,6 +3964,10 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ),
             frontend_live_parity_evidence=frontend_live_parity_evidence,
+            terminal_order_form_live_shape_complete=bool(
+                terminal_order_form_evidence.get("terminal_order_form_live_shape_complete", False)
+            ),
+            terminal_order_form_evidence=terminal_order_form_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)

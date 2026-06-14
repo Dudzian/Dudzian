@@ -41,6 +41,7 @@ Components.StyledScrollView {
         }
 
         Rectangle {
+            objectName: "paperTerminalSafetyBoundary"
             Layout.fillWidth: true
             radius: 16
             color: designSystem.color("surfaceElevated")
@@ -120,6 +121,7 @@ Components.StyledScrollView {
                 Layout.alignment: Qt.AlignTop
 
                 RowLayout {
+                    objectName: "paperTerminalSideControls"
                     Layout.fillWidth: true
                     spacing: 8
                     Repeater {
@@ -137,6 +139,7 @@ Components.StyledScrollView {
                 }
 
                 RowLayout {
+                    objectName: "paperTerminalOrderTypeControls"
                     Layout.fillWidth: true
                     spacing: 8
                     Repeater {
@@ -169,13 +172,14 @@ Components.StyledScrollView {
                 }
 
                 Label { text: qsTr("price input"); color: designSystem.color("textSecondary"); Layout.fillWidth: true }
-                Components.StyledTextField { designSystem: root.designSystem; text: previewState.terminalPrice; placeholderText: qsTr("Price"); Layout.fillWidth: true; onTextEdited: previewState.setTerminalPrice(text) }
+                Components.StyledTextField { objectName: "paperTerminalPriceInput"; designSystem: root.designSystem; text: previewState.terminalPrice; placeholderText: qsTr("Price"); Layout.fillWidth: true; onTextEdited: previewState.setTerminalPrice(text) }
                 Label { text: qsTr("amount input"); color: designSystem.color("textSecondary"); Layout.fillWidth: true }
-                Components.StyledTextField { designSystem: root.designSystem; text: previewState.terminalAmount; placeholderText: qsTr("Amount"); Layout.fillWidth: true; onTextEdited: previewState.setTerminalAmount(text) }
+                Components.StyledTextField { objectName: "paperTerminalAmountInput"; designSystem: root.designSystem; text: previewState.terminalAmount; placeholderText: qsTr("Amount"); Layout.fillWidth: true; onTextEdited: previewState.setTerminalAmount(text) }
                 Label { text: qsTr("total input"); color: designSystem.color("textSecondary"); Layout.fillWidth: true }
-                Components.StyledTextField { designSystem: root.designSystem; text: previewState.terminalTotal; placeholderText: qsTr("Total"); Layout.fillWidth: true; onTextEdited: previewState.terminalTotal = text }
+                Components.StyledTextField { objectName: "paperTerminalTotalInput"; designSystem: root.designSystem; text: previewState.terminalTotal; placeholderText: qsTr("Total"); Layout.fillWidth: true; onTextEdited: previewState.terminalTotal = text }
 
                 Flow {
+                    objectName: "paperTerminalPercentChips"
                     Layout.fillWidth: true
                     spacing: 8
                     Repeater { model: [10, 25, 50, 75, 100]; delegate: Components.IconButton { required property int modelData; designSystem: root.designSystem; text: modelData + "%"; subtle: true; onClicked: previewState.applyTerminalPercent(modelData) } }
@@ -212,6 +216,7 @@ Components.StyledScrollView {
                 }
 
                 Rectangle {
+                    objectName: "paperTerminalSubmissionDisabledWarning"
                     Layout.fillWidth: true
                     radius: 12
                     color: designSystem.color("surfaceMuted")

@@ -15,10 +15,12 @@ from ui.pyside_app.smoke import (
     PREVIEW_LAUNCH_READINESS_CHECKS,
     FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS,
     FRONTEND_LIVE_PARITY_SMOKE_KEYS,
+    FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
     TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS,
     _audit_typed_preview_bridge,
     _build_frontend_live_parity_evidence,
+    _build_terminal_order_form_parity_evidence,
     _preview_launch_readiness_evidence,
     _typed_preview_bridge_consumer_evidence,
 )
@@ -411,6 +413,78 @@ def test_frontend_live_parity_dashboard_requires_runtime_alert_summary() -> None
     assert evidence["frontend_live_parity_missing_sections"] == ["dashboard"]
     assert evidence["frontend_live_parity_dashboard_present"] is False
     assert evidence["frontend_live_parity_all_required_sections_present"] is False
+
+
+def _terminal_order_form_green_audit() -> dict[str, object]:
+    return {key: True for key in FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS}
+
+
+def test_terminal_order_form_parity_evidence_helper_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+    terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
+
+    assert "FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS" in smoke_source
+    assert "def _build_terminal_order_form_parity_evidence" in smoke_source
+    assert "terminal_order_form_evidence" in smoke_source
+    assert "def _qml_object_visible_with_size" in smoke_source
+    assert "terminal_order_price_amount_total_source_present" in smoke_source
+    assert "terminal_order_submission_disabled_source_present" in smoke_source
+    for key in FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS:
+        assert key in smoke_source
+    for object_name in (
+        'objectName: "paperTerminalOrderForm"',
+        'objectName: "paperTerminalSafetyBoundary"',
+        'objectName: "paperTerminalSideControls"',
+        'objectName: "paperTerminalOrderTypeControls"',
+        'objectName: "paperTerminalPriceInput"',
+        'objectName: "paperTerminalAmountInput"',
+        'objectName: "paperTerminalTotalInput"',
+        'objectName: "paperTerminalPercentChips"',
+        'objectName: "paperTerminalSubmissionDisabledWarning"',
+        'descriptionObjectName: "previewTerminalLatestOrderLabel"',
+    ):
+        assert object_name in terminal
+
+
+def test_terminal_order_form_parity_evidence_complete() -> None:
+    evidence = _build_terminal_order_form_parity_evidence(_terminal_order_form_green_audit())
+
+    assert evidence["terminal_order_form_required_checks"] == list(
+        FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS
+    )
+    assert evidence["terminal_order_form_missing_checks"] == []
+    assert evidence["terminal_order_form_live_shape_complete"] is True
+    for key in FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS:
+        assert evidence[key] is True
+
+
+def test_terminal_order_form_parity_evidence_reports_missing_required_check() -> None:
+    audit = _terminal_order_form_green_audit()
+    audit["terminal_order_price_amount_total_present"] = False
+
+    evidence = _build_terminal_order_form_parity_evidence(audit)
+
+    assert evidence["terminal_order_form_missing_checks"] == [
+        "terminal_order_price_amount_total_present"
+    ]
+    assert evidence["terminal_order_price_amount_total_present"] is False
+    assert evidence["terminal_order_form_live_shape_complete"] is False
+
+
+def test_terminal_order_form_parity_evidence_requires_runtime_not_source_fallback() -> None:
+    audit = _terminal_order_form_green_audit()
+    audit["terminal_order_price_amount_total_present"] = False
+    audit["terminal_order_price_amount_total_source_present"] = True
+    audit["terminal_order_submission_disabled_visible"] = False
+    audit["terminal_order_submission_disabled_source_present"] = True
+
+    evidence = _build_terminal_order_form_parity_evidence(audit)
+
+    assert evidence["terminal_order_form_missing_checks"] == [
+        "terminal_order_price_amount_total_present",
+        "terminal_order_submission_disabled_visible",
+    ]
+    assert evidence["terminal_order_form_live_shape_complete"] is False
 
 
 def test_smoke_flags_are_available_in_parser() -> None:
@@ -862,6 +936,15 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
         assert audit[key] is True
         assert frontend_evidence[key] is True
     assert payload["frontend_live_parity_evidence"] == frontend_evidence
+    terminal_evidence = audit["terminal_order_form_evidence"]
+    assert isinstance(terminal_evidence, dict)
+    assert terminal_evidence["terminal_order_form_live_shape_complete"] is True
+    assert terminal_evidence["terminal_order_form_missing_checks"] == []
+    assert payload["terminal_order_form_live_shape_complete"] is True
+    assert payload["terminal_order_form_evidence"] == terminal_evidence
+    for key in FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS:
+        assert audit[key] is True
+        assert terminal_evidence[key] is True
     evidence = audit["typed_preview_bridge_qml_consumer_evidence"]
     assert isinstance(evidence, dict)
     assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is True
