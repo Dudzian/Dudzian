@@ -435,6 +435,14 @@ Components.StyledScrollView {
                 }
             }
 
+            Label {
+                objectName: "paperTerminalLifecycleReservedPlaceholder"
+                Layout.fillWidth: true
+                text: qsTr("Reserved for live lifecycle: NO ORDER / rejected / partial fill / cancel placeholders — disabled in preview; no real order side-effect or exchange fill is emitted.")
+                color: designSystem.color("textSecondary")
+                wrapMode: Text.WordWrap
+            }
+
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 8

@@ -139,7 +139,7 @@ def main(argv: list[str]) -> int:
     download(wheelhouse, build_download_cmd(wheelhouse, args, stub_tooling_packages, args.python))
 
     # Lint/type-check tooling required by CI quality gates.
-    lint_tooling_packages = ["mypy==1.10.0"]
+    lint_tooling_packages = ["mypy==1.10.0", "ruff==0.14.11"]
     download(wheelhouse, build_download_cmd(wheelhouse, args, lint_tooling_packages, args.python))
 
     # Project dependencies
@@ -148,6 +148,9 @@ def main(argv: list[str]) -> int:
 
     # Tooling extras used by CI jobs (including marketing parity checks).
     download(wheelhouse, build_download_cmd(wheelhouse, args, [".[tools]"], args.python))
+
+    # Desktop extras are required by manual runtime UI parity proof jobs.
+    download(wheelhouse, build_download_cmd(wheelhouse, args, [".[desktop]"], args.python))
 
     # Dev extras are required by lint/type-check jobs running in wheelhouse-only mode.
     if not args.skip_dev:

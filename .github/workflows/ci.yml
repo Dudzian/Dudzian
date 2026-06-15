@@ -1378,6 +1378,179 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+  frontend-parity-runtime-proof:
+    if: github.event_name == 'workflow_dispatch'
+    name: Frontend parity runtime proof
+    runs-on: ubuntu-latest
+    needs: prepare-wheelhouse
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libpulse0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-xinerama0 \
+            xvfb \
+            xauth
+
+      - name: Download PySide6 wheel artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: wheelhouse-Linux-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- \
+            PySide6==${PYSIDE6_VERSION} \
+            PySide6_Addons==${PYSIDE6_VERSION} \
+            PySide6_Essentials==${PYSIDE6_VERSION} \
+            shiboken6==${PYSIDE6_VERSION}
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- .[dev,desktop]
+          python scripts/ci/pip_install.py --wheelhouse "$WHEELHOUSE_DIR" --require-wheelhouse -- \
+            pre-commit \
+            ruff==0.14.11 \
+            mypy==1.10.0
+
+      - name: Ruff frontend parity scope
+        run: |
+          python -m ruff check ui/pyside_app tests/ui_pyside tests/scripts/test_ui_preview_launch_plan.py
+
+      - name: Pytest UI PySide scope
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            python -m pytest -q tests/ui_pyside -vv
+
+      - name: Pytest UI preview launch plan
+        run: |
+          python -m pytest -q tests/scripts/test_ui_preview_launch_plan.py -vv
+
+      - name: Runtime smoke
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            python -m ui.pyside_app --config ui/config/preview_local.yaml --smoke --offscreen
+
+      - name: Runtime exercise smoke and assert FRONTEND-PARITY-3.0
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" python - <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          command = [
+              sys.executable,
+              "-m",
+              "ui.pyside_app",
+              "--config",
+              "ui/config/preview_local.yaml",
+              "--smoke",
+              "--offscreen",
+              "--exercise-preview-state",
+          ]
+          completed = subprocess.run(command, check=False, text=True, capture_output=True)
+          print(completed.stdout, end="")
+          print(completed.stderr, end="", file=sys.stderr)
+          lines = [line for line in completed.stdout.splitlines() if line.strip()]
+          if not lines:
+              raise SystemExit("runtime exercise smoke produced no JSON output")
+          payload = json.loads(lines[-1])
+          lifecycle_evidence = payload.get("order_lifecycle_evidence") or {}
+          terminal_evidence = payload.get("terminal_order_form_evidence") or {}
+          frontend_evidence = payload.get("frontend_live_parity_evidence") or {}
+          assertions = {
+              "status": payload.get("status") == "ok",
+              "issues": payload.get("issues") == [],
+              "order_lifecycle_preview_parity_complete": (
+                  payload.get("order_lifecycle_preview_parity_complete") is True
+              ),
+              "order_lifecycle_missing_checks": (
+                  lifecycle_evidence.get("order_lifecycle_missing_checks") == []
+              ),
+              "terminal_order_form_live_shape_complete": (
+                  payload.get("terminal_order_form_live_shape_complete") is True
+              ),
+              "terminal_order_form_missing_checks": (
+                  terminal_evidence.get("terminal_order_form_missing_checks") == []
+              ),
+              "frontend_live_parity_missing_sections": (
+                  frontend_evidence.get("frontend_live_parity_missing_sections") == []
+              ),
+              "frontend_live_parity_all_required_sections_present": (
+                  payload.get("frontend_live_parity_all_required_sections_present") is True
+              ),
+          }
+          print(json.dumps({key: payload.get(key) for key in ("status", "issues")}, sort_keys=True))
+          print(json.dumps({
+              "order_lifecycle_preview_parity_complete": payload.get(
+                  "order_lifecycle_preview_parity_complete"
+              ),
+              "order_lifecycle_missing_checks": lifecycle_evidence.get(
+                  "order_lifecycle_missing_checks"
+              ),
+              "terminal_order_form_live_shape_complete": payload.get(
+                  "terminal_order_form_live_shape_complete"
+              ),
+              "terminal_order_form_missing_checks": terminal_evidence.get(
+                  "terminal_order_form_missing_checks"
+              ),
+              "frontend_live_parity_missing_sections": frontend_evidence.get(
+                  "frontend_live_parity_missing_sections"
+              ),
+              "frontend_live_parity_all_required_sections_present": payload.get(
+                  "frontend_live_parity_all_required_sections_present"
+              ),
+          }, sort_keys=True))
+          failed = [key for key, passed in assertions.items() if not passed]
+          if completed.returncode != 0 or failed:
+              raise SystemExit(
+                  f"runtime exercise smoke failed: returncode={completed.returncode}, "
+                  f"failed_assertions={failed}"
+              )
+          PY
+
+      - name: Pre-commit ruff frontend parity files
+        run: |
+          python -m pre_commit run ruff --files ui/pyside_app/smoke.py tests/ui_pyside/test_source_smoke.py ui/pyside_app/qml/views/PaperTerminal.qml ui/pyside_app/qml/views/AiDecisionsView.qml ui/pyside_app/qml/views/PortfolioPerformance.qml ui/pyside_app/qml/MainWindow.qml
+
+      - name: Pre-commit ruff-format frontend parity files
+        run: |
+          python -m pre_commit run ruff-format --files ui/pyside_app/smoke.py tests/ui_pyside/test_source_smoke.py ui/pyside_app/qml/views/PaperTerminal.qml ui/pyside_app/qml/views/AiDecisionsView.qml ui/pyside_app/qml/views/PortfolioPerformance.qml ui/pyside_app/qml/MainWindow.qml
+
+      - name: Pre-commit mypy frontend parity files
+        run: |
+          python -m pre_commit run mypy --files ui/pyside_app/smoke.py tests/ui_pyside/test_source_smoke.py
+
+      - name: Git diff check
+        run: git diff --check
+
+      - name: Runtime artifact diff check
+        run: git diff -- reports/ci/decision_feed_metrics.json var/ui_layouts.json
+
+      - name: Git status check
+        run: |
+          git status --short
+          test -z "$(git status --short)"
+
   grpc-feed-integration:
     if: github.event_name != 'schedule'
     name: gRPC Decision Feed Integration
