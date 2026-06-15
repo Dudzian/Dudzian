@@ -16,6 +16,7 @@ from ui.pyside_app.smoke import (
     FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS,
     FRONTEND_LIVE_PARITY_SMOKE_KEYS,
     FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS,
+    FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS,
     FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS,
     FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
     FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS,
@@ -24,6 +25,7 @@ from ui.pyside_app.smoke import (
     _audit_typed_preview_bridge,
     _build_frontend_live_parity_evidence,
     _build_market_scanner_live_field_evidence,
+    _build_portfolio_live_shape_evidence,
     _build_order_lifecycle_parity_evidence,
     _build_risk_live_safety_controls_evidence,
     _build_terminal_order_form_parity_evidence,
@@ -2873,3 +2875,82 @@ def test_ui_preview_8_0b_smoke_audits_portfolio_state_and_safety() -> None:
     assert audit["safety_boundary_ok"] is True
     assert payload["safety_boundary_ok"] is True
     assert payload["portfolio_filters_do_not_mutate_paper_state"] is True
+
+
+def test_portfolio_live_shape_required_checks_contract() -> None:
+    assert set(FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS) >= {
+        "portfolio_summary_visible",
+        "portfolio_equity_visible",
+        "portfolio_cash_or_balance_visible",
+        "portfolio_unrealized_pnl_visible",
+        "portfolio_realized_pnl_visible",
+        "portfolio_total_pnl_visible",
+        "portfolio_daily_pnl_visible",
+        "portfolio_drawdown_visible",
+        "portfolio_exposure_visible",
+        "portfolio_freshness_visible",
+        "portfolio_local_source_marker_visible",
+        "portfolio_open_positions_visible",
+        "portfolio_position_symbol_visible",
+        "portfolio_position_side_visible",
+        "portfolio_position_quantity_visible",
+        "portfolio_position_entry_price_visible",
+        "portfolio_position_mark_price_visible",
+        "portfolio_position_unrealized_pnl_visible",
+        "portfolio_position_exposure_visible",
+        "portfolio_open_orders_visible",
+        "portfolio_order_symbol_visible",
+        "portfolio_order_side_visible",
+        "portfolio_order_quantity_visible",
+        "portfolio_order_status_visible",
+        "portfolio_closed_trades_visible",
+        "portfolio_closed_trade_symbol_visible",
+        "portfolio_closed_trade_pnl_visible",
+        "portfolio_fills_or_executions_placeholder_visible",
+        "portfolio_fees_or_slippage_placeholder_visible",
+        "portfolio_risk_state_visible",
+        "portfolio_blocked_exposure_reason_visible",
+        "portfolio_no_live_account_sync_visible",
+        "portfolio_no_exchange_balance_fetch_visible",
+        "portfolio_no_real_fill_path_visible",
+        "portfolio_no_real_order_path_visible",
+        "portfolio_uses_local_paper_state",
+        "portfolio_updates_after_preview_order_local_only",
+    }
+
+
+def test_portfolio_live_shape_evidence_complete_and_ignores_extra_diagnostics() -> None:
+    audit = {key: True for key in FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS}
+    audit["source_diagnostic_only"] = False
+
+    evidence = _build_portfolio_live_shape_evidence(audit)
+
+    assert evidence["portfolio_live_shape_parity_complete"] is True
+    assert evidence["portfolio_live_shape_missing_checks"] == []
+    assert "source_diagnostic_only" not in evidence
+    for check in FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS:
+        assert evidence[check] is True
+
+
+def test_portfolio_live_shape_evidence_reports_missing_required_check() -> None:
+    audit = {key: True for key in FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS}
+    audit["portfolio_no_real_order_path_visible"] = False
+
+    evidence = _build_portfolio_live_shape_evidence(audit)
+
+    assert evidence["portfolio_live_shape_parity_complete"] is False
+    assert evidence["portfolio_live_shape_missing_checks"] == [
+        "portfolio_no_real_order_path_visible"
+    ]
+
+
+def test_portfolio_live_shape_required_checks_not_masked_by_source_diagnostics() -> None:
+    audit = {key: True for key in FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS}
+    del audit["portfolio_summary_visible"]
+    audit["portfolio_summary_source_present"] = True
+
+    evidence = _build_portfolio_live_shape_evidence(audit)
+
+    assert evidence["portfolio_summary_visible"] is False
+    assert "portfolio_summary_visible" in evidence["portfolio_live_shape_missing_checks"]
+    assert evidence["portfolio_live_shape_parity_complete"] is False

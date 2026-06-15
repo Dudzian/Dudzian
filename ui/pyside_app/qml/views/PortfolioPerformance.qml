@@ -47,6 +47,40 @@ Components.StyledScrollView {
             description: qsTr("Raport portfolio jest lokalnym snapshotem UI. runtime loop not started, exchange I/O disabled, order submission disabled, API keys not required, no secrets/env/keychain reads. Filtry czasu aktualizują tylko Portfolio report / selected range, nigdy Paper session PnL / equity.")
         }
 
+
+
+        Components.PreviewCard {
+            objectName: "portfolioLiveShapeSummaryCard"
+            descriptionObjectName: "portfolioLiveShapeSummaryLabel"
+            designSystem: root.designSystem
+            title: qsTr("LOCAL PAPER PORTFOLIO • PREVIEW PORTFOLIO ONLY")
+            description: qsTr("Account/equity summary: equity %1 • cash/balance %2 • unrealized PnL %3 • realized PnL %4 • total PnL %5 • daily PnL %6 • drawdown %7 • exposure %8 • FRESHNESS / STALE marker %9 • source LOCAL PAPER PORTFOLIO / local preview paper portfolio.").arg(previewState.formatMoney(previewState.portfolioTotalEquityUsd, "USD")).arg(previewState.formatMoney(previewState.portfolioAvailableBalanceUsd, previewState.portfolioBaseCurrency)).arg(previewState.formatUsd(previewState.portfolioUnrealizedPnlUsd)).arg(previewState.formatUsd(previewState.portfolioRealizedPnlUsd)).arg(previewState.formatUsd(previewState.portfolioNetPnlUsd)).arg(previewState.formatUsd(previewState.portfolioSessionPnlUsd)).arg(previewState.portfolioMaxDrawdown).arg(previewState.formatMoney(previewState.portfolioInPositionsUsd, previewState.portfolioBaseCurrency)).arg(previewState.portfolioLastCycleTimestamp)
+        }
+
+        Components.PreviewCard {
+            objectName: "portfolioLiveShapePositionsCard"
+            descriptionObjectName: "portfolioLiveShapePositionsLabel"
+            designSystem: root.designSystem
+            title: qsTr("Open positions • PAPER POSITIONS ONLY")
+            description: previewState.paperOpenPositions.length > 0 ? qsTr("Open positions visible: symbol %1 • side %2 • quantity %3 • entry price %4 • mark price local preview %5 • unrealized PnL %6 • exposure %7 • PAPER POSITIONS ONLY.").arg(previewState.paperOpenPositions[0].pair).arg(previewState.paperOpenPositions[0].side).arg(previewState.paperOpenPositions[0].size).arg(previewState.paperOpenPositions[0].entry || "local paper entry").arg(previewState.terminalPrice || "local mark").arg(previewState.paperOpenPositions[0].pnl || previewState.formatUsd(previewState.paperPnl)).arg(previewState.formatMoney(previewState.portfolioInPositionsUsd, previewState.portfolioBaseCurrency)) : qsTr("Open positions placeholder: PAPER POSITIONS ONLY • no live positions fetched • symbol/side/quantity/entry price/mark price/unrealized PnL/exposure placeholders visible.")
+        }
+
+        Components.PreviewCard {
+            objectName: "portfolioLiveShapeOrdersTradesCard"
+            descriptionObjectName: "portfolioLiveShapeOrdersTradesLabel"
+            designSystem: root.designSystem
+            title: qsTr("Orders / trades / fills preview")
+            description: qsTr("Open orders visible: symbol %1 • side %2 • quantity %3 • status %4. Closed trades/history visible: symbol %5 • closed trade PnL %6. PAPER FILLS / EXECUTIONS PLACEHOLDER • fees/slippage placeholder %7 / funding-other %8 • local paper history only.").arg(previewState.paperOrderRows.length > 0 ? previewState.paperOrderRows[0].pair : previewState.selectedTerminalPair).arg(previewState.paperOrderRows.length > 0 ? (previewState.paperOrderRows[0].side || previewState.paperOrderRows[0].action) : previewState.terminalSide).arg(previewState.paperOrderRows.length > 0 ? (previewState.paperOrderRows[0].amount || previewState.terminalAmount) : previewState.terminalAmount).arg(previewState.paperOrderRows.length > 0 ? previewState.paperOrderRows[0].status : "paper placeholder").arg(previewState.paperClosedTrades.length > 0 ? previewState.paperClosedTrades[0].pair : previewState.selectedTerminalPair).arg(previewState.paperClosedTrades.length > 0 ? (previewState.paperClosedTrades[0].result || previewState.paperClosedTrades[0].pnl) : previewState.formatUsd(0)).arg(previewState.formatMoney(previewState.portfolioFeesUsd, previewState.portfolioBaseCurrency)).arg(previewState.formatMoney(previewState.portfolioFundingOtherCostsUsd, previewState.portfolioBaseCurrency))
+        }
+
+        Components.PreviewCard {
+            objectName: "portfolioLiveShapeRiskBoundaryCard"
+            descriptionObjectName: "portfolioLiveShapeRiskBoundaryLabel"
+            designSystem: root.designSystem
+            title: qsTr("Risk / local-only boundary")
+            description: qsTr("Risk state %1 • blocked exposure reason %2 • NO LIVE ACCOUNT SYNC • NO EXCHANGE BALANCE FETCH • NO REAL FILL PATH • NO REAL ORDER PATH • local-only guarantee • uses local paper state after preview order updates.").arg(previewState.riskState).arg(previewState.riskBlockReason)
+        }
+
         Components.PreviewCard {
             objectName: "portfolioTimeFiltersCard"
             designSystem: root.designSystem
