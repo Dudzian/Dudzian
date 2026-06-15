@@ -178,6 +178,8 @@ class UiSmokeResult:
     terminal_order_form_evidence: dict[str, object] = field(default_factory=dict)
     order_lifecycle_preview_parity_complete: bool = False
     order_lifecycle_evidence: dict[str, object] = field(default_factory=dict)
+    market_scanner_live_field_parity_complete: bool = False
+    market_scanner_live_field_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -573,6 +575,7 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
         "market_scanner_filter_sort_threshold_present",
         "market_scanner_explain_updates_explanation",
         "simulation_can_use_scanner_candidate_local_only",
+        "market_scanner_live_field_parity_complete",
     ),
     "ai_governor": (
         "governor_updates_decision",
@@ -681,6 +684,58 @@ FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS = (
 )
 
 
+FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS = (
+    "market_scanner_table_visible",
+    "market_scanner_rows_visible",
+    "market_scanner_symbol_visible",
+    "market_scanner_exchange_or_venue_visible",
+    "market_scanner_price_visible",
+    "market_scanner_spread_visible",
+    "market_scanner_volume_or_liquidity_visible",
+    "market_scanner_volatility_visible",
+    "market_scanner_score_visible",
+    "market_scanner_risk_score_visible",
+    "market_scanner_confidence_visible",
+    "market_scanner_ai_action_visible",
+    "market_scanner_risk_decision_visible",
+    "market_scanner_reason_visible",
+    "market_scanner_freshness_visible",
+    "market_scanner_local_source_marker_visible",
+    "market_scanner_filter_controls_visible",
+    "market_scanner_sort_controls_visible",
+    "market_scanner_threshold_controls_visible",
+    "market_scanner_selected_candidate_details_visible",
+    "market_scanner_explain_candidate_local_only",
+    "market_scanner_can_select_candidate_local_only",
+    "market_scanner_no_exchange_io_visible",
+    "market_scanner_no_live_feed_visible",
+    "market_scanner_no_real_order_path_visible",
+    "market_scanner_uses_local_preview_catalog",
+    "market_scanner_updates_shared_preview_state_local_only",
+)
+
+
+def _build_market_scanner_live_field_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build fail-closed FRONTEND-PARITY-5.0 scanner live-field evidence."""
+
+    missing_checks = [
+        key
+        for key in FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS
+        if audit.get(key) is not True
+    ]
+    return {
+        "market_scanner_live_field_required_checks": list(
+            FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS
+        ),
+        "market_scanner_live_field_missing_checks": missing_checks,
+        "market_scanner_live_field_parity_complete": not missing_checks,
+        **{
+            key: audit.get(key) is True
+            for key in FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS
+        },
+    }
+
+
 def _build_risk_live_safety_controls_evidence(audit: dict[str, object]) -> dict[str, object]:
     """Build fail-closed evidence for visible preview risk/live safety controls."""
 
@@ -735,6 +790,7 @@ FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
     "frontend_live_parity_alerts_telemetry_present",
     "frontend_live_parity_live_safety_boundary_visible",
     "risk_live_safety_controls_visible_complete",
+    "market_scanner_live_field_parity_complete",
     "frontend_live_parity_no_fake_live_actions",
     "frontend_live_parity_all_required_sections_present",
 )
@@ -782,6 +838,10 @@ def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, 
             "live_safety_boundary"
         ],
         "risk_live_safety_controls_visible_complete": section_results["risk_live_safety_controls"],
+        "market_scanner_live_field_parity_complete": normalized_audit.get(
+            "market_scanner_live_field_parity_complete"
+        )
+        is True,
         "frontend_live_parity_no_fake_live_actions": no_fake_live_actions,
         "frontend_live_parity_all_required_sections_present": (
             not missing_sections and no_fake_live_actions
@@ -1228,6 +1288,23 @@ def _qml_object_visible_with_size(root: Any, object_name: str) -> bool:
         max(_number_property(item, "width"), _number_property(item, "implicitWidth")) > 0
         and max(_number_property(item, "height"), _number_property(item, "implicitHeight")) > 0
     )
+
+
+def _read_visible_panel_object_property(
+    root: Any, panel_id: str, object_name: str, property_name: str
+) -> str:
+    _invoke_show_panel(root, panel_id)
+    _process_events()
+    item = _find_qml_object(root, object_name)
+    if item is None:
+        return ""
+    try:
+        value = item.property(property_name)
+    except RuntimeError:
+        return ""
+    if value in (None, ""):
+        return ""
+    return str(_variant(value))
 
 
 def _read_visible_panel_object(root: Any, panel_id: str, object_name: str) -> str:
@@ -2165,6 +2242,149 @@ def _exercise_preview_state(
         _bool_property(root, "orderSubmissionDisabled") is True
     )
     audit["market_scanner_no_secret_reads"] = True
+    _invoke_show_panel(root, "marketScannerPanel")
+    _process_events()
+    scanner_table_text = " ".join(
+        (
+            _read_visible_panel_object(root, "marketScannerPanel", "previewScannerRowsView"),
+            _read_visible_panel_object_property(
+                root, "marketScannerPanel", "previewScannerRowsView", "description"
+            ),
+        )
+    )
+    scanner_live_fields_text = " ".join(
+        (
+            _read_visible_panel_object(root, "marketScannerPanel", "marketScannerLiveFieldSummary"),
+            _read_visible_panel_object_property(
+                root, "marketScannerPanel", "marketScannerLiveFieldSummary", "description"
+            ),
+        )
+    )
+    scanner_selected_details_text = " ".join(
+        (
+            _read_visible_panel_object(
+                root, "marketScannerPanel", "marketScannerSelectedCandidateDetails"
+            ),
+            _read_visible_panel_object_property(
+                root, "marketScannerPanel", "marketScannerSelectedCandidateDetails", "description"
+            ),
+        )
+    )
+    scanner_safety_text = " ".join(
+        (
+            _read_visible_panel_object(
+                root, "marketScannerPanel", "marketScannerSafetyBoundaryCard"
+            ),
+            _read_visible_panel_object_property(
+                root, "marketScannerPanel", "marketScannerSafetyBoundaryCard", "description"
+            ),
+        )
+    )
+    scanner_explanation_text = " ".join(
+        (
+            _read_visible_panel_object(root, "marketScannerPanel", "marketScannerExplanationPanel"),
+            _read_visible_panel_object_property(
+                root, "marketScannerPanel", "marketScannerExplanationPanel", "description"
+            ),
+        )
+    )
+    scanner_rows = _variant(root.property("scannerRows")) or []
+    selected_scanner_row = _variant(
+        _call_qml(root, "scannerRowByPair", root.property("scannerSelectedPair")) or {}
+    )
+    selected_row_text = repr(selected_scanner_row)
+    audit["market_scanner_table_visible"] = _qml_object_visible_with_size(
+        root, "previewScannerRowsView"
+    ) and bool(scanner_table_text)
+    audit["market_scanner_rows_visible"] = (
+        audit["market_scanner_table_visible"] and len(scanner_rows) > 0
+    )
+    audit["market_scanner_symbol_visible"] = _contains_tokens(
+        scanner_table_text, ("Pair",)
+    ) and bool(selected_scanner_row.get("pair"))
+    audit["market_scanner_exchange_or_venue_visible"] = _contains_tokens(
+        scanner_table_text + selected_row_text, ("Exchange", "Paper Preview")
+    )
+    audit["market_scanner_price_visible"] = _contains_tokens(
+        scanner_table_text, ("Price",)
+    ) and bool(selected_scanner_row.get("price"))
+    audit["market_scanner_spread_visible"] = _contains_tokens(
+        scanner_table_text, ("Spread",)
+    ) and bool(selected_scanner_row.get("spread"))
+    audit["market_scanner_volume_or_liquidity_visible"] = _contains_tokens(
+        scanner_table_text, ("Volume", "Liquidity")
+    ) and bool(selected_scanner_row.get("volume"))
+    audit["market_scanner_volatility_visible"] = (
+        _contains_tokens(
+            scanner_live_fields_text + scanner_selected_details_text + scanner_explanation_text,
+            ("Volatility",),
+        )
+        and selected_scanner_row.get("volatility") is not None
+    )
+    audit["market_scanner_score_visible"] = _contains_tokens(
+        scanner_table_text, ("AI score",)
+    ) and (selected_scanner_row.get("aiScore") is not None)
+    audit["market_scanner_risk_score_visible"] = _contains_tokens(
+        scanner_table_text, ("Risk",)
+    ) and (selected_scanner_row.get("riskScore") is not None)
+    audit["market_scanner_confidence_visible"] = _contains_tokens(
+        scanner_live_fields_text, ("Confidence",)
+    )
+    audit["market_scanner_ai_action_visible"] = _contains_tokens(
+        scanner_live_fields_text + scanner_table_text, ("AI action", "Recommendation")
+    )
+    audit["market_scanner_risk_decision_visible"] = _contains_tokens(
+        scanner_live_fields_text + scanner_selected_details_text, ("RISK DECISION",)
+    )
+    audit["market_scanner_reason_visible"] = _contains_tokens(
+        scanner_table_text, ("Reason",)
+    ) and bool(selected_scanner_row.get("reason"))
+    audit["market_scanner_freshness_visible"] = _contains_tokens(
+        scanner_live_fields_text + scanner_selected_details_text, ("FRESHNESS",)
+    )
+    audit["market_scanner_local_source_marker_visible"] = _contains_tokens(
+        scanner_live_fields_text + scanner_safety_text, ("LOCAL PREVIEW FEED",)
+    )
+    audit["market_scanner_filter_controls_visible"] = _qml_object_visible_with_size(
+        root, "marketScannerFilterModeControl"
+    )
+    audit["market_scanner_sort_controls_visible"] = _qml_object_visible_with_size(
+        root, "marketScannerSortModeControl"
+    )
+    audit["market_scanner_threshold_controls_visible"] = _qml_object_visible_with_size(
+        root, "marketScannerThresholdControls"
+    )
+    audit["market_scanner_selected_candidate_details_visible"] = _qml_object_visible_with_size(
+        root, "marketScannerSelectedCandidateDetails"
+    ) and bool(scanner_selected_details_text)
+    audit["market_scanner_explain_candidate_local_only"] = _contains_tokens(
+        scanner_explanation_text, ("Live trading disabled", "order submission disabled")
+    )
+    audit["market_scanner_can_select_candidate_local_only"] = (
+        _string_property(root, "selectedTerminalPair")
+        == _string_property(root, "scannerSelectedPair")
+        and _bool_property(root, "runtimeLoopStarted") is False
+    )
+    audit["market_scanner_no_exchange_io_visible"] = _contains_tokens(
+        scanner_safety_text + scanner_live_fields_text, ("NO EXCHANGE I/O",)
+    )
+    audit["market_scanner_no_live_feed_visible"] = _contains_tokens(
+        scanner_safety_text + scanner_live_fields_text, ("NO LIVE FEED",)
+    )
+    audit["market_scanner_no_real_order_path_visible"] = _contains_tokens(
+        scanner_safety_text + scanner_live_fields_text, ("NO REAL ORDER PATH",)
+    )
+    audit["market_scanner_uses_local_preview_catalog"] = (
+        _contains_tokens(
+            scanner_safety_text + scanner_live_fields_text, ("LOCAL PREVIEW", "catalog")
+        )
+        and len(scanner_rows) >= 30
+    )
+    audit["market_scanner_updates_shared_preview_state_local_only"] = (
+        audit.get("simulation_can_use_scanner_candidate_local_only") is True
+        and _bool_property(root, "exchangeIoDisabled") is True
+        and _bool_property(root, "orderSubmissionDisabled") is True
+    )
     decision_state_fields = (
         "decisionExplainDrawerOpen",
         "selectedDecisionId",
@@ -2754,6 +2974,9 @@ def _exercise_preview_state(
     terminal_order_form_evidence = _build_terminal_order_form_parity_evidence(audit)
     audit["terminal_order_form_evidence"] = terminal_order_form_evidence
     audit.update(terminal_order_form_evidence)
+    market_scanner_live_field_evidence = _build_market_scanner_live_field_evidence(audit)
+    audit["market_scanner_live_field_evidence"] = market_scanner_live_field_evidence
+    audit.update(market_scanner_live_field_evidence)
 
     frontend_live_parity_evidence = _build_frontend_live_parity_evidence(audit)
     audit["frontend_live_parity_evidence"] = frontend_live_parity_evidence
@@ -3932,6 +4155,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         )
         if not isinstance(risk_live_safety_controls_evidence, dict):
             risk_live_safety_controls_evidence = {}
+        market_scanner_live_field_evidence = preview_state_audit.get(
+            "market_scanner_live_field_evidence", {}
+        )
+        if not isinstance(market_scanner_live_field_evidence, dict):
+            market_scanner_live_field_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -4236,6 +4464,12 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 order_lifecycle_evidence.get("order_lifecycle_preview_parity_complete", False)
             ),
             order_lifecycle_evidence=order_lifecycle_evidence,
+            market_scanner_live_field_parity_complete=bool(
+                market_scanner_live_field_evidence.get(
+                    "market_scanner_live_field_parity_complete", False
+                )
+            ),
+            market_scanner_live_field_evidence=market_scanner_live_field_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)
