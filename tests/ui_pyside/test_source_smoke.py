@@ -15,6 +15,7 @@ from ui.pyside_app.smoke import (
     PREVIEW_LAUNCH_READINESS_CHECKS,
     FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS,
     FRONTEND_LIVE_PARITY_SMOKE_KEYS,
+    FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS,
     FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS,
     FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
     FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS,
@@ -22,6 +23,7 @@ from ui.pyside_app.smoke import (
     TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS,
     _audit_typed_preview_bridge,
     _build_frontend_live_parity_evidence,
+    _build_market_scanner_live_field_evidence,
     _build_order_lifecycle_parity_evidence,
     _build_risk_live_safety_controls_evidence,
     _build_terminal_order_form_parity_evidence,
@@ -419,6 +421,81 @@ def test_frontend_live_parity_dashboard_requires_runtime_alert_summary() -> None
     assert evidence["frontend_live_parity_missing_sections"] == ["dashboard"]
     assert evidence["frontend_live_parity_dashboard_present"] is False
     assert evidence["frontend_live_parity_all_required_sections_present"] is False
+
+
+def _market_scanner_live_field_green_audit() -> dict[str, object]:
+    return {key: True for key in FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS}
+
+
+def test_market_scanner_live_field_evidence_helper_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+    scanner = (QML_SOURCE_ROOT / "views" / "MarketScanner.qml").read_text(encoding="utf-8")
+
+    assert "FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS" in smoke_source
+    assert "def _build_market_scanner_live_field_evidence" in smoke_source
+    assert "market_scanner_live_field_evidence" in smoke_source
+    assert "market_scanner_live_field_parity_complete" in smoke_source
+    assert "market_scanner_live_field_parity_complete" in smoke_source
+    assert 'root, "marketScannerPanel", "marketScannerLiveFieldSummary"' in smoke_source
+    assert 'audit["market_scanner_table_visible"] = _qml_object_visible_with_size' in smoke_source
+    for key in FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS:
+        assert key in smoke_source
+    for token in (
+        'objectName: "marketScannerLiveFieldSummary"',
+        'objectName: "marketScannerSelectedCandidateDetails"',
+        "LOCAL PREVIEW FEED",
+        "NO EXCHANGE I/O",
+        "NO LIVE FEED",
+        "NO REAL ORDER PATH",
+        "PAPER / MOCK SCANNER ONLY",
+        "FRESHNESS",
+        "RISK DECISION",
+    ):
+        assert token in scanner
+
+
+def test_market_scanner_live_field_evidence_complete() -> None:
+    evidence = _build_market_scanner_live_field_evidence(_market_scanner_live_field_green_audit())
+
+    assert evidence["market_scanner_live_field_required_checks"] == list(
+        FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS
+    )
+    assert evidence["market_scanner_live_field_missing_checks"] == []
+    assert evidence["market_scanner_live_field_parity_complete"] is True
+    for key in FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS:
+        assert evidence[key] is True
+
+
+def test_market_scanner_live_field_reports_missing_required_check() -> None:
+    audit = _market_scanner_live_field_green_audit()
+    audit["market_scanner_price_visible"] = False
+
+    evidence = _build_market_scanner_live_field_evidence(audit)
+
+    assert evidence["market_scanner_live_field_missing_checks"] == ["market_scanner_price_visible"]
+    assert evidence["market_scanner_price_visible"] is False
+    assert evidence["market_scanner_live_field_parity_complete"] is False
+
+
+def test_market_scanner_live_field_ignores_extra_diagnostics() -> None:
+    audit = _market_scanner_live_field_green_audit()
+    baseline = _build_market_scanner_live_field_evidence(audit)
+    audit["market_scanner_source_diagnostic"] = False
+
+    assert _build_market_scanner_live_field_evidence(audit) == baseline
+
+
+def test_market_scanner_live_field_requires_runtime_not_source_fallback() -> None:
+    audit = _market_scanner_live_field_green_audit()
+    audit["market_scanner_no_live_feed_visible"] = False
+    audit["market_scanner_no_live_feed_source_present"] = True
+
+    evidence = _build_market_scanner_live_field_evidence(audit)
+
+    assert evidence["market_scanner_live_field_missing_checks"] == [
+        "market_scanner_no_live_feed_visible"
+    ]
+    assert evidence["market_scanner_live_field_parity_complete"] is False
 
 
 def _risk_live_safety_green_audit() -> dict[str, object]:
@@ -1076,6 +1153,15 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
         assert audit[key] is True
         assert frontend_evidence[key] is True
     assert payload["frontend_live_parity_evidence"] == frontend_evidence
+    market_scanner_evidence = audit["market_scanner_live_field_evidence"]
+    assert isinstance(market_scanner_evidence, dict)
+    assert market_scanner_evidence["market_scanner_live_field_parity_complete"] is True
+    assert market_scanner_evidence["market_scanner_live_field_missing_checks"] == []
+    assert payload["market_scanner_live_field_parity_complete"] is True
+    assert payload["market_scanner_live_field_evidence"] == market_scanner_evidence
+    for key in FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS:
+        assert audit[key] is True
+        assert market_scanner_evidence[key] is True
     risk_safety_evidence = audit["risk_live_safety_controls_evidence"]
     assert isinstance(risk_safety_evidence, dict)
     assert risk_safety_evidence["risk_live_safety_controls_visible_complete"] is True
