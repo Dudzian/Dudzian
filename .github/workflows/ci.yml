@@ -1369,6 +1369,7 @@ jobs:
       QT_QPA_PLATFORM: offscreen
       QT_QUICK_BACKEND: software
       PYTHONFAULTHANDLER: "1"
+      WHEELHOUSE_DIR: ${{ runner.temp }}/wheelhouse
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
