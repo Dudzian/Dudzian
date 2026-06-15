@@ -23,6 +23,7 @@ from ui.pyside_app.smoke import (
     _build_frontend_live_parity_evidence,
     _build_order_lifecycle_parity_evidence,
     _build_terminal_order_form_parity_evidence,
+    _rows_contain_tokens,
     _preview_launch_readiness_evidence,
     _rows_contain_tokens,
     _typed_preview_bridge_consumer_evidence,
