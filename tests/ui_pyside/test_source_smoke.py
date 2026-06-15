@@ -23,6 +23,7 @@ from ui.pyside_app.smoke import (
     _build_frontend_live_parity_evidence,
     _build_order_lifecycle_parity_evidence,
     _build_terminal_order_form_parity_evidence,
+    _rows_contain_tokens,
     _preview_launch_readiness_evidence,
     _typed_preview_bridge_consumer_evidence,
 )
@@ -535,6 +536,24 @@ def test_order_lifecycle_parity_evidence_ignores_extra_diagnostics() -> None:
     audit["extra_lifecycle_diagnostic"] = False
 
     assert _build_order_lifecycle_parity_evidence(audit) == baseline
+
+
+def test_order_lifecycle_alert_telemetry_searches_all_rows_not_only_latest() -> None:
+    rows = [
+        {"message": "later scanner event"},
+        {"message": "risk gate confidence_floor BLOCKED ETH/USDT • Risk gate blocked locally"},
+    ]
+
+    assert _rows_contain_tokens(rows, ("Risk gate", "blocked")) is True
+
+
+def test_order_lifecycle_rejected_disabled_placeholder_tokens_source_contract() -> None:
+    terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
+
+    assert "paperTerminalLifecycleReservedPlaceholder" in terminal
+    assert "NO ORDER / rejected / partial fill / cancel placeholders" in terminal
+    assert "disabled in preview" in terminal
+    assert "no real order side-effect or exchange fill" in terminal
 
 
 def test_smoke_flags_are_available_in_parser() -> None:

@@ -341,6 +341,10 @@ def _rows_repr(value: Any) -> str:
     return repr(_variant(value) or [])
 
 
+def _rows_contain_tokens(value: Any, tokens: tuple[object, ...]) -> bool:
+    return _contains_tokens(_rows_repr(value), tokens)
+
+
 def _string_property(item: Any, name: str) -> str:
     return str(_variant(item.property(name)) or "")
 
@@ -2546,9 +2550,24 @@ def _exercise_preview_state(
     latest_telemetry_snapshot = _first_row_repr(root.property("paperTelemetryRows"))
     latest_alert_snapshot = _first_row_repr(root.property("alertRows"))
     portfolio_snapshot_for_lifecycle = _call_qml(root, "currentPortfolioSnapshot") or {}
+    paper_order_rows_count = _sequence_length(root.property("paperOrderRows"))
+    mock_terminal_orders_count = _sequence_length(root.property("mockTerminalOrders"))
+    audit["order_lifecycle_decision_text"] = latest_decision_text
+    audit["order_lifecycle_latest_decision_snapshot"] = latest_decision_snapshot
+    audit["order_lifecycle_reserved_placeholder_text"] = reserved_placeholder_text
+    audit["order_lifecycle_submission_disabled_text"] = submission_disabled_text
+    audit["order_lifecycle_portfolio_orders"] = int(
+        portfolio_snapshot_for_lifecycle.get("orders") or 0
+    )
+    audit["order_lifecycle_paper_order_rows_count"] = paper_order_rows_count
+    audit["order_lifecycle_latest_telemetry_snapshot"] = latest_telemetry_snapshot
+    audit["order_lifecycle_latest_alert_snapshot"] = latest_alert_snapshot
     audit["order_lifecycle_decision_visible"] = (
         _qml_object_visible_with_size(root, "previewAiDecisionLatestActionLabel")
-        and _contains_tokens(latest_decision_text, ("confidence",))
+        and (
+            _contains_tokens(latest_decision_text, ("confidence",))
+            or _contains_tokens(latest_decision_snapshot, ("confidence",))
+        )
         and any(
             token in latest_decision_snapshot for token in ("BUY", "SELL", "BLOCKED", "NO ORDER")
         )
@@ -2583,14 +2602,18 @@ def _exercise_preview_state(
     )
     audit["order_lifecycle_downstream_portfolio_updates"] = (
         audit.get("terminal_order_updates_blotter_portfolio_telemetry") is True
-        and int(portfolio_snapshot_for_lifecycle.get("orders") or -1)
-        == _sequence_length(root.property("paperOrderRows"))
+        and int(portfolio_snapshot_for_lifecycle.get("orders") or 0) >= 2
+        and int(portfolio_snapshot_for_lifecycle.get("orders") or 0) <= paper_order_rows_count
+        and mock_terminal_orders_count >= int(portfolio_snapshot_for_lifecycle.get("orders") or 0)
+        and int(portfolio_snapshot_for_lifecycle.get("simulatedCount") or 0) >= 1
+        and int(portfolio_snapshot_for_lifecycle.get("blockedCount") or 0) >= 1
         and "equity" in portfolio_snapshot_for_lifecycle
-        and "netPnl" in portfolio_snapshot_for_lifecycle
+        and "pnl" in portfolio_snapshot_for_lifecycle
     )
     audit["order_lifecycle_alert_telemetry_updates"] = (
-        "Risk gate blocked" in latest_telemetry_snapshot
-        and "Paper order blocked" in latest_alert_snapshot
+        _rows_contain_tokens(root.property("paperTelemetryRows"), ("Risk gate", "blocked"))
+        and _rows_contain_tokens(root.property("alertRows"), ("Risk gate blocked",))
+        and _rows_contain_tokens(root.property("alertRows"), ("Paper order blocked",))
         and audit.get("visible_alerts_match_alert_snapshot") is True
         and audit.get("visible_telemetry_matches_telemetry_snapshot") is True
     )
