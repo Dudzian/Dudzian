@@ -180,6 +180,8 @@ class UiSmokeResult:
     order_lifecycle_evidence: dict[str, object] = field(default_factory=dict)
     market_scanner_live_field_parity_complete: bool = False
     market_scanner_live_field_evidence: dict[str, object] = field(default_factory=dict)
+    portfolio_live_shape_parity_complete: bool = False
+    portfolio_live_shape_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -606,6 +608,7 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
         "portfolio_time_filter_does_not_mutate_paper_state",
         "portfolio_custom_filter_does_not_mutate_paper_state",
         "visible_portfolio_matches_portfolio_snapshot",
+        "portfolio_live_shape_parity_complete",
     ),
     "alerts_telemetry": (
         "alerts_state_present",
@@ -682,6 +685,61 @@ FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS = (
     "risk_blocked_event_visible",
     "operator_can_explain_blocked_state_local_only",
 )
+
+
+FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS = (
+    "portfolio_summary_visible",
+    "portfolio_equity_visible",
+    "portfolio_cash_or_balance_visible",
+    "portfolio_unrealized_pnl_visible",
+    "portfolio_realized_pnl_visible",
+    "portfolio_total_pnl_visible",
+    "portfolio_daily_pnl_visible",
+    "portfolio_drawdown_visible",
+    "portfolio_exposure_visible",
+    "portfolio_freshness_visible",
+    "portfolio_local_source_marker_visible",
+    "portfolio_open_positions_visible",
+    "portfolio_position_symbol_visible",
+    "portfolio_position_side_visible",
+    "portfolio_position_quantity_visible",
+    "portfolio_position_entry_price_visible",
+    "portfolio_position_mark_price_visible",
+    "portfolio_position_unrealized_pnl_visible",
+    "portfolio_position_exposure_visible",
+    "portfolio_open_orders_visible",
+    "portfolio_order_symbol_visible",
+    "portfolio_order_side_visible",
+    "portfolio_order_quantity_visible",
+    "portfolio_order_status_visible",
+    "portfolio_closed_trades_visible",
+    "portfolio_closed_trade_symbol_visible",
+    "portfolio_closed_trade_pnl_visible",
+    "portfolio_fills_or_executions_placeholder_visible",
+    "portfolio_fees_or_slippage_placeholder_visible",
+    "portfolio_risk_state_visible",
+    "portfolio_blocked_exposure_reason_visible",
+    "portfolio_no_live_account_sync_visible",
+    "portfolio_no_exchange_balance_fetch_visible",
+    "portfolio_no_real_fill_path_visible",
+    "portfolio_no_real_order_path_visible",
+    "portfolio_uses_local_paper_state",
+    "portfolio_updates_after_preview_order_local_only",
+)
+
+
+def _build_portfolio_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build fail-closed FRONTEND-PARITY-6.0 portfolio live-shape evidence."""
+
+    missing_checks = [
+        key for key in FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS if audit.get(key) is not True
+    ]
+    return {
+        "portfolio_live_shape_required_checks": list(FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS),
+        "portfolio_live_shape_missing_checks": missing_checks,
+        "portfolio_live_shape_parity_complete": not missing_checks,
+        **{key: audit.get(key) is True for key in FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS},
+    }
 
 
 FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS = (
@@ -791,6 +849,7 @@ FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
     "frontend_live_parity_live_safety_boundary_visible",
     "risk_live_safety_controls_visible_complete",
     "market_scanner_live_field_parity_complete",
+    "portfolio_live_shape_parity_complete",
     "frontend_live_parity_no_fake_live_actions",
     "frontend_live_parity_all_required_sections_present",
 )
@@ -840,6 +899,10 @@ def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, 
         "risk_live_safety_controls_visible_complete": section_results["risk_live_safety_controls"],
         "market_scanner_live_field_parity_complete": normalized_audit.get(
             "market_scanner_live_field_parity_complete"
+        )
+        is True,
+        "portfolio_live_shape_parity_complete": normalized_audit.get(
+            "portfolio_live_shape_parity_complete"
         )
         is True,
         "frontend_live_parity_no_fake_live_actions": no_fake_live_actions,
@@ -2965,6 +3028,133 @@ def _exercise_preview_state(
     audit["operator_can_explain_blocked_state_local_only"] = _contains_tokens(
         risk_safety_text, ("Operator can explain blocked state local only",)
     )
+    _invoke_show_panel(root, "portfolioPerformancePanel")
+    _process_events()
+    portfolio_summary_text = _read_visible_panel_object(
+        root, "portfolioPerformancePanel", "portfolioLiveShapeSummaryLabel"
+    )
+    portfolio_positions_text = _read_visible_panel_object(
+        root, "portfolioPerformancePanel", "portfolioLiveShapePositionsLabel"
+    )
+    portfolio_orders_trades_text = _read_visible_panel_object(
+        root, "portfolioPerformancePanel", "portfolioLiveShapeOrdersTradesLabel"
+    )
+    portfolio_risk_boundary_text = _read_visible_panel_object(
+        root, "portfolioPerformancePanel", "portfolioLiveShapeRiskBoundaryLabel"
+    )
+    portfolio_live_shape_text = " ".join(
+        (
+            portfolio_summary_text,
+            portfolio_positions_text,
+            portfolio_orders_trades_text,
+            portfolio_risk_boundary_text,
+        )
+    )
+    audit["portfolio_summary_visible"] = _qml_object_visible_with_size(
+        root, "portfolioLiveShapeSummaryCard"
+    ) and _contains_tokens(portfolio_summary_text, ("Account/equity summary",))
+    audit["portfolio_equity_visible"] = _contains_tokens(portfolio_summary_text, ("equity",))
+    audit["portfolio_cash_or_balance_visible"] = _contains_tokens(
+        portfolio_summary_text, ("cash/balance",)
+    )
+    audit["portfolio_unrealized_pnl_visible"] = _contains_tokens(
+        portfolio_summary_text, ("unrealized PnL",)
+    )
+    audit["portfolio_realized_pnl_visible"] = _contains_tokens(
+        portfolio_summary_text, ("realized PnL",)
+    )
+    audit["portfolio_total_pnl_visible"] = _contains_tokens(portfolio_summary_text, ("total PnL",))
+    audit["portfolio_daily_pnl_visible"] = _contains_tokens(portfolio_summary_text, ("daily PnL",))
+    audit["portfolio_drawdown_visible"] = _contains_tokens(portfolio_summary_text, ("drawdown",))
+    audit["portfolio_exposure_visible"] = _contains_tokens(portfolio_summary_text, ("exposure",))
+    audit["portfolio_freshness_visible"] = _contains_tokens(
+        portfolio_summary_text, ("FRESHNESS", "STALE")
+    )
+    audit["portfolio_local_source_marker_visible"] = _contains_tokens(
+        portfolio_summary_text, ("LOCAL PAPER PORTFOLIO", "local preview")
+    )
+    audit["portfolio_open_positions_visible"] = _qml_object_visible_with_size(
+        root, "portfolioLiveShapePositionsCard"
+    ) and _contains_tokens(portfolio_positions_text, ("Open positions",))
+    audit["portfolio_position_symbol_visible"] = _contains_tokens(
+        portfolio_positions_text, ("symbol",)
+    )
+    audit["portfolio_position_side_visible"] = _contains_tokens(portfolio_positions_text, ("side",))
+    audit["portfolio_position_quantity_visible"] = _contains_tokens(
+        portfolio_positions_text, ("quantity",)
+    )
+    audit["portfolio_position_entry_price_visible"] = _contains_tokens(
+        portfolio_positions_text, ("entry price",)
+    )
+    audit["portfolio_position_mark_price_visible"] = _contains_tokens(
+        portfolio_positions_text, ("mark",)
+    ) and bool(_string_property(root, "terminalPrice"))
+    audit["portfolio_position_unrealized_pnl_visible"] = _contains_tokens(
+        portfolio_positions_text, ("unrealized PnL",)
+    )
+    audit["portfolio_position_exposure_visible"] = _contains_tokens(
+        portfolio_positions_text, ("exposure",)
+    )
+    audit["portfolio_open_orders_visible"] = _qml_object_visible_with_size(
+        root, "portfolioLiveShapeOrdersTradesCard"
+    ) and _contains_tokens(portfolio_orders_trades_text, ("Open orders",))
+    audit["portfolio_order_symbol_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("symbol",)
+    )
+    audit["portfolio_order_side_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("side",)
+    )
+    audit["portfolio_order_quantity_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("quantity",)
+    )
+    audit["portfolio_order_status_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("status",)
+    )
+    audit["portfolio_closed_trades_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("Closed trades/history",)
+    )
+    audit["portfolio_closed_trade_symbol_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("symbol",)
+    )
+    audit["portfolio_closed_trade_pnl_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("closed trade PnL",)
+    )
+    audit["portfolio_fills_or_executions_placeholder_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("PAPER FILLS / EXECUTIONS PLACEHOLDER",)
+    )
+    audit["portfolio_fees_or_slippage_placeholder_visible"] = _contains_tokens(
+        portfolio_orders_trades_text, ("fees/slippage placeholder",)
+    )
+    audit["portfolio_risk_state_visible"] = _qml_object_visible_with_size(
+        root, "portfolioLiveShapeRiskBoundaryCard"
+    ) and _contains_tokens(portfolio_risk_boundary_text, ("Risk state",))
+    audit["portfolio_blocked_exposure_reason_visible"] = _contains_tokens(
+        portfolio_risk_boundary_text, ("blocked exposure reason",)
+    )
+    audit["portfolio_no_live_account_sync_visible"] = _contains_tokens(
+        portfolio_risk_boundary_text, ("NO LIVE ACCOUNT SYNC",)
+    )
+    audit["portfolio_no_exchange_balance_fetch_visible"] = _contains_tokens(
+        portfolio_risk_boundary_text, ("NO EXCHANGE BALANCE FETCH",)
+    )
+    audit["portfolio_no_real_fill_path_visible"] = _contains_tokens(
+        portfolio_risk_boundary_text, ("NO REAL FILL PATH",)
+    )
+    audit["portfolio_no_real_order_path_visible"] = _contains_tokens(
+        portfolio_risk_boundary_text, ("NO REAL ORDER PATH",)
+    )
+    audit["portfolio_uses_local_paper_state"] = _contains_tokens(
+        portfolio_live_shape_text, ("local paper",)
+    )
+    audit["portfolio_updates_after_preview_order_local_only"] = (
+        audit.get("terminal_blotter_updates_portfolio_snapshot") is True
+        and audit.get("simulate_order_updates_blotter_portfolio_telemetry") is True
+        and _contains_tokens(portfolio_risk_boundary_text, ("local-only",))
+    )
+    portfolio_live_shape_evidence = _build_portfolio_live_shape_evidence(audit)
+    audit["portfolio_live_shape_evidence"] = portfolio_live_shape_evidence
+    audit.update(portfolio_live_shape_evidence)
+
     risk_live_safety_controls_evidence = _build_risk_live_safety_controls_evidence(audit)
     audit["risk_live_safety_controls_evidence"] = risk_live_safety_controls_evidence
     audit.update(risk_live_safety_controls_evidence)
@@ -2981,7 +3171,10 @@ def _exercise_preview_state(
     frontend_live_parity_evidence = _build_frontend_live_parity_evidence(audit)
     audit["frontend_live_parity_evidence"] = frontend_live_parity_evidence
     audit.update(
-        {key: frontend_live_parity_evidence[key] for key in FRONTEND_LIVE_PARITY_SMOKE_KEYS}
+        {
+            key: frontend_live_parity_evidence.get(key, False)
+            for key in FRONTEND_LIVE_PARITY_SMOKE_KEYS
+        }
     )
 
     required_true_keys = (
@@ -3151,6 +3344,7 @@ def _exercise_preview_state(
         "frontend_live_parity_all_required_sections_present",
         "risk_live_safety_controls_visible_complete",
         "terminal_order_form_live_shape_complete",
+        "portfolio_live_shape_parity_complete",
     )
     audit["passed"] = (
         int(audit["start_tick_delta"]) >= 1
@@ -3160,7 +3354,7 @@ def _exercise_preview_state(
         and int(audit["portfolio_filters_count"]) == 7
         and int(audit["portfolio_cycles_count"]) >= 4
         and int(audit["portfolio_cards_count"]) >= 13
-        and all(audit[key] is True for key in required_true_keys)
+        and all(audit.get(key) is True for key in required_true_keys)
     )
     return audit
 
@@ -4160,6 +4354,9 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         )
         if not isinstance(market_scanner_live_field_evidence, dict):
             market_scanner_live_field_evidence = {}
+        portfolio_live_shape_evidence = preview_state_audit.get("portfolio_live_shape_evidence", {})
+        if not isinstance(portfolio_live_shape_evidence, dict):
+            portfolio_live_shape_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -4470,6 +4667,10 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ),
             market_scanner_live_field_evidence=market_scanner_live_field_evidence,
+            portfolio_live_shape_parity_complete=bool(
+                portfolio_live_shape_evidence.get("portfolio_live_shape_parity_complete", False)
+            ),
+            portfolio_live_shape_evidence=portfolio_live_shape_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)
