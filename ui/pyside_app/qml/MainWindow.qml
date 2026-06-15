@@ -757,7 +757,7 @@ ApplicationWindow {
     property string alertEventExplanation: "Select an alert and click Explain event. Explanation is local preview only; no backend calls, no exchange/API calls, no order submission, no secrets read."
     property var alertSeverityFilters: ["All", "Critical", "Warning", "Info"]
     property var alertCategoryFilters: ["All", "Trading", "Risk", "AI", "Scanner", "Paper", "Portfolio", "Telemetry", "Diagnostics", "Safety"]
-    property string alertSafetyBoundaryCopy: "Alerts are local preview only • No OS notifications sent • No backend calls • No exchange/API calls • No order submission • No secrets read • Alerty działają lokalnie w preview • Brak systemowych powiadomień OS • Brak wywołań backendu • Brak połączeń giełda/API • Brak składania zleceń • Brak odczytu sekretów"
+    property string alertSafetyBoundaryCopy: "LOCAL ALERT FEED ONLY • NO CLOUD SINK • NO EXTERNAL EXPORT • Alerts are local preview only • No OS notifications sent • No backend calls • No exchange/API calls • No order submission • No secrets read • Alerty działają lokalnie w preview • Brak systemowych powiadomień OS • Brak wywołań backendu • Brak połączeń giełda/API • Brak składania zleceń • Brak odczytu sekretów"
 
     function normalizeAlertSeverity(severity) {
         if (severity === "Critical" || severity === "critical") return "Critical"
@@ -2887,10 +2887,17 @@ ApplicationWindow {
                     }
                 }
                 Components.PreviewCard {
+                    objectName: "alertCenterLiveShapeBoundary"
+                    designSystem: rootDesignSystem
+                    title: qsTr("LOCAL ALERT FEED ONLY")
+                    description: qsTr("LOCAL ALERT FEED ONLY • alert feed/list visible • severity • source • category • message • timestamp/FRESHNESS • acknowledged/unresolved placeholder: unread/unresolved • risk blocked alert • order blocked alert • scanner candidate alert • NO CLOUD SINK • NO EXTERNAL EXPORT • PAPER / MOCK EVENTS ONLY • local-only guarantee")
+                    Layout.fillWidth: true
+                }
+                Components.PreviewCard {
                     objectName: "alertCenterTimeline"
                     designSystem: rootDesignSystem
                     title: qsTr("Event timeline")
-                    description: qsTr("time • severity • category • source • pair • title • message • action • status/read")
+                    description: qsTr("time • severity • category • source • pair • title • message • action • status/read • acknowledged/unresolved placeholder")
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 34
@@ -2994,9 +3001,23 @@ ApplicationWindow {
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Data freshness"); description: root.telemetryFreshness; Layout.fillWidth: true }
                 }
                 Components.PreviewCard {
+                    objectName: "telemetryLiveShapeSummary"
+                    designSystem: rootDesignSystem
+                    title: qsTr("LOCAL PREVIEW TELEMETRY")
+                    description: qsTr("LOCAL PREVIEW TELEMETRY • runtime mode: local preview / paper simulation • local preview source marker • event type • component • message • timestamp/FRESHNESS • NO CLOUD SINK • NO EXTERNAL EXPORT • NO LIVE EXCHANGE STREAM • NO REAL ORDER EVENT STREAM • SECRETS NOT LOGGED • PAPER / MOCK EVENTS ONLY")
+                    Layout.fillWidth: true
+                }
+                Components.PreviewCard {
+                    objectName: "telemetryAuditLogCard"
+                    designSystem: rootDesignSystem
+                    title: qsTr("LOCAL AUDIT LOG ONLY")
+                    description: qsTr("LOCAL AUDIT LOG ONLY • audit/event log sequence • decision event • order event • risk event • scanner event • TRACE / CORRELATION marker • decision/order/risk/scanner event correlation • local-only guarantee • no external telemetry export")
+                    Layout.fillWidth: true
+                }
+                Components.PreviewCard {
                     designSystem: rootDesignSystem
                     title: qsTr("Telemetry heartbeat feed")
-                    description: qsTr("Ping feed and Paper Terminal events append to shared paperTelemetryRows: last heartbeat, session ticks, last paper event, bounded list 8–12 rows, exchange I/O disabled, runtime loop not started.")
+                    description: qsTr("event type heartbeat/paper action • component previewState/paper bridge • message rows append to shared paperTelemetryRows with timestamp/FRESHNESS: last heartbeat, session ticks, last paper event, bounded list 8–12 rows, exchange I/O disabled, runtime loop not started.")
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
@@ -3004,6 +3025,7 @@ ApplicationWindow {
                         Label { text: qsTr("heartbeat/tick source state: %1 • session ticks %2 • last paper event: %3").arg(root.telemetryTick).arg(root.paperSessionTicks).arg(root.paperTelemetryRows.length > 0 ? root.paperTelemetryRows[0].message : "none"); color: designSystem.color("textSecondary"); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     ListView {
+                        objectName: "telemetryFeedList"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 330
                         clip: true

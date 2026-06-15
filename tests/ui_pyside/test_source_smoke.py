@@ -15,6 +15,7 @@ from ui.pyside_app.smoke import (
     PREVIEW_LAUNCH_READINESS_CHECKS,
     FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS,
     FRONTEND_LIVE_PARITY_SMOKE_KEYS,
+    FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS,
     FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS,
     FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS,
     FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS,
@@ -23,6 +24,7 @@ from ui.pyside_app.smoke import (
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
     TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS,
     _audit_typed_preview_bridge,
+    _build_alerts_telemetry_live_shape_evidence,
     _build_frontend_live_parity_evidence,
     _build_market_scanner_live_field_evidence,
     _build_portfolio_live_shape_evidence,
@@ -356,6 +358,74 @@ def test_ui_smoke_does_not_dirty_tracked_artifacts() -> None:
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert _tracked_artifact_snapshot() == before
+
+
+def _alerts_telemetry_live_shape_green_audit() -> dict[str, object]:
+    return {key: True for key in FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS}
+
+
+def test_alerts_telemetry_live_shape_evidence_helper_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+    qml_source = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert "FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS" in smoke_source
+    assert "def _build_alerts_telemetry_live_shape_evidence" in smoke_source
+    assert "alerts_telemetry_live_shape_evidence" in smoke_source
+    assert "alerts_telemetry_live_shape_parity_complete" in smoke_source
+    assert 'audit["alerts_feed_visible"] = _qml_object_visible_with_size' in smoke_source
+    assert 'audit["telemetry_feed_visible"] = _qml_object_visible_with_size' in smoke_source
+    assert 'audit["audit_log_visible"] = _qml_object_visible_with_size' in smoke_source
+    assert "LOCAL ALERT FEED ONLY" in qml_source
+    assert "LOCAL PREVIEW TELEMETRY" in qml_source
+    assert "LOCAL AUDIT LOG ONLY" in qml_source
+
+
+def test_alerts_telemetry_live_shape_evidence_complete() -> None:
+    evidence = _build_alerts_telemetry_live_shape_evidence(
+        _alerts_telemetry_live_shape_green_audit()
+    )
+
+    assert evidence["alerts_telemetry_live_shape_required_checks"] == list(
+        FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS
+    )
+    assert evidence["alerts_telemetry_live_shape_missing_checks"] == []
+    assert evidence["alerts_telemetry_live_shape_parity_complete"] is True
+    for key in FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS:
+        assert evidence[key] is True
+
+
+def test_alerts_telemetry_live_shape_reports_missing_required_check() -> None:
+    audit = _alerts_telemetry_live_shape_green_audit()
+    audit["telemetry_no_live_exchange_stream_visible"] = False
+
+    evidence = _build_alerts_telemetry_live_shape_evidence(audit)
+
+    assert evidence["alerts_telemetry_live_shape_missing_checks"] == [
+        "telemetry_no_live_exchange_stream_visible"
+    ]
+    assert evidence["telemetry_no_live_exchange_stream_visible"] is False
+    assert evidence["alerts_telemetry_live_shape_parity_complete"] is False
+
+
+def test_alerts_telemetry_live_shape_ignores_extra_diagnostics() -> None:
+    audit = _alerts_telemetry_live_shape_green_audit()
+    baseline = _build_alerts_telemetry_live_shape_evidence(audit)
+    audit["alerts_telemetry_source_diagnostic"] = False
+
+    assert _build_alerts_telemetry_live_shape_evidence(audit) == baseline
+
+
+def test_alerts_telemetry_live_shape_requires_runtime_not_source_fallback() -> None:
+    audit = _alerts_telemetry_live_shape_green_audit()
+    audit["alerts_no_cloud_sink_visible"] = False
+    audit["alerts_no_cloud_sink_source_present"] = True
+
+    evidence = _build_alerts_telemetry_live_shape_evidence(audit)
+
+    assert evidence["alerts_telemetry_live_shape_missing_checks"] == [
+        "alerts_no_cloud_sink_visible"
+    ]
+    assert evidence["alerts_telemetry_live_shape_parity_complete"] is False
 
 
 def _frontend_live_parity_green_audit() -> dict[str, object]:
@@ -1182,6 +1252,15 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     for key in FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS:
         assert audit[key] is True
         assert terminal_evidence[key] is True
+    alerts_telemetry_evidence = audit["alerts_telemetry_live_shape_evidence"]
+    assert isinstance(alerts_telemetry_evidence, dict)
+    assert alerts_telemetry_evidence["alerts_telemetry_live_shape_parity_complete"] is True
+    assert alerts_telemetry_evidence["alerts_telemetry_live_shape_missing_checks"] == []
+    assert payload["alerts_telemetry_live_shape_parity_complete"] is True
+    assert payload["alerts_telemetry_live_shape_evidence"] == alerts_telemetry_evidence
+    for key in FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS:
+        assert audit[key] is True
+        assert alerts_telemetry_evidence[key] is True
     order_lifecycle_evidence = audit["order_lifecycle_evidence"]
     assert isinstance(order_lifecycle_evidence, dict)
     assert order_lifecycle_evidence["order_lifecycle_preview_parity_complete"] is True
