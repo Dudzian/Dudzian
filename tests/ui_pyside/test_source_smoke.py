@@ -17,6 +17,7 @@ from ui.pyside_app.smoke import (
     FRONTEND_LIVE_PARITY_SMOKE_KEYS,
     FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS,
     FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS,
+    FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS,
     FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS,
     FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS,
     FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
@@ -27,6 +28,7 @@ from ui.pyside_app.smoke import (
     _build_alerts_telemetry_live_shape_evidence,
     _build_frontend_live_parity_evidence,
     _build_market_scanner_live_field_evidence,
+    _build_operator_workflow_evidence,
     _build_portfolio_live_shape_evidence,
     _build_order_lifecycle_parity_evidence,
     _build_risk_live_safety_controls_evidence,
@@ -426,6 +428,69 @@ def test_alerts_telemetry_live_shape_requires_runtime_not_source_fallback() -> N
         "alerts_no_cloud_sink_visible"
     ]
     assert evidence["alerts_telemetry_live_shape_parity_complete"] is False
+
+
+def _operator_workflow_green_audit() -> dict[str, object]:
+    return {key: True for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS}
+
+
+def test_operator_workflow_evidence_helper_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert "FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS" in smoke_source
+    assert "def _build_operator_workflow_evidence" in smoke_source
+    assert "operator_workflow_evidence" in smoke_source
+    assert "operator_workflow_smoke_complete" in smoke_source
+    assert '"operator_workflow": ("operator_workflow_smoke_complete",)' in smoke_source
+    assert "_build_operator_workflow_runtime_audit" in smoke_source
+    assert "operator_scanner_rows_runtime_non_empty_diagnostic" in smoke_source
+    assert "operator_source_diagnostic" not in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS
+    for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS:
+        assert key in smoke_source
+
+
+def test_operator_workflow_evidence_complete() -> None:
+    evidence = _build_operator_workflow_evidence(_operator_workflow_green_audit())
+
+    assert evidence["operator_workflow_required_checks"] == list(
+        FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS
+    )
+    assert evidence["operator_workflow_missing_checks"] == []
+    assert evidence["operator_workflow_smoke_complete"] is True
+    for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS:
+        assert evidence[key] is True
+
+
+def test_operator_workflow_evidence_reports_missing_required_check() -> None:
+    audit = _operator_workflow_green_audit()
+    audit["operator_terminal_pair_matches_selected_candidate"] = False
+
+    evidence = _build_operator_workflow_evidence(audit)
+
+    assert evidence["operator_workflow_missing_checks"] == [
+        "operator_terminal_pair_matches_selected_candidate"
+    ]
+    assert evidence["operator_terminal_pair_matches_selected_candidate"] is False
+    assert evidence["operator_workflow_smoke_complete"] is False
+
+
+def test_operator_workflow_evidence_ignores_extra_diagnostics() -> None:
+    audit = _operator_workflow_green_audit()
+    baseline = _build_operator_workflow_evidence(audit)
+    audit["operator_scanner_rows_runtime_non_empty_diagnostic"] = False
+
+    assert _build_operator_workflow_evidence(audit) == baseline
+
+
+def test_operator_workflow_required_checks_are_not_masked_by_source_diagnostics() -> None:
+    audit = _operator_workflow_green_audit()
+    audit["operator_alerts_visible_after_actions"] = False
+    audit["operator_alerts_visible_source_present"] = True
+
+    evidence = _build_operator_workflow_evidence(audit)
+
+    assert evidence["operator_workflow_missing_checks"] == ["operator_alerts_visible_after_actions"]
+    assert evidence["operator_workflow_smoke_complete"] is False
 
 
 def _frontend_live_parity_green_audit() -> dict[str, object]:
@@ -1225,6 +1290,15 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
         assert audit[key] is True
         assert frontend_evidence[key] is True
     assert payload["frontend_live_parity_evidence"] == frontend_evidence
+    operator_evidence = audit["operator_workflow_evidence"]
+    assert isinstance(operator_evidence, dict)
+    assert operator_evidence["operator_workflow_smoke_complete"] is True
+    assert operator_evidence["operator_workflow_missing_checks"] == []
+    assert payload["operator_workflow_smoke_complete"] is True
+    assert payload["operator_workflow_evidence"] == operator_evidence
+    for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS:
+        assert audit[key] is True
+        assert operator_evidence[key] is True
     market_scanner_evidence = audit["market_scanner_live_field_evidence"]
     assert isinstance(market_scanner_evidence, dict)
     assert market_scanner_evidence["market_scanner_live_field_parity_complete"] is True

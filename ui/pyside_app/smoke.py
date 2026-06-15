@@ -184,6 +184,8 @@ class UiSmokeResult:
     portfolio_live_shape_evidence: dict[str, object] = field(default_factory=dict)
     alerts_telemetry_live_shape_parity_complete: bool = False
     alerts_telemetry_live_shape_evidence: dict[str, object] = field(default_factory=dict)
+    operator_workflow_smoke_complete: bool = False
+    operator_workflow_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -633,6 +635,7 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
         "safety_boundary_ok",
     ),
     "risk_live_safety_controls": ("risk_live_safety_controls_visible_complete",),
+    "operator_workflow": ("operator_workflow_smoke_complete",),
 }
 
 FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS = (
@@ -767,6 +770,67 @@ FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS = (
     "telemetry_uses_local_preview_state",
     "alerts_telemetry_updates_after_preview_actions_local_only",
 )
+
+
+FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS = (
+    "operator_dashboard_visible",
+    "operator_can_open_market_scanner",
+    "operator_can_open_ai_decisions",
+    "operator_can_open_risk_controls",
+    "operator_can_open_terminal",
+    "operator_can_open_portfolio",
+    "operator_can_open_alerts",
+    "operator_can_open_telemetry",
+    "operator_can_return_to_dashboard",
+    "operator_scanner_candidate_visible",
+    "operator_scanner_candidate_selectable_local_only",
+    "operator_selected_candidate_updates_shared_state",
+    "operator_decision_visible_after_candidate",
+    "operator_decision_has_action_confidence_reason",
+    "operator_decision_local_source_visible",
+    "operator_risk_gate_visible",
+    "operator_risk_block_reason_visible",
+    "operator_blocked_state_explainable",
+    "operator_risk_limits_visible",
+    "operator_live_safety_lock_visible",
+    "operator_terminal_order_form_visible",
+    "operator_terminal_pair_matches_selected_candidate",
+    "operator_order_submission_disabled_visible",
+    "operator_simulated_order_path_visible",
+    "operator_blocked_order_path_visible",
+    "operator_no_real_order_path_visible",
+    "operator_portfolio_visible",
+    "operator_portfolio_reflects_preview_order_or_block",
+    "operator_portfolio_local_paper_marker_visible",
+    "operator_portfolio_no_live_account_sync_visible",
+    "operator_alerts_visible_after_actions",
+    "operator_risk_or_order_alert_visible",
+    "operator_telemetry_visible_after_actions",
+    "operator_audit_correlation_visible",
+    "operator_no_cloud_sink_visible",
+    "operator_no_external_export_visible",
+    "operator_no_secrets_logged_visible",
+    "operator_terminal_order_form_live_shape_complete",
+    "operator_order_lifecycle_preview_parity_complete",
+    "operator_risk_live_safety_controls_visible_complete",
+    "operator_market_scanner_live_field_parity_complete",
+    "operator_portfolio_live_shape_parity_complete",
+    "operator_alerts_telemetry_live_shape_parity_complete",
+)
+
+
+def _build_operator_workflow_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build fail-closed FRONTEND-PARITY-8.0 full operator workflow evidence."""
+
+    missing_checks = [
+        key for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS if audit.get(key) is not True
+    ]
+    return {
+        "operator_workflow_required_checks": list(FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS),
+        "operator_workflow_missing_checks": missing_checks,
+        "operator_workflow_smoke_complete": not missing_checks,
+        **{key: audit.get(key) is True for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS},
+    }
 
 
 def _build_alerts_telemetry_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
@@ -914,6 +978,7 @@ FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
     "portfolio_live_shape_parity_complete",
     "alerts_telemetry_live_shape_parity_complete",
     "frontend_live_parity_no_fake_live_actions",
+    "operator_workflow_smoke_complete",
     "frontend_live_parity_all_required_sections_present",
 )
 
@@ -973,6 +1038,7 @@ def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, 
         )
         is True,
         "frontend_live_parity_no_fake_live_actions": no_fake_live_actions,
+        "operator_workflow_smoke_complete": section_results["operator_workflow"],
         "frontend_live_parity_all_required_sections_present": (
             not missing_sections and no_fake_live_actions
         ),
@@ -1464,6 +1530,180 @@ def _visible_preview_object_values(root: Any) -> dict[str, str]:
         key: _read_visible_panel_object(root, panel_id, object_name)
         for key, (panel_id, object_name) in object_panels.items()
     }
+
+
+def _panel_has_visible_loaded_item(root: Any, panel_id: str) -> bool:
+    from PySide6.QtCore import QObject
+
+    _invoke_show_panel(root, panel_id)
+    _process_events()
+    central_loader = root.findChild(QObject, "centralContentLoader")
+    loaded_item = central_loader.property("item") if central_loader is not None else None
+    if loaded_item is None or _bool_property(loaded_item, "visible") is not True:
+        return False
+    return (
+        max(_number_property(loaded_item, "width"), _number_property(loaded_item, "implicitWidth"))
+        > 0
+        and max(
+            _number_property(loaded_item, "height"), _number_property(loaded_item, "implicitHeight")
+        )
+        > 0
+    )
+
+
+def _build_operator_workflow_runtime_audit(root: Any, audit: dict[str, object]) -> dict[str, bool]:
+    workflow: dict[str, bool] = {}
+    continuity_pair = _string_property(root, "selectedTerminalPair") or "BTC/USDT"
+    if continuity_pair:
+        _invoke_qml(root, "selectScannerPair", continuity_pair)
+    selected_pair = _string_property(root, "scannerSelectedPair")
+    selected_terminal_pair = _string_property(root, "selectedTerminalPair")
+    scanner_rows_text = _rows_repr(root.property("scannerRows"))
+    decision_rows_text = _rows_repr(root.property("decisionPreviewRows"))
+    order_rows_text = _rows_repr(root.property("paperOrderRows"))
+    alert_rows_text = _rows_repr(root.property("alertRows"))
+    telemetry_rows_text = _rows_repr(root.property("paperTelemetryRows"))
+    latest_decision = _first_row(root.property("decisionPreviewRows"))
+
+    workflow["operator_dashboard_visible"] = _panel_has_visible_loaded_item(
+        root, "sidePanel"
+    ) and _qml_object_visible_with_size(root, "operatorDashboardRoot")
+    workflow["operator_can_open_market_scanner"] = _panel_has_visible_loaded_item(
+        root, "marketScannerPanel"
+    ) and _qml_object_visible_with_size(root, "marketScannerRoot")
+    workflow["operator_can_open_ai_decisions"] = _panel_has_visible_loaded_item(
+        root, "aiDecisionsPanel"
+    ) and _qml_object_visible_with_size(root, "aiDecisionsPreviewPanel")
+    workflow["operator_can_open_risk_controls"] = _panel_has_visible_loaded_item(
+        root, "riskControlsPanel"
+    ) and _qml_object_visible_with_size(root, "riskControlsPreviewPanel")
+    workflow["operator_can_open_terminal"] = _panel_has_visible_loaded_item(
+        root, "terminalPanel"
+    ) and _qml_object_visible_with_size(root, "paperTerminalRoot")
+    workflow["operator_can_open_portfolio"] = _panel_has_visible_loaded_item(
+        root, "portfolioPerformancePanel"
+    ) and _qml_object_visible_with_size(root, "portfolioPerformanceRoot")
+    workflow["operator_can_open_alerts"] = _panel_has_visible_loaded_item(
+        root, "alertsPanel"
+    ) and _qml_object_visible_with_size(root, "alertCenterRoot")
+    workflow["operator_can_open_telemetry"] = _panel_has_visible_loaded_item(
+        root, "telemetryPanel"
+    ) and _qml_object_visible_with_size(root, "telemetryFeedList")
+    workflow["operator_can_return_to_dashboard"] = _panel_has_visible_loaded_item(
+        root, "sidePanel"
+    ) and _qml_object_visible_with_size(root, "operatorDashboardRoot")
+    workflow["operator_scanner_candidate_visible"] = (
+        audit.get("market_scanner_table_visible") is True
+        and bool(selected_pair)
+        and selected_pair != "—"
+    )
+    workflow["operator_scanner_candidate_selectable_local_only"] = (
+        audit.get("market_scanner_can_select_candidate_local_only") is True
+    )
+    workflow["operator_selected_candidate_updates_shared_state"] = (
+        bool(selected_pair) and selected_pair == selected_terminal_pair
+    )
+    workflow["operator_decision_visible_after_candidate"] = (
+        audit.get("decision_explainability_state_present") is True
+        and _sequence_length(root.property("decisionPreviewRows")) > 0
+    )
+    workflow["operator_decision_has_action_confidence_reason"] = all(
+        _row_field(latest_decision, field) for field in ("action", "confidence", "reason")
+    )
+    workflow["operator_decision_local_source_visible"] = _contains_tokens(
+        decision_rows_text, ("local",)
+    ) or _contains_tokens(
+        _string_property(root, "selectedDecisionSafetySummary"), ("local preview",)
+    )
+    workflow["operator_risk_gate_visible"] = audit.get("risk_lock_or_risk_gate_visible") is True
+    workflow["operator_risk_block_reason_visible"] = bool(
+        _string_property(root, "riskBlockReason")
+    ) or _contains_tokens(order_rows_text + decision_rows_text, ("Risk gate blocked",))
+    workflow["operator_blocked_state_explainable"] = (
+        audit.get("operator_can_explain_blocked_state_local_only") is True
+        or audit.get("paper_order_explain_local_only") is True
+    )
+    workflow["operator_risk_limits_visible"] = audit.get("risk_limits_visible") is True
+    workflow["operator_live_safety_lock_visible"] = (
+        audit.get("kill_switch_or_safety_lock_visible") is True
+    )
+    workflow["operator_terminal_order_form_visible"] = (
+        audit.get("terminal_order_form_visible") is True
+    )
+    workflow["operator_terminal_pair_matches_selected_candidate"] = (
+        bool(selected_pair) and selected_pair == selected_terminal_pair
+    )
+    workflow["operator_order_submission_disabled_visible"] = (
+        audit.get("terminal_order_submission_disabled_visible") is True
+    )
+    workflow["operator_simulated_order_path_visible"] = (
+        audit.get("terminal_order_simulated_state_visible") is True
+    )
+    workflow["operator_blocked_order_path_visible"] = (
+        audit.get("terminal_order_blocked_state_visible") is True
+    )
+    workflow["operator_no_real_order_path_visible"] = (
+        audit.get("terminal_order_mode_local_preview_visible") is True
+        and audit.get("portfolio_no_real_order_path_visible") is True
+    )
+    workflow["operator_portfolio_visible"] = (
+        _panel_has_visible_loaded_item(root, "portfolioPerformancePanel")
+        and audit.get("portfolio_summary_visible") is True
+    )
+    workflow["operator_portfolio_reflects_preview_order_or_block"] = audit.get(
+        "portfolio_updates_after_preview_order_local_only"
+    ) is True and _contains_tokens(order_rows_text, ("BLOCKED",))
+    workflow["operator_portfolio_local_paper_marker_visible"] = (
+        audit.get("portfolio_local_source_marker_visible") is True
+    )
+    workflow["operator_portfolio_no_live_account_sync_visible"] = (
+        audit.get("portfolio_no_live_account_sync_visible") is True
+    )
+    workflow["operator_alerts_visible_after_actions"] = (
+        audit.get("alerts_feed_visible") is True
+        and _sequence_length(root.property("alertRows")) > 0
+    )
+    workflow["operator_risk_or_order_alert_visible"] = _contains_tokens(
+        alert_rows_text, ("blocked",)
+    ) and (
+        _contains_tokens(alert_rows_text, ("risk",))
+        or _contains_tokens(alert_rows_text, ("order",))
+    )
+    workflow["operator_telemetry_visible_after_actions"] = (
+        audit.get("telemetry_feed_visible") is True
+        and _sequence_length(root.property("paperTelemetryRows")) > 0
+    )
+    workflow["operator_audit_correlation_visible"] = (
+        audit.get("audit_correlation_or_trace_marker_visible") is True
+    )
+    workflow["operator_no_cloud_sink_visible"] = audit.get("alerts_no_cloud_sink_visible") is True
+    workflow["operator_no_external_export_visible"] = (
+        audit.get("alerts_no_external_export_visible") is True
+    )
+    workflow["operator_no_secrets_logged_visible"] = (
+        audit.get("telemetry_no_secrets_logged_visible") is True
+    )
+    workflow["operator_terminal_order_form_live_shape_complete"] = (
+        audit.get("terminal_order_form_live_shape_complete") is True
+    )
+    workflow["operator_order_lifecycle_preview_parity_complete"] = (
+        audit.get("order_lifecycle_preview_parity_complete") is True
+    )
+    workflow["operator_risk_live_safety_controls_visible_complete"] = (
+        audit.get("risk_live_safety_controls_visible_complete") is True
+    )
+    workflow["operator_market_scanner_live_field_parity_complete"] = (
+        audit.get("market_scanner_live_field_parity_complete") is True
+    )
+    workflow["operator_portfolio_live_shape_parity_complete"] = (
+        audit.get("portfolio_live_shape_parity_complete") is True
+    )
+    workflow["operator_alerts_telemetry_live_shape_parity_complete"] = (
+        audit.get("alerts_telemetry_live_shape_parity_complete") is True
+    )
+    workflow["operator_scanner_rows_runtime_non_empty_diagnostic"] = bool(scanner_rows_text)
+    workflow["operator_telemetry_rows_runtime_non_empty_diagnostic"] = bool(telemetry_rows_text)
+    return workflow
 
 
 def _risk_path_generates_blocked_event(root: Any, path: str) -> tuple[bool, dict[str, Any]]:
@@ -3385,6 +3625,11 @@ def _exercise_preview_state(
     audit["alerts_telemetry_live_shape_evidence"] = alerts_telemetry_live_shape_evidence
     audit.update(alerts_telemetry_live_shape_evidence)
 
+    audit.update(_build_operator_workflow_runtime_audit(root, audit))
+    operator_workflow_evidence = _build_operator_workflow_evidence(audit)
+    audit["operator_workflow_evidence"] = operator_workflow_evidence
+    audit.update(operator_workflow_evidence)
+
     frontend_live_parity_evidence = _build_frontend_live_parity_evidence(audit)
     audit["frontend_live_parity_evidence"] = frontend_live_parity_evidence
     audit.update(
@@ -3563,6 +3808,7 @@ def _exercise_preview_state(
         "terminal_order_form_live_shape_complete",
         "portfolio_live_shape_parity_complete",
         "alerts_telemetry_live_shape_parity_complete",
+        "operator_workflow_smoke_complete",
     )
     audit["passed"] = (
         int(audit["start_tick_delta"]) >= 1
@@ -4580,6 +4826,9 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         )
         if not isinstance(alerts_telemetry_live_shape_evidence, dict):
             alerts_telemetry_live_shape_evidence = {}
+        operator_workflow_evidence = preview_state_audit.get("operator_workflow_evidence", {})
+        if not isinstance(operator_workflow_evidence, dict):
+            operator_workflow_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -4900,6 +5149,10 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ),
             alerts_telemetry_live_shape_evidence=alerts_telemetry_live_shape_evidence,
+            operator_workflow_smoke_complete=bool(
+                operator_workflow_evidence.get("operator_workflow_smoke_complete", False)
+            ),
+            operator_workflow_evidence=operator_workflow_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)
