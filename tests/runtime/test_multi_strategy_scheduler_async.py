@@ -399,6 +399,11 @@ class _TickClock:
         return current
 
 
+async def _wait_until(predicate, *, interval: float = 0.001) -> None:
+    while not predicate():
+        await asyncio.sleep(interval)
+
+
 class _NoMetricFailureScheduler(MultiStrategyScheduler):
     def _handle_schedule_failure(self, schedule, reason, exc=None):  # type: ignore[override]
         metadata = {"reason": reason}
@@ -519,9 +524,20 @@ def test_scheduler_threshold_n_minus_one_does_not_escalate() -> None:
 
     async def _run() -> None:
         runner = asyncio.create_task(scheduler.run_forever())
-        await asyncio.sleep(0.05)
-        scheduler.stop()
-        await asyncio.wait_for(runner, timeout=1.0)
+        try:
+            await asyncio.wait_for(
+                _wait_until(
+                    lambda: (
+                        schedule.failover_count == threshold - 1
+                        and schedule.consecutive_failures == 0
+                        and bool(sink.calls)
+                    )
+                ),
+                timeout=1.0,
+            )
+        finally:
+            scheduler.stop()
+            await asyncio.wait_for(runner, timeout=1.0)
 
     asyncio.run(_run())
 
