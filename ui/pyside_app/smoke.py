@@ -174,6 +174,8 @@ class UiSmokeResult:
     frontend_live_parity_evidence: dict[str, object] = field(default_factory=dict)
     terminal_order_form_live_shape_complete: bool = False
     terminal_order_form_evidence: dict[str, object] = field(default_factory=dict)
+    order_lifecycle_preview_parity_complete: bool = False
+    order_lifecycle_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -586,6 +588,7 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
         "blocked_semantics_no_legacy_generated",
         "simulation_does_not_enable_order_submission",
         "terminal_order_form_live_shape_complete",
+        "order_lifecycle_preview_parity_complete",
     ),
     "portfolio": (
         "portfolio_fields_present",
@@ -632,6 +635,33 @@ FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS = (
     "terminal_order_rejected_disabled_placeholder_visible",
     "terminal_order_updates_blotter_portfolio_telemetry",
 )
+
+
+FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS = (
+    "order_lifecycle_decision_visible",
+    "order_lifecycle_simulated_order_visible",
+    "order_lifecycle_blocked_order_visible",
+    "order_lifecycle_no_order_visible",
+    "order_lifecycle_rejected_disabled_visible",
+    "order_lifecycle_partial_fill_cancel_placeholders_visible",
+    "order_lifecycle_downstream_portfolio_updates",
+    "order_lifecycle_alert_telemetry_updates",
+    "order_lifecycle_no_live_side_effects",
+)
+
+
+def _build_order_lifecycle_parity_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build a pure fail-closed checklist for preview order lifecycle parity."""
+
+    missing_checks = [
+        key for key in FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS if audit.get(key) is not True
+    ]
+    return {
+        "order_lifecycle_required_checks": list(FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS),
+        "order_lifecycle_missing_checks": missing_checks,
+        "order_lifecycle_preview_parity_complete": not missing_checks,
+        **{key: audit.get(key) is True for key in FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS},
+    }
 
 
 def _build_terminal_order_form_parity_evidence(audit: dict[str, object]) -> dict[str, object]:
@@ -2502,6 +2532,79 @@ def _exercise_preview_state(
         and audit.get("terminal_blotter_updates_portfolio_snapshot") is True
         and audit.get("risk_block_generates_blocked_event_and_alert") is True
     )
+    latest_decision_text = _read_visible_panel_object(
+        root, "aiDecisionsPanel", "previewAiDecisionLatestActionLabel"
+    )
+    reserved_placeholder_text = _read_visible_panel_object(
+        root, "terminalPanel", "paperTerminalLifecycleReservedPlaceholder"
+    )
+    submission_disabled_text = _read_visible_panel_object(
+        root, "terminalPanel", "paperTerminalSubmissionDisabledWarning"
+    )
+    latest_order_snapshot = _first_row_repr(root.property("paperOrderRows"))
+    latest_decision_snapshot = _first_row_repr(root.property("decisionPreviewRows"))
+    latest_telemetry_snapshot = _first_row_repr(root.property("paperTelemetryRows"))
+    latest_alert_snapshot = _first_row_repr(root.property("alertRows"))
+    portfolio_snapshot_for_lifecycle = _call_qml(root, "currentPortfolioSnapshot") or {}
+    audit["order_lifecycle_decision_visible"] = (
+        _qml_object_visible_with_size(root, "previewAiDecisionLatestActionLabel")
+        and _contains_tokens(latest_decision_text, ("confidence",))
+        and any(
+            token in latest_decision_snapshot for token in ("BUY", "SELL", "BLOCKED", "NO ORDER")
+        )
+    )
+    audit["order_lifecycle_simulated_order_visible"] = (
+        audit.get("terminal_order_simulated_state_visible") is True
+        and "paper simulated" in latest_order_snapshot + first_sim_order
+        and _sequence_length(root.property("mockTerminalOrders")) > 0
+    )
+    audit["order_lifecycle_blocked_order_visible"] = (
+        audit.get("terminal_order_blocked_state_visible") is True
+        and "BLOCKED" in latest_order_snapshot
+        and "Risk gate blocked" in latest_order_snapshot
+        and "BLOCKED LIVE" not in latest_order_snapshot
+        and "BLOCKED PAPER PREVIEW" not in latest_order_snapshot
+    )
+    audit["order_lifecycle_no_order_visible"] = _qml_object_visible_with_size(
+        root, "paperTerminalLifecycleReservedPlaceholder"
+    ) and _contains_tokens(reserved_placeholder_text, ("NO ORDER", "no real order"))
+    audit["order_lifecycle_rejected_disabled_visible"] = (
+        _qml_object_visible_with_size(root, "paperTerminalSubmissionDisabledWarning")
+        and _contains_tokens(
+            submission_disabled_text, ("order submission disabled", "no real order")
+        )
+        and _contains_tokens(reserved_placeholder_text, ("rejected", "disabled in preview"))
+    )
+    audit["order_lifecycle_partial_fill_cancel_placeholders_visible"] = (
+        _qml_object_visible_with_size(root, "paperTerminalLifecycleReservedPlaceholder")
+        and _contains_tokens(
+            reserved_placeholder_text, ("partial fill", "cancel", "disabled in preview")
+        )
+    )
+    audit["order_lifecycle_downstream_portfolio_updates"] = (
+        audit.get("terminal_order_updates_blotter_portfolio_telemetry") is True
+        and int(portfolio_snapshot_for_lifecycle.get("orders") or -1)
+        == _sequence_length(root.property("paperOrderRows"))
+        and "equity" in portfolio_snapshot_for_lifecycle
+        and "netPnl" in portfolio_snapshot_for_lifecycle
+    )
+    audit["order_lifecycle_alert_telemetry_updates"] = (
+        "Risk gate blocked" in latest_telemetry_snapshot
+        and "Paper order blocked" in latest_alert_snapshot
+        and audit.get("visible_alerts_match_alert_snapshot") is True
+        and audit.get("visible_telemetry_matches_telemetry_snapshot") is True
+    )
+    audit["order_lifecycle_no_live_side_effects"] = (
+        audit.get("live_trading_disabled") is True
+        and audit.get("exchange_io_disabled") is True
+        and audit.get("order_submission_disabled") is True
+        and audit.get("runtime_loop_started") is False
+        and audit.get("api_keys_required") is False
+        and audit.get("simulation_does_not_read_secrets") is True
+    )
+    order_lifecycle_evidence = _build_order_lifecycle_parity_evidence(audit)
+    audit["order_lifecycle_evidence"] = order_lifecycle_evidence
+    audit.update(order_lifecycle_evidence)
     terminal_order_form_evidence = _build_terminal_order_form_parity_evidence(audit)
     audit["terminal_order_form_evidence"] = terminal_order_form_evidence
     audit.update(terminal_order_form_evidence)
@@ -3674,6 +3777,9 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         terminal_order_form_evidence = preview_state_audit.get("terminal_order_form_evidence", {})
         if not isinstance(terminal_order_form_evidence, dict):
             terminal_order_form_evidence = {}
+        order_lifecycle_evidence = preview_state_audit.get("order_lifecycle_evidence", {})
+        if not isinstance(order_lifecycle_evidence, dict):
+            order_lifecycle_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -3968,6 +4074,10 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 terminal_order_form_evidence.get("terminal_order_form_live_shape_complete", False)
             ),
             terminal_order_form_evidence=terminal_order_form_evidence,
+            order_lifecycle_preview_parity_complete=bool(
+                order_lifecycle_evidence.get("order_lifecycle_preview_parity_complete", False)
+            ),
+            order_lifecycle_evidence=order_lifecycle_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)

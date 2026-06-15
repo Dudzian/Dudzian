@@ -16,10 +16,12 @@ from ui.pyside_app.smoke import (
     FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS,
     FRONTEND_LIVE_PARITY_SMOKE_KEYS,
     FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
+    FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS,
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
     TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS,
     _audit_typed_preview_bridge,
     _build_frontend_live_parity_evidence,
+    _build_order_lifecycle_parity_evidence,
     _build_terminal_order_form_parity_evidence,
     _preview_launch_readiness_evidence,
     _typed_preview_bridge_consumer_evidence,
@@ -487,6 +489,54 @@ def test_terminal_order_form_parity_evidence_requires_runtime_not_source_fallbac
     assert evidence["terminal_order_form_live_shape_complete"] is False
 
 
+def _order_lifecycle_green_audit() -> dict[str, object]:
+    return {key: True for key in FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS}
+
+
+def test_order_lifecycle_parity_evidence_helper_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+    terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
+
+    assert "FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS" in smoke_source
+    assert "def _build_order_lifecycle_parity_evidence" in smoke_source
+    assert "order_lifecycle_evidence" in smoke_source
+    assert "order_lifecycle_preview_parity_complete" in smoke_source
+    assert 'objectName: "paperTerminalLifecycleReservedPlaceholder"' in terminal
+    for key in FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS:
+        assert key in smoke_source
+
+
+def test_order_lifecycle_parity_evidence_complete() -> None:
+    evidence = _build_order_lifecycle_parity_evidence(_order_lifecycle_green_audit())
+
+    assert evidence["order_lifecycle_required_checks"] == list(
+        FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS
+    )
+    assert evidence["order_lifecycle_missing_checks"] == []
+    assert evidence["order_lifecycle_preview_parity_complete"] is True
+    for key in FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS:
+        assert evidence[key] is True
+
+
+def test_order_lifecycle_parity_evidence_reports_missing_required_check() -> None:
+    audit = _order_lifecycle_green_audit()
+    audit["order_lifecycle_blocked_order_visible"] = False
+
+    evidence = _build_order_lifecycle_parity_evidence(audit)
+
+    assert evidence["order_lifecycle_missing_checks"] == ["order_lifecycle_blocked_order_visible"]
+    assert evidence["order_lifecycle_blocked_order_visible"] is False
+    assert evidence["order_lifecycle_preview_parity_complete"] is False
+
+
+def test_order_lifecycle_parity_evidence_ignores_extra_diagnostics() -> None:
+    audit = _order_lifecycle_green_audit()
+    baseline = _build_order_lifecycle_parity_evidence(audit)
+    audit["extra_lifecycle_diagnostic"] = False
+
+    assert _build_order_lifecycle_parity_evidence(audit) == baseline
+
+
 def test_smoke_flags_are_available_in_parser() -> None:
     options = AppOptions.parse(
         ["--config", "ui/config/preview_local.yaml", "--smoke", "--offscreen"]
@@ -945,6 +995,15 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     for key in FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS:
         assert audit[key] is True
         assert terminal_evidence[key] is True
+    order_lifecycle_evidence = audit["order_lifecycle_evidence"]
+    assert isinstance(order_lifecycle_evidence, dict)
+    assert order_lifecycle_evidence["order_lifecycle_preview_parity_complete"] is True
+    assert order_lifecycle_evidence["order_lifecycle_missing_checks"] == []
+    assert payload["order_lifecycle_preview_parity_complete"] is True
+    assert payload["order_lifecycle_evidence"] == order_lifecycle_evidence
+    for key in FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS:
+        assert audit[key] is True
+        assert order_lifecycle_evidence[key] is True
     evidence = audit["typed_preview_bridge_qml_consumer_evidence"]
     assert isinstance(evidence, dict)
     assert evidence["all_typed_preview_bridge_consumer_checks_passed"] is True
