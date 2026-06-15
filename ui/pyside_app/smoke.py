@@ -182,6 +182,8 @@ class UiSmokeResult:
     market_scanner_live_field_evidence: dict[str, object] = field(default_factory=dict)
     portfolio_live_shape_parity_complete: bool = False
     portfolio_live_shape_evidence: dict[str, object] = field(default_factory=dict)
+    alerts_telemetry_live_shape_parity_complete: bool = False
+    alerts_telemetry_live_shape_evidence: dict[str, object] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -618,6 +620,7 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
         "visible_alerts_match_alert_snapshot",
         "visible_telemetry_matches_telemetry_snapshot",
         "alert_center_safety_boundary_ok",
+        "alerts_telemetry_live_shape_parity_complete",
     ),
     "live_safety_boundary": (
         "live_trading_disabled",
@@ -726,6 +729,65 @@ FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS = (
     "portfolio_uses_local_paper_state",
     "portfolio_updates_after_preview_order_local_only",
 )
+
+
+FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS = (
+    "alerts_feed_visible",
+    "alerts_rows_visible",
+    "alert_severity_visible",
+    "alert_source_visible",
+    "alert_category_visible",
+    "alert_message_visible",
+    "alert_timestamp_or_freshness_visible",
+    "alert_acknowledged_or_unresolved_placeholder_visible",
+    "risk_blocked_alert_visible",
+    "order_blocked_alert_visible",
+    "scanner_candidate_alert_visible",
+    "telemetry_feed_visible",
+    "telemetry_rows_visible",
+    "telemetry_event_type_visible",
+    "telemetry_component_visible",
+    "telemetry_message_visible",
+    "telemetry_timestamp_or_freshness_visible",
+    "telemetry_runtime_mode_marker_visible",
+    "telemetry_local_preview_source_marker_visible",
+    "audit_log_visible",
+    "audit_event_id_or_sequence_visible",
+    "audit_decision_event_visible",
+    "audit_order_event_visible",
+    "audit_risk_event_visible",
+    "audit_scanner_event_visible",
+    "audit_correlation_or_trace_marker_visible",
+    "audit_local_only_marker_visible",
+    "alerts_no_cloud_sink_visible",
+    "alerts_no_external_export_visible",
+    "telemetry_no_live_exchange_stream_visible",
+    "telemetry_no_real_order_stream_visible",
+    "telemetry_no_secrets_logged_visible",
+    "telemetry_uses_local_preview_state",
+    "alerts_telemetry_updates_after_preview_actions_local_only",
+)
+
+
+def _build_alerts_telemetry_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build fail-closed FRONTEND-PARITY-7.0 alerts/telemetry live-shape evidence."""
+
+    missing_checks = [
+        key
+        for key in FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS
+        if audit.get(key) is not True
+    ]
+    return {
+        "alerts_telemetry_live_shape_required_checks": list(
+            FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS
+        ),
+        "alerts_telemetry_live_shape_missing_checks": missing_checks,
+        "alerts_telemetry_live_shape_parity_complete": not missing_checks,
+        **{
+            key: audit.get(key) is True
+            for key in FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS
+        },
+    }
 
 
 def _build_portfolio_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
@@ -850,6 +912,7 @@ FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
     "risk_live_safety_controls_visible_complete",
     "market_scanner_live_field_parity_complete",
     "portfolio_live_shape_parity_complete",
+    "alerts_telemetry_live_shape_parity_complete",
     "frontend_live_parity_no_fake_live_actions",
     "frontend_live_parity_all_required_sections_present",
 )
@@ -903,6 +966,10 @@ def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, 
         is True,
         "portfolio_live_shape_parity_complete": normalized_audit.get(
             "portfolio_live_shape_parity_complete"
+        )
+        is True,
+        "alerts_telemetry_live_shape_parity_complete": normalized_audit.get(
+            "alerts_telemetry_live_shape_parity_complete"
         )
         is True,
         "frontend_live_parity_no_fake_live_actions": no_fake_live_actions,
@@ -3168,6 +3235,156 @@ def _exercise_preview_state(
     audit["market_scanner_live_field_evidence"] = market_scanner_live_field_evidence
     audit.update(market_scanner_live_field_evidence)
 
+    _invoke_show_panel(root, "alertsPanel")
+    _process_events()
+    alerts_feed_text = " ".join(
+        (
+            _read_visible_panel_object(root, "alertsPanel", "alertCenterTimeline"),
+            _read_visible_panel_object_property(
+                root, "alertsPanel", "alertCenterTimeline", "description"
+            ),
+            _read_visible_panel_object(root, "alertsPanel", "alertCenterLiveShapeBoundary"),
+            _read_visible_panel_object_property(
+                root, "alertsPanel", "alertCenterLiveShapeBoundary", "description"
+            ),
+        )
+    )
+    alert_rows_text = _rows_repr(root.property("alertRows"))
+    selected_alert_text = repr(_variant(root.property("alertSelectedEvent")) or {})
+    audit["alerts_feed_visible"] = _qml_object_visible_with_size(
+        root, "alertCenterTimeline"
+    ) and bool(alerts_feed_text.strip())
+    audit["alerts_rows_visible"] = (
+        audit["alerts_feed_visible"] and _sequence_length(root.property("alertRows")) > 0
+    )
+    audit["alert_severity_visible"] = _contains_tokens(
+        alerts_feed_text + alert_rows_text, ("severity",)
+    )
+    audit["alert_source_visible"] = _contains_tokens(
+        alerts_feed_text + alert_rows_text, ("source",)
+    )
+    audit["alert_category_visible"] = _contains_tokens(
+        alerts_feed_text + alert_rows_text, ("category",)
+    )
+    audit["alert_message_visible"] = _contains_tokens(
+        alerts_feed_text + alert_rows_text, ("message",)
+    )
+    audit["alert_timestamp_or_freshness_visible"] = _contains_tokens(
+        alerts_feed_text + selected_alert_text, ("time",)
+    ) or _contains_tokens(alerts_feed_text, ("FRESHNESS",))
+    audit["alert_acknowledged_or_unresolved_placeholder_visible"] = _contains_tokens(
+        alerts_feed_text + selected_alert_text, ("unresolved",)
+    ) or _contains_tokens(alerts_feed_text + selected_alert_text, ("unread",))
+    audit["risk_blocked_alert_visible"] = _contains_tokens(
+        alert_rows_text + alerts_feed_text, ("risk", "blocked")
+    )
+    audit["order_blocked_alert_visible"] = _contains_tokens(
+        alert_rows_text + alerts_feed_text, ("order", "blocked")
+    )
+    audit["scanner_candidate_alert_visible"] = _contains_tokens(
+        alert_rows_text + alerts_feed_text, ("scanner", "candidate")
+    )
+
+    _invoke_show_panel(root, "telemetryPanel")
+    _process_events()
+    telemetry_feed_text = " ".join(
+        (
+            _read_visible_panel_object(root, "telemetryPanel", "telemetryLiveShapeSummary"),
+            _read_visible_panel_object_property(
+                root, "telemetryPanel", "telemetryLiveShapeSummary", "description"
+            ),
+            _read_visible_panel_object(root, "telemetryPanel", "telemetryFeedList"),
+            _read_visible_panel_object_property(
+                root, "telemetryPanel", "telemetryFeedList", "description"
+            ),
+            _read_visible_panel_object(root, "telemetryPanel", "telemetryAuditLogCard"),
+            _read_visible_panel_object_property(
+                root, "telemetryPanel", "telemetryAuditLogCard", "description"
+            ),
+        )
+    )
+    telemetry_rows_text = _rows_repr(root.property("paperTelemetryRows"))
+    audit_rows_text = (
+        _rows_repr(root.property("decisionPreviewRows"))
+        + " "
+        + _rows_repr(root.property("paperOrderRows"))
+        + " "
+        + alert_rows_text
+    )
+    audit["telemetry_feed_visible"] = _qml_object_visible_with_size(
+        root, "telemetryFeedList"
+    ) and bool(telemetry_feed_text.strip())
+    audit["telemetry_rows_visible"] = (
+        audit["telemetry_feed_visible"]
+        and _sequence_length(root.property("paperTelemetryRows")) > 0
+    )
+    audit["telemetry_event_type_visible"] = _contains_tokens(telemetry_feed_text, ("event type",))
+    audit["telemetry_component_visible"] = _contains_tokens(telemetry_feed_text, ("component",))
+    audit["telemetry_message_visible"] = _contains_tokens(
+        telemetry_feed_text + telemetry_rows_text, ("message",)
+    )
+    audit["telemetry_timestamp_or_freshness_visible"] = _contains_tokens(
+        telemetry_feed_text + telemetry_rows_text, ("timestamp",)
+    ) or _contains_tokens(telemetry_feed_text, ("FRESHNESS",))
+    audit["telemetry_runtime_mode_marker_visible"] = _contains_tokens(
+        telemetry_feed_text, ("runtime mode", "LOCAL PREVIEW TELEMETRY")
+    )
+    audit["telemetry_local_preview_source_marker_visible"] = _contains_tokens(
+        telemetry_feed_text, ("local preview",)
+    )
+    audit["audit_log_visible"] = _qml_object_visible_with_size(
+        root, "telemetryAuditLogCard"
+    ) and _contains_tokens(telemetry_feed_text, ("LOCAL AUDIT LOG ONLY",))
+    audit["audit_event_id_or_sequence_visible"] = _contains_tokens(
+        telemetry_feed_text, ("sequence",)
+    )
+    audit["audit_decision_event_visible"] = _contains_tokens(
+        telemetry_feed_text + audit_rows_text, ("decision",)
+    )
+    audit["audit_order_event_visible"] = _contains_tokens(
+        telemetry_feed_text + audit_rows_text, ("order",)
+    )
+    audit["audit_risk_event_visible"] = _contains_tokens(
+        telemetry_feed_text + audit_rows_text, ("risk",)
+    )
+    audit["audit_scanner_event_visible"] = _contains_tokens(
+        telemetry_feed_text + audit_rows_text, ("scanner",)
+    )
+    audit["audit_correlation_or_trace_marker_visible"] = _contains_tokens(
+        telemetry_feed_text, ("TRACE", "CORRELATION")
+    )
+    audit["audit_local_only_marker_visible"] = _contains_tokens(
+        telemetry_feed_text, ("LOCAL AUDIT LOG ONLY",)
+    )
+    audit["alerts_no_cloud_sink_visible"] = _contains_tokens(
+        alerts_feed_text + telemetry_feed_text, ("NO CLOUD SINK",)
+    )
+    audit["alerts_no_external_export_visible"] = _contains_tokens(
+        alerts_feed_text + telemetry_feed_text, ("NO EXTERNAL EXPORT",)
+    )
+    audit["telemetry_no_live_exchange_stream_visible"] = _contains_tokens(
+        telemetry_feed_text, ("NO LIVE EXCHANGE STREAM",)
+    )
+    audit["telemetry_no_real_order_stream_visible"] = _contains_tokens(
+        telemetry_feed_text, ("NO REAL ORDER EVENT STREAM",)
+    )
+    audit["telemetry_no_secrets_logged_visible"] = _contains_tokens(
+        telemetry_feed_text, ("SECRETS NOT LOGGED",)
+    )
+    audit["telemetry_uses_local_preview_state"] = (
+        _contains_tokens(telemetry_feed_text + telemetry_rows_text, ("local", "preview"))
+        and _bool_property(root, "runtimeLoopStarted") is False
+    )
+    audit["alerts_telemetry_updates_after_preview_actions_local_only"] = (
+        audit.get("ping_appends_telemetry") is True
+        and audit.get("risk_block_generates_blocked_event_and_alert") is True
+        and _bool_property(root, "exchangeIoDisabled") is True
+        and _bool_property(root, "orderSubmissionDisabled") is True
+    )
+    alerts_telemetry_live_shape_evidence = _build_alerts_telemetry_live_shape_evidence(audit)
+    audit["alerts_telemetry_live_shape_evidence"] = alerts_telemetry_live_shape_evidence
+    audit.update(alerts_telemetry_live_shape_evidence)
+
     frontend_live_parity_evidence = _build_frontend_live_parity_evidence(audit)
     audit["frontend_live_parity_evidence"] = frontend_live_parity_evidence
     audit.update(
@@ -3345,6 +3562,7 @@ def _exercise_preview_state(
         "risk_live_safety_controls_visible_complete",
         "terminal_order_form_live_shape_complete",
         "portfolio_live_shape_parity_complete",
+        "alerts_telemetry_live_shape_parity_complete",
     )
     audit["passed"] = (
         int(audit["start_tick_delta"]) >= 1
@@ -4357,6 +4575,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         portfolio_live_shape_evidence = preview_state_audit.get("portfolio_live_shape_evidence", {})
         if not isinstance(portfolio_live_shape_evidence, dict):
             portfolio_live_shape_evidence = {}
+        alerts_telemetry_live_shape_evidence = preview_state_audit.get(
+            "alerts_telemetry_live_shape_evidence", {}
+        )
+        if not isinstance(alerts_telemetry_live_shape_evidence, dict):
+            alerts_telemetry_live_shape_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -4671,6 +4894,12 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 portfolio_live_shape_evidence.get("portfolio_live_shape_parity_complete", False)
             ),
             portfolio_live_shape_evidence=portfolio_live_shape_evidence,
+            alerts_telemetry_live_shape_parity_complete=bool(
+                alerts_telemetry_live_shape_evidence.get(
+                    "alerts_telemetry_live_shape_parity_complete", False
+                )
+            ),
+            alerts_telemetry_live_shape_evidence=alerts_telemetry_live_shape_evidence,
             issues=[] if smoke_ok else audit_issues or qml_warnings or ["qml_root_objects_missing"],
         )
         print(result.to_json(), file=output)
