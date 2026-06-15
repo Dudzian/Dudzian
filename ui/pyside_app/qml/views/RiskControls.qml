@@ -163,25 +163,26 @@ Components.StyledScrollView {
             columns: width > 1000 ? 4 : 2
             rowSpacing: 10
             columnSpacing: 10
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Risk state"); description: previewState.riskState; Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Max position"); description: previewState.maxPosition; Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "riskStateCard"; descriptionObjectName: "riskStateCardDescription"; designSystem: root.designSystem; title: qsTr("Risk state"); description: previewState.riskState; Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "riskMaxPositionCard"; descriptionObjectName: "riskMaxPositionCardDescription"; designSystem: root.designSystem; title: qsTr("Max position"); description: previewState.maxPosition; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Max open positions"); description: String(previewState.maxOpenPositions); Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Stop loss"); description: previewState.stopLoss; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Take profit"); description: previewState.takeProfit; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Max slippage"); description: previewState.maxSlippage; Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Max drawdown"); description: previewState.maxDrawdown; Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Daily loss limit"); description: previewState.dailyLossLimit; Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Per-symbol exposure"); description: previewState.perSymbolExposure; Layout.fillWidth: true }
-            Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Confidence floor"); description: previewState.confidenceFloor; Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "riskMaxDrawdownCard"; descriptionObjectName: "riskMaxDrawdownCardDescription"; designSystem: root.designSystem; title: qsTr("Max drawdown"); description: previewState.maxDrawdown; Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "riskDailyLossLimitCard"; descriptionObjectName: "riskDailyLossLimitCardDescription"; designSystem: root.designSystem; title: qsTr("Daily loss limit"); description: previewState.dailyLossLimit; Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "riskPerSymbolExposureCard"; descriptionObjectName: "riskPerSymbolExposureCardDescription"; designSystem: root.designSystem; title: qsTr("Per-symbol exposure"); description: previewState.perSymbolExposure; Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "riskConfidenceFloorCard"; descriptionObjectName: "riskConfidenceFloorCardDescription"; designSystem: root.designSystem; title: qsTr("Confidence floor"); description: previewState.confidenceFloor; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Cooldown"); description: previewState.cooldown; Layout.fillWidth: true }
             Components.PreviewCard { designSystem: root.designSystem; title: qsTr("Allow AI override preview-only"); description: previewState.allowAiOverride ? qsTr("enabled locally") : qsTr("disabled locally"); Layout.fillWidth: true }
         }
 
         Components.PreviewCard {
             objectName: "riskSafetyBoundaryCard"
+            descriptionObjectName: "riskSafetyBoundaryDescription"
             designSystem: root.designSystem
             title: qsTr("Safety boundary")
-            description: qsTr("Safety kill-switch armed • live disabled • exchange route disabled • order submission disabled • paper bridge not connected/planned • Live trading disabled • Exchange I/O disabled • Order submission disabled • API keys not required • No real orders • Runtime loop not started / production runtime loop not started • Risk settings are local preview only. Zablokowane przez ryzyko: brak zmiany PnL/equity, brak pozycji, brak order fill. Blocked events update audit/logs only.")
+            description: qsTr("LIVE DISABLED • EXCHANGE I/O DISABLED • ORDER SUBMISSION DISABLED • API KEYS NOT REQUIRED IN PREVIEW • SECRETS NOT READ • RUNTIME LOOP NOT STARTED • PREVIEW LOCAL ONLY • NO LIVE SIDE EFFECTS • LIVE MODE BLOCKED • RISK GATE / SAFETY LOCK ACTIVE • Safety kill-switch armed • live disabled • exchange route disabled • order submission disabled • paper bridge not connected/planned • Live trading disabled • Exchange I/O disabled • Order submission disabled • API keys not required • No real orders • Runtime loop not started / production runtime loop not started • Risk settings are local preview only. Zablokowane przez ryzyko: brak zmiany PnL/equity, brak pozycji, brak order fill. Blocked reasons: confidence floor, scanner risk score, max position/exposure, daily loss/drawdown, kill-switch/risk lock. Operator can explain blocked state local only. Blocked events update audit/logs only.")
         }
     }
 }

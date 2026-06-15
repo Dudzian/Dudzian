@@ -15,6 +15,7 @@ from ui.pyside_app.smoke import (
     PREVIEW_LAUNCH_READINESS_CHECKS,
     FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS,
     FRONTEND_LIVE_PARITY_SMOKE_KEYS,
+    FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS,
     FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
     FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS,
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
@@ -22,6 +23,7 @@ from ui.pyside_app.smoke import (
     _audit_typed_preview_bridge,
     _build_frontend_live_parity_evidence,
     _build_order_lifecycle_parity_evidence,
+    _build_risk_live_safety_controls_evidence,
     _build_terminal_order_form_parity_evidence,
     _rows_contain_tokens,
     _preview_launch_readiness_evidence,
@@ -417,6 +419,72 @@ def test_frontend_live_parity_dashboard_requires_runtime_alert_summary() -> None
     assert evidence["frontend_live_parity_missing_sections"] == ["dashboard"]
     assert evidence["frontend_live_parity_dashboard_present"] is False
     assert evidence["frontend_live_parity_all_required_sections_present"] is False
+
+
+def _risk_live_safety_green_audit() -> dict[str, object]:
+    return {key: True for key in FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS}
+
+
+def test_risk_live_safety_controls_evidence_helper_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+    risk_controls = (QML_SOURCE_ROOT / "views" / "RiskControls.qml").read_text(encoding="utf-8")
+
+    assert "FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS" in smoke_source
+    assert "def _build_risk_live_safety_controls_evidence" in smoke_source
+    assert "risk_live_safety_controls_evidence" in smoke_source
+    assert "risk_live_safety_controls_visible_complete" in smoke_source
+    assert 'root, "riskControlsPanel", "riskSafetyBoundaryDescription"' in smoke_source
+    assert 'audit["live_trading_disabled_visible"] = _contains_tokens' in smoke_source
+    assert "risk_live_safety_controls" in smoke_source
+    assert "LIVE DISABLED" in risk_controls
+    assert "EXCHANGE I/O DISABLED" in risk_controls
+    assert "ORDER SUBMISSION DISABLED" in risk_controls
+    assert "API KEYS NOT REQUIRED IN PREVIEW" in risk_controls
+    assert "SECRETS NOT READ" in risk_controls
+    assert "RISK GATE / SAFETY LOCK ACTIVE" in risk_controls
+    assert "PREVIEW LOCAL ONLY" in risk_controls
+
+
+def test_risk_live_safety_controls_evidence_complete() -> None:
+    evidence = _build_risk_live_safety_controls_evidence(_risk_live_safety_green_audit())
+
+    assert evidence["risk_live_safety_controls_required_checks"] == list(
+        FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS
+    )
+    assert evidence["risk_live_safety_controls_missing_checks"] == []
+    assert evidence["risk_live_safety_controls_visible_complete"] is True
+    for key in FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS:
+        assert evidence[key] is True
+
+
+def test_risk_live_safety_controls_reports_missing_required_check() -> None:
+    audit = _risk_live_safety_green_audit()
+    audit["secrets_not_read_visible"] = False
+
+    evidence = _build_risk_live_safety_controls_evidence(audit)
+
+    assert evidence["risk_live_safety_controls_missing_checks"] == ["secrets_not_read_visible"]
+    assert evidence["secrets_not_read_visible"] is False
+    assert evidence["risk_live_safety_controls_visible_complete"] is False
+
+
+def test_risk_live_safety_controls_ignores_extra_diagnostics() -> None:
+    audit = _risk_live_safety_green_audit()
+    baseline = _build_risk_live_safety_controls_evidence(audit)
+    audit["risk_safety_source_diagnostic"] = False
+
+    assert _build_risk_live_safety_controls_evidence(audit) == baseline
+
+
+def test_risk_live_safety_controls_requires_runtime_not_source_fallback() -> None:
+    audit = _risk_live_safety_green_audit()
+    audit["live_trading_disabled_visible"] = False
+    audit["live_trading_disabled_source_present"] = True
+
+    evidence = _build_risk_live_safety_controls_evidence(audit)
+
+    assert evidence["risk_live_safety_controls_missing_checks"] == ["live_trading_disabled_visible"]
+    assert evidence["risk_live_safety_controls_visible_complete"] is False
 
 
 def _terminal_order_form_green_audit() -> dict[str, object]:
@@ -1008,6 +1076,15 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
         assert audit[key] is True
         assert frontend_evidence[key] is True
     assert payload["frontend_live_parity_evidence"] == frontend_evidence
+    risk_safety_evidence = audit["risk_live_safety_controls_evidence"]
+    assert isinstance(risk_safety_evidence, dict)
+    assert risk_safety_evidence["risk_live_safety_controls_visible_complete"] is True
+    assert risk_safety_evidence["risk_live_safety_controls_missing_checks"] == []
+    assert payload["risk_live_safety_controls_visible_complete"] is True
+    assert payload["risk_live_safety_controls_evidence"] == risk_safety_evidence
+    for key in FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS:
+        assert audit[key] is True
+        assert risk_safety_evidence[key] is True
     terminal_evidence = audit["terminal_order_form_evidence"]
     assert isinstance(terminal_evidence, dict)
     assert terminal_evidence["terminal_order_form_live_shape_complete"] is True

@@ -172,6 +172,8 @@ class UiSmokeResult:
     frontend_live_parity_no_fake_live_actions: bool = False
     frontend_live_parity_all_required_sections_present: bool = False
     frontend_live_parity_evidence: dict[str, object] = field(default_factory=dict)
+    risk_live_safety_controls_visible_complete: bool = False
+    risk_live_safety_controls_evidence: dict[str, object] = field(default_factory=dict)
     terminal_order_form_live_shape_complete: bool = False
     terminal_order_form_evidence: dict[str, object] = field(default_factory=dict)
     order_lifecycle_preview_parity_complete: bool = False
@@ -621,6 +623,7 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
         "typed_preview_bridge_qml_consumer_diagnostic_marker_local_read_only",
         "safety_boundary_ok",
     ),
+    "risk_live_safety_controls": ("risk_live_safety_controls_visible_complete",),
 }
 
 FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS = (
@@ -652,6 +655,46 @@ FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS = (
     "order_lifecycle_alert_telemetry_updates",
     "order_lifecycle_no_live_side_effects",
 )
+
+
+FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS = (
+    "live_trading_disabled_visible",
+    "exchange_io_disabled_visible",
+    "order_submission_disabled_visible",
+    "runtime_loop_not_started_visible",
+    "api_keys_not_required_visible",
+    "secrets_not_read_visible",
+    "preview_mode_badge_visible",
+    "live_mode_blocked_badge_visible",
+    "safety_boundary_visible",
+    "no_live_side_effects_visible",
+    "kill_switch_or_safety_lock_visible",
+    "risk_lock_or_risk_gate_visible",
+    "risk_profile_visible",
+    "risk_limits_visible",
+    "blocked_reasons_visible",
+    "confidence_floor_or_score_threshold_visible",
+    "max_position_or_exposure_limit_visible",
+    "daily_loss_or_drawdown_limit_visible",
+    "risk_blocked_event_visible",
+    "operator_can_explain_blocked_state_local_only",
+)
+
+
+def _build_risk_live_safety_controls_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build fail-closed evidence for visible preview risk/live safety controls."""
+
+    missing_checks = [
+        key for key in FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS if audit.get(key) is not True
+    ]
+    return {
+        "risk_live_safety_controls_required_checks": list(
+            FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS
+        ),
+        "risk_live_safety_controls_missing_checks": missing_checks,
+        "risk_live_safety_controls_visible_complete": not missing_checks,
+        **{key: audit.get(key) is True for key in FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS},
+    }
 
 
 def _build_order_lifecycle_parity_evidence(audit: dict[str, object]) -> dict[str, object]:
@@ -691,6 +734,7 @@ FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
     "frontend_live_parity_portfolio_present",
     "frontend_live_parity_alerts_telemetry_present",
     "frontend_live_parity_live_safety_boundary_visible",
+    "risk_live_safety_controls_visible_complete",
     "frontend_live_parity_no_fake_live_actions",
     "frontend_live_parity_all_required_sections_present",
 )
@@ -737,6 +781,7 @@ def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, 
         "frontend_live_parity_live_safety_boundary_visible": section_results[
             "live_safety_boundary"
         ],
+        "risk_live_safety_controls_visible_complete": section_results["risk_live_safety_controls"],
         "frontend_live_parity_no_fake_live_actions": no_fake_live_actions,
         "frontend_live_parity_all_required_sections_present": (
             not missing_sections and no_fake_live_actions
@@ -2623,6 +2668,86 @@ def _exercise_preview_state(
         and audit.get("api_keys_required") is False
         and audit.get("simulation_does_not_read_secrets") is True
     )
+    risk_safety_text = _read_visible_panel_object(
+        root, "riskControlsPanel", "riskSafetyBoundaryDescription"
+    )
+    risk_state_text = _read_visible_panel_object(root, "riskControlsPanel", "riskStateCard")
+    risk_limits_text = " ".join(
+        _read_visible_panel_object(root, "riskControlsPanel", object_name)
+        for object_name in (
+            "riskActiveLimitsTable",
+            "riskConfidenceFloorCardDescription",
+            "riskMaxPositionCardDescription",
+            "riskPerSymbolExposureCardDescription",
+            "riskDailyLossLimitCardDescription",
+            "riskMaxDrawdownCardDescription",
+        )
+    )
+    risk_blocked_text = " ".join(
+        (
+            first_blocked_order,
+            _first_row_repr(root.property("alertRows")),
+            _first_row_repr(root.property("paperTelemetryRows")),
+            str(blocked_governor_snapshot.get("riskBlockReason") or ""),
+        )
+    )
+    audit["live_trading_disabled_visible"] = _contains_tokens(risk_safety_text, ("LIVE DISABLED",))
+    audit["exchange_io_disabled_visible"] = _contains_tokens(
+        risk_safety_text, ("EXCHANGE I/O DISABLED",)
+    )
+    audit["order_submission_disabled_visible"] = _contains_tokens(
+        risk_safety_text, ("ORDER SUBMISSION DISABLED",)
+    )
+    audit["runtime_loop_not_started_visible"] = _contains_tokens(
+        risk_safety_text, ("RUNTIME LOOP NOT STARTED",)
+    )
+    audit["api_keys_not_required_visible"] = _contains_tokens(
+        risk_safety_text, ("API KEYS NOT REQUIRED IN PREVIEW",)
+    )
+    audit["secrets_not_read_visible"] = _contains_tokens(risk_safety_text, ("SECRETS NOT READ",))
+    audit["preview_mode_badge_visible"] = _contains_tokens(
+        risk_safety_text, ("PREVIEW LOCAL ONLY",)
+    )
+    audit["live_mode_blocked_badge_visible"] = _contains_tokens(
+        risk_safety_text, ("LIVE MODE BLOCKED",)
+    )
+    audit["safety_boundary_visible"] = _qml_object_visible_with_size(
+        root, "riskSafetyBoundaryCard"
+    ) and bool(risk_safety_text)
+    audit["no_live_side_effects_visible"] = _contains_tokens(
+        risk_safety_text, ("NO LIVE SIDE EFFECTS",)
+    )
+    audit["kill_switch_or_safety_lock_visible"] = _contains_tokens(
+        risk_safety_text, ("kill-switch",)
+    ) or _contains_tokens(risk_safety_text, ("SAFETY LOCK",))
+    audit["risk_lock_or_risk_gate_visible"] = _contains_tokens(
+        risk_safety_text + risk_blocked_text, ("RISK GATE",)
+    )
+    audit["risk_profile_visible"] = _qml_object_visible_with_size(
+        root, "riskProfileSegmentedControl"
+    ) and bool(_string_property(root, "riskProfile"))
+    audit["risk_limits_visible"] = _qml_object_visible_with_size(
+        root, "riskActiveLimitsTable"
+    ) and bool(risk_limits_text.strip())
+    audit["blocked_reasons_visible"] = _contains_tokens(risk_safety_text, ("Blocked reasons",))
+    audit["confidence_floor_or_score_threshold_visible"] = _contains_tokens(
+        risk_limits_text + risk_safety_text, ("confidence floor",)
+    )
+    audit["max_position_or_exposure_limit_visible"] = _contains_tokens(
+        risk_limits_text + risk_safety_text, ("max position",)
+    ) or _contains_tokens(risk_limits_text + risk_safety_text, ("exposure",))
+    audit["daily_loss_or_drawdown_limit_visible"] = _contains_tokens(
+        risk_limits_text + risk_safety_text, ("daily loss",)
+    ) or _contains_tokens(risk_limits_text + risk_safety_text, ("drawdown",))
+    audit["risk_blocked_event_visible"] = audit.get(
+        "risk_block_generates_blocked_event_and_alert"
+    ) is True and _contains_tokens(risk_blocked_text, ("Risk gate blocked",))
+    audit["operator_can_explain_blocked_state_local_only"] = _contains_tokens(
+        risk_safety_text, ("Operator can explain blocked state local only",)
+    )
+    risk_live_safety_controls_evidence = _build_risk_live_safety_controls_evidence(audit)
+    audit["risk_live_safety_controls_evidence"] = risk_live_safety_controls_evidence
+    audit.update(risk_live_safety_controls_evidence)
     order_lifecycle_evidence = _build_order_lifecycle_parity_evidence(audit)
     audit["order_lifecycle_evidence"] = order_lifecycle_evidence
     audit.update(order_lifecycle_evidence)
@@ -2801,6 +2926,7 @@ def _exercise_preview_state(
         "frontend_live_parity_live_safety_boundary_visible",
         "frontend_live_parity_no_fake_live_actions",
         "frontend_live_parity_all_required_sections_present",
+        "risk_live_safety_controls_visible_complete",
         "terminal_order_form_live_shape_complete",
     )
     audit["passed"] = (
@@ -3801,6 +3927,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         order_lifecycle_evidence = preview_state_audit.get("order_lifecycle_evidence", {})
         if not isinstance(order_lifecycle_evidence, dict):
             order_lifecycle_evidence = {}
+        risk_live_safety_controls_evidence = preview_state_audit.get(
+            "risk_live_safety_controls_evidence", {}
+        )
+        if not isinstance(risk_live_safety_controls_evidence, dict):
+            risk_live_safety_controls_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -4091,6 +4222,12 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ),
             frontend_live_parity_evidence=frontend_live_parity_evidence,
+            risk_live_safety_controls_visible_complete=bool(
+                risk_live_safety_controls_evidence.get(
+                    "risk_live_safety_controls_visible_complete", False
+                )
+            ),
+            risk_live_safety_controls_evidence=risk_live_safety_controls_evidence,
             terminal_order_form_live_shape_complete=bool(
                 terminal_order_form_evidence.get("terminal_order_form_live_shape_complete", False)
             ),
