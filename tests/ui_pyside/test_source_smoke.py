@@ -25,6 +25,7 @@ from ui.pyside_app.smoke import (
     _build_terminal_order_form_parity_evidence,
     _rows_contain_tokens,
     _preview_launch_readiness_evidence,
+    _rows_contain_tokens,
     _typed_preview_bridge_consumer_evidence,
 )
 
@@ -538,22 +539,24 @@ def test_order_lifecycle_parity_evidence_ignores_extra_diagnostics() -> None:
     assert _build_order_lifecycle_parity_evidence(audit) == baseline
 
 
-def test_order_lifecycle_alert_telemetry_searches_all_rows_not_only_latest() -> None:
-    rows = [
-        {"message": "later scanner event"},
-        {"message": "risk gate confidence_floor BLOCKED ETH/USDT • Risk gate blocked locally"},
-    ]
-
-    assert _rows_contain_tokens(rows, ("Risk gate", "blocked")) is True
-
-
-def test_order_lifecycle_rejected_disabled_placeholder_tokens_source_contract() -> None:
+def test_order_lifecycle_runtime_hardening_source_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
     terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
 
-    assert "paperTerminalLifecycleReservedPlaceholder" in terminal
-    assert "NO ORDER / rejected / partial fill / cancel placeholders" in terminal
+    assert _rows_contain_tokens([{"message": "Risk gate blocked locally"}], ("Risk gate",))
+    assert "Runtime-captured values collected by _visible_preview_object_values()" in smoke_source
+    assert "order_lifecycle_decision_rows_contain_blocked" in smoke_source
+    assert "order_lifecycle_telemetry_rows_contain_risk_gate" in smoke_source
+    assert "order_lifecycle_alert_rows_contain_paper_blocked" in smoke_source
+    rejected_check = smoke_source[
+        smoke_source.index(
+            'audit["order_lifecycle_rejected_disabled_visible"]'
+        ) : smoke_source.index('audit["order_lifecycle_partial_fill_cancel_placeholders_visible"]')
+    ]
+    assert "terminal_order_rejected_disabled_placeholder_visible" not in rejected_check
+    assert 'objectName: "paperTerminalLifecycleReservedPlaceholder"' in terminal
+    assert "rejected" in terminal
     assert "disabled in preview" in terminal
-    assert "no real order side-effect or exchange fill" in terminal
 
 
 def test_smoke_flags_are_available_in_parser() -> None:

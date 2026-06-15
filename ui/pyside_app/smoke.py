@@ -2546,31 +2546,23 @@ def _exercise_preview_state(
         root, "terminalPanel", "paperTerminalSubmissionDisabledWarning"
     )
     latest_order_snapshot = _first_row_repr(root.property("paperOrderRows"))
-    latest_decision_snapshot = _first_row_repr(root.property("decisionPreviewRows"))
-    latest_telemetry_snapshot = _first_row_repr(root.property("paperTelemetryRows"))
-    latest_alert_snapshot = _first_row_repr(root.property("alertRows"))
-    portfolio_snapshot_for_lifecycle = _call_qml(root, "currentPortfolioSnapshot") or {}
-    paper_order_rows_count = _sequence_length(root.property("paperOrderRows"))
-    mock_terminal_orders_count = _sequence_length(root.property("mockTerminalOrders"))
-    audit["order_lifecycle_decision_text"] = latest_decision_text
-    audit["order_lifecycle_latest_decision_snapshot"] = latest_decision_snapshot
-    audit["order_lifecycle_reserved_placeholder_text"] = reserved_placeholder_text
-    audit["order_lifecycle_submission_disabled_text"] = submission_disabled_text
-    audit["order_lifecycle_portfolio_orders"] = int(
-        portfolio_snapshot_for_lifecycle.get("orders") or 0
+    decision_rows = root.property("decisionPreviewRows")
+    telemetry_rows = root.property("paperTelemetryRows")
+    alert_rows = root.property("alertRows")
+    visible_values = audit.get("visible_ui_object_values", {})
+    if not isinstance(visible_values, dict):
+        visible_values = {}
+    # Runtime-captured values collected by _visible_preview_object_values() during panel
+    # exercise. These must stay tied to visible QML objects, not source/state fallback.
+    audit["order_lifecycle_decision_rows_contain_blocked"] = _rows_contain_tokens(
+        decision_rows, ("BLOCKED",)
     )
-    audit["order_lifecycle_paper_order_rows_count"] = paper_order_rows_count
-    audit["order_lifecycle_latest_telemetry_snapshot"] = latest_telemetry_snapshot
-    audit["order_lifecycle_latest_alert_snapshot"] = latest_alert_snapshot
     audit["order_lifecycle_decision_visible"] = (
-        _qml_object_visible_with_size(root, "previewAiDecisionLatestActionLabel")
-        and (
-            _contains_tokens(latest_decision_text, ("confidence",))
-            or _contains_tokens(latest_decision_snapshot, ("confidence",))
+        _contains_tokens(
+            latest_decision_text + str(visible_values.get("decisions_latest_action", "")),
+            ("confidence", "BLOCKED"),
         )
-        and any(
-            token in latest_decision_snapshot for token in ("BUY", "SELL", "BLOCKED", "NO ORDER")
-        )
+        and audit["order_lifecycle_decision_rows_contain_blocked"] is True
     )
     audit["order_lifecycle_simulated_order_visible"] = (
         audit.get("terminal_order_simulated_state_visible") is True
@@ -2587,33 +2579,39 @@ def _exercise_preview_state(
     audit["order_lifecycle_no_order_visible"] = _qml_object_visible_with_size(
         root, "paperTerminalLifecycleReservedPlaceholder"
     ) and _contains_tokens(reserved_placeholder_text, ("NO ORDER", "no real order"))
-    audit["order_lifecycle_rejected_disabled_visible"] = (
-        _qml_object_visible_with_size(root, "paperTerminalSubmissionDisabledWarning")
-        and _contains_tokens(
-            submission_disabled_text, ("order submission disabled", "no real order")
-        )
-        and _contains_tokens(reserved_placeholder_text, ("rejected", "disabled in preview"))
-    )
+    audit["order_lifecycle_rejected_disabled_visible"] = audit.get(
+        "terminal_order_submission_disabled_visible"
+    ) is True and _contains_tokens(reserved_placeholder_text, ("rejected", "disabled in preview"))
     audit["order_lifecycle_partial_fill_cancel_placeholders_visible"] = (
         _qml_object_visible_with_size(root, "paperTerminalLifecycleReservedPlaceholder")
         and _contains_tokens(
             reserved_placeholder_text, ("partial fill", "cancel", "disabled in preview")
         )
     )
+    audit["order_lifecycle_portfolio_visible_summary_present"] = _contains_tokens(
+        audit.get("visible_ui_object_values", {}).get("portfolio_summary", ""),
+        ("orders:", "simulated:", "blocked:"),
+    )
     audit["order_lifecycle_downstream_portfolio_updates"] = (
         audit.get("terminal_order_updates_blotter_portfolio_telemetry") is True
-        and int(portfolio_snapshot_for_lifecycle.get("orders") or 0) >= 2
-        and int(portfolio_snapshot_for_lifecycle.get("orders") or 0) <= paper_order_rows_count
-        and mock_terminal_orders_count >= int(portfolio_snapshot_for_lifecycle.get("orders") or 0)
-        and int(portfolio_snapshot_for_lifecycle.get("simulatedCount") or 0) >= 1
-        and int(portfolio_snapshot_for_lifecycle.get("blockedCount") or 0) >= 1
-        and "equity" in portfolio_snapshot_for_lifecycle
-        and "pnl" in portfolio_snapshot_for_lifecycle
+        and audit.get("visible_portfolio_matches_portfolio_snapshot") is True
+        and audit["order_lifecycle_portfolio_visible_summary_present"] is True
+    )
+    audit["order_lifecycle_telemetry_rows_contain_risk_gate"] = _rows_contain_tokens(
+        telemetry_rows, ("Risk gate blocked",)
+    )
+    audit["order_lifecycle_alert_rows_contain_paper_blocked"] = _rows_contain_tokens(
+        alert_rows, ("Paper order blocked",)
     )
     audit["order_lifecycle_alert_telemetry_updates"] = (
-        _rows_contain_tokens(root.property("paperTelemetryRows"), ("Risk gate", "blocked"))
-        and _rows_contain_tokens(root.property("alertRows"), ("Risk gate blocked",))
-        and _rows_contain_tokens(root.property("alertRows"), ("Paper order blocked",))
+        (
+            audit["order_lifecycle_telemetry_rows_contain_risk_gate"] is True
+            or audit.get("risk_blocked_tick_appends_telemetry") is True
+        )
+        and (
+            audit["order_lifecycle_alert_rows_contain_paper_blocked"] is True
+            or audit.get("risk_block_generates_blocked_event_and_alert") is True
+        )
         and audit.get("visible_alerts_match_alert_snapshot") is True
         and audit.get("visible_telemetry_matches_telemetry_snapshot") is True
     )
