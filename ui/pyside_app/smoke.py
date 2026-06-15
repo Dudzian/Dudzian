@@ -1663,11 +1663,16 @@ def _build_operator_workflow_runtime_audit(root: Any, audit: dict[str, object]) 
         audit.get("alerts_feed_visible") is True
         and _sequence_length(root.property("alertRows")) > 0
     )
-    workflow["operator_risk_or_order_alert_visible"] = _contains_tokens(
-        alert_rows_text, ("blocked",)
-    ) and (
+    direct_risk_or_order_alert_visible = _contains_tokens(alert_rows_text, ("blocked",)) and (
         _contains_tokens(alert_rows_text, ("risk",))
         or _contains_tokens(alert_rows_text, ("order",))
+    )
+    workflow["operator_risk_or_order_alert_visible"] = workflow.get(
+        "operator_alerts_visible_after_actions"
+    ) is True and (
+        audit.get("risk_blocked_alert_visible") is True
+        or audit.get("order_blocked_alert_visible") is True
+        or direct_risk_or_order_alert_visible
     )
     workflow["operator_telemetry_visible_after_actions"] = (
         audit.get("telemetry_feed_visible") is True
