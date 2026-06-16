@@ -8,6 +8,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 QML_ROOT = REPO_ROOT / "ui" / "pyside_app" / "qml"
 SMOKE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "smoke.py"
 UI_PYSIDE_ROOT = REPO_ROOT / "ui" / "pyside_app"
+APP_SOURCE = UI_PYSIDE_ROOT / "app.py"
+ALLOWED_QT_QUICK_CONTROLS_STYLE_BOOTSTRAP = (
+    'os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")'
+)
 
 
 def _qml_source() -> str:
@@ -17,6 +21,10 @@ def _qml_source() -> str:
 def _scoped_source() -> str:
     paths = [*UI_PYSIDE_ROOT.rglob("*.py"), *UI_PYSIDE_ROOT.rglob("*.qml")]
     return "\n".join(path.read_text(encoding="utf-8") for path in sorted(paths))
+
+
+def _source_without_allowed_qt_style_bootstrap(source: str) -> str:
+    return source.replace(ALLOWED_QT_QUICK_CONTROLS_STYLE_BOOTSTRAP, "", 1)
 
 
 def test_risk_profiles_and_apply_functions_exist() -> None:
@@ -122,7 +130,7 @@ def test_smoke_audit_contract_has_risk_8_0e_flags() -> None:
 
 
 def test_forbidden_tokens_do_not_appear_in_ui_preview_scope() -> None:
-    source = _scoped_source()
+    source = _source_without_allowed_qt_style_bootstrap(_scoped_source())
     forbidden = (
         "create" + "_" + "order",
         "fetch" + "_" + "balance",
@@ -138,3 +146,26 @@ def test_forbidden_tokens_do_not_appear_in_ui_preview_scope() -> None:
 
     for token in forbidden:
         assert token not in source
+
+
+def test_app_bootstrap_allows_only_basic_qt_quick_controls_style_env_default() -> None:
+    app_source = APP_SOURCE.read_text(encoding="utf-8")
+
+    assert "QT_QUICK_CONTROLS_STYLE" in app_source
+    assert "os.environ.setdefault" in app_source
+    assert ALLOWED_QT_QUICK_CONTROLS_STYLE_BOOTSTRAP in app_source
+    assert 'os.environ["QT_QUICK_CONTROLS_STYLE"]' not in app_source
+    assert "os.environ['QT_QUICK_CONTROLS_STYLE']" not in app_source
+    assert "os.getenv" not in app_source
+    assert "getenv" not in app_source
+
+
+def test_app_bootstrap_forbidden_env_guard_still_catches_other_environ_usage() -> None:
+    app_source = APP_SOURCE.read_text(encoding="utf-8")
+    unsafe_source = (
+        f'{app_source}\nos.environ.setdefault("TRADING_API_SECRET", "unsafe-preview-secret")\n'
+    )
+
+    normalized_source = _source_without_allowed_qt_style_bootstrap(unsafe_source)
+
+    assert "os.environ" in normalized_source
