@@ -819,6 +819,10 @@ class LiveExecutionRouter(ExecutionService):
             raise
 
     def cancel(self, order_id: str, context: ExecutionContext) -> None:  # noqa: D401
+        if self._closed:
+            _LOGGER.debug("LiveExecutionRouter zamknięty; pomijam anulację %s", order_id)
+            return
+
         exchange_name: str | None = self.binding_for_order(order_id)
         symbol = "unknown"
         context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
