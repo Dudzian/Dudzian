@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts/ci/functional_preview_readiness.py"
 REPORT = REPO_ROOT / "reports/ci/functional_preview_readiness.json"
 REQUIRED_SECTIONS = {
+    "preview_mode_contract",
     "data_source_market_feed",
     "scanner_opportunity_pipeline",
     "ai_decision_governor",
@@ -194,7 +195,7 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_2_scope_remains_static_read_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-2.0" in scope
+    assert "FUNCTIONAL-PREVIEW-2.4" in scope
     assert "no runtime loop, secrets, market fetches, or order I/O executed" in scope
 
 
@@ -210,3 +211,23 @@ def test_runtime_and_strategy_sections_keep_conservative_status() -> None:
     assert strategy["runtime_backed"] is False
     assert strategy["supports_test_server"] is False
     assert strategy["supports_read_only_real_data"] is False
+
+
+def test_preview_mode_contract_evidence_is_static_and_not_mock_only() -> None:
+    payload = _load_report()
+    section = payload["sections"]["preview_mode_contract"]
+    assert section["status"] == "partial"
+    assert section["runtime_backed"] is False
+    assert section["static_qml_only"] is False
+    assert section["supports_test_server"] is False
+    assert section["supports_read_only_real_data"] is False
+    assert "bot_core/runtime/preview_modes.py" in section["evidence_files"]
+    assert "tests/runtime/test_preview_modes.py" in section["evidence_files"]
+    text = "\n".join([*section["gaps"], section["recommended_next_step"]]).lower()
+    assert "preview is not mock-only" in text
+    assert "paper" in text
+    assert "testnet" in text or "sandbox" in text
+    assert "read_only_market" in text or "read-only feed" in text
+    assert "real implementations/proofs" in text
+    assert "live account balance fetch" in text
+    assert "live account snapshot read" in text
