@@ -321,9 +321,10 @@ def validate_report(payload: dict[str, Any]) -> None:
             isinstance(item, str) for item in section["gaps"]
         ):
             raise ValueError(f"{name}: gaps must be list[str]")
-        if not isinstance(section["recommended_next_step"], str) or not section[
-            "recommended_next_step"
-        ].strip():
+        if (
+            not isinstance(section["recommended_next_step"], str)
+            or not section["recommended_next_step"].strip()
+        ):
             raise ValueError(f"{name}: recommended_next_step must be non-empty")
 
 

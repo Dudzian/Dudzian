@@ -157,7 +157,8 @@ def test_top_navigation_order_unique_with_settings_and_scrollable() -> None:
         "alertsPanel": 10,
         "diagnosticsPanel": 11,
         "settingsPanel": 12,
-        "helpGlossaryPanel": 13,
+        "runtimeSessionControlPanel": 13,
+        "helpGlossaryPanel": 14,
     }
     matches = re.findall(r'panelId: "([^"]+)",[^\n]+defaultOrder: (\d+)', main_window)
     panel_orders = {panel_id: int(order) for panel_id, order in matches}
