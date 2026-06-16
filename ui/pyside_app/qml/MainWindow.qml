@@ -3255,6 +3255,18 @@ ApplicationWindow {
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Marketplace"); description: marketplacePresets.length > 0 ? qsTr("Presety dostępne lokalnie") : qsTr("Marketplace unavailable w tym preview"); Layout.fillWidth: true }
                     Components.PreviewCard { designSystem: rootDesignSystem; title: qsTr("Safety"); description: qsTr("Runtime loop not started, API keys not required"); Layout.fillWidth: true }
                 }
+                GridLayout {
+                    objectName: "strategyModelReplayLiveShapeGrid"
+                    Layout.fillWidth: true
+                    columns: width > 980 ? 2 : 1
+                    rowSpacing: 10
+                    columnSpacing: 10
+                    Components.PreviewCard { objectName: "strategyRegistryLiveShapeCard"; designSystem: rootDesignSystem; title: qsTr("LOCAL STRATEGY CATALOG / PREVIEW STRATEGY STATE"); description: qsTr("Strategy registry visible: Momentum Guard enabled, Range Guard enabled, Volatility Breakout Preview disabled. Active strategy / selected strategy: Momentum Guard. Strategy health: healthy preview. Strategy risk profile: moderate; capital allocation shape 35% max preview."); Layout.fillWidth: true }
+                    Components.PreviewCard { objectName: "modelArtifactLiveShapeCard"; designSystem: rootDesignSystem; title: qsTr("MOCK MODEL ARTIFACT / LOCAL INFERENCE PREVIEW / NO MODEL PROMOTION"); description: qsTr("Model artifact status: loaded mock artifact. Version v-preview-10, hash local-mock-7f3a, lineage scanner->governor->paper. Inference readiness: ready local only. Confidence score 0.81, calibration preview only; NO MODEL PROMOTION."); Layout.fillWidth: true }
+                    Components.PreviewCard { objectName: "backtestReplayLiveShapeCard"; designSystem: rootDesignSystem; title: qsTr("Backtest / Replay controls — LOCAL REPLAY ONLY / NO LIVE MARKET DATA FETCH"); description: qsTr("Dataset: bundled preview candles; window 2026-06-01..2026-06-02; timeframe 5m. Start disabled, replay disabled in preview. Result summary: +126.75 USD paper PnL. Metrics: PnL +126.75, win rate 62%, drawdown 3.4%, trades 24. LOCAL REPLAY ONLY. NO LIVE MARKET DATA FETCH."); Layout.fillWidth: true }
+                    Components.PreviewCard { objectName: "strategyReadinessDeploymentGateCard"; designSystem: rootDesignSystem; title: qsTr("Readiness checklist / LIVE PROMOTION DISABLED / PAPER ONLY"); description: qsTr("Readiness checklist visible: registry loaded, mock model ready, replay local, audit boundary green. Paper / sandbox / live promotion shape visible but locked in preview. Blocked live promotion reason: preview cannot train, promote, deploy or execute. no live deployment side effect."); Layout.fillWidth: true }
+                    Components.PreviewCard { objectName: "strategyAuditTelemetryBoundaryCard"; designSystem: rootDesignSystem; title: qsTr("Strategy audit boundary — local-only mock actions"); description: qsTr("strategy/model/backtest actions are local-only, read-only or mock. No real model training, no model artifact promotion, no live execution, no exchange/account/order side effects, no secrets in logs, NO CLOUD SINK, NO EXTERNAL EXPORT."); Layout.fillWidth: true }
+                }
             }
         }
     }
