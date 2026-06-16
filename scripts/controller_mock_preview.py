@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
+
 from bot_core.alerts import AlertMessage
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.execution import ExecutionContext, ExecutionService
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
-from bot_core.runtime import TradingController
-from bot_core.strategies import StrategySignal
+from bot_core.runtime.controller import TradingController
+from bot_core.strategies.base import StrategySignal
 
 _EXPECTED_RULES: tuple[tuple[str, Any], ...] = (
     ("trading.enable_paper_mode", True),
