@@ -51,11 +51,13 @@ def build_report() -> dict[str, Any]:
             "supports_read_only_real_data": False,
             "paper_only_execution_safe": True,
             "gaps": [
-                "Mode contract exists and states that preview is not mock-only: local_mock, recorded replay, paper, testnet/sandbox, and read_only_market are allowed by policy.",
-                "The contract blocks live-production side effects including real exchange orders/fills, live account balance mutation, live account balance fetch, live account snapshot read, live credentials, production cloud telemetry, external export, and live scheduler/worker effects.",
-                "Read-only market policy is distinct from live-production account/balance access; this is static/read-only policy evidence only, and real implementations/proofs for paper spine, read-only feed, and testnet execution still remain.",
+                "Static mode contract exists and states that preview is not mock-only: local_mock, recorded replay, paper, testnet/sandbox, and read_only_market are allowed by policy.",
+                "Enforcement helper exists and accepts enum/string inputs while failing closed for unknown or ambiguous preview mode/capability declarations.",
+                "Paper, testnet/sandbox, read-only market, recorded replay, and local telemetry audit capabilities are allowed by policy.",
+                "Live-production capabilities are blocked by policy, including real exchange orders/fills, live account balance mutation, live account balance fetch, live account snapshot read, live credentials, production cloud telemetry, external export, and live scheduler/worker effects.",
+                "Read-only market policy is distinct from live-production account/balance access; this is static/read-only policy evidence only, and real runtime implementations/proofs for paper spine, read-only feed, and testnet execution still remain.",
             ],
-            "recommended_next_step": "Keep the mode contract as the foundation, then add real implementations/proofs for paper spine, read-only feed, and testnet execution without enabling live-production side effects.",
+            "recommended_next_step": "Keep the static mode contract and enforcement helper as the foundation that allows paper/testnet/read-only/recorded capabilities while blocking live-production capabilities; next add real runtime implementations/proofs for paper spine, read-only feed, and testnet execution without enabling live-production side effects.",
         },
         "data_source_market_feed": {
             "status": "partial",
@@ -303,7 +305,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-2.4 static/read-only preview mode contract evidence; no runtime loop, secrets, market fetches, or order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-2.5 static/read-only preview mode contract enforcement evidence; no runtime loop, secrets, market fetches, or order I/O executed",
         "sections": sections,
     }
     validate_report(payload)
