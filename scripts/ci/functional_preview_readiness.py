@@ -260,6 +260,7 @@ def build_report() -> dict[str, Any]:
                     "tests/scripts/test_mock_runtime_preview.py",
                     "tests/scripts/test_controller_mock_preview.py",
                     "tests/scripts/test_preview_process_safety_hard_gate.py",
+                    "tests/test_live_execution_router_preview_safety_guard.py",
                     "config/e2e/demo_paper.yml",
                     "bot_core/exchanges/base.py",
                 ]
@@ -271,10 +272,12 @@ def build_report() -> dict[str, Any]:
             "paper_only_execution_safe": True,
             "gaps": [
                 "Preview helper tests prove live mode/config is blocked, safe payload invariants report exchange/order/runtime-loop disabled, and forbidden exchange/secret/stream/process tokens are absent from preview scripts.",
-                "A subprocess/source/payload preview hard gate proof now exists for mock/controller preview helpers, but it is not a full DI canary injection proof across every backend/runtime/live adapter route under a running preview application.",
-                "The canary evidence is an armed future-DI contract, not proof that a live exchange adapter was injected into the full preview application process.",
+                "A subprocess/source/payload preview hard gate proof exists for mock/controller preview helpers, and a LiveExecutionRouter DI canary proof exists for the disabled/test-mode path.",
+                "The LiveExecutionRouter disabled/test-mode proof shows get_runtime_stats(), execute(...), cancel(...), flush(), and close() do not touch the injected canary adapter; the closed-path cancel guard is covered.",
+                "This still is not a full end-to-end preview proof across every backend/runtime/live adapter route under a running preview application.",
+                "Paper event spine, preview data-source contract, and read-only market feed proof remain missing, so this is not real live readiness.",
             ],
-            "recommended_next_step": "Keep the live safety hard gate partial until a full DI canary injection or equivalent end-to-end preview proof covers backend/runtime/live adapter routes; then add a local paper event spine for order lifecycle → portfolio → alerts and the preview data-source contract.",
+            "recommended_next_step": "Keep the live safety hard gate partial: preserve the existing subprocess/source/payload helper proof and LiveExecutionRouter DI canary disabled/test-mode proof, then add full end-to-end preview coverage for all backend/runtime/live adapter routes plus a paper event spine, preview data-source contract, and read-only market feed proof.",
         },
     }
     payload = {
