@@ -21,6 +21,7 @@ from ui.pyside_app.smoke import (
     FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS,
     FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS,
     FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS,
+    FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS,
     FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
     FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS,
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
@@ -34,6 +35,7 @@ from ui.pyside_app.smoke import (
     _build_order_lifecycle_parity_evidence,
     _build_risk_live_safety_controls_evidence,
     _build_settings_config_live_shape_evidence,
+    _build_strategy_model_replay_live_shape_evidence,
     _build_terminal_order_form_parity_evidence,
     _rows_contain_tokens,
     _preview_launch_readiness_evidence,
@@ -545,6 +547,59 @@ def test_settings_config_live_shape_source_runtime_markers() -> None:
         "NO SECRET MATERIAL",
         "NO EXCHANGE I/O",
         "NO ACCOUNT BALANCE FETCH",
+        "NO CLOUD SINK",
+        "NO EXTERNAL EXPORT",
+    ):
+        assert token in qml_source
+
+
+def test_strategy_model_replay_live_shape_evidence_complete_and_fail_closed() -> None:
+    audit = {key: True for key in FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS}
+
+    evidence = _build_strategy_model_replay_live_shape_evidence(audit)
+
+    assert evidence["strategy_model_replay_missing_checks"] == []
+    assert evidence["strategy_model_replay_live_shape_parity_complete"] is True
+    for key in FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS:
+        assert evidence[key] is True
+
+    audit["no_model_promotion_visible"] = False
+    evidence = _build_strategy_model_replay_live_shape_evidence(audit)
+
+    assert evidence["strategy_model_replay_missing_checks"] == ["no_model_promotion_visible"]
+    assert evidence["strategy_model_replay_live_shape_parity_complete"] is False
+
+
+def test_strategy_model_replay_live_shape_source_runtime_markers() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+    qml_source = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert (
+        '"strategy_model_replay": ("strategy_model_replay_live_shape_parity_complete",)'
+        in smoke_source
+    )
+    assert "strategy_model_replay_live_shape_evidence" in smoke_source
+    assert "strategy_model_replay_missing_checks" in smoke_source
+    assert '"strategyRegistryLiveShapeCard",' in smoke_source
+    assert 'root, "strategyWorkbench", object_name, "description"' in smoke_source
+    for object_name in (
+        "strategyRegistryLiveShapeCard",
+        "modelArtifactLiveShapeCard",
+        "backtestReplayLiveShapeCard",
+        "strategyReadinessDeploymentGateCard",
+        "strategyAuditTelemetryBoundaryCard",
+    ):
+        assert object_name in qml_source
+    for token in (
+        "LOCAL STRATEGY CATALOG",
+        "PREVIEW STRATEGY STATE",
+        "MOCK MODEL ARTIFACT",
+        "LOCAL INFERENCE PREVIEW",
+        "NO MODEL PROMOTION",
+        "LOCAL REPLAY ONLY",
+        "NO LIVE MARKET DATA FETCH",
+        "LIVE PROMOTION DISABLED",
+        "PAPER ONLY",
         "NO CLOUD SINK",
         "NO EXTERNAL EXPORT",
     ):

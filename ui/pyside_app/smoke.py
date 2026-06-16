@@ -174,6 +174,8 @@ class UiSmokeResult:
     frontend_live_parity_evidence: dict[str, object] = field(default_factory=dict)
     settings_config_live_shape_parity_complete: bool = False
     settings_config_live_shape_evidence: dict[str, object] = field(default_factory=dict)
+    strategy_model_replay_live_shape_parity_complete: bool = False
+    strategy_model_replay_live_shape_evidence: dict[str, object] = field(default_factory=dict)
     risk_live_safety_controls_visible_complete: bool = False
     risk_live_safety_controls_evidence: dict[str, object] = field(default_factory=dict)
     terminal_order_form_live_shape_complete: bool = False
@@ -639,6 +641,7 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
     "risk_live_safety_controls": ("risk_live_safety_controls_visible_complete",),
     "operator_workflow": ("operator_workflow_smoke_complete",),
     "settings_config": ("settings_config_live_shape_parity_complete",),
+    "strategy_model_replay": ("strategy_model_replay_live_shape_parity_complete",),
 }
 
 FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS = (
@@ -659,6 +662,47 @@ FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS = (
     "no_cloud_sink_visible",
     "no_external_export_visible",
 )
+
+
+FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS = (
+    "strategy_panel_visible",
+    "strategy_registry_visible",
+    "active_strategy_visible",
+    "strategy_health_visible",
+    "strategy_risk_profile_visible",
+    "model_artifact_status_visible",
+    "model_lineage_visible",
+    "inference_readiness_visible",
+    "no_model_promotion_visible",
+    "backtest_replay_controls_visible",
+    "replay_dataset_window_visible",
+    "replay_results_summary_visible",
+    "replay_metrics_visible",
+    "local_replay_only_visible",
+    "no_live_market_data_fetch_visible",
+    "readiness_checklist_visible",
+    "live_promotion_locked_visible",
+    "no_live_deployment_side_effect_visible",
+    "strategy_audit_local_only_visible",
+    "no_cloud_sink_visible",
+    "no_external_export_visible",
+)
+
+
+def _build_strategy_model_replay_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build fail-closed FRONTEND-PARITY-10.0 strategy/model/replay evidence."""
+
+    missing_checks = [
+        key for key in FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS if audit.get(key) is not True
+    ]
+    return {
+        "strategy_model_replay_required_checks": list(
+            FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS
+        ),
+        "strategy_model_replay_missing_checks": missing_checks,
+        "strategy_model_replay_live_shape_parity_complete": not missing_checks,
+        **{key: audit.get(key) is True for key in FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS},
+    }
 
 
 def _build_settings_config_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
@@ -1023,6 +1067,7 @@ FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
     "alerts_telemetry_live_shape_parity_complete",
     "frontend_live_parity_no_fake_live_actions",
     "operator_workflow_smoke_complete",
+    "strategy_model_replay_live_shape_parity_complete",
     "frontend_live_parity_all_required_sections_present",
 )
 
@@ -1085,6 +1130,12 @@ def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, 
         "operator_workflow_smoke_complete": section_results["operator_workflow"],
         "settings_config_live_shape_parity_complete": section_results["settings_config"],
         "frontend_live_parity_settings_config_present": section_results["settings_config"],
+        "strategy_model_replay_live_shape_parity_complete": section_results[
+            "strategy_model_replay"
+        ],
+        "frontend_live_parity_strategy_model_replay_present": section_results[
+            "strategy_model_replay"
+        ],
         "frontend_live_parity_all_required_sections_present": (
             not missing_sections and no_fake_live_actions
         ),
@@ -3735,6 +3786,94 @@ def _exercise_preview_state(
     audit["settings_config_live_shape_evidence"] = settings_config_live_shape_evidence
     audit.update(settings_config_live_shape_evidence)
 
+    strategy_model_replay_objects = (
+        "strategyWorkbenchPreviewPanel",
+        "strategyRegistryLiveShapeCard",
+        "modelArtifactLiveShapeCard",
+        "backtestReplayLiveShapeCard",
+        "strategyReadinessDeploymentGateCard",
+        "strategyAuditTelemetryBoundaryCard",
+    )
+    strategy_model_replay_text = " ".join(
+        value
+        for object_name in strategy_model_replay_objects
+        for value in (
+            _read_visible_panel_object(root, "strategyWorkbench", object_name),
+            _read_visible_panel_object_property(root, "strategyWorkbench", object_name, "title"),
+            _read_visible_panel_object_property(
+                root, "strategyWorkbench", object_name, "description"
+            ),
+        )
+    )
+    audit["strategy_panel_visible"] = _qml_object_visible_with_size(
+        root, "strategyWorkbenchPreviewPanel"
+    )
+    audit["strategy_registry_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("LOCAL STRATEGY CATALOG", "PREVIEW STRATEGY STATE")
+    )
+    audit["active_strategy_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("Active strategy", "selected strategy")
+    )
+    audit["strategy_health_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("health", "enabled", "disabled")
+    )
+    audit["strategy_risk_profile_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("risk profile", "capital allocation")
+    )
+    audit["model_artifact_status_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("MOCK MODEL ARTIFACT", "artifact status")
+    )
+    audit["model_lineage_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("version", "hash", "lineage")
+    )
+    audit["inference_readiness_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("LOCAL INFERENCE PREVIEW", "inference readiness")
+    )
+    audit["no_model_promotion_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("NO MODEL PROMOTION",)
+    )
+    audit["backtest_replay_controls_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("Backtest", "Replay", "Start disabled")
+    )
+    audit["replay_dataset_window_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("dataset", "window", "timeframe")
+    )
+    audit["replay_results_summary_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("result summary",)
+    )
+    audit["replay_metrics_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("PnL", "win rate", "drawdown", "trades")
+    )
+    audit["local_replay_only_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("LOCAL REPLAY ONLY",)
+    )
+    audit["no_live_market_data_fetch_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("NO LIVE MARKET DATA FETCH",)
+    )
+    audit["readiness_checklist_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("readiness checklist",)
+    )
+    audit["live_promotion_locked_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("LIVE PROMOTION DISABLED", "PAPER ONLY")
+    )
+    audit["no_live_deployment_side_effect_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("no live deployment side effect",)
+    )
+    audit["strategy_audit_local_only_visible"] = _contains_tokens(
+        strategy_model_replay_text, ("strategy/model/backtest actions", "local-only")
+    )
+    audit["no_cloud_sink_visible"] = audit.get(
+        "no_cloud_sink_visible"
+    ) is True and _contains_tokens(strategy_model_replay_text, ("NO CLOUD SINK",))
+    audit["no_external_export_visible"] = audit.get(
+        "no_external_export_visible"
+    ) is True and _contains_tokens(strategy_model_replay_text, ("NO EXTERNAL EXPORT",))
+    strategy_model_replay_live_shape_evidence = _build_strategy_model_replay_live_shape_evidence(
+        audit
+    )
+    audit["strategy_model_replay_live_shape_evidence"] = strategy_model_replay_live_shape_evidence
+    audit.update(strategy_model_replay_live_shape_evidence)
+
     audit.update(_build_operator_workflow_runtime_audit(root, audit))
     operator_workflow_evidence = _build_operator_workflow_evidence(audit)
     audit["operator_workflow_evidence"] = operator_workflow_evidence
@@ -4944,6 +5083,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         )
         if not isinstance(settings_config_live_shape_evidence, dict):
             settings_config_live_shape_evidence = {}
+        strategy_model_replay_live_shape_evidence = preview_state_audit.get(
+            "strategy_model_replay_live_shape_evidence", {}
+        )
+        if not isinstance(strategy_model_replay_live_shape_evidence, dict):
+            strategy_model_replay_live_shape_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -5240,6 +5384,12 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ),
             settings_config_live_shape_evidence=settings_config_live_shape_evidence,
+            strategy_model_replay_live_shape_parity_complete=bool(
+                strategy_model_replay_live_shape_evidence.get(
+                    "strategy_model_replay_live_shape_parity_complete", False
+                )
+            ),
+            strategy_model_replay_live_shape_evidence=strategy_model_replay_live_shape_evidence,
             risk_live_safety_controls_visible_complete=bool(
                 risk_live_safety_controls_evidence.get(
                     "risk_live_safety_controls_visible_complete", False
