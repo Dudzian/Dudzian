@@ -20,6 +20,7 @@ from ui.pyside_app.smoke import (
     FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS,
     FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS,
     FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS,
+    FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS,
     FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
     FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS,
     TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
@@ -32,6 +33,7 @@ from ui.pyside_app.smoke import (
     _build_portfolio_live_shape_evidence,
     _build_order_lifecycle_parity_evidence,
     _build_risk_live_safety_controls_evidence,
+    _build_settings_config_live_shape_evidence,
     _build_terminal_order_form_parity_evidence,
     _rows_contain_tokens,
     _preview_launch_readiness_evidence,
@@ -499,6 +501,54 @@ def _frontend_live_parity_green_audit() -> dict[str, object]:
     audit["api_keys_required"] = False
     audit["network_api_calls"] = "disabled"
     return audit
+
+
+def test_settings_config_live_shape_evidence_complete_and_fail_closed() -> None:
+    audit = {key: True for key in FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS}
+
+    evidence = _build_settings_config_live_shape_evidence(audit)
+
+    assert evidence["settings_config_missing_checks"] == []
+    assert evidence["settings_config_live_shape_parity_complete"] is True
+    for key in FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS:
+        assert evidence[key] is True
+
+    audit["api_keys_masked_visible"] = False
+    evidence = _build_settings_config_live_shape_evidence(audit)
+
+    assert evidence["settings_config_missing_checks"] == ["api_keys_masked_visible"]
+    assert evidence["settings_config_live_shape_parity_complete"] is False
+
+
+def test_settings_config_live_shape_source_runtime_markers() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+    qml_source = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert '"settings_config": ("settings_config_live_shape_parity_complete",)' in smoke_source
+    assert "settings_config_live_shape_evidence" in smoke_source
+    assert "settings_config_missing_checks" in smoke_source
+    assert '"settingsModeControlsLiveShapeCard",' in smoke_source
+    assert (
+        '_read_visible_panel_object_property(root, "settingsPanel", object_name, "description")'
+        in smoke_source
+    )
+    assert "settingsModeControlsLiveShapeCard" in qml_source
+    assert "settingsApiKeyCredentialsLiveShapeCard" in qml_source
+    assert "settingsExchangeAccountLiveShapeCard" in qml_source
+    assert "settingsConfigValidationLiveShapeCard" in qml_source
+    assert "settingsAuditTelemetryBoundaryCard" in qml_source
+    for token in (
+        "LOCAL PREVIEW",
+        "PAPER ONLY",
+        "LIVE DISABLED",
+        "SECRETS MASKED",
+        "NO SECRET MATERIAL",
+        "NO EXCHANGE I/O",
+        "NO ACCOUNT BALANCE FETCH",
+        "NO CLOUD SINK",
+        "NO EXTERNAL EXPORT",
+    ):
+        assert token in qml_source
 
 
 def test_frontend_live_parity_evidence_helper_contract() -> None:
