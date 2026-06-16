@@ -172,6 +172,8 @@ class UiSmokeResult:
     frontend_live_parity_no_fake_live_actions: bool = False
     frontend_live_parity_all_required_sections_present: bool = False
     frontend_live_parity_evidence: dict[str, object] = field(default_factory=dict)
+    settings_config_live_shape_parity_complete: bool = False
+    settings_config_live_shape_evidence: dict[str, object] = field(default_factory=dict)
     risk_live_safety_controls_visible_complete: bool = False
     risk_live_safety_controls_evidence: dict[str, object] = field(default_factory=dict)
     terminal_order_form_live_shape_complete: bool = False
@@ -636,7 +638,49 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
     ),
     "risk_live_safety_controls": ("risk_live_safety_controls_visible_complete",),
     "operator_workflow": ("operator_workflow_smoke_complete",),
+    "settings_config": ("settings_config_live_shape_parity_complete",),
 }
+
+FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS = (
+    "settings_panel_visible",
+    "mode_controls_visible",
+    "preview_mode_boundary_visible",
+    "live_mode_locked_visible",
+    "api_key_status_visible",
+    "api_keys_masked_visible",
+    "no_secret_material_visible",
+    "exchange_profile_visible",
+    "account_profile_visible",
+    "no_exchange_io_boundary_visible",
+    "no_account_balance_fetch_boundary_visible",
+    "config_validation_visible",
+    "live_activation_blocked_reason_visible",
+    "config_audit_local_only_visible",
+    "no_cloud_sink_visible",
+    "no_external_export_visible",
+)
+
+
+def _build_settings_config_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build fail-closed FRONTEND-PARITY-9.0 settings/config evidence."""
+
+    missing_checks = [
+        key
+        for key in FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS
+        if audit.get(key) is not True
+    ]
+    return {
+        "settings_config_required_checks": list(
+            FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS
+        ),
+        "settings_config_missing_checks": missing_checks,
+        "settings_config_live_shape_parity_complete": not missing_checks,
+        **{
+            key: audit.get(key) is True
+            for key in FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS
+        },
+    }
+
 
 FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS = (
     "terminal_order_form_visible",
@@ -1039,6 +1083,8 @@ def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, 
         is True,
         "frontend_live_parity_no_fake_live_actions": no_fake_live_actions,
         "operator_workflow_smoke_complete": section_results["operator_workflow"],
+        "settings_config_live_shape_parity_complete": section_results["settings_config"],
+        "frontend_live_parity_settings_config_present": section_results["settings_config"],
         "frontend_live_parity_all_required_sections_present": (
             not missing_sections and no_fake_live_actions
         ),
@@ -3630,6 +3676,65 @@ def _exercise_preview_state(
     audit["alerts_telemetry_live_shape_evidence"] = alerts_telemetry_live_shape_evidence
     audit.update(alerts_telemetry_live_shape_evidence)
 
+    settings_live_shape_objects = (
+        "settingsPreviewPanel",
+        "settingsModeControlsLiveShapeCard",
+        "settingsApiKeyCredentialsLiveShapeCard",
+        "settingsExchangeAccountLiveShapeCard",
+        "settingsConfigValidationLiveShapeCard",
+        "settingsAuditTelemetryBoundaryCard",
+    )
+    settings_text = " ".join(
+        value
+        for object_name in settings_live_shape_objects
+        for value in (
+            _read_visible_panel_object(root, "settingsPanel", object_name),
+            _read_visible_panel_object_property(root, "settingsPanel", object_name, "title"),
+            _read_visible_panel_object_property(root, "settingsPanel", object_name, "description"),
+        )
+    )
+    audit["settings_panel_visible"] = _qml_object_visible_with_size(root, "settingsPreviewPanel")
+    audit["mode_controls_visible"] = _qml_object_visible_with_size(
+        root, "settingsModeControlsLiveShapeCard"
+    ) and _contains_tokens(settings_text, ("Current mode", "PAPER ONLY", "LIVE DISABLED"))
+    audit["preview_mode_boundary_visible"] = _contains_tokens(
+        settings_text, ("LOCAL PREVIEW", "PAPER ONLY")
+    )
+    audit["live_mode_locked_visible"] = _contains_tokens(settings_text, ("LIVE DISABLED", "locked"))
+    audit["api_key_status_visible"] = _contains_tokens(
+        settings_text, ("API key status", "missing", "not configured", "read-only")
+    )
+    audit["api_keys_masked_visible"] = "••••" in settings_text
+    audit["no_secret_material_visible"] = (
+        _contains_tokens(settings_text, ("SECRETS MASKED", "NO SECRET MATERIAL"))
+        and _bool_property(root, "settingsSecretsRead") is False
+    )
+    audit["exchange_profile_visible"] = _contains_tokens(settings_text, ("Exchange profile",))
+    audit["account_profile_visible"] = _contains_tokens(
+        settings_text, ("Account profile", "status")
+    )
+    audit["no_exchange_io_boundary_visible"] = (
+        _contains_tokens(settings_text, ("NO EXCHANGE I/O",))
+        and _bool_property(root, "exchangeIoDisabled") is True
+    )
+    audit["no_account_balance_fetch_boundary_visible"] = _contains_tokens(
+        settings_text, ("NO ACCOUNT BALANCE FETCH",)
+    )
+    audit["config_validation_visible"] = _contains_tokens(
+        settings_text, ("Config validation", "readiness checklist", "guardrails")
+    )
+    audit["live_activation_blocked_reason_visible"] = _contains_tokens(
+        settings_text, ("live activation blocked reason", "cannot enable live execution")
+    )
+    audit["config_audit_local_only_visible"] = _contains_tokens(
+        settings_text, ("Config/settings changes", "local only")
+    )
+    audit["no_cloud_sink_visible"] = _contains_tokens(settings_text, ("NO CLOUD SINK",))
+    audit["no_external_export_visible"] = _contains_tokens(settings_text, ("NO EXTERNAL EXPORT",))
+    settings_config_live_shape_evidence = _build_settings_config_live_shape_evidence(audit)
+    audit["settings_config_live_shape_evidence"] = settings_config_live_shape_evidence
+    audit.update(settings_config_live_shape_evidence)
+
     audit.update(_build_operator_workflow_runtime_audit(root, audit))
     operator_workflow_evidence = _build_operator_workflow_evidence(audit)
     audit["operator_workflow_evidence"] = operator_workflow_evidence
@@ -4834,6 +4939,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         operator_workflow_evidence = preview_state_audit.get("operator_workflow_evidence", {})
         if not isinstance(operator_workflow_evidence, dict):
             operator_workflow_evidence = {}
+        settings_config_live_shape_evidence = preview_state_audit.get(
+            "settings_config_live_shape_evidence", {}
+        )
+        if not isinstance(settings_config_live_shape_evidence, dict):
+            settings_config_live_shape_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -5124,6 +5234,12 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ),
             frontend_live_parity_evidence=frontend_live_parity_evidence,
+            settings_config_live_shape_parity_complete=bool(
+                settings_config_live_shape_evidence.get(
+                    "settings_config_live_shape_parity_complete", False
+                )
+            ),
+            settings_config_live_shape_evidence=settings_config_live_shape_evidence,
             risk_live_safety_controls_visible_complete=bool(
                 risk_live_safety_controls_evidence.get(
                     "risk_live_safety_controls_visible_complete", False

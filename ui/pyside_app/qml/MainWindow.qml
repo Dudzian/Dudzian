@@ -2700,6 +2700,38 @@ ApplicationWindow {
                         description: root.appModePreview + " • App mode selector • Demo Preview / Paper Preview / Sandbox planned / Live disabled"
                         Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: root.appModePreviewOptions; delegate: Components.IconButton { required property string modelData; designSystem: rootDesignSystem; text: modelData; subtle: root.appModePreview !== modelData; helpText: root.tooltipText("App mode selector"); onClicked: root.setAppModePreview(modelData) } } }
                     }
+
+                    Components.PreviewCard {
+                        objectName: "settingsModeControlsLiveShapeCard"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Mode controls live shape")
+                        description: qsTr("Current mode: %1 • LOCAL PREVIEW • PAPER ONLY • LIVE DISABLED • preview_mode_boundary • live_mode_locked").arg(root.appModePreview)
+                        Flow { Layout.fillWidth: true; spacing: 8; Repeater { model: ["LOCAL PREVIEW", "PAPER ONLY", "Paper mode shape", "Live mode: disabled/locked", "No real live execution"]; delegate: Rectangle { required property string modelData; objectName: modelData.indexOf("Live mode") === 0 ? "settingsLiveModeLockedBadge" : "settingsModeBoundaryBadge"; width: Math.max(150, modeBadgeText.implicitWidth + 20); height: 30; radius: 15; color: Qt.rgba(0.95, 0.65, 0.20, 0.13); border.color: designSystem.color("warning"); Label { id: modeBadgeText; anchors.centerIn: parent; text: modelData; color: designSystem.color("textPrimary"); font.bold: true; font.pixelSize: 11 } } } }
+                    }
+                    Components.PreviewCard {
+                        objectName: "settingsApiKeyCredentialsLiveShapeCard"
+                        designSystem: rootDesignSystem
+                        title: qsTr("API keys / credentials shape")
+                        description: qsTr("Exchange API key status: missing/not configured/read-only preview • key=•••••••• • secret=•••••••• • SECRETS MASKED • NO SECRET MATERIAL • READ-ONLY PREVIEW • no secret read attempts")
+                    }
+                    Components.PreviewCard {
+                        objectName: "settingsExchangeAccountLiveShapeCard"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Exchange / account configuration shape")
+                        description: qsTr("Exchange profile: Paper Preview Catalog • Account profile/status: local placeholder only • Market data source: local preview catalog • Execution venue: paper-only bridge • NO EXCHANGE I/O • NO ACCOUNT BALANCE FETCH • NO LIVE ORDER ROUTE")
+                    }
+                    Components.PreviewCard {
+                        objectName: "settingsConfigValidationLiveShapeCard"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Safety / config validation shape")
+                        description: qsTr("Config validation: preview valid • readiness checklist visible • risk/safety guardrails active • live activation blocked reason: preview build cannot enable live execution • emergency stop / kill-switch config shape armed")
+                    }
+                    Components.PreviewCard {
+                        objectName: "settingsAuditTelemetryBoundaryCard"
+                        designSystem: rootDesignSystem
+                        title: qsTr("Audit / telemetry boundary")
+                        description: qsTr("Config/settings changes are local only or read-only • no secrets in logs • no live adapter side effect • NO CLOUD SINK • NO EXTERNAL EXPORT")
+                    }
                     Components.PreviewCard {
                         objectName: "defaultPreviewExchangeSelector"
                         designSystem: rootDesignSystem
