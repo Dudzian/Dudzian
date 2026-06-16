@@ -91,7 +91,14 @@ def test_live_safety_is_not_marked_as_complete() -> None:
     safety = sections["live_safety_hard_gate"]
     assert safety["paper_only_execution_safe"] is True
     assert safety["status"] == "partial"
-    assert any("not for every backend/runtime/live adapter" in gap for gap in safety["gaps"])
+    assert safety["status"] != "functional"
+    assert safety["supports_test_server"] is False
+    assert safety["supports_read_only_real_data"] is False
+    assert "tests/scripts/test_preview_process_safety_hard_gate.py" in safety["evidence_files"]
+    caution_text = "\n".join([*safety["gaps"], safety["recommended_next_step"]]).lower()
+    assert "subprocess/source/payload" in caution_text
+    assert "not a full di canary injection proof" in caution_text
+    assert "end-to-end preview proof" in caution_text
 
 
 def test_runtime_session_control_plane_includes_frontend_parity_11_evidence() -> None:
@@ -130,7 +137,9 @@ def test_no_functional_status_without_zero_gaps() -> None:
 def test_test_server_and_read_only_flags_need_explicit_tested_source() -> None:
     payload = _load_report()
     for name, section in payload["sections"].items():
-        joined = "\n".join([*section["evidence_files"], *section["gaps"], section["recommended_next_step"]]).lower()
+        joined = "\n".join(
+            [*section["evidence_files"], *section["gaps"], section["recommended_next_step"]]
+        ).lower()
         if section["supports_test_server"]:
             assert "test-server" in joined or "test server" in joined or "sandbox" in joined, name
             assert "test" in "\n".join(section["evidence_files"]).lower(), name
