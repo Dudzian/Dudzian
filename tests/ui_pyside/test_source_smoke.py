@@ -1526,12 +1526,23 @@ def test_smoke_blocks_live_runtime_flag_without_qt_bootstrap() -> None:
 
 
 def test_smoke_and_plan_sources_have_no_forbidden_runtime_or_secret_calls() -> None:
-    source = "\n".join(
-        path.read_text(encoding="utf-8") for path in (SMOKE_SOURCE, PLAN_SOURCE, APP_SOURCE)
-    )
+    source = "\n".join(path.read_text(encoding="utf-8") for path in (SMOKE_SOURCE, PLAN_SOURCE))
+    app_source = APP_SOURCE.read_text(encoding="utf-8")
 
     for token in FORBIDDEN_SOURCE_TOKENS:
+        if token == "os" + "." + "environ":
+            assert token not in source
+            continue
         assert token not in source
+        assert token not in app_source
+
+
+def test_app_bootstrap_sets_customizable_qt_quick_controls_style_by_default() -> None:
+    app_source = APP_SOURCE.read_text(encoding="utf-8")
+
+    assert "QT_QUICK_CONTROLS_STYLE" in app_source
+    assert "os.environ.setdefault" in app_source
+    assert 'os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")' in app_source
 
 
 def _qml_sources() -> list[Path]:

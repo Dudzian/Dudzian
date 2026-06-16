@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,15 @@ if TYPE_CHECKING:
 from .config import load_ui_app_config
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _configure_qt_quick_controls_style() -> None:
+    """Select a customizable Qt Quick Controls style before Qt is bootstrapped."""
+
+    os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+
+
+_configure_qt_quick_controls_style()
 
 
 @dataclass(slots=True)
