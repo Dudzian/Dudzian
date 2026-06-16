@@ -95,10 +95,14 @@ def test_live_safety_is_not_marked_as_complete() -> None:
     assert safety["supports_test_server"] is False
     assert safety["supports_read_only_real_data"] is False
     assert "tests/scripts/test_preview_process_safety_hard_gate.py" in safety["evidence_files"]
-    caution_text = "\n".join([*safety["gaps"], safety["recommended_next_step"]]).lower()
-    assert "subprocess/source/payload" in caution_text
-    assert "not a full di canary injection proof" in caution_text
-    assert "end-to-end preview proof" in caution_text
+    assert "tests/test_live_execution_router_preview_safety_guard.py" in safety["evidence_files"]
+    caution_text = "\n".join([*safety["gaps"], safety["recommended_next_step"]])
+    caution_text_lower = caution_text.lower()
+    assert "subprocess/source/payload" in caution_text_lower
+    assert "LiveExecutionRouter" in caution_text
+    assert "DI canary" in caution_text
+    assert "disabled/test-mode" in caution_text_lower
+    assert "not a full end-to-end preview proof" in caution_text_lower
 
 
 def test_runtime_session_control_plane_includes_frontend_parity_11_evidence() -> None:
