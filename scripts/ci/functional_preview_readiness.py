@@ -37,6 +37,26 @@ def build_report() -> dict[str, Any]:
     """Build the brutal, non-promotional preview functionality classification."""
 
     sections: dict[str, dict[str, Any]] = {
+        "preview_mode_contract": {
+            "status": "partial",
+            "evidence_files": _existing(
+                [
+                    "bot_core/runtime/preview_modes.py",
+                    "tests/runtime/test_preview_modes.py",
+                ]
+            ),
+            "runtime_backed": False,
+            "static_qml_only": False,
+            "supports_test_server": False,
+            "supports_read_only_real_data": False,
+            "paper_only_execution_safe": True,
+            "gaps": [
+                "Mode contract exists and states that preview is not mock-only: local_mock, recorded replay, paper, testnet/sandbox, and read_only_market are allowed by policy.",
+                "The contract blocks live-production side effects including real exchange orders/fills, live account balance mutation, live account balance fetch, live account snapshot read, live credentials, production cloud telemetry, external export, and live scheduler/worker effects.",
+                "Read-only market policy is distinct from live-production account/balance access; this is static/read-only policy evidence only, and real implementations/proofs for paper spine, read-only feed, and testnet execution still remain.",
+            ],
+            "recommended_next_step": "Keep the mode contract as the foundation, then add real implementations/proofs for paper spine, read-only feed, and testnet execution without enabling live-production side effects.",
+        },
         "data_source_market_feed": {
             "status": "partial",
             "evidence_files": _existing(
@@ -283,7 +303,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-2.0 static/read-only audit refresh after FRONTEND-PARITY-9.0/10.0/11.0; no runtime loop, secrets, market fetches, or order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-2.4 static/read-only preview mode contract evidence; no runtime loop, secrets, market fetches, or order I/O executed",
         "sections": sections,
     }
     validate_report(payload)
