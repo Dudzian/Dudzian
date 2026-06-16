@@ -130,7 +130,9 @@ def test_no_functional_status_without_zero_gaps() -> None:
 def test_test_server_and_read_only_flags_need_explicit_tested_source() -> None:
     payload = _load_report()
     for name, section in payload["sections"].items():
-        joined = "\n".join([*section["evidence_files"], *section["gaps"], section["recommended_next_step"]]).lower()
+        joined = "\n".join(
+            [*section["evidence_files"], *section["gaps"], section["recommended_next_step"]]
+        ).lower()
         if section["supports_test_server"]:
             assert "test-server" in joined or "test server" in joined or "sandbox" in joined, name
             assert "test" in "\n".join(section["evidence_files"]).lower(), name

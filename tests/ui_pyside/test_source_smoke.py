@@ -626,7 +626,6 @@ def test_strategy_model_replay_live_shape_source_runtime_markers() -> None:
         assert token in qml_source
 
 
-
 def _runtime_session_control_green_audit() -> dict[str, object]:
     return {key: True for key in FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS}
 
@@ -648,9 +647,7 @@ def test_runtime_session_control_live_shape_evidence_fail_closed() -> None:
 
     evidence = _build_runtime_session_control_live_shape_evidence(audit)
 
-    assert evidence["runtime_session_control_missing_checks"] == [
-        "no_live_reconnect_visible"
-    ]
+    assert evidence["runtime_session_control_missing_checks"] == ["no_live_reconnect_visible"]
     assert evidence["runtime_session_control_live_shape_parity_complete"] is False
 
 
@@ -663,18 +660,22 @@ def test_runtime_session_control_qml_contract_source() -> None:
         'objectName: "runtimeControlPlaneHealthCard"',
         'objectName: "runtimeRecoveryFailoverDegradedCard"',
         'objectName: "runtimeAuditLocalOnlyBoundaryCard"',
-        'NO REAL LOOP START',
-        'NO LIVE SCHEDULER WORKER START',
-        'NO LIVE ADAPTER START',
-        'NO LIVE RECONNECT',
-        'NO CLOUD SINK',
-        'NO EXTERNAL EXPORT',
+        "NO REAL LOOP START",
+        "NO LIVE SCHEDULER WORKER START",
+        "NO LIVE ADAPTER START",
+        "NO LIVE RECONNECT",
+        "NO CLOUD SINK",
+        "NO EXTERNAL EXPORT",
     ):
         assert snippet in main_window
-    assert 'Timer {' not in main_window[
-        main_window.index('objectName: "runtimeSessionControlPanel"'):
-        main_window.index('id: settingsPanelComponent')
-    ]
+    assert (
+        "Timer {"
+        not in main_window[
+            main_window.index('objectName: "runtimeSessionControlPanel"') : main_window.index(
+                "id: settingsPanelComponent"
+            )
+        ]
+    )
 
 
 def test_frontend_live_parity_evidence_helper_contract() -> None:
@@ -1471,9 +1472,14 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     runtime_session_control_evidence = audit["runtime_session_control_live_shape_evidence"]
     assert isinstance(runtime_session_control_evidence, dict)
     assert runtime_session_control_evidence["runtime_session_control_missing_checks"] == []
-    assert runtime_session_control_evidence["runtime_session_control_live_shape_parity_complete"] is True
+    assert (
+        runtime_session_control_evidence["runtime_session_control_live_shape_parity_complete"]
+        is True
+    )
     assert payload["runtime_session_control_live_shape_parity_complete"] is True
-    assert payload["runtime_session_control_live_shape_evidence"] == runtime_session_control_evidence
+    assert (
+        payload["runtime_session_control_live_shape_evidence"] == runtime_session_control_evidence
+    )
     for key in FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS:
         assert audit[key] is True
     operator_evidence = audit["operator_workflow_evidence"]
