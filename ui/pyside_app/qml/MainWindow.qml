@@ -41,6 +41,7 @@ ApplicationWindow {
             "nav.alerts": "Alerty",
             "nav.diagnostics": "Diagnostyka",
             "nav.settings": "Ustawienia",
+            "nav.runtimeControl": "Runtime / Sesja",
             "nav.help": "Pomoc / Słownik",
             "settings.title": "Ustawienia",
             "settings.description": "Ustawienia działają lokalnie w preview. Konfiguracja runtime nie jest zapisywana.",
@@ -75,6 +76,7 @@ ApplicationWindow {
             "nav.alerts": "Alerts",
             "nav.diagnostics": "Diagnostics",
             "nav.settings": "Settings",
+            "nav.runtimeControl": "Runtime / Session",
             "nav.help": "Help / Glossary",
             "settings.title": "Settings",
             "settings.description": "Settings are local preview only. No runtime config is written.",
@@ -2163,7 +2165,8 @@ ApplicationWindow {
         ({ panelId: "alertsPanel", title: qsTr("Alerty"), titleKey: "nav.alerts", icon: "diagnostics", defaultColumn: 0, defaultOrder: 10 }),
         ({ panelId: "diagnosticsPanel", title: qsTr("Diagnostyka"), titleKey: "nav.diagnostics", icon: "diagnostics", defaultColumn: 0, defaultOrder: 11 }),
         ({ panelId: "settingsPanel", title: qsTr("Ustawienia"), titleKey: "nav.settings", icon: "diagnostics", defaultColumn: 0, defaultOrder: 12 }),
-        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 13 })
+        ({ panelId: "runtimeSessionControlPanel", title: qsTr("Runtime / Sesja"), titleKey: "nav.runtimeControl", icon: "diagnostics", defaultColumn: 0, defaultOrder: 13 }),
+        ({ panelId: "helpGlossaryPanel", title: qsTr("Pomoc / Słownik"), titleKey: "nav.help", icon: "diagnostics", defaultColumn: 0, defaultOrder: 14 })
     ]
 
     property var productTabs: panelMetadata
@@ -2182,6 +2185,7 @@ ApplicationWindow {
         "diagnosticsPanel": { title: qsTr("Diagnostyka"), icon: "diagnostics", component: diagnosticsPanelComponent },
         "alertsPanel": { title: qsTr("Alerty"), icon: "diagnostics", component: alertsPanelComponent },
         "settingsPanel": { title: qsTr("Ustawienia"), icon: "diagnostics", component: settingsPanelComponent },
+        "runtimeSessionControlPanel": { title: qsTr("Runtime / Sesja"), icon: "diagnostics", component: runtimeSessionControlPanelComponent },
         "helpGlossaryPanel": { title: qsTr("Pomoc / Słownik"), icon: "diagnostics", component: helpGlossaryPanelComponent },
         "chartView": { title: qsTr("Strumień decyzji"), icon: "cloud", component: chartViewComponent },
         "strategyWorkbench": { title: qsTr("Warsztat strategii"), icon: "package", component: strategyWorkbenchComponent },
@@ -2624,6 +2628,25 @@ ApplicationWindow {
         }
     }
 
+
+    Component {
+        id: runtimeSessionControlPanelComponent
+        Components.StyledScrollView {
+            designSystem: rootDesignSystem
+            objectName: "runtimeSessionControlPanel"
+            contentWidth: availableWidth
+            clip: true
+            ColumnLayout {
+                width: parent.availableWidth
+                spacing: 12
+                Label { objectName: "runtimeSessionControlTitle"; text: qsTr("Runtime / Session / Control-plane health"); font.bold: true; font.pixelSize: 22; color: designSystem.color("textPrimary") }
+                Components.PreviewCard { objectName: "runtimeSessionPanelLiveShapeCard"; designSystem: rootDesignSystem; title: qsTr("RUNTIME SESSION PANEL / PREVIEW LIVE-SHAPE ONLY"); description: qsTr("Runtime session panel visible. Current session state: stopped preview; session controls visible: start, stop, pause, resume; start/stop/pause/resume visible as disabled control shape. Live runtime disabled in preview. NO REAL LOOP START. Runtime preflight gate: closed. Runtime activation blocked reason: preview/local/paper typed bridge without secrets, adapters or exchange I/O."); Layout.fillWidth: true }
+                Components.PreviewCard { objectName: "runtimeControlPlaneHealthCard"; designSystem: rootDesignSystem; title: qsTr("CONTROL-PLANE HEALTH / HEARTBEAT / SCHEDULER / WORKER STATUS"); description: qsTr("Control-plane health visible: healthy local preview. Scheduler status: stopped preview; worker status: idle preview. Heartbeat visible: mock heartbeat #0 / local timestamp placeholder. MOCK HEARTBEAT ONLY. NO LIVE SCHEDULER WORKER START. NO LIVE ADAPTER START."); Layout.fillWidth: true }
+                Components.PreviewCard { objectName: "runtimeRecoveryFailoverDegradedCard"; designSystem: rootDesignSystem; title: qsTr("RECOVERY / FAILOVER / DEGRADED MODE / EMERGENCY STOP SHAPE"); description: qsTr("Recovery controls visible but disabled. Failover state visible: standby preview only. Degraded mode visible: off/preview-ready. Emergency stop shape visible: armed UI control, no backend side effect. Recovery actions disabled. NO LIVE RECONNECT. No real adapter reconnect or worker restart is available in preview."); Layout.fillWidth: true }
+                Components.PreviewCard { objectName: "runtimeAuditLocalOnlyBoundaryCard"; designSystem: rootDesignSystem; title: qsTr("RUNTIME AUDIT LOCAL ONLY / NO CLOUD SINK / NO EXTERNAL EXPORT"); description: qsTr("Runtime audit local-only visible. Typed preview bridge only; no real secrets, no live exchange I/O, no real orders/fills, no real account balance fetch, no runtime loop start, no scheduler/live worker start, NO CLOUD SINK, NO EXTERNAL EXPORT."); Layout.fillWidth: true }
+            }
+        }
+    }
 
     Component {
         id: settingsPanelComponent

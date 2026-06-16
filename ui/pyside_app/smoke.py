@@ -11,7 +11,15 @@ from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, TextIO
 
-from .app import AppOptions, BotPysideApplication
+if __package__ in (None, ""):
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from ui.pyside_app.app import AppOptions, BotPysideApplication
+    from ui.pyside_app.preview_state_bridge import LocalPreviewStateBridge
+else:
+    from .app import AppOptions, BotPysideApplication
+    from .preview_state_bridge import LocalPreviewStateBridge
 
 
 @dataclass(slots=True)
@@ -169,6 +177,7 @@ class UiSmokeResult:
     frontend_live_parity_portfolio_present: bool = False
     frontend_live_parity_alerts_telemetry_present: bool = False
     frontend_live_parity_live_safety_boundary_visible: bool = False
+    frontend_live_parity_runtime_session_control_present: bool = False
     frontend_live_parity_no_fake_live_actions: bool = False
     frontend_live_parity_all_required_sections_present: bool = False
     frontend_live_parity_evidence: dict[str, object] = field(default_factory=dict)
@@ -176,6 +185,8 @@ class UiSmokeResult:
     settings_config_live_shape_evidence: dict[str, object] = field(default_factory=dict)
     strategy_model_replay_live_shape_parity_complete: bool = False
     strategy_model_replay_live_shape_evidence: dict[str, object] = field(default_factory=dict)
+    runtime_session_control_live_shape_parity_complete: bool = False
+    runtime_session_control_live_shape_evidence: dict[str, object] = field(default_factory=dict)
     risk_live_safety_controls_visible_complete: bool = False
     risk_live_safety_controls_evidence: dict[str, object] = field(default_factory=dict)
     terminal_order_form_live_shape_complete: bool = False
@@ -234,6 +245,7 @@ PANEL_AUDIT_IDS = (
     "alertsPanel",
     "diagnosticsPanel",
     "settingsPanel",
+    "runtimeSessionControlPanel",
     "helpGlossaryPanel",
 )
 
@@ -642,7 +654,57 @@ FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
     "operator_workflow": ("operator_workflow_smoke_complete",),
     "settings_config": ("settings_config_live_shape_parity_complete",),
     "strategy_model_replay": ("strategy_model_replay_live_shape_parity_complete",),
+    "runtime_session_control": ("runtime_session_control_live_shape_parity_complete",),
 }
+
+FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS = (
+    "runtime_session_panel_visible",
+    "session_controls_visible",
+    "start_stop_pause_resume_visible",
+    "live_runtime_disabled_visible",
+    "no_real_loop_start_visible",
+    "current_session_state_visible",
+    "control_plane_health_visible",
+    "scheduler_status_visible",
+    "worker_status_visible",
+    "heartbeat_visible",
+    "mock_heartbeat_visible",
+    "recovery_controls_visible",
+    "failover_state_visible",
+    "degraded_mode_visible",
+    "recovery_actions_disabled_visible",
+    "no_live_reconnect_visible",
+    "runtime_preflight_gate_visible",
+    "runtime_activation_blocked_reason_visible",
+    "emergency_stop_shape_visible",
+    "no_live_scheduler_worker_start_visible",
+    "no_live_adapter_start_visible",
+    "runtime_audit_local_only_visible",
+    "no_cloud_sink_visible",
+    "no_external_export_visible",
+)
+
+
+def _build_runtime_session_control_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
+    """Build fail-closed FRONTEND-PARITY-11.0 runtime/session/control-plane evidence."""
+
+    missing_checks = [
+        key
+        for key in FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS
+        if audit.get(key) is not True
+    ]
+    return {
+        "runtime_session_control_required_checks": list(
+            FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS
+        ),
+        "runtime_session_control_missing_checks": missing_checks,
+        "runtime_session_control_live_shape_parity_complete": not missing_checks,
+        **{
+            key: audit.get(key) is True
+            for key in FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS
+        },
+    }
+
 
 FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS = (
     "settings_panel_visible",
@@ -1061,6 +1123,8 @@ FRONTEND_LIVE_PARITY_SMOKE_KEYS = (
     "frontend_live_parity_portfolio_present",
     "frontend_live_parity_alerts_telemetry_present",
     "frontend_live_parity_live_safety_boundary_visible",
+    "frontend_live_parity_runtime_session_control_present",
+    "runtime_session_control_live_shape_parity_complete",
     "risk_live_safety_controls_visible_complete",
     "market_scanner_live_field_parity_complete",
     "portfolio_live_shape_parity_complete",
@@ -1112,6 +1176,12 @@ def _build_frontend_live_parity_evidence(audit: dict[str, object]) -> dict[str, 
         "frontend_live_parity_alerts_telemetry_present": section_results["alerts_telemetry"],
         "frontend_live_parity_live_safety_boundary_visible": section_results[
             "live_safety_boundary"
+        ],
+        "frontend_live_parity_runtime_session_control_present": section_results[
+            "runtime_session_control"
+        ],
+        "runtime_session_control_live_shape_parity_complete": section_results[
+            "runtime_session_control"
         ],
         "risk_live_safety_controls_visible_complete": section_results["risk_live_safety_controls"],
         "market_scanner_live_field_parity_complete": normalized_audit.get(
@@ -1372,8 +1442,6 @@ def _audit_typed_preview_bridge(
         for method_name in required_methods
     ):
         return audit
-
-    from .preview_state_bridge import LocalPreviewStateBridge
 
     is_qml_context_instance = (
         isinstance(typed_preview_bridge, LocalPreviewStateBridge)
@@ -3874,6 +3942,102 @@ def _exercise_preview_state(
     audit["strategy_model_replay_live_shape_evidence"] = strategy_model_replay_live_shape_evidence
     audit.update(strategy_model_replay_live_shape_evidence)
 
+    runtime_session_control_objects = (
+        "runtimeSessionControlPanel",
+        "runtimeSessionPanelLiveShapeCard",
+        "runtimeControlPlaneHealthCard",
+        "runtimeRecoveryFailoverDegradedCard",
+        "runtimeAuditLocalOnlyBoundaryCard",
+    )
+    runtime_session_control_text = " ".join(
+        value
+        for object_name in runtime_session_control_objects
+        for value in (
+            _read_visible_panel_object(root, "runtimeSessionControlPanel", object_name),
+            _read_visible_panel_object_property(
+                root, "runtimeSessionControlPanel", object_name, "title"
+            ),
+            _read_visible_panel_object_property(
+                root, "runtimeSessionControlPanel", object_name, "description"
+            ),
+        )
+    )
+    audit["runtime_session_panel_visible"] = _qml_object_visible_with_size(
+        root, "runtimeSessionPanelLiveShapeCard"
+    )
+    audit["session_controls_visible"] = _contains_tokens(
+        runtime_session_control_text, ("session controls",)
+    )
+    audit["start_stop_pause_resume_visible"] = _contains_tokens(
+        runtime_session_control_text, ("start", "stop", "pause", "resume")
+    )
+    audit["live_runtime_disabled_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Live runtime disabled",)
+    )
+    audit["no_real_loop_start_visible"] = _contains_tokens(
+        runtime_session_control_text, ("NO REAL LOOP START",)
+    ) and _bool_property(root, "runtimeLoopStarted") is False
+    audit["current_session_state_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Current session state", "stopped preview")
+    )
+    audit["control_plane_health_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Control-plane health",)
+    )
+    audit["scheduler_status_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Scheduler status", "stopped preview")
+    )
+    audit["worker_status_visible"] = _contains_tokens(
+        runtime_session_control_text, ("worker status", "idle preview")
+    )
+    audit["heartbeat_visible"] = _contains_tokens(runtime_session_control_text, ("Heartbeat",))
+    audit["mock_heartbeat_visible"] = _contains_tokens(
+        runtime_session_control_text, ("MOCK HEARTBEAT ONLY",)
+    )
+    audit["recovery_controls_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Recovery controls",)
+    )
+    audit["failover_state_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Failover state", "standby preview")
+    )
+    audit["degraded_mode_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Degraded mode",)
+    )
+    audit["recovery_actions_disabled_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Recovery actions disabled",)
+    )
+    audit["no_live_reconnect_visible"] = _contains_tokens(
+        runtime_session_control_text, ("NO LIVE RECONNECT",)
+    )
+    audit["runtime_preflight_gate_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Runtime preflight gate", "closed")
+    )
+    audit["runtime_activation_blocked_reason_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Runtime activation blocked reason",)
+    )
+    audit["emergency_stop_shape_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Emergency stop shape",)
+    )
+    audit["no_live_scheduler_worker_start_visible"] = _contains_tokens(
+        runtime_session_control_text, ("NO LIVE SCHEDULER WORKER START",)
+    )
+    audit["no_live_adapter_start_visible"] = _contains_tokens(
+        runtime_session_control_text, ("NO LIVE ADAPTER START",)
+    )
+    audit["runtime_audit_local_only_visible"] = _contains_tokens(
+        runtime_session_control_text, ("Runtime audit local-only", "Typed preview bridge")
+    )
+    audit["no_cloud_sink_visible"] = audit.get("no_cloud_sink_visible") is True and _contains_tokens(
+        runtime_session_control_text, ("NO CLOUD SINK",)
+    )
+    audit["no_external_export_visible"] = audit.get(
+        "no_external_export_visible"
+    ) is True and _contains_tokens(runtime_session_control_text, ("NO EXTERNAL EXPORT",))
+    runtime_session_control_live_shape_evidence = _build_runtime_session_control_live_shape_evidence(
+        audit
+    )
+    audit["runtime_session_control_live_shape_evidence"] = runtime_session_control_live_shape_evidence
+    audit.update(runtime_session_control_live_shape_evidence)
+
     audit.update(_build_operator_workflow_runtime_audit(root, audit))
     operator_workflow_evidence = _build_operator_workflow_evidence(audit)
     audit["operator_workflow_evidence"] = operator_workflow_evidence
@@ -4560,7 +4724,8 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 "alertsPanel": 10,
                 "diagnosticsPanel": 11,
                 "settingsPanel": 12,
-                "helpGlossaryPanel": 13,
+                "runtimeSessionControlPanel": 13,
+                "helpGlossaryPanel": 14,
             }
             panel_orders = {panel_id: int(order) for panel_id, order in panel_order_matches}
             top_navigation_default_order_unique = panel_orders == required_panel_order and len(
@@ -5088,6 +5253,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         )
         if not isinstance(strategy_model_replay_live_shape_evidence, dict):
             strategy_model_replay_live_shape_evidence = {}
+        runtime_session_control_live_shape_evidence = preview_state_audit.get(
+            "runtime_session_control_live_shape_evidence", {}
+        )
+        if not isinstance(runtime_session_control_live_shape_evidence, dict):
+            runtime_session_control_live_shape_evidence = {}
         result = UiSmokeResult(
             status="ok" if smoke_ok else "error",
             ui_loaded=qml_loaded,
@@ -5367,6 +5537,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                     "frontend_live_parity_live_safety_boundary_visible", False
                 )
             ),
+            frontend_live_parity_runtime_session_control_present=bool(
+                frontend_live_parity_evidence.get(
+                    "frontend_live_parity_runtime_session_control_present", False
+                )
+            ),
             frontend_live_parity_no_fake_live_actions=bool(
                 frontend_live_parity_evidence.get(
                     "frontend_live_parity_no_fake_live_actions", False
@@ -5390,6 +5565,12 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
                 )
             ),
             strategy_model_replay_live_shape_evidence=strategy_model_replay_live_shape_evidence,
+            runtime_session_control_live_shape_parity_complete=bool(
+                runtime_session_control_live_shape_evidence.get(
+                    "runtime_session_control_live_shape_parity_complete", False
+                )
+            ),
+            runtime_session_control_live_shape_evidence=runtime_session_control_live_shape_evidence,
             risk_live_safety_controls_visible_complete=bool(
                 risk_live_safety_controls_evidence.get(
                     "risk_live_safety_controls_visible_complete", False
@@ -5436,3 +5617,23 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
     finally:
         if artifact_paths_entered:
             artifact_paths.__exit__(None, None, None)
+
+if __name__ == "__main__":  # pragma: no cover - CLI compatibility for direct script smoke runs
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Run PySide preview UI smoke checks.")
+    parser.add_argument("--config", default="ui/config/preview_local.yaml")
+    parser.add_argument("--offscreen", action="store_true", default=True)
+    parser.add_argument("--exercise-preview-state", action="store_true")
+    args = parser.parse_args()
+    smoke_options = AppOptions.parse(
+        [
+            "--config",
+            args.config,
+            "--smoke",
+            "--offscreen",
+            *( ["--exercise-preview-state"] if args.exercise_preview_state else [] ),
+        ]
+    )
+    raise SystemExit(run_smoke(smoke_options, output=sys.stdout, force_offscreen=True))
