@@ -184,6 +184,9 @@ def build_report() -> dict[str, Any]:
                     "tests/scripts/test_controller_mock_preview.py",
                     "tests/scripts/test_credential_reference_readiness.py",
                     "ui/backend/dashboard_settings.py",
+                    "ui/pyside_app/smoke.py",
+                    "ui/pyside_app/qml/MainWindow.qml",
+                    "tests/ui_pyside/test_source_smoke.py",
                 ]
             ),
             "runtime_backed": False,
@@ -194,9 +197,32 @@ def build_report() -> dict[str, Any]:
             "gaps": [
                 "Safe preview config disables TLS/secret endpoints and mock-preview tests assert no API keys are required.",
                 "No preview config entry was found for read-only/test credentials or explicit sandbox/test-server API selection.",
+                "FRONTEND-PARITY-9.0 adds settings/config/API-key live-shape proof, but it is QML/smoke/source evidence only and does not prove credential I/O, sandbox auth, or read-only account access.",
                 "Live credential separation is safety-oriented but not equivalent to a functional read-only credential workflow.",
             ],
-            "recommended_next_step": "Define non-secret credential references for preview read-only/test-server profiles and validate that live credential keys are rejected.",
+            "recommended_next_step": "After process-wide preview safety hard gate proof, define non-secret credential references for preview read-only/test-server profiles and validate that live credential keys are rejected.",
+        },
+        "strategy_model_backtest_replay": {
+            "status": "static_mock_only",
+            "evidence_files": _existing(
+                [
+                    "ui/pyside_app/smoke.py",
+                    "ui/pyside_app/qml/MainWindow.qml",
+                    "tests/ui_pyside/test_source_smoke.py",
+                    "ui/qml/views/StrategyExperience.qml",
+                ]
+            ),
+            "runtime_backed": False,
+            "static_qml_only": True,
+            "supports_test_server": False,
+            "supports_read_only_real_data": False,
+            "paper_only_execution_safe": True,
+            "gaps": [
+                "FRONTEND-PARITY-10.0 proves strategy/model/backtest/replay live shape in PySide/QML/source-smoke only.",
+                "No audited preview path trains a real model, promotes an artifact, starts live inference, fetches live market data, or executes replay against a test server.",
+                "Local replay/backtest cards remain static/mock readiness evidence, not functional strategy runtime readiness.",
+            ],
+            "recommended_next_step": "After process-wide preview safety hard gate proof, connect strategy/model/replay to the local paper event spine and preview data-source contract using deterministic fixtures only.",
         },
         "runtime_session_control_plane": {
             "status": "partial",
@@ -206,6 +232,9 @@ def build_report() -> dict[str, Any]:
                     "scripts/controller_mock_preview.py",
                     "ui/backend/runtime_service.py",
                     "ui/qml/dashboard/RuntimeOverview.qml",
+                    "ui/pyside_app/smoke.py",
+                    "ui/pyside_app/qml/MainWindow.qml",
+                    "tests/ui_pyside/test_source_smoke.py",
                     "tests/scripts/test_mock_runtime_preview.py",
                     "tests/scripts/test_controller_mock_preview.py",
                 ]
@@ -217,9 +246,10 @@ def build_report() -> dict[str, Any]:
             "paper_only_execution_safe": True,
             "gaps": [
                 "Mock runtime preview can start a safe local preview simulation, but controller mock preview explicitly reports runtime_loop_started=false.",
+                "FRONTEND-PARITY-11.0 adds PySide/QML/source-smoke proof for runtime/session/control-plane live shape, including heartbeat, scheduler, worker, failover, and disabled recovery/reconnect controls; this is not runtime-loop proof.",
                 "Scheduler, heartbeat, worker, recovery, reconnect, and failover controls are preview-shaped unless a separate runtime is attached; no start path is enabled here.",
             ],
-            "recommended_next_step": "Add a local paper loop harness that emits heartbeat/worker states without starting live workers or recovery actions.",
+            "recommended_next_step": "First prove a process-wide preview safety hard gate, then add a local paper harness that emits mock heartbeat/worker states without live scheduler, live workers, reconnect, or recovery side effects.",
         },
         "live_safety_hard_gate": {
             "status": "partial",
@@ -243,13 +273,13 @@ def build_report() -> dict[str, Any]:
                 "The hard gate is proven for mock/controller preview helpers, not for every backend/runtime/live adapter route under a running preview application.",
                 "Runtime assertions or adapter-level mocks proving no live exchange I/O across the full preview process were not identified in this audit.",
             ],
-            "recommended_next_step": "Add process-wide preview-mode runtime assertions around exchange adapters/create_order and prove live I/O remains unreachable in integration tests.",
+            "recommended_next_step": "First add process-wide preview safety hard gate proof around exchange adapters/create_order; then add a local paper event spine for order lifecycle → portfolio → alerts; then add the preview data-source contract.",
         },
     }
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-1.0 static audit; no runtime loop, secrets, market fetches, or order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-2.0 static/read-only audit refresh after FRONTEND-PARITY-9.0/10.0/11.0; no runtime loop, secrets, market fetches, or order I/O executed",
         "sections": sections,
     }
     validate_report(payload)
