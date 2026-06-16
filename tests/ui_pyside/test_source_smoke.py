@@ -126,6 +126,23 @@ def _smoke_payload(result: subprocess.CompletedProcess[str]) -> dict[str, object
     return json.loads(result.stdout)
 
 
+def _run_direct_script_smoke(*extra_args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SMOKE_SOURCE), *extra_args],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+
+def _direct_script_payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
+    result.stdout.encode("cp1252")
+    assert result.stdout.strip(), result.stderr
+    return json.loads(result.stdout)
+
+
 def _tracked_artifact_snapshot() -> dict[Path, bytes | None]:
     artifact_paths = (
         REPO_ROOT / "reports" / "ci" / "decision_feed_metrics.json",
@@ -3288,3 +3305,36 @@ def test_portfolio_live_shape_required_checks_not_masked_by_source_diagnostics()
     assert evidence["portfolio_summary_visible"] is False
     assert "portfolio_summary_visible" in evidence["portfolio_live_shape_missing_checks"]
     assert evidence["portfolio_live_shape_parity_complete"] is False
+
+
+def test_direct_script_exercise_preview_state_smoke_cli_runtime_contract() -> None:
+    result = _run_direct_script_smoke("--exercise-preview-state")
+    payload = _direct_script_payload(result)
+
+    if result.returncode != 0 and any("libGL.so.1" in issue for issue in payload["issues"]):
+        pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert payload["status"] == "ok"
+    assert payload["preview_state_exercised"] is True
+    assert payload["runtime_session_control_live_shape_parity_complete"] is True
+    evidence = payload["runtime_session_control_live_shape_evidence"]
+    assert isinstance(evidence, dict)
+    assert evidence["runtime_session_control_missing_checks"] == []
+    assert evidence["runtime_session_control_live_shape_parity_complete"] is True
+
+
+def test_direct_script_basic_smoke_does_not_fake_runtime_session_control_runtime_proof() -> None:
+    result = _run_direct_script_smoke()
+    payload = _direct_script_payload(result)
+
+    if result.returncode != 0 and any("libGL.so.1" in issue for issue in payload["issues"]):
+        pytest.skip("Qt runtime unavailable in this headless environment: missing libGL.so.1")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert payload["status"] == "ok"
+    assert payload["preview_state_exercised"] is False
+    assert payload["preview_launch_readiness_evaluated"] is False
+    assert payload["preview_launch_readiness_requires_exercise_preview_state"] is True
+    assert payload["runtime_session_control_live_shape_parity_complete"] is False
+    assert payload["runtime_session_control_live_shape_evidence"] == {}
