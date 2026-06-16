@@ -195,7 +195,7 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_2_scope_remains_static_read_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-2.4" in scope
+    assert "FUNCTIONAL-PREVIEW-2.5" in scope
     assert "no runtime loop, secrets, market fetches, or order I/O executed" in scope
 
 
@@ -224,10 +224,13 @@ def test_preview_mode_contract_evidence_is_static_and_not_mock_only() -> None:
     assert "bot_core/runtime/preview_modes.py" in section["evidence_files"]
     assert "tests/runtime/test_preview_modes.py" in section["evidence_files"]
     text = "\n".join([*section["gaps"], section["recommended_next_step"]]).lower()
+    assert "static mode contract exists" in text
+    assert "enforcement helper exists" in text
     assert "preview is not mock-only" in text
     assert "paper" in text
     assert "testnet" in text or "sandbox" in text
     assert "read_only_market" in text or "read-only feed" in text
-    assert "real implementations/proofs" in text
+    assert "real runtime implementations/proofs" in text
+    assert "live-production capabilities are blocked" in text
     assert "live account balance fetch" in text
     assert "live account snapshot read" in text
