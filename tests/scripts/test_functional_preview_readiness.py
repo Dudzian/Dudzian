@@ -195,10 +195,13 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.1" in scope
-    assert "local paper event spine plus portfolio reducer unit evidence" in scope
+    assert "FUNCTIONAL-PREVIEW-3.2" in scope
     assert (
-        "no runtime loop, secrets, market fetches, live account access, or live order I/O executed"
+        "local paper event spine, portfolio reducer, and local audit/alerts consumer unit evidence"
+        in scope
+    )
+    assert (
+        "no runtime loop, secrets, market fetches, live account access, cloud/export sink, or live order I/O executed"
         in scope
     )
 
@@ -254,7 +257,7 @@ def test_paper_terminal_order_lifecycle_includes_local_spine_without_overstateme
     assert "local paper event spine exists" in text
     assert "no live exchange/order/account side effects" in text
     assert "local paper portfolio reducer now exists" in text
-    assert "alerts/local telemetry integration still missing" in text
+    assert "local paper audit/alerts consumer now exists" in text
     assert "ui/runtime integration still missing" in text
     assert "testnet" in text
     assert "read-only market feed" in text
@@ -276,6 +279,29 @@ def test_portfolio_positions_trades_includes_local_reducer_without_overstatement
     assert "paper fills produce deterministic trades/positions" in text
     assert "non-fill events do not mutate portfolio" in text
     assert "app runtime/ui integration still missing" in text
-    assert "alerts/local telemetry" in text
+    assert "local paper audit/alerts consumer" in text
     assert "testnet/read-only market feed" in text
     assert "live exchange/order/account" in text
+
+
+def test_alerts_telemetry_audit_is_local_unit_evidence_only() -> None:
+    payload = _load_report()
+    section = payload["sections"]["alerts_telemetry_audit"]
+    assert section["status"] == "partial"
+    assert section["runtime_backed"] is False
+    assert section["static_qml_only"] is False
+    assert section["supports_test_server"] is False
+    assert section["supports_read_only_real_data"] is False
+    assert section["paper_only_execution_safe"] is True
+    assert "bot_core/runtime/paper_audit_journal.py" in section["evidence_files"]
+    assert "tests/runtime/test_paper_audit_journal.py" in section["evidence_files"]
+    text = "\n".join([*section["gaps"], section["recommended_next_step"]]).lower()
+    assert "local paper audit/alerts consumer exists" in text
+    assert "paperorderevent" in text
+    assert "papertrade" in text
+    assert "no cloud sink" in text
+    assert "no external export" in text
+    assert "no runtime loop" in text
+    assert "app runtime/ui integration still missing" in text
+    assert "testnet/read-only market feed still missing" in text
+    assert "no live exchange/order/account side effects" in text

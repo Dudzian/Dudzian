@@ -151,7 +151,7 @@ def build_report() -> dict[str, Any]:
             "gaps": [
                 "Local paper event spine exists with deterministic accepted, rejected, partial fill, fill, and cancel unit-level lifecycle tests and no live exchange/order/account side effects.",
                 "Local paper portfolio reducer now exists as separate unit-level evidence; app runtime/UI integration still missing.",
-                "Alerts/local telemetry integration still missing; no local audit sink consumes the paper event stream yet.",
+                "Local paper audit/alerts consumer now exists as separate unit-level evidence and consumes paper order/trade events locally without cloud/export/live side effects.",
                 "UI/runtime integration still missing; this is not app-runtime-backed evidence and no runtime loop is started.",
                 "Testnet execution and read-only market feed still missing; this paper spine does not fetch market data or use sandbox/testnet adapters.",
             ],
@@ -181,7 +181,7 @@ def build_report() -> dict[str, Any]:
                 "Paper fills produce deterministic trades/positions and basic realized PnL for long closes without live exchange/order/account side effects.",
                 "Rejected, cancelled, accepted, and other non-fill paper events do not mutate portfolio trades/positions.",
                 "App runtime/UI integration still missing; this is not app-runtime-backed portfolio evidence.",
-                "Alerts/local telemetry integration still missing; no local audit sink consumes portfolio reductions yet.",
+                "Local paper audit/alerts consumer now consumes PaperTrade records as static/local unit evidence without mutating portfolio state.",
                 "Testnet/read-only market feed still missing; no test-server, sandbox, read-only real-data, live account, or balance path is proven here.",
             ],
             "recommended_next_step": "Keep the local paper portfolio reducer partial: paper fills now produce deterministic trades/positions and non-fill events do not mutate portfolio, but app runtime/UI integration, alerts/local telemetry, testnet/read-only market feed, and all live exchange/order/account side-effect proofs remain missing.",
@@ -190,24 +190,26 @@ def build_report() -> dict[str, Any]:
             "status": "partial",
             "evidence_files": _existing(
                 [
-                    "ui/backend/alert_manager.py",
-                    "ui/backend/telemetry_provider.py",
-                    "ui/backend/privacy_settings.py",
-                    "ui/src/telemetry/UiTelemetryReporter.cpp",
-                    "core/telemetry/anonymous_collector.py",
-                    "tests/scripts/test_mock_runtime_preview.py",
+                    "bot_core/runtime/paper_audit_journal.py",
+                    "tests/runtime/test_paper_audit_journal.py",
+                    "bot_core/runtime/paper_event_spine.py",
+                    "tests/runtime/test_paper_event_spine.py",
+                    "bot_core/runtime/paper_portfolio_reducer.py",
+                    "tests/runtime/test_paper_portfolio_reducer.py",
                 ]
             ),
-            "runtime_backed": True,
+            "runtime_backed": False,
             "static_qml_only": False,
             "supports_test_server": False,
             "supports_read_only_real_data": False,
             "paper_only_execution_safe": True,
             "gaps": [
-                "Telemetry/alerts have runtime plumbing and local preview contracts, but some rows remain demo/static unless connected to runtime events.",
-                "This audit did not find a single hard CI assertion covering all preview cloud/export sinks; existing safety tests focus on mock preview source tokens and config.",
+                "Local paper audit/alerts consumer exists and consumes PaperOrderEvent lifecycle events plus PaperTrade records locally as in-memory unit evidence.",
+                "No cloud sink, no external export, no file export, and no runtime loop are implemented for the local paper audit journal.",
+                "App runtime/UI integration still missing; this is static/local unit evidence, not app-runtime-backed telemetry proof.",
+                "Testnet/read-only market feed still missing; no live exchange/order/account side effects are introduced or proven here.",
             ],
-            "recommended_next_step": "Add a preview telemetry sink contract proving local-only storage/export disabled while consuming runtime paper events.",
+            "recommended_next_step": "Keep local paper audit/alerts consumer partial: it consumes paper order/trade events locally with no cloud sink, no external export, no runtime loop, and no live exchange/order/account side effects; next add app runtime/UI integration plus testnet/read-only market feed proof without overstating readiness.",
         },
         "settings_config_api_keys": {
             "status": "partial",
@@ -318,7 +320,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-3.1 local paper event spine plus portfolio reducer unit evidence; no runtime loop, secrets, market fetches, live account access, or live order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-3.2 local paper event spine, portfolio reducer, and local audit/alerts consumer unit evidence; no runtime loop, secrets, market fetches, live account access, cloud/export sink, or live order I/O executed",
         "sections": sections,
     }
     validate_report(payload)
