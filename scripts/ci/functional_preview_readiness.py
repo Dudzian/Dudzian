@@ -150,17 +150,21 @@ def build_report() -> dict[str, Any]:
             "paper_only_execution_safe": True,
             "gaps": [
                 "Local paper event spine exists with deterministic accepted, rejected, partial fill, fill, and cancel unit-level lifecycle tests and no live exchange/order/account side effects.",
-                "Portfolio reducer integration still missing; paper fills are not yet reduced into portfolio positions/trades.",
+                "Local paper portfolio reducer now exists as separate unit-level evidence; app runtime/UI integration still missing.",
                 "Alerts/local telemetry integration still missing; no local audit sink consumes the paper event stream yet.",
                 "UI/runtime integration still missing; this is not app-runtime-backed evidence and no runtime loop is started.",
                 "Testnet execution and read-only market feed still missing; this paper spine does not fetch market data or use sandbox/testnet adapters.",
             ],
-            "recommended_next_step": "Keep the local paper event spine as unit-level evidence with no live exchange/order/account side effects; next integrate it with portfolio reducer, alerts/local telemetry, UI/runtime, testnet execution, and a read-only market feed without overstating readiness.",
+            "recommended_next_step": "Keep the local paper event spine as unit-level evidence with no live exchange/order/account side effects; next integrate the spine and local paper portfolio reducer with alerts/local telemetry, UI/runtime, testnet execution, and a read-only market feed without overstating readiness.",
         },
         "portfolio_positions_trades": {
-            "status": "static_mock_only",
+            "status": "partial",
             "evidence_files": _existing(
                 [
+                    "bot_core/runtime/paper_portfolio_reducer.py",
+                    "tests/runtime/test_paper_portfolio_reducer.py",
+                    "bot_core/runtime/paper_event_spine.py",
+                    "tests/runtime/test_paper_event_spine.py",
                     "ui/qml/views/PortfolioDashboard.qml",
                     "ui/qml/components/PortfolioManagerView.qml",
                     "ui/src/grpc/TradingClient.cpp",
@@ -168,15 +172,19 @@ def build_report() -> dict[str, Any]:
                 ]
             ),
             "runtime_backed": False,
-            "static_qml_only": True,
+            "static_qml_only": False,
             "supports_test_server": False,
             "supports_read_only_real_data": False,
             "paper_only_execution_safe": True,
             "gaps": [
-                "Preview portfolio presentation has UI/model shape, but this audit found no proof of mutation after simulated fill.",
-                "Read-only balance retrieval for preview/test server is not implemented as an allowed, tested preview path.",
+                "Local paper portfolio reducer exists and consumes PaperOrderEvent fill events as static/local unit evidence.",
+                "Paper fills produce deterministic trades/positions and basic realized PnL for long closes without live exchange/order/account side effects.",
+                "Rejected, cancelled, accepted, and other non-fill paper events do not mutate portfolio trades/positions.",
+                "App runtime/UI integration still missing; this is not app-runtime-backed portfolio evidence.",
+                "Alerts/local telemetry integration still missing; no local audit sink consumes portfolio reductions yet.",
+                "Testnet/read-only market feed still missing; no test-server, sandbox, read-only real-data, live account, or balance path is proven here.",
             ],
-            "recommended_next_step": "Create a preview portfolio state reducer fed by paper fill events and a separate read-only balance adapter with secret-free tests.",
+            "recommended_next_step": "Keep the local paper portfolio reducer partial: paper fills now produce deterministic trades/positions and non-fill events do not mutate portfolio, but app runtime/UI integration, alerts/local telemetry, testnet/read-only market feed, and all live exchange/order/account side-effect proofs remain missing.",
         },
         "alerts_telemetry_audit": {
             "status": "partial",
@@ -310,7 +318,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-3.0 local paper event spine unit evidence; no runtime loop, secrets, market fetches, live account access, or live order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-3.1 local paper event spine plus portfolio reducer unit evidence; no runtime loop, secrets, market fetches, live account access, or live order I/O executed",
         "sections": sections,
     }
     validate_report(payload)
