@@ -685,7 +685,9 @@ FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS = (
 )
 
 
-def _build_runtime_session_control_live_shape_evidence(audit: dict[str, object]) -> dict[str, object]:
+def _build_runtime_session_control_live_shape_evidence(
+    audit: dict[str, object],
+) -> dict[str, object]:
     """Build fail-closed FRONTEND-PARITY-11.0 runtime/session/control-plane evidence."""
 
     missing_checks = [
@@ -699,10 +701,7 @@ def _build_runtime_session_control_live_shape_evidence(audit: dict[str, object])
         ),
         "runtime_session_control_missing_checks": missing_checks,
         "runtime_session_control_live_shape_parity_complete": not missing_checks,
-        **{
-            key: audit.get(key) is True
-            for key in FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS
-        },
+        **{key: audit.get(key) is True for key in FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS},
     }
 
 
@@ -3974,9 +3973,10 @@ def _exercise_preview_state(
     audit["live_runtime_disabled_visible"] = _contains_tokens(
         runtime_session_control_text, ("Live runtime disabled",)
     )
-    audit["no_real_loop_start_visible"] = _contains_tokens(
-        runtime_session_control_text, ("NO REAL LOOP START",)
-    ) and _bool_property(root, "runtimeLoopStarted") is False
+    audit["no_real_loop_start_visible"] = (
+        _contains_tokens(runtime_session_control_text, ("NO REAL LOOP START",))
+        and _bool_property(root, "runtimeLoopStarted") is False
+    )
     audit["current_session_state_visible"] = _contains_tokens(
         runtime_session_control_text, ("Current session state", "stopped preview")
     )
@@ -4026,16 +4026,18 @@ def _exercise_preview_state(
     audit["runtime_audit_local_only_visible"] = _contains_tokens(
         runtime_session_control_text, ("Runtime audit local-only", "Typed preview bridge")
     )
-    audit["no_cloud_sink_visible"] = audit.get("no_cloud_sink_visible") is True and _contains_tokens(
-        runtime_session_control_text, ("NO CLOUD SINK",)
-    )
+    audit["no_cloud_sink_visible"] = audit.get(
+        "no_cloud_sink_visible"
+    ) is True and _contains_tokens(runtime_session_control_text, ("NO CLOUD SINK",))
     audit["no_external_export_visible"] = audit.get(
         "no_external_export_visible"
     ) is True and _contains_tokens(runtime_session_control_text, ("NO EXTERNAL EXPORT",))
-    runtime_session_control_live_shape_evidence = _build_runtime_session_control_live_shape_evidence(
-        audit
+    runtime_session_control_live_shape_evidence = (
+        _build_runtime_session_control_live_shape_evidence(audit)
     )
-    audit["runtime_session_control_live_shape_evidence"] = runtime_session_control_live_shape_evidence
+    audit["runtime_session_control_live_shape_evidence"] = (
+        runtime_session_control_live_shape_evidence
+    )
     audit.update(runtime_session_control_live_shape_evidence)
 
     audit.update(_build_operator_workflow_runtime_audit(root, audit))
@@ -5618,6 +5620,7 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
         if artifact_paths_entered:
             artifact_paths.__exit__(None, None, None)
 
+
 if __name__ == "__main__":  # pragma: no cover - CLI compatibility for direct script smoke runs
     import argparse
     import sys
@@ -5633,7 +5636,7 @@ if __name__ == "__main__":  # pragma: no cover - CLI compatibility for direct sc
             args.config,
             "--smoke",
             "--offscreen",
-            *( ["--exercise-preview-state"] if args.exercise_preview_state else [] ),
+            *(["--exercise-preview-state"] if args.exercise_preview_state else []),
         ]
     )
     raise SystemExit(run_smoke(smoke_options, output=sys.stdout, force_offscreen=True))
