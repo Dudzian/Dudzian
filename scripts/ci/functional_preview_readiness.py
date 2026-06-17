@@ -139,18 +139,23 @@ def build_report() -> dict[str, Any]:
                     "tests/scripts/test_mock_runtime_preview.py",
                     "tests/test_paper_execution.py",
                     "bot_core/exchanges/base.py",
+                    "bot_core/runtime/paper_event_spine.py",
+                    "tests/runtime/test_paper_event_spine.py",
                 ]
             ),
-            "runtime_backed": True,
+            "runtime_backed": False,
             "static_qml_only": False,
             "supports_test_server": False,
             "supports_read_only_real_data": False,
             "paper_only_execution_safe": True,
             "gaps": [
-                "Mock/controller preview proves a bounded filled synthetic order path with exchange I/O disabled, but not a full accepted/rejected/partial/fill/cancel UI lifecycle.",
-                "No evidence was found that preview portfolio and alerts are updated by the same paper order event stream end-to-end.",
+                "Local paper event spine exists with deterministic accepted, rejected, partial fill, fill, and cancel unit-level lifecycle tests and no live exchange/order/account side effects.",
+                "Portfolio reducer integration still missing; paper fills are not yet reduced into portfolio positions/trades.",
+                "Alerts/local telemetry integration still missing; no local audit sink consumes the paper event stream yet.",
+                "UI/runtime integration still missing; this is not app-runtime-backed evidence and no runtime loop is started.",
+                "Testnet execution and read-only market feed still missing; this paper spine does not fetch market data or use sandbox/testnet adapters.",
             ],
-            "recommended_next_step": "Add a paper broker simulator contract covering accepted, rejected, partial fill, fill, and cancel events through UI-facing models.",
+            "recommended_next_step": "Keep the local paper event spine as unit-level evidence with no live exchange/order/account side effects; next integrate it with portfolio reducer, alerts/local telemetry, UI/runtime, testnet execution, and a read-only market feed without overstating readiness.",
         },
         "portfolio_positions_trades": {
             "status": "static_mock_only",
@@ -305,7 +310,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-2.5 static/read-only preview mode contract enforcement evidence; no runtime loop, secrets, market fetches, or order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-3.0 local paper event spine unit evidence; no runtime loop, secrets, market fetches, live account access, or live order I/O executed",
         "sections": sections,
     }
     validate_report(payload)

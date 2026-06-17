@@ -192,11 +192,15 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
     assert all((REPO_ROOT / item).exists() for item in evidence)
 
 
-def test_functional_preview_2_scope_remains_static_read_only() -> None:
+def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-2.5" in scope
-    assert "no runtime loop, secrets, market fetches, or order I/O executed" in scope
+    assert "FUNCTIONAL-PREVIEW-3.0" in scope
+    assert "local paper event spine unit evidence" in scope
+    assert (
+        "no runtime loop, secrets, market fetches, live account access, or live order I/O executed"
+        in scope
+    )
 
 
 def test_runtime_and_strategy_sections_keep_conservative_status() -> None:
@@ -234,3 +238,23 @@ def test_preview_mode_contract_evidence_is_static_and_not_mock_only() -> None:
     assert "live-production capabilities are blocked" in text
     assert "live account balance fetch" in text
     assert "live account snapshot read" in text
+
+
+def test_paper_terminal_order_lifecycle_includes_local_spine_without_overstatement() -> None:
+    payload = _load_report()
+    section = payload["sections"]["paper_terminal_order_lifecycle"]
+    assert section["status"] == "partial"
+    assert section["runtime_backed"] is False
+    assert section["supports_test_server"] is False
+    assert section["supports_read_only_real_data"] is False
+    assert section["paper_only_execution_safe"] is True
+    assert "bot_core/runtime/paper_event_spine.py" in section["evidence_files"]
+    assert "tests/runtime/test_paper_event_spine.py" in section["evidence_files"]
+    text = "\n".join([*section["gaps"], section["recommended_next_step"]]).lower()
+    assert "local paper event spine exists" in text
+    assert "no live exchange/order/account side effects" in text
+    assert "portfolio reducer integration still missing" in text
+    assert "alerts/local telemetry integration still missing" in text
+    assert "ui/runtime integration still missing" in text
+    assert "testnet" in text
+    assert "read-only market feed" in text
