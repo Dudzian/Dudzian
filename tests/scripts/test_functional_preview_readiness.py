@@ -195,13 +195,13 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.2" in scope
+    assert "FUNCTIONAL-PREVIEW-3.3" in scope
     assert (
-        "local paper event spine, portfolio reducer, and local audit/alerts consumer unit evidence"
+        "local paper event spine, portfolio reducer, local audit/alerts consumer, and local composition proof unit evidence"
         in scope
     )
     assert (
-        "no runtime loop, secrets, market fetches, live account access, cloud/export sink, or live order I/O executed"
+        "no runtime loop, secrets, market fetches, live account access, cloud/export sink, external export, or live order I/O executed"
         in scope
     )
 
