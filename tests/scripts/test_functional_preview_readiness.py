@@ -195,13 +195,13 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.4" in scope
+    assert "FUNCTIONAL-PREVIEW-3.5" in scope
     assert (
-        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, and deterministic in-memory local scenario fixture runner unit evidence"
+        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, and read-only market data contract unit evidence"
         in scope
     )
     assert (
-        "no runtime loop, UI integration, file loader/export, secrets, market fetches, live account access, cloud/export sink, external export, or live order I/O executed"
+        "no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, or live order I/O executed"
         in scope
     )
 
@@ -313,3 +313,34 @@ def test_alerts_telemetry_audit_is_local_unit_evidence_only() -> None:
     assert "no live exchange/order/account side effects" in text
     assert "scenario fixture runner" in text
     assert "external export" in text
+
+
+def test_read_only_market_contract_is_static_local_evidence_only() -> None:
+    payload = _load_report()
+    preview = payload["sections"]["preview_mode_contract"]
+    feed = payload["sections"]["data_source_market_feed"]
+
+    for section in (preview, feed):
+        assert section["status"] == "partial"
+        assert (
+            section["runtime_backed"] is False
+            if section is feed
+            else section["runtime_backed"] is False
+        )
+        assert section["static_qml_only"] is False
+        assert section["supports_test_server"] is False
+        assert section["supports_read_only_real_data"] is False
+        assert section["paper_only_execution_safe"] is True
+        assert "bot_core/runtime/read_only_market_data.py" in section["evidence_files"]
+        assert "tests/runtime/test_read_only_market_data.py" in section["evidence_files"]
+
+    joined = "\n".join([*feed["gaps"], feed["recommended_next_step"]]).lower()
+    assert "read-only market data contract" in joined
+    assert "read_only_market_fetch" in joined
+    assert "account/balance/credentials/order/fill/live side effects remain blocked" in joined
+    assert "no real market adapter/fetch" in joined
+    assert "app runtime loop" in joined
+    assert "ui integration" in joined
+    assert "testnet/sandbox adapter" in joined
+    assert "cloud sink" in joined
+    assert "external export" in joined
