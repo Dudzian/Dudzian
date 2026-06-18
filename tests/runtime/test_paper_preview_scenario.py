@@ -23,6 +23,10 @@ from bot_core.runtime.paper_preview_bundle_read_model import (
     build_paper_preview_bundle_read_model,
     build_paper_preview_read_model_boundary_matrix,
 )
+from bot_core.runtime.paper_preview_ui_runtime_preflight import (
+    PaperPreviewUiRuntimePreflightError,
+    build_paper_preview_ui_runtime_preflight,
+)
 from bot_core.runtime.paper_preview_scenario import (
     PaperPreviewDecisionContext,
     PaperPreviewDecisionDryRunAuditEntry,
@@ -2327,3 +2331,286 @@ def test_read_model_boundary_matrix_has_no_forbidden_surface() -> None:
     for item in (model, report, *report.rows, runner):
         for name in forbidden:
             assert not hasattr(item, name)
+
+
+def _ui_runtime_preflight_for_result(result):
+    model, _ = _read_model_for_result(result)
+    matrix = build_paper_preview_read_model_boundary_matrix(model)
+    return model, matrix, build_paper_preview_ui_runtime_preflight(model, matrix)
+
+
+def test_ui_runtime_preflight_exists_for_read_model_and_boundary_matrix() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    bundle_matrix = build_local_bundle_boundary_matrix(result.local_bundle)
+    read_model = build_paper_preview_bundle_read_model(result.local_bundle, bundle_matrix)
+    read_model_matrix = build_paper_preview_read_model_boundary_matrix(read_model)
+
+    report = build_paper_preview_ui_runtime_preflight(read_model, read_model_matrix)
+
+    assert report.report_kind == "local_preview_ui_runtime_preflight"
+    assert report.scenario_name == read_model.scenario_name == read_model_matrix.scenario_name
+    assert report.model_kind == read_model.model_kind == read_model_matrix.model_kind
+
+
+def test_ui_runtime_preflight_positive_local_static_checks() -> None:
+    _, _, report = _ui_runtime_preflight_for_result(_local_bundle_result())
+    checks = {check.check_name: check for check in report.checks}
+
+    for name in (
+        "local_read_model_present",
+        "read_model_is_read_only",
+        "read_model_not_runtime_backed",
+        "read_model_not_ui_bound",
+        "read_model_boundary_matrix_present",
+        "all_read_model_boundaries_refused",
+    ):
+        assert checks[name].passed is True
+        assert checks[name].blocking is False
+
+
+def test_ui_runtime_preflight_blocking_missing_integration_checks() -> None:
+    _, _, report = _ui_runtime_preflight_for_result(_local_bundle_result())
+    checks = {check.check_name: check for check in report.checks}
+
+    for name in (
+        "qml_binding_missing",
+        "pyside_bridge_missing",
+        "app_runtime_loop_missing",
+        "controller_handoff_missing",
+        "trading_controller_handoff_missing",
+        "decision_envelope_handoff_missing",
+        "strategy_engine_missing",
+        "ai_model_inference_missing",
+        "scoring_missing",
+        "recommendation_missing",
+        "order_generation_missing",
+        "real_market_adapter_missing",
+        "testnet_sandbox_adapter_missing",
+        "export_sink_missing",
+        "cloud_sink_missing",
+        "serialization_export_missing",
+    ):
+        assert checks[name].passed is False
+        assert checks[name].blocking is True
+
+
+def test_ui_runtime_preflight_readiness_flags_and_safety_mirror() -> None:
+    model, _, report = _ui_runtime_preflight_for_result(_local_bundle_result())
+
+    assert report.ready_for_ui_binding is False
+    assert report.ready_for_runtime_loop is False
+    assert report.ready_for_controller_handoff is False
+    assert report.ready_for_decision_engine is False
+    assert report.ready_for_export is False
+    assert report.blocking_check_count > 0
+    assert report.read_only is model.read_only is True
+    assert report.runtime_backed is model.runtime_backed is False
+    assert report.ui_bound is model.ui_bound is False
+    assert report.export_sink == model.export_sink == "none"
+    assert report.cloud_sink == model.cloud_sink == "none"
+    assert report.external_export is model.external_export is False
+    assert report.generated_order_count == model.generated_order_count == 0
+    assert report.generated_decision_count == model.generated_decision_count == 0
+
+
+def test_ui_runtime_preflight_consistency_fails_closed() -> None:
+    model, matrix, _ = _ui_runtime_preflight_for_result(_local_bundle_result())
+
+    with pytest.raises(PaperPreviewUiRuntimePreflightError, match="scenario_name"):
+        build_paper_preview_ui_runtime_preflight(
+            model, dataclasses.replace(matrix, scenario_name="other")
+        )
+    with pytest.raises(PaperPreviewUiRuntimePreflightError, match="model_kind"):
+        build_paper_preview_ui_runtime_preflight(model, dataclasses.replace(matrix, model_kind="x"))
+    with pytest.raises(PaperPreviewUiRuntimePreflightError, match="refuse all"):
+        build_paper_preview_ui_runtime_preflight(
+            model, dataclasses.replace(matrix, all_refused=False)
+        )
+    with pytest.raises(PaperPreviewUiRuntimePreflightError, match="row_count"):
+        build_paper_preview_ui_runtime_preflight(
+            model, dataclasses.replace(matrix, row_count=matrix.row_count + 1)
+        )
+    with pytest.raises(PaperPreviewUiRuntimePreflightError, match="runtime-backed"):
+        build_paper_preview_ui_runtime_preflight(
+            dataclasses.replace(model, runtime_backed=True), matrix
+        )
+    with pytest.raises(PaperPreviewUiRuntimePreflightError, match="unbound"):
+        build_paper_preview_ui_runtime_preflight(dataclasses.replace(model, ui_bound=True), matrix)
+    with pytest.raises(PaperPreviewUiRuntimePreflightError, match="read-only"):
+        build_paper_preview_ui_runtime_preflight(
+            dataclasses.replace(model, read_only=False), matrix
+        )
+
+
+def test_ui_runtime_preflight_has_no_file_network_serialization_or_ui_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model, matrix, _ = _ui_runtime_preflight_for_result(_local_bundle_result())
+    original_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        if any(token in mode for token in ("w", "a", "+", "x")):
+            raise AssertionError("preflight must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network used")),
+    )
+    monkeypatch.setattr(
+        socket,
+        "socket",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("socket used")),
+    )
+
+    report = build_paper_preview_ui_runtime_preflight(model, matrix)
+
+    for forbidden in (
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+        "runtime_handle",
+    ):
+        assert not hasattr(report, forbidden)
+        assert all(not hasattr(check, forbidden) for check in report.checks)
+
+
+def test_ui_runtime_preflight_is_deterministic_and_immutable() -> None:
+    model, matrix, first = _ui_runtime_preflight_for_result(_local_bundle_result())
+    second = build_paper_preview_ui_runtime_preflight(model, matrix)
+
+    assert first == second
+    assert isinstance(first.checks, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.ready_for_ui_binding = True  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.checks[0] = first.checks[0]  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.checks[0].passed = False  # type: ignore[misc]
+
+
+def test_ui_runtime_preflight_does_not_affect_paper_flow() -> None:
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    result = runner.run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit",
+                order_id="preflight-stable",
+                symbol="BTCUSDT",
+                side="buy",
+                quantity=1,
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="preflight-stable", fill_price=100),
+            name="preflight-stable",
+        )
+    )
+    assert result.local_bundle is not None
+    before = _snapshot_counts(runner)
+    model, _ = _read_model_for_result(result)
+    matrix = build_paper_preview_read_model_boundary_matrix(model)
+
+    report = build_paper_preview_ui_runtime_preflight(model, matrix)
+
+    assert report.check_count == len(report.checks)
+    assert _snapshot_counts(runner) == before
+    assert before == (
+        result.summary.order_event_count,
+        result.summary.trade_count,
+        result.summary.audit_event_count,
+    )
+
+
+def test_ui_runtime_preflight_has_no_forbidden_surface() -> None:
+    model, matrix, report = _ui_runtime_preflight_for_result(_local_bundle_result())
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    forbidden = {
+        "bind_qml",
+        "bind_pyside",
+        "attach_ui",
+        "start_runtime",
+        "run_loop",
+        "connect_signal",
+        "emit_signal",
+        "create_controller",
+        "serialize_for_ui",
+        "qml",
+        "qml_object",
+        "QObject",
+        "signal",
+        "slot",
+        "runtime_handle",
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    for item in (report, *report.checks, model, matrix, runner):
+        for name in forbidden:
+            assert not hasattr(item, name)
+
+
+def test_ui_runtime_preflight_preview_policy_keeps_live_capabilities_blocked() -> None:
+    policy = build_preview_mode_policy(
+        PreviewMode.PAPER,
+        (
+            RuntimeCapability.READ_ONLY_MARKET_FETCH,
+            RuntimeCapability.PAPER_ORDER_SUBMIT,
+            RuntimeCapability.PAPER_ORDER_LIFECYCLE,
+        ),
+    )
+
+    assert RuntimeCapability.READ_ONLY_MARKET_FETCH in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in policy.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
