@@ -778,3 +778,229 @@ def test_market_context_has_no_secret_metadata_surface() -> None:
         "private_key",
     ):
         assert not hasattr(result.market_context, field)
+
+
+def test_dry_run_artifact_exists_after_successful_scenario() -> None:
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="dry", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="dry", fill_price=100),
+            name="dry-run",
+        )
+    )
+
+    artifact = result.dry_run_artifact
+    assert artifact is not None
+    assert artifact.artifact_kind == "context_only_dry_run"
+    assert artifact.scenario_name == "dry-run"
+    assert artifact.step_count == 2
+    assert artifact.generated_order_count == 0
+    assert artifact.generated_decision_count == 0
+    assert artifact.no_action_reason == "dry_run_context_only"
+
+
+def test_dry_run_artifact_mirrors_decision_context_and_risk() -> None:
+    risk = PaperPreviewRiskPlaceholder(risk_checks_enabled=True, source="unit-risk")
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        PaperPreviewScenario(
+            name="mirror",
+            risk=risk,
+            steps=(
+                PaperPreviewScenarioStep(
+                    action="submit", order_id="mirror", symbol="BTCUSDT", side="buy", quantity=1
+                ),
+                PaperPreviewScenarioStep(action="fill", order_id="mirror", fill_price=100),
+            ),
+        )
+    )
+
+    context = result.decision_context
+    artifact = result.dry_run_artifact
+    assert context is not None
+    assert artifact is not None
+    assert artifact.decision_status == context.decision_status
+    assert artifact.market_symbols == context.market_symbols
+    assert artifact.trade_count == context.trade_count == result.summary.trade_count
+    assert artifact.position_count == context.position_count == result.summary.position_count
+    assert (
+        artifact.audit_event_count == context.audit_event_count == result.summary.audit_event_count
+    )
+    assert artifact.realized_pnl_total == context.realized_pnl_total
+    assert artifact.risk_source == context.risk.source == "unit-risk"
+    assert artifact.risk_checks_enabled is context.risk.risk_checks_enabled is True
+
+
+def test_dry_run_artifact_includes_market_context_summary() -> None:
+    result = PaperPreviewScenarioRunner(market_data_provider=_market_provider()).run(
+        PaperPreviewScenario(
+            name="dry-market",
+            market_symbols=("ETHUSDT", "BTCUSDT"),
+            market_timeframe="1m",
+            market_candle_limit=2,
+            steps=(
+                PaperPreviewScenarioStep(
+                    action="submit", order_id="buy", symbol="BTCUSDT", side="buy", quantity=1
+                ),
+                PaperPreviewScenarioStep(action="fill", order_id="buy", fill_price=100),
+            ),
+        )
+    )
+
+    artifact = result.dry_run_artifact
+    assert artifact is not None
+    assert artifact.has_market_context is True
+    assert artifact.market_symbols == ("BTCUSDT", "ETHUSDT")
+    assert artifact.quote_count == 2
+    assert artifact.candle_set_count == 2
+    assert artifact.paper_symbols == ("BTCUSDT",)
+
+
+def test_dry_run_artifact_without_market_context_summary_is_empty() -> None:
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="no-market", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="no-market", fill_price=100),
+            name="no-market",
+        )
+    )
+
+    artifact = result.dry_run_artifact
+    assert artifact is not None
+    assert artifact.has_market_context is False
+    assert artifact.market_symbols == ()
+    assert artifact.quote_count == 0
+    assert artifact.candle_set_count == 0
+
+
+def test_dry_run_artifact_does_not_affect_paper_flow_counts_or_audit() -> None:
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="flow", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="flow", fill_price=100),
+            name="flow-unchanged",
+        )
+    )
+
+    artifact = result.dry_run_artifact
+    assert artifact is not None
+    assert artifact.order_event_count == result.summary.order_event_count == 2
+    assert artifact.trade_count == result.summary.trade_count == 1
+    assert artifact.audit_event_count == result.summary.audit_event_count == 3
+    assert [event.event_type for event in result.final_snapshot.audit_events] == [
+        "order_accepted",
+        "order_filled",
+        "trade_recorded",
+    ]
+
+
+def test_dry_run_artifact_is_immutable_and_deterministic() -> None:
+    scenario = _scenario(
+        PaperPreviewScenarioStep(
+            action="submit", order_id="det-dry", symbol="BTCUSDT", side="buy", quantity=1
+        ),
+        PaperPreviewScenarioStep(action="fill", order_id="det-dry", fill_price=100),
+        name="det-dry",
+    )
+    first = PaperPreviewScenarioRunner(created_at="fixed").run(scenario).dry_run_artifact
+    second = PaperPreviewScenarioRunner(created_at="fixed").run(scenario).dry_run_artifact
+
+    assert first == second
+    assert first is not None
+    with pytest.raises(AttributeError):
+        first.generated_order_count = 1  # type: ignore[misc]
+
+
+def test_dry_run_artifact_has_no_decision_scoring_account_secret_or_export_surface() -> None:
+    result = PaperPreviewScenarioRunner().run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="surface-dry", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="surface-dry", fill_price=100),
+        )
+    )
+    artifact = result.dry_run_artifact
+    assert artifact is not None
+    forbidden = {
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export",
+        "cloud_sink",
+    }
+
+    assert forbidden.isdisjoint(set(dir(artifact)))
+    assert forbidden.isdisjoint(set(dir(PaperPreviewScenarioRunner())))
+
+
+def test_dry_run_artifact_lists_blocked_integrations() -> None:
+    result = PaperPreviewScenarioRunner().run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="blocked", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="blocked", fill_price=100),
+        )
+    )
+
+    artifact = result.dry_run_artifact
+    assert artifact is not None
+    assert set(artifact.blocked_engine_integrations) >= {
+        "strategy_engine",
+        "ai_model_inference",
+        "decision_envelope",
+        "trading_controller",
+        "order_generation",
+    }
+
+
+def test_dry_run_preview_policy_allows_read_only_and_paper_but_blocks_live() -> None:
+    read_only = build_preview_mode_policy(
+        PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    )
+    paper = PaperPreviewScenarioRunner(created_at="fixed").policy
+
+    assert read_only.capabilities == (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in paper.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in paper.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))

@@ -350,7 +350,7 @@ def test_read_only_market_contract_is_static_local_evidence_only() -> None:
     assert "in-memory/static-local fixture" in joined
 
 
-def test_decision_context_readiness_evidence_stays_partial_static_local() -> None:
+def test_decision_dry_run_artifact_readiness_evidence_stays_partial_static_local() -> None:
     payload = _load_report()
     sections = payload["sections"]
     for name in (
@@ -366,9 +366,11 @@ def test_decision_context_readiness_evidence_stays_partial_static_local() -> Non
         assert section["runtime_backed"] is False
         assert section["supports_read_only_real_data"] is False
         assert "paper_preview_scenario.py" in joined
-        assert "decision context" in joined or "decision-context" in joined
+        assert "dry-run decision artifact" in joined
         assert "context-only" in joined
         assert "generates no orders/decisions" in joined
+        assert "no scoring" in joined
+        assert "no recommendation" in joined
         assert "no strategy engine" in joined
         assert "ai/model inference" in joined
         assert "decisionenvelope integration" in joined
