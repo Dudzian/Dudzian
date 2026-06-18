@@ -195,7 +195,7 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.15" in scope
+    assert "FUNCTIONAL-PREVIEW-3.16" in scope
     for phrase in (
         "local paper event spine",
         "read-only market data contract unit evidence",
@@ -203,10 +203,11 @@ def test_functional_preview_3_scope_remains_local_unit_only() -> None:
         "local preview bundle read model evidence",
         "local read model boundary refusal matrix evidence",
         "local/static UI/runtime preflight audit evidence",
+        "local/static integration readiness checklist gate evidence",
     ):
         assert phrase in scope
     assert (
-        "no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed"
+        "integration readiness checklist gate blocks transition to real UI/runtime while preflight has blocking checks; BLOK A is contractually complete but not functional UI/runtime integration; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed"
         in scope
     )
 

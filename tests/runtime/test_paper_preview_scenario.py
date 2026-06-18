@@ -27,6 +27,10 @@ from bot_core.runtime.paper_preview_ui_runtime_preflight import (
     PaperPreviewUiRuntimePreflightError,
     build_paper_preview_ui_runtime_preflight,
 )
+from bot_core.runtime.paper_preview_integration_gate import (
+    PaperPreviewIntegrationReadinessGateError,
+    build_paper_preview_integration_readiness_gate,
+)
 from bot_core.runtime.paper_preview_scenario import (
     PaperPreviewDecisionContext,
     PaperPreviewDecisionDryRunAuditEntry,
@@ -2591,6 +2595,293 @@ def test_ui_runtime_preflight_has_no_forbidden_surface() -> None:
 
 
 def test_ui_runtime_preflight_preview_policy_keeps_live_capabilities_blocked() -> None:
+    policy = build_preview_mode_policy(
+        PreviewMode.PAPER,
+        (
+            RuntimeCapability.READ_ONLY_MARKET_FETCH,
+            RuntimeCapability.PAPER_ORDER_SUBMIT,
+            RuntimeCapability.PAPER_ORDER_LIFECYCLE,
+        ),
+    )
+
+    assert RuntimeCapability.READ_ONLY_MARKET_FETCH in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in policy.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+def _integration_gate_for_result(result):
+    model, matrix, preflight = _ui_runtime_preflight_for_result(result)
+    return model, matrix, preflight, build_paper_preview_integration_readiness_gate(preflight)
+
+
+def test_integration_readiness_gate_exists_for_preflight_chain() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    bundle_matrix = build_local_bundle_boundary_matrix(result.local_bundle)
+    assert bundle_matrix.report_kind == "local_bundle_boundary_refusal_matrix"
+    read_model = build_paper_preview_bundle_read_model(result.local_bundle, bundle_matrix)
+    read_model_matrix = build_paper_preview_read_model_boundary_matrix(read_model)
+    preflight = build_paper_preview_ui_runtime_preflight(read_model, read_model_matrix)
+
+    gate = build_paper_preview_integration_readiness_gate(preflight)
+
+    assert gate.gate_kind == "local_preview_integration_readiness_gate"
+    assert gate.scenario_name == preflight.scenario_name == read_model.scenario_name
+    assert gate.model_kind == preflight.model_kind == read_model.model_kind
+
+
+def test_integration_readiness_gate_is_blocked_while_preflight_blocks() -> None:
+    _, _, preflight, gate = _integration_gate_for_result(_local_bundle_result())
+
+    assert preflight.blocking_check_count > 0
+    assert gate.status == "blocked"
+    assert gate.ready_for_next_block is False
+    assert gate.ready_for_ui_runtime_integration is False
+    assert gate.ready_for_ui_binding is False
+    assert gate.ready_for_runtime_loop is False
+    assert gate.ready_for_controller_handoff is False
+    assert gate.ready_for_decision_engine is False
+    assert gate.ready_for_export is False
+    assert gate.blocking_check_count > 0
+    for name in (
+        "qml_binding_missing",
+        "app_runtime_loop_missing",
+        "controller_handoff_missing",
+        "decision_envelope_handoff_missing",
+        "real_market_adapter_missing",
+        "testnet_sandbox_adapter_missing",
+    ):
+        assert name in gate.blocking_items
+
+
+def test_integration_readiness_gate_checklist_mirrors_preflight_checks() -> None:
+    _, _, preflight, gate = _integration_gate_for_result(_local_bundle_result())
+
+    assert gate.check_count == preflight.check_count
+    assert len(gate.checklist) == preflight.check_count
+    for item, check in zip(gate.checklist, preflight.checks, strict=True):
+        assert item.item_name == check.check_name
+        assert item.source_check == check.check_name
+        assert item.passed is check.passed
+        assert item.blocking is check.blocking
+        assert item.required_for == check.required_for
+        assert item.reason == check.reason
+
+
+def test_integration_readiness_gate_mirrors_safety_flags() -> None:
+    _, _, _, gate = _integration_gate_for_result(_local_bundle_result())
+
+    assert gate.read_only is True
+    assert gate.runtime_backed is False
+    assert gate.ui_bound is False
+    assert gate.export_sink == "none"
+    assert gate.cloud_sink == "none"
+    assert gate.external_export is False
+    assert gate.generated_order_count == 0
+    assert gate.generated_decision_count == 0
+    assert gate.all_boundaries_refused is True
+
+
+def test_integration_readiness_gate_consistency_fails_closed() -> None:
+    _, _, preflight, _ = _integration_gate_for_result(_local_bundle_result())
+
+    replacements = (
+        ("report_kind", "wrong", "report_kind"),
+        ("check_count", preflight.check_count + 1, "check_count"),
+        ("blocking_check_count", preflight.blocking_check_count + 1, "blocking_check_count"),
+        ("read_only", False, "read-only"),
+        ("runtime_backed", True, "runtime-backed"),
+        ("ui_bound", True, "unbound"),
+        ("ready_for_ui_binding", True, "UI binding"),
+        ("ready_for_runtime_loop", True, "runtime-loop"),
+        ("ready_for_controller_handoff", True, "controller-handoff"),
+        ("ready_for_decision_engine", True, "decision-engine"),
+        ("ready_for_export", True, "export readiness"),
+        ("generated_order_count", 1, "generated_order_count"),
+        ("generated_decision_count", 1, "generated_decision_count"),
+        ("export_sink", "file", "export_sink"),
+        ("cloud_sink", "cloud", "cloud_sink"),
+        ("external_export", True, "external_export"),
+    )
+    for field_name, value, message in replacements:
+        with pytest.raises(PaperPreviewIntegrationReadinessGateError, match=message):
+            build_paper_preview_integration_readiness_gate(
+                dataclasses.replace(preflight, **{field_name: value})
+            )
+
+
+def test_integration_readiness_gate_has_no_file_network_serialization_or_ui_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, preflight, _ = _integration_gate_for_result(_local_bundle_result())
+    original_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        if any(token in mode for token in ("w", "a", "+", "x")):
+            raise AssertionError("integration gate must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network used")),
+    )
+    monkeypatch.setattr(
+        socket,
+        "socket",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("socket used")),
+    )
+    gate = build_paper_preview_integration_readiness_gate(preflight)
+
+    for forbidden in (
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+        "runtime_handle",
+    ):
+        assert not hasattr(gate, forbidden)
+        assert all(not hasattr(item, forbidden) for item in gate.checklist)
+
+
+def test_integration_readiness_gate_is_deterministic_and_immutable() -> None:
+    _, _, preflight, first = _integration_gate_for_result(_local_bundle_result())
+    second = build_paper_preview_integration_readiness_gate(preflight)
+
+    assert first == second
+    assert isinstance(first.checklist, tuple)
+    assert isinstance(first.blocking_items, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.ready_for_next_block = True  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.checklist[0] = first.checklist[0]  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.checklist[0].passed = False  # type: ignore[misc]
+
+
+def test_integration_readiness_gate_does_not_affect_paper_flow() -> None:
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    result = runner.run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="gate-stable", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="gate-stable", fill_price=100),
+            name="gate-stable",
+        )
+    )
+    before = _snapshot_counts(runner)
+    _, _, preflight = _ui_runtime_preflight_for_result(result)
+
+    gate = build_paper_preview_integration_readiness_gate(preflight)
+
+    assert gate.check_count == len(gate.checklist)
+    assert _snapshot_counts(runner) == before
+    assert before == (
+        result.summary.order_event_count,
+        result.summary.trade_count,
+        result.summary.audit_event_count,
+    )
+
+
+def _assert_gate_surface_absent(forbidden: set[str]) -> None:
+    model, _, preflight, gate = _integration_gate_for_result(_local_bundle_result())
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    for item in (gate, *gate.checklist, preflight, model, runner):
+        for name in forbidden:
+            assert not hasattr(item, name)
+
+
+def test_integration_readiness_gate_has_no_ui_runtime_surface() -> None:
+    _assert_gate_surface_absent(
+        {
+            "bind_qml",
+            "bind_pyside",
+            "attach_ui",
+            "start_runtime",
+            "run_loop",
+            "connect_signal",
+            "emit_signal",
+            "create_controller",
+            "serialize_for_ui",
+            "qml",
+            "qml_object",
+            "QObject",
+            "signal",
+            "slot",
+            "runtime_handle",
+        }
+    )
+
+
+def test_integration_readiness_gate_has_no_decision_scoring_recommendation_surface() -> None:
+    _assert_gate_surface_absent(
+        {
+            "decide",
+            "evaluate_strategy",
+            "score",
+            "recommend",
+            "recommendation",
+            "confidence",
+            "generate_order",
+            "order_intent",
+            "execute",
+            "infer",
+            "predict",
+            "serialize_for_engine",
+            "to_json",
+            "to_yaml",
+            "to_csv",
+        }
+    )
+
+
+def test_integration_readiness_gate_has_no_account_live_secret_export_surface() -> None:
+    _assert_gate_surface_absent(
+        {
+            "get_balance",
+            "get_account",
+            "get_account_snapshot",
+            "get_positions_from_exchange",
+            "get_open_orders",
+            "read_credentials",
+            "account_balance",
+            "metadata",
+            "api_key",
+            "secret",
+            "password",
+            "passphrase",
+            "credential",
+            "credentials",
+            "token",
+            "private_key",
+            "export_path",
+            "file_path",
+            "cloud_url",
+        }
+    )
+
+
+def test_integration_readiness_gate_preview_policy_keeps_live_capabilities_blocked() -> None:
     policy = build_preview_mode_policy(
         PreviewMode.PAPER,
         (
