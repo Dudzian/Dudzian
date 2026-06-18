@@ -45,6 +45,8 @@ def build_report() -> dict[str, Any]:
                     "tests/runtime/test_preview_modes.py",
                     "bot_core/runtime/read_only_market_data.py",
                     "tests/runtime/test_read_only_market_data.py",
+                    "bot_core/runtime/paper_preview_scenario.py",
+                    "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
             "runtime_backed": False,
@@ -59,8 +61,9 @@ def build_report() -> dict[str, Any]:
                 "Live-production capabilities are blocked by policy, including real exchange orders/fills, live account balance mutation, live account balance fetch, live account snapshot read, live credentials, production cloud telemetry, external export, and live scheduler/worker effects.",
                 "Read-only market policy is distinct from live-production account/balance access; this is static/read-only policy evidence only, and real runtime implementations/proofs for paper spine, read-only feed, and testnet execution still remain.",
                 "Read-only market data contract exists as local/static unit evidence and uses READ_ONLY_MARKET_FETCH while account, balance, credentials, order, fill, cloud/export, and live scheduler side effects remain blocked.",
+                "Local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures without treating it as live account/balance/order access.",
             ],
-            "recommended_next_step": "Keep the static mode contract and enforcement helper as the foundation that allows paper/testnet/read-only/recorded capabilities while blocking live-production capabilities; next add real runtime implementations/proofs for paper spine, read-only feed, and testnet execution without enabling live-production side effects; keep the read-only market data contract separated from account/balance/credentials/order/fill access and add no real market adapter/fetch until a later proof.",
+            "recommended_next_step": "Keep the static mode contract and enforcement helper as the foundation that allows paper/testnet/read-only/recorded capabilities while blocking live-production capabilities; the local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures, READ_ONLY_MARKET_FETCH remains preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export exists yet.",
         },
         "data_source_market_feed": {
             "status": "partial",
@@ -74,6 +77,8 @@ def build_report() -> dict[str, Any]:
                     "tests/scripts/test_run_rest_market_data_poller_script.py",
                     "bot_core/runtime/read_only_market_data.py",
                     "tests/runtime/test_read_only_market_data.py",
+                    "bot_core/runtime/paper_preview_scenario.py",
+                    "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
             "runtime_backed": False,
@@ -84,10 +89,11 @@ def build_report() -> dict[str, Any]:
             "gaps": [
                 "Preview profile is explicitly in-process/local and points at a sample OHLCV dataset, not a test-server or read-only real-market source.",
                 "A preview-scoped read-only market data contract now exists for static/local in-memory quote/candle/snapshot proof, but it is not a real adapter or real feed.",
+                "Local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures before paper step execution.",
                 "gRPC/UI fallback code can expose runtime-shaped snapshots, but this audit found no real-data-backed preview proof of read-only feed ingestion.",
                 "No real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export is implemented for this contract.",
             ],
-            "recommended_next_step": "Keep the read-only market data contract as partial/static-local evidence: READ_ONLY_MARKET_FETCH is preview-safe and account/balance/credentials/order/fill/live side effects remain blocked, but no real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export exists yet.",
+            "recommended_next_step": "Keep the read-only market data contract and scenario market context as partial/static-local evidence: the local scenario runner can carry deterministic read-only market context, market context is in-memory/static-local fixture only, READ_ONLY_MARKET_FETCH is preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export exists yet.",
         },
         "scanner_opportunity_pipeline": {
             "status": "static_mock_only",
@@ -163,7 +169,7 @@ def build_report() -> dict[str, Any]:
                 "Local paper portfolio reducer now exists as separate unit-level evidence; app runtime/UI integration still missing.",
                 "Local paper audit/alerts consumer now exists as separate unit-level evidence and consumes paper order/trade events locally without cloud/export/live side effects.",
                 "Local composition proof exists: paper spine, portfolio reducer, and audit journal are wired together locally for submit/reject/cancel/partial/fill snapshot evidence.",
-                "Local scenario fixture runner exists and drives PaperPreviewFlow with deterministic in-memory scenarios; no file loader/export is implemented.",
+                "Local scenario fixture runner exists and drives PaperPreviewFlow with deterministic in-memory scenarios; it can carry deterministic read-only market context from an in-memory/static-local fixture; no file loader/export is implemented.",
                 "UI/runtime integration still missing; this is not app-runtime-backed evidence and no runtime loop is started.",
                 "No cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects are proven or introduced here.",
                 "Testnet execution and read-only market feed still missing; this paper spine does not fetch market data or use sandbox/testnet adapters.",
@@ -345,7 +351,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-3.5 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, and read-only market data contract unit evidence; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, or live order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-3.6 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, and static/local scenario-level read-only market context evidence; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, or live order I/O executed",
         "sections": sections,
     }
     validate_report(payload)

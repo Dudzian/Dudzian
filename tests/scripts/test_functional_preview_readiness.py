@@ -195,9 +195,9 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.5" in scope
+    assert "FUNCTIONAL-PREVIEW-3.6" in scope
     assert (
-        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, and read-only market data contract unit evidence"
+        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, and static/local scenario-level read-only market context evidence"
         in scope
     )
     assert (
@@ -333,6 +333,8 @@ def test_read_only_market_contract_is_static_local_evidence_only() -> None:
         assert section["paper_only_execution_safe"] is True
         assert "bot_core/runtime/read_only_market_data.py" in section["evidence_files"]
         assert "tests/runtime/test_read_only_market_data.py" in section["evidence_files"]
+        assert "bot_core/runtime/paper_preview_scenario.py" in section["evidence_files"]
+        assert "tests/runtime/test_paper_preview_scenario.py" in section["evidence_files"]
 
     joined = "\n".join([*feed["gaps"], feed["recommended_next_step"]]).lower()
     assert "read-only market data contract" in joined
@@ -344,3 +346,5 @@ def test_read_only_market_contract_is_static_local_evidence_only() -> None:
     assert "testnet/sandbox adapter" in joined
     assert "cloud sink" in joined
     assert "external export" in joined
+    assert "scenario runner can carry deterministic read-only market context" in joined
+    assert "in-memory/static-local fixture" in joined
