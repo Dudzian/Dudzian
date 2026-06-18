@@ -195,13 +195,13 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.3" in scope
+    assert "FUNCTIONAL-PREVIEW-3.4" in scope
     assert (
-        "local paper event spine, portfolio reducer, local audit/alerts consumer, and local composition proof unit evidence"
+        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, and deterministic in-memory local scenario fixture runner unit evidence"
         in scope
     )
     assert (
-        "no runtime loop, secrets, market fetches, live account access, cloud/export sink, external export, or live order I/O executed"
+        "no runtime loop, UI integration, file loader/export, secrets, market fetches, live account access, cloud/export sink, external export, or live order I/O executed"
         in scope
     )
 
@@ -256,11 +256,15 @@ def test_paper_terminal_order_lifecycle_includes_local_spine_without_overstateme
     text = "\n".join([*section["gaps"], section["recommended_next_step"]]).lower()
     assert "local paper event spine exists" in text
     assert "no live exchange/order/account side effects" in text
+    assert "scenario fixture runner" in text
+    assert "external export" in text
     assert "local paper portfolio reducer now exists" in text
     assert "local paper audit/alerts consumer now exists" in text
     assert "ui/runtime integration still missing" in text
     assert "testnet" in text
     assert "read-only market feed" in text
+    assert "local scenario fixture runner exists" in text
+    assert "deterministic in-memory" in text
 
 
 def test_portfolio_positions_trades_includes_local_reducer_without_overstatement() -> None:
@@ -282,6 +286,8 @@ def test_portfolio_positions_trades_includes_local_reducer_without_overstatement
     assert "local paper audit/alerts consumer" in text
     assert "testnet/read-only market feed" in text
     assert "live exchange/order/account" in text
+    assert "scenario runner" in text
+    assert "file loader/export" in text
 
 
 def test_alerts_telemetry_audit_is_local_unit_evidence_only() -> None:
@@ -305,3 +311,5 @@ def test_alerts_telemetry_audit_is_local_unit_evidence_only() -> None:
     assert "app runtime/ui integration still missing" in text
     assert "testnet/read-only market feed still missing" in text
     assert "no live exchange/order/account side effects" in text
+    assert "scenario fixture runner" in text
+    assert "external export" in text

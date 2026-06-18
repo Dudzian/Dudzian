@@ -143,6 +143,8 @@ def build_report() -> dict[str, Any]:
                     "tests/runtime/test_paper_event_spine.py",
                     "bot_core/runtime/paper_preview_flow.py",
                     "tests/runtime/test_paper_preview_flow.py",
+                    "bot_core/runtime/paper_preview_scenario.py",
+                    "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
             "runtime_backed": False,
@@ -155,11 +157,12 @@ def build_report() -> dict[str, Any]:
                 "Local paper portfolio reducer now exists as separate unit-level evidence; app runtime/UI integration still missing.",
                 "Local paper audit/alerts consumer now exists as separate unit-level evidence and consumes paper order/trade events locally without cloud/export/live side effects.",
                 "Local composition proof exists: paper spine, portfolio reducer, and audit journal are wired together locally for submit/reject/cancel/partial/fill snapshot evidence.",
+                "Local scenario fixture runner exists and drives PaperPreviewFlow with deterministic in-memory scenarios; no file loader/export is implemented.",
                 "UI/runtime integration still missing; this is not app-runtime-backed evidence and no runtime loop is started.",
                 "No cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects are proven or introduced here.",
                 "Testnet execution and read-only market feed still missing; this paper spine does not fetch market data or use sandbox/testnet adapters.",
             ],
-            "recommended_next_step": "Keep the local composition proof partial: paper spine + portfolio reducer + audit journal are wired together locally, but there is no app runtime loop, no UI integration, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects.",
+            "recommended_next_step": "Keep the local composition proof partial: paper spine + portfolio reducer + audit journal are wired together locally, and a deterministic in-memory local scenario fixture runner now drives PaperPreviewFlow, but there is no app runtime loop, no UI integration, no file loader/export, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects.",
         },
         "portfolio_positions_trades": {
             "status": "partial",
@@ -167,6 +170,8 @@ def build_report() -> dict[str, Any]:
                 [
                     "bot_core/runtime/paper_portfolio_reducer.py",
                     "tests/runtime/test_paper_portfolio_reducer.py",
+                    "bot_core/runtime/paper_preview_scenario.py",
+                    "tests/runtime/test_paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_flow.py",
                     "tests/runtime/test_paper_preview_flow.py",
                     "bot_core/runtime/paper_event_spine.py",
@@ -189,9 +194,10 @@ def build_report() -> dict[str, Any]:
                 "App runtime/UI integration still missing; this is not app-runtime-backed portfolio evidence.",
                 "Local paper audit/alerts consumer now consumes PaperTrade records as static/local unit evidence without mutating portfolio state.",
                 "Local composition proof exists and wires paper spine + portfolio reducer + audit journal together locally; this remains unit evidence, not app-runtime-backed proof.",
+                "Local scenario fixture runner exists and produces deterministic PaperPreviewFlow snapshots/summaries from in-memory steps without a file loader or export.",
                 "Testnet/read-only market feed still missing; no test-server, sandbox, read-only real-data, live account, or balance path is proven here.",
             ],
-            "recommended_next_step": "Keep the local paper portfolio reducer partial: paper fills produce deterministic trades/positions, non-fill events do not mutate portfolio, and local composition proof now wires trades/positions to audit locally, but there is no app runtime loop, no UI integration, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects.",
+            "recommended_next_step": "Keep the local paper portfolio reducer partial: paper fills produce deterministic trades/positions, non-fill events do not mutate portfolio, local composition proof wires trades/positions to audit locally, and a deterministic in-memory scenario runner exists, but there is no app runtime loop, no UI integration, no file loader/export, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects.",
         },
         "alerts_telemetry_audit": {
             "status": "partial",
@@ -205,6 +211,8 @@ def build_report() -> dict[str, Any]:
                     "tests/runtime/test_paper_event_spine.py",
                     "bot_core/runtime/paper_portfolio_reducer.py",
                     "tests/runtime/test_paper_portfolio_reducer.py",
+                    "bot_core/runtime/paper_preview_scenario.py",
+                    "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
             "runtime_backed": False,
@@ -217,9 +225,10 @@ def build_report() -> dict[str, Any]:
                 "No cloud sink, no external export, no file export, and no runtime loop are implemented for the local paper audit journal.",
                 "App runtime/UI integration still missing; this is static/local unit evidence, not app-runtime-backed telemetry proof.",
                 "Local composition proof exists and wires paper spine + portfolio reducer + audit journal together locally without a cloud sink or external export.",
+                "Local scenario fixture runner exists as static/local unit evidence and drives PaperPreviewFlow deterministically without file export, cloud sink, or external export.",
                 "Testnet/read-only market feed still missing; no live exchange/order/account side effects are introduced or proven here.",
             ],
-            "recommended_next_step": "Keep local paper audit/alerts consumer partial: local composition proof wires paper spine + portfolio reducer + audit journal locally, but there is no app runtime loop, no UI integration, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects.",
+            "recommended_next_step": "Keep local paper audit/alerts consumer partial: local composition proof wires paper spine + portfolio reducer + audit journal locally, and a deterministic in-memory scenario runner exists, but there is no app runtime loop, no UI integration, no file loader/export, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects.",
         },
         "settings_config_api_keys": {
             "status": "partial",
@@ -330,7 +339,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-3.3 local paper event spine, portfolio reducer, local audit/alerts consumer, and local composition proof unit evidence; no runtime loop, secrets, market fetches, live account access, cloud/export sink, external export, or live order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-3.4 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, and deterministic in-memory local scenario fixture runner unit evidence; no runtime loop, UI integration, file loader/export, secrets, market fetches, live account access, cloud/export sink, external export, or live order I/O executed",
         "sections": sections,
     }
     validate_report(payload)
