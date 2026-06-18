@@ -7,7 +7,15 @@ from pathlib import Path
 
 import pytest
 
+import dataclasses
+
 from bot_core.runtime.paper_audit_journal import PaperAuditSeverity
+from bot_core.runtime.paper_preview_bundle_boundary import (
+    PaperPreviewBundleBoundary,
+    PaperPreviewBundleBoundaryError,
+    build_local_bundle_refusal,
+    refuse_local_bundle_boundary,
+)
 from bot_core.runtime.paper_preview_scenario import (
     PaperPreviewDecisionContext,
     PaperPreviewDecisionDryRunAuditEntry,
@@ -1344,6 +1352,245 @@ def test_local_bundle_preview_policy_keeps_live_capabilities_blocked() -> None:
         RuntimeCapability.PAPER_ORDER_SUBMIT,
         RuntimeCapability.PAPER_ORDER_LIFECYCLE,
     )
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+def _local_bundle_result():
+    return PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit",
+                order_id="boundary-order",
+                symbol="BTCUSDT",
+                side="buy",
+                quantity=1,
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="boundary-order", fill_price=100),
+            name="bundle-boundary",
+        )
+    )
+
+
+def test_bundle_boundary_refuses_file_export_without_file_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    original_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("file writes must not be attempted")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+
+    with pytest.raises(
+        PaperPreviewBundleBoundaryError,
+        match="local bundle boundary refuses file_export",
+    ):
+        refuse_local_bundle_boundary(result.local_bundle, PaperPreviewBundleBoundary.FILE_EXPORT)
+
+    refusal = build_local_bundle_refusal(result.local_bundle, "file_export")
+    assert refusal.boundary_kind == "file_export"
+    assert refusal.refused is True
+    assert refusal.export_sink == "none"
+    assert refusal.cloud_sink == "none"
+    assert refusal.external_export is False
+    assert refusal.generated_order_count == 0
+    assert refusal.generated_decision_count == 0
+    assert refusal.bundle_kind == result.local_bundle.bundle_kind
+
+
+def test_bundle_boundary_refuses_serialized_export_without_payload_surface() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    with pytest.raises(PaperPreviewBundleBoundaryError, match="serialized_export"):
+        refuse_local_bundle_boundary(result.local_bundle, "serialized_export")
+
+    for name in ("to_json", "to_yaml", "to_csv", "serialize", "serialized_payload"):
+        assert not hasattr(result.local_bundle, name)
+
+
+def test_bundle_boundary_refuses_cloud_and_external_export_without_network_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network used")),
+    )
+    monkeypatch.setattr(
+        socket,
+        "socket",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("socket used")),
+    )
+
+    for boundary in ("cloud_sink", "external_export"):
+        with pytest.raises(PaperPreviewBundleBoundaryError, match=boundary):
+            refuse_local_bundle_boundary(result.local_bundle, boundary)
+        refusal = build_local_bundle_refusal(result.local_bundle, boundary)
+        assert refusal.cloud_sink == "none"
+        assert refusal.export_sink == "none"
+        assert refusal.external_export is False
+
+    assert not hasattr(result.local_bundle, "cloud_url")
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "strategy_engine_handoff",
+        "ai_model_inference_handoff",
+        "scoring_handoff",
+        "recommendation_handoff",
+        "decision_envelope_handoff",
+        "trading_controller_handoff",
+        "order_generation_handoff",
+    ],
+)
+def test_bundle_boundary_refuses_engine_and_order_handoffs(boundary: str) -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    with pytest.raises(PaperPreviewBundleBoundaryError, match=boundary):
+        refuse_local_bundle_boundary(result.local_bundle, boundary)
+
+    refusal = build_local_bundle_refusal(result.local_bundle, boundary)
+    assert refusal.boundary_kind == boundary
+    assert refusal.generated_order_count == 0
+    assert refusal.generated_decision_count == 0
+    assert refusal.export_sink == "none"
+    assert refusal.cloud_sink == "none"
+    assert refusal.external_export is False
+
+
+def test_bundle_refusal_is_deterministic_and_immutable() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    first = build_local_bundle_refusal(result.local_bundle, "file_export")
+    second = build_local_bundle_refusal(result.local_bundle, PaperPreviewBundleBoundary.FILE_EXPORT)
+
+    assert first == second
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.export_sink = "file"  # type: ignore[misc]
+
+    with pytest.raises(PaperPreviewBundleBoundaryError) as first_error:
+        refuse_local_bundle_boundary(result.local_bundle, "file_export")
+    with pytest.raises(PaperPreviewBundleBoundaryError) as second_error:
+        refuse_local_bundle_boundary(result.local_bundle, "file_export")
+    assert str(first_error.value) == str(second_error.value)
+
+
+def test_bundle_boundary_refusal_does_not_affect_paper_flow() -> None:
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    result = runner.run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="stable", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="stable", fill_price=100),
+            name="stable-flow",
+        )
+    )
+    assert result.local_bundle is not None
+    before = _snapshot_counts(runner)
+
+    for boundary in PaperPreviewBundleBoundary:
+        with pytest.raises(PaperPreviewBundleBoundaryError):
+            refuse_local_bundle_boundary(result.local_bundle, boundary)
+
+    assert _snapshot_counts(runner) == before
+    assert before == (
+        result.summary.order_event_count,
+        result.summary.trade_count,
+        result.summary.audit_event_count,
+    )
+
+
+def test_bundle_boundary_has_no_decision_scoring_recommendation_account_live_secret_surface() -> (
+    None
+):
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    refusal = build_local_bundle_refusal(result.local_bundle, "file_export")
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+
+    forbidden = {
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    for item in (result.local_bundle, refusal, runner):
+        for name in forbidden:
+            assert not hasattr(item, name)
+
+
+def test_bundle_boundary_unknown_kind_fails_closed() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    with pytest.raises(PaperPreviewBundleBoundaryError, match="unknown boundary"):
+        build_local_bundle_refusal(result.local_bundle, "unlisted_boundary")
+
+
+def test_preview_policy_boundary_live_capabilities_remain_blocked() -> None:
+    assert (
+        RuntimeCapability.READ_ONLY_MARKET_FETCH
+        in build_preview_mode_policy(
+            PreviewMode.READ_ONLY_MARKET,
+            (RuntimeCapability.READ_ONLY_MARKET_FETCH,),
+        ).capabilities
+    )
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in PaperPreviewScenarioRunner().policy.capabilities
+    assert (
+        RuntimeCapability.PAPER_ORDER_LIFECYCLE in PaperPreviewScenarioRunner().policy.capabilities
+    )
+
     for capability in (
         RuntimeCapability.LIVE_ORDER_SUBMIT,
         RuntimeCapability.REAL_EXCHANGE_FILL,

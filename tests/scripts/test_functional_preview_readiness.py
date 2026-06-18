@@ -195,13 +195,13 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.10" in scope
+    assert "FUNCTIONAL-PREVIEW-3.11" in scope
     assert (
-        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle contract evidence"
+        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal contract evidence"
         in scope
     )
     assert (
-        "no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, or live order I/O executed"
+        "no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed"
         in scope
     )
 
@@ -375,3 +375,37 @@ def test_decision_dry_run_artifact_readiness_evidence_stays_partial_static_local
         assert "ai/model inference" in joined
         assert "decisionenvelope integration" in joined
         assert "tradingcontroller integration" in joined
+
+
+def test_bundle_boundary_refusal_readiness_evidence_stays_static_local() -> None:
+    payload = _load_report()
+    sections = payload["sections"]
+    for name in (
+        "ai_decision_governor",
+        "alerts_telemetry_audit",
+        "preview_mode_contract",
+        "paper_terminal_order_lifecycle",
+        "data_source_market_feed",
+    ):
+        section = sections[name]
+        joined = "\n".join(
+            [*section["evidence_files"], *section["gaps"], section["recommended_next_step"]]
+        ).lower()
+        assert section["status"] == "partial"
+        assert section["runtime_backed"] is False
+        assert section["supports_read_only_real_data"] is False
+        assert "paper_preview_bundle_boundary.py" in joined
+        assert "bundle boundary/export refusal" in joined
+        assert "static/local" in joined or "static-local" in joined
+        assert "file export" in joined
+        assert "serialization export" in joined
+        assert "cloud sink" in joined
+        assert "external export" in joined
+        assert "engine handoff" in joined
+        assert (
+            "no generated orders/decisions" in joined or "generates no orders/decisions" in joined
+        )
+        assert "no scoring" in joined
+        assert "no recommendation" in joined
+        assert "decisionenvelope" in joined
+        assert "tradingcontroller" in joined
