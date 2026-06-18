@@ -17,6 +17,10 @@ from bot_core.runtime.paper_preview_bundle_boundary import (
     build_local_bundle_refusal,
     refuse_local_bundle_boundary,
 )
+from bot_core.runtime.paper_preview_bundle_read_model import (
+    PaperPreviewBundleReadModelError,
+    build_paper_preview_bundle_read_model,
+)
 from bot_core.runtime.paper_preview_scenario import (
     PaperPreviewDecisionContext,
     PaperPreviewDecisionDryRunAuditEntry,
@@ -1827,3 +1831,251 @@ def test_preview_policy_boundary_live_capabilities_remain_blocked() -> None:
     ):
         with pytest.raises(PreviewModeContractError):
             build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+def _local_bundle_with_market_result():
+    return PaperPreviewScenarioRunner(
+        created_at="fixed", market_data_provider=_market_provider()
+    ).run(
+        PaperPreviewScenario(
+            name="bundle-read-model-market",
+            market_symbols=("ETHUSDT", "BTCUSDT"),
+            market_timeframe="1m",
+            market_candle_limit=99,
+            steps=(
+                PaperPreviewScenarioStep(
+                    action="submit",
+                    order_id="read-model-market",
+                    symbol="ETHUSDT",
+                    side="buy",
+                    quantity=1,
+                ),
+                PaperPreviewScenarioStep(
+                    action="fill", order_id="read-model-market", fill_price=10
+                ),
+            ),
+        )
+    )
+
+
+def _read_model_for_result(result):
+    assert result.local_bundle is not None
+    matrix = build_local_bundle_boundary_matrix(result.local_bundle)
+    return build_paper_preview_bundle_read_model(result.local_bundle, matrix), matrix
+
+
+def test_bundle_read_model_exists_for_local_bundle_and_matrix() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    model, matrix = _read_model_for_result(result)
+
+    assert model.model_kind == "local_preview_bundle_read_model"
+    assert model.scenario_name == result.local_bundle.scenario_name == matrix.scenario_name
+    assert model.bundle_kind == result.local_bundle.bundle_kind == matrix.bundle_kind
+
+
+def test_bundle_read_model_mirrors_bundle_and_boundary_matrix() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    model, matrix = _read_model_for_result(result)
+
+    assert model.decision_status == result.local_bundle.decision_status
+    assert model.market_symbols == result.local_bundle.market_symbols
+    assert model.trade_count == result.local_bundle.trade_count
+    assert model.position_count == result.local_bundle.position_count
+    assert model.audit_event_count == result.local_bundle.audit_event_count
+    assert model.generated_order_count == 0
+    assert model.generated_decision_count == 0
+    assert model.export_sink == "none"
+    assert model.cloud_sink == "none"
+    assert model.external_export is False
+    assert model.boundary_row_count == len(matrix.rows)
+    assert model.all_boundaries_refused is True
+    assert model.boundary_kinds == tuple(row.boundary_kind for row in matrix.rows)
+    assert tuple(row.boundary_kind for row in model.boundary_rows) == model.boundary_kinds
+
+
+def test_bundle_read_model_summarizes_market_and_no_market_context() -> None:
+    market_result = _local_bundle_with_market_result()
+    assert market_result.local_bundle is not None
+    market_model, _ = _read_model_for_result(market_result)
+
+    assert market_model.has_market_context is True
+    assert market_model.market_symbols == ("BTCUSDT", "ETHUSDT")
+    assert market_model.quote_count == 2
+    assert market_model.candle_set_count == 2
+
+    no_market_result = _local_bundle_result()
+    assert no_market_result.local_bundle is not None
+    no_market_model, _ = _read_model_for_result(no_market_result)
+
+    assert no_market_model.has_market_context is False
+    assert no_market_model.market_symbols == ()
+    assert no_market_model.quote_count == 0
+    assert no_market_model.candle_set_count == 0
+
+
+def test_bundle_read_model_static_flags_and_local_contract() -> None:
+    model, _ = _read_model_for_result(_local_bundle_result())
+
+    assert model.read_only is True
+    assert model.runtime_backed is False
+    assert model.ui_bound is False
+    assert model.has_boundary_matrix is True
+    assert model.has_dry_run_artifact is True
+    assert model.has_audit_trail is True
+    assert model.has_decision_context is True
+
+
+def test_bundle_read_model_consistency_fails_closed() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    matrix = build_local_bundle_boundary_matrix(result.local_bundle)
+
+    with pytest.raises(PaperPreviewBundleReadModelError, match="scenario_name"):
+        build_paper_preview_bundle_read_model(
+            result.local_bundle, dataclasses.replace(matrix, scenario_name="other")
+        )
+    with pytest.raises(PaperPreviewBundleReadModelError, match="bundle_kind"):
+        build_paper_preview_bundle_read_model(
+            result.local_bundle, dataclasses.replace(matrix, bundle_kind="other")
+        )
+    with pytest.raises(PaperPreviewBundleReadModelError, match="refuse all"):
+        build_paper_preview_bundle_read_model(
+            result.local_bundle, dataclasses.replace(matrix, all_refused=False)
+        )
+    with pytest.raises(PaperPreviewBundleReadModelError, match="row_count"):
+        build_paper_preview_bundle_read_model(
+            result.local_bundle, dataclasses.replace(matrix, row_count=matrix.row_count + 1)
+        )
+
+
+def test_bundle_read_model_has_no_file_network_serialization_or_ui_side_effects(
+    monkeypatch,
+) -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    matrix = build_local_bundle_boundary_matrix(result.local_bundle)
+
+    original_open = builtins.open
+
+    def guarded_open(file, mode="r", *args, **kwargs):
+        if any(token in mode for token in ("w", "a", "+", "x")):
+            raise AssertionError("read model must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")),
+    )
+    monkeypatch.setattr(
+        socket, "socket", lambda *a, **k: (_ for _ in ()).throw(AssertionError("socket"))
+    )
+
+    model = build_paper_preview_bundle_read_model(result.local_bundle, matrix)
+
+    forbidden = {
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "qml",
+        "QObject",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+    }
+    for name in forbidden:
+        assert not hasattr(model, name)
+
+
+def test_bundle_read_model_is_deterministic_and_immutable() -> None:
+    model, matrix = _read_model_for_result(_local_bundle_result())
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    repeated = build_paper_preview_bundle_read_model(result.local_bundle, matrix)
+
+    assert repeated == model
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        model.read_only = False  # type: ignore[misc]
+    assert isinstance(model.market_symbols, tuple)
+    with pytest.raises(AttributeError):
+        model.market_symbols.append("X")  # type: ignore[attr-defined]
+
+
+def test_bundle_read_model_does_not_affect_paper_flow_or_audit() -> None:
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    result = runner.run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="stable-read", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="stable-read", fill_price=100),
+            name="stable-read-model",
+        )
+    )
+    assert result.local_bundle is not None
+    before = _snapshot_counts(runner)
+    matrix = build_local_bundle_boundary_matrix(result.local_bundle)
+
+    build_paper_preview_bundle_read_model(result.local_bundle, matrix)
+
+    assert _snapshot_counts(runner) == before
+    assert before == (
+        result.summary.order_event_count,
+        result.summary.trade_count,
+        result.summary.audit_event_count,
+    )
+
+
+def test_bundle_read_model_has_no_decision_account_live_secret_export_ui_surface() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    matrix = build_local_bundle_boundary_matrix(result.local_bundle)
+    model = build_paper_preview_bundle_read_model(result.local_bundle, matrix)
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+
+    forbidden = {
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "qml",
+        "QObject",
+    }
+    for item in (model, result.local_bundle, matrix, runner):
+        for name in forbidden:
+            assert not hasattr(item, name)

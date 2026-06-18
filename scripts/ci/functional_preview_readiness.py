@@ -47,6 +47,7 @@ def build_report() -> dict[str, Any]:
                     "tests/runtime/test_read_only_market_data.py",
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
+                    "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -62,9 +63,9 @@ def build_report() -> dict[str, Any]:
                 "Live-production capabilities are blocked by policy, including real exchange orders/fills, live account balance mutation, live account balance fetch, live account snapshot read, live credentials, production cloud telemetry, external export, and live scheduler/worker effects.",
                 "Read-only market policy is distinct from live-production account/balance access; this is static/read-only policy evidence only, and real runtime implementations/proofs for paper spine, read-only feed, and testnet execution still remain.",
                 "Read-only market data contract exists as local/static unit evidence and uses READ_ONLY_MARKET_FETCH while account, balance, credentials, order, fill, cloud/export, and live scheduler side effects remain blocked.",
-                "Local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures and can produce a deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix without treating it as live account/balance/order access and with no generated orders/decisions, no scoring, no recommendation, no DecisionEnvelope integration, and no TradingController integration; bundle boundary matrix shows all export/serialization/cloud/engine handoff boundaries are refused; matrix/report is local/static-only; file export, serialization export, cloud sink, external export, and engine handoff remain refused.",
+                "Local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures and can produce a deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix, and local read model can summarize bundle + boundary matrix for future UI/runtime integration without treating it as live account/balance/order access and with no generated orders/decisions, no scoring, no recommendation, no DecisionEnvelope integration, and no TradingController integration; bundle boundary matrix shows all export/serialization/cloud/engine handoff boundaries are refused; matrix/report/read model is local/static-only; read model is not QML/PySide/UI-bound; read model is not runtime-backed; file export, serialization export, cloud sink, external export, and engine handoff remain refused.",
             ],
-            "recommended_next_step": "Keep the static mode contract and enforcement helper as the foundation that allows paper/testnet/read-only/recorded capabilities while blocking live-production capabilities; the local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures, READ_ONLY_MARKET_FETCH remains preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch yet, no app runtime loop, UI integration, testnet/sandbox adapter, file export, serialization export, cloud sink, external export, or engine handoff exists yet.",
+            "recommended_next_step": "Keep the static mode contract and enforcement helper as the foundation that allows paper/testnet/read-only/recorded capabilities while blocking live-production capabilities; the local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures, READ_ONLY_MARKET_FETCH remains preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch yet, no app runtime loop, UI integration, testnet/sandbox adapter, file export, serialization export, cloud sink, external export, serialization payload, or engine handoff exists yet.",
         },
         "data_source_market_feed": {
             "status": "partial",
@@ -80,6 +81,7 @@ def build_report() -> dict[str, Any]:
                     "tests/runtime/test_read_only_market_data.py",
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
+                    "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -92,11 +94,11 @@ def build_report() -> dict[str, Any]:
                 "Preview profile is explicitly in-process/local and points at a sample OHLCV dataset, not a test-server or read-only real-market source.",
                 "A preview-scoped read-only market data contract now exists for static/local in-memory quote/candle/snapshot proof, but it is not a real adapter or real feed.",
                 "Local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures before paper step execution.",
-                "Local scenario runner can produce deterministic context-only dry-run decision artifact, local in-memory artifact audit trail, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix after execution; artifact, bundle, and matrix are context-only/static-local and generate no orders/decisions, with no scoring, no recommendation, no strategy engine, AI/model inference, DecisionEnvelope integration, or TradingController integration.",
+                "Local scenario runner can produce deterministic context-only dry-run decision artifact, local in-memory artifact audit trail, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal local bundle boundary matrix, and local read model after execution; artifact, bundle, matrix, and read model are context-only/static-local and generate no orders/decisions, with no scoring, no recommendation, no strategy engine, AI/model inference, DecisionEnvelope integration, or TradingController integration.",
                 "gRPC/UI fallback code can expose runtime-shaped snapshots, but this audit found no real-data-backed preview proof of read-only feed ingestion.",
-                "No real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, external export, or engine handoff is implemented for this contract.",
+                "No real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, external export, serialization payload, or engine handoff is implemented for this contract.",
             ],
-            "recommended_next_step": "Keep the read-only market data contract, scenario market context, scenario decision dry-run artifact, local artifact audit trail, and local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix as partial/static-local evidence: the local scenario runner can carry deterministic read-only market context and produce deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix that generates no orders/decisions, market context is in-memory/static-local fixture only, READ_ONLY_MARKET_FETCH is preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no scoring, no recommendation, no strategy engine, AI/model inference, DecisionEnvelope integration, TradingController integration, file export, serialization export, cloud sink, external export, real market adapter/fetch, app runtime loop, UI integration, or testnet/sandbox adapter exists yet.",
+            "recommended_next_step": "Keep the read-only market data contract, scenario market context, scenario decision dry-run artifact, local artifact audit trail, and local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal, local bundle boundary matrix, and local read model as partial/static-local evidence: the local scenario runner can carry deterministic read-only market context and produce deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal, local bundle boundary matrix, and local read model that generate no orders/decisions, market context is in-memory/static-local fixture only, READ_ONLY_MARKET_FETCH is preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no scoring, no recommendation, no strategy engine, AI/model inference, DecisionEnvelope integration, TradingController integration, file export, serialization export, cloud sink, external export, real market adapter/fetch, app runtime loop, UI integration, or testnet/sandbox adapter exists yet.",
         },
         "scanner_opportunity_pipeline": {
             "status": "static_mock_only",
@@ -132,6 +134,7 @@ def build_report() -> dict[str, Any]:
                     "data/decision_engine/paper/candidates.json",
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
+                    "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                     "bot_core/runtime/read_only_market_data.py",
                     "tests/runtime/test_read_only_market_data.py",
@@ -147,10 +150,10 @@ def build_report() -> dict[str, Any]:
                 "Paper decision-engine smoke inputs are file fixtures, not a preview proof of live read-only market input.",
                 "Confidence/reason/risk fields in the preview default are supplied as serialized demo values unless a runtime source is configured.",
                 "Local scenario runner can produce a deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix after paper scenario execution, including scenario state, optional in-memory/static-local market context summary, decision context, dry-run artifact, local artifact audit trail, no-action markers, no-export/no-cloud markers, and blocked engine integration markers.",
-                "Dry-run artifact, local bundle, and bundle boundary matrix are context-only/static-local and generate no orders/decisions; they are not scoring, recommendation, strategy engine, AI/model inference path, DecisionEnvelope integration, TradingController integration, file export, serialization export, cloud sink, external export, or engine handoff.",
-                "Market context is in-memory/static-local fixture only; no real market adapter/fetch yet, no app runtime loop, UI integration, testnet/sandbox adapter, file export, serialization export, cloud sink, external export, or engine handoff exists yet.",
+                "Dry-run artifact, local bundle, bundle boundary matrix, and local read model are context-only/static-local and generate no orders/decisions; they are not scoring, recommendation, strategy engine, AI/model inference path, DecisionEnvelope integration, TradingController integration, file export, serialization export, cloud sink, external export, or engine handoff.",
+                "Market context is in-memory/static-local fixture only; no real market adapter/fetch yet, no app runtime loop, UI integration, testnet/sandbox adapter, file export, serialization export, cloud sink, external export, serialization payload, or engine handoff exists yet.",
             ],
-            "recommended_next_step": "Keep ai_decision_governor partial/static-local: local scenario runner can produce deterministic context-only dry-run decision artifact and local in-memory audit trail, dry-run artifact audit trail and bundle boundary matrix are static-local only and generate no orders/decisions, no scoring, no recommendation, no strategy engine, no AI/model inference, no DecisionEnvelope integration, no TradingController integration, market context is in-memory/static-local fixture only, READ_ONLY_MARKET_FETCH is preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch yet, no app runtime loop, UI integration, testnet/sandbox adapter, file export, serialization export, cloud sink, external export, or engine handoff exists yet.",
+            "recommended_next_step": "Keep ai_decision_governor partial/static-local: local scenario runner can produce deterministic context-only dry-run decision artifact and local in-memory audit trail, dry-run artifact audit trail, bundle boundary matrix, and local read model are static-local only and generate no orders/decisions, no scoring, no recommendation, no strategy engine, no AI/model inference, no DecisionEnvelope integration, no TradingController integration, market context is in-memory/static-local fixture only, READ_ONLY_MARKET_FETCH is preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch yet, no app runtime loop, UI integration, testnet/sandbox adapter, file export, serialization export, cloud sink, external export, serialization payload, or engine handoff exists yet.",
         },
         "paper_terminal_order_lifecycle": {
             "status": "partial",
@@ -168,6 +171,7 @@ def build_report() -> dict[str, Any]:
                     "tests/runtime/test_paper_preview_flow.py",
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
+                    "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -182,12 +186,12 @@ def build_report() -> dict[str, Any]:
                 "Local paper audit/alerts consumer now exists as separate unit-level evidence and consumes paper order/trade events locally without cloud/export/live side effects.",
                 "Local composition proof exists: paper spine, portfolio reducer, and audit journal are wired together locally for submit/reject/cancel/partial/fill snapshot evidence.",
                 "Local scenario fixture runner exists and drives PaperPreviewFlow with deterministic in-memory scenarios; it can carry deterministic read-only market context from an in-memory/static-local fixture; no file loader/export is implemented.",
-                "Local scenario runner can produce deterministic context-only dry-run decision artifact, local in-memory artifact audit trail, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix after execution; dry-run artifact, bundle, and matrix are context-only/static-local and generate no orders/decisions with no scoring, no recommendation, no strategy engine, AI/model inference, DecisionEnvelope integration, or TradingController integration.",
+                "Local scenario runner can produce deterministic context-only dry-run decision artifact, local in-memory artifact audit trail, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal local bundle boundary matrix, and local read model after execution; dry-run artifact, bundle, matrix, and read model are context-only/static-local and generate no orders/decisions with no scoring, no recommendation, no strategy engine, AI/model inference, DecisionEnvelope integration, or TradingController integration.",
                 "UI/runtime integration still missing; this is not app-runtime-backed evidence and no runtime loop is started.",
                 "No cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects are proven or introduced here.",
                 "Testnet execution and read-only market feed still missing; this paper spine does not fetch market data or use sandbox/testnet adapters.",
             ],
-            "recommended_next_step": "Keep the local composition proof partial: paper spine + portfolio reducer + audit journal are wired together locally, a deterministic in-memory local scenario fixture runner now drives PaperPreviewFlow, and the runner can produce a context-only dry-run decision artifact plus local in-memory audit trail and local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix with no generated orders/decisions, but there is no scoring, no recommendation, no strategy engine, no AI/model inference, no DecisionEnvelope integration, no TradingController integration, no app runtime loop, no UI integration, no file loader/export, no file export, no serialization export, no cloud sink, no external export, no engine handoff, no testnet/sandbox adapter, no real market adapter/fetch, and no live exchange/order/account side effects.",
+            "recommended_next_step": "Keep the local composition proof partial: paper spine + portfolio reducer + audit journal are wired together locally, a deterministic in-memory local scenario fixture runner now drives PaperPreviewFlow, and the runner can produce a context-only dry-run decision artifact plus local in-memory audit trail and local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal, local bundle boundary matrix, and local read model with no generated orders/decisions, but there is no scoring, no recommendation, no strategy engine, no AI/model inference, no DecisionEnvelope integration, no TradingController integration, no app runtime loop, no UI integration, no file loader/export, no file export, no serialization export, no cloud sink, no external export, no engine handoff, no testnet/sandbox adapter, no real market adapter/fetch, and no live exchange/order/account side effects.",
         },
         "portfolio_positions_trades": {
             "status": "partial",
@@ -197,6 +201,7 @@ def build_report() -> dict[str, Any]:
                     "tests/runtime/test_paper_portfolio_reducer.py",
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
+                    "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_flow.py",
                     "tests/runtime/test_paper_preview_flow.py",
@@ -239,6 +244,7 @@ def build_report() -> dict[str, Any]:
                     "tests/runtime/test_paper_portfolio_reducer.py",
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
+                    "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -253,10 +259,10 @@ def build_report() -> dict[str, Any]:
                 "App runtime/UI integration still missing; this is static/local unit evidence, not app-runtime-backed telemetry proof.",
                 "Local composition proof exists and wires paper spine + portfolio reducer + audit journal together locally without a cloud sink or external export.",
                 "Local scenario fixture runner exists as static/local unit evidence and drives PaperPreviewFlow deterministically without file export, serialization export, cloud sink, external export, or engine handoff.",
-                "Local scenario runner can produce a deterministic context-only dry-run artifact audit trail and fail-closed bundle boundary/export refusal and local bundle boundary matrix as local/in-memory/static-local evidence only; it is not cloud telemetry, file export, serialization export, external export, engine handoff, strategy evaluation, AI/model inference, scoring, recommendation, DecisionEnvelope integration, or TradingController integration, and it generates no orders/decisions.",
+                "Local scenario runner can produce a deterministic context-only dry-run artifact audit trail and fail-closed bundle boundary/export refusal and local bundle boundary matrix and local read model as local/in-memory/static-local evidence only; it is not cloud telemetry, file export, serialization export, external export, engine handoff, strategy evaluation, AI/model inference, scoring, recommendation, DecisionEnvelope integration, or TradingController integration, and it generates no orders/decisions.",
                 "Testnet/read-only market feed still missing; no live exchange/order/account side effects are introduced or proven here.",
             ],
-            "recommended_next_step": "Keep local paper audit/alerts consumer partial: local composition proof wires paper spine + portfolio reducer + audit journal locally, and a deterministic in-memory scenario runner plus static/local bundle boundary/export refusal and local matrix exist, but there is no app runtime loop, no UI integration, no file loader/export, no serialization export, no cloud sink, no external export, no engine handoff, no scoring, no recommendation, no DecisionEnvelope integration, no TradingController integration, no testnet/read-only market feed, and no live exchange/order/account side effects.",
+            "recommended_next_step": "Keep local paper audit/alerts consumer partial: local composition proof wires paper spine + portfolio reducer + audit journal locally, and a deterministic in-memory scenario runner plus static/local bundle boundary/export refusal, local matrix, and local read model exist, but there is no app runtime loop, no UI integration, no file loader/export, no serialization export, no cloud sink, no external export, no engine handoff, no scoring, no recommendation, no DecisionEnvelope integration, no TradingController integration, no testnet/read-only market feed, and no live exchange/order/account side effects.",
         },
         "settings_config_api_keys": {
             "status": "partial",
@@ -364,10 +370,28 @@ def build_report() -> dict[str, Any]:
             "recommended_next_step": "Keep the live safety hard gate partial: preserve the existing subprocess/source/payload helper proof and LiveExecutionRouter DI canary disabled/test-mode proof, then add full end-to-end preview coverage for all backend/runtime/live adapter routes plus a paper event spine, preview data-source contract, and read-only market feed proof.",
         },
     }
+    read_model_gap = (
+        "Local read model can summarize bundle + boundary matrix for future UI/runtime "
+        "integration; read model is local/static-only, not QML/PySide/UI-bound, not "
+        "runtime-backed, and bundle/read model/matrix generate no orders/decisions; "
+        "no scoring, no recommendation, no strategy engine, no AI/model inference, no "
+        "DecisionEnvelope integration, no TradingController integration, no file export, "
+        "no serialization export, no cloud sink, no external export, and no serialization "
+        "payload."
+    )
+    for section_name in (
+        "ai_decision_governor",
+        "alerts_telemetry_audit",
+        "preview_mode_contract",
+        "paper_terminal_order_lifecycle",
+        "data_source_market_feed",
+    ):
+        sections[section_name]["gaps"].append(read_model_gap)
+
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-3.12 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence plus local bundle boundary refusal matrix evidence; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-3.13 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence, local bundle boundary refusal matrix evidence, and local preview bundle read model evidence; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed",
         "sections": sections,
     }
     validate_report(payload)
