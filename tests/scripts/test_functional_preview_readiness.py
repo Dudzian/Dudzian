@@ -195,9 +195,9 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.11" in scope
+    assert "FUNCTIONAL-PREVIEW-3.12" in scope
     assert (
-        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal contract evidence"
+        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence plus local bundle boundary refusal matrix evidence"
         in scope
     )
     assert (
@@ -368,7 +368,7 @@ def test_decision_dry_run_artifact_readiness_evidence_stays_partial_static_local
         assert "paper_preview_scenario.py" in joined
         assert "dry-run decision artifact" in joined
         assert "context-only" in joined
-        assert "generates no orders/decisions" in joined
+        assert "generate no orders/decisions" in joined or "generates no orders/decisions" in joined
         assert "no scoring" in joined
         assert "no recommendation" in joined
         assert "no strategy engine" in joined
@@ -403,7 +403,9 @@ def test_bundle_boundary_refusal_readiness_evidence_stays_static_local() -> None
         assert "external export" in joined
         assert "engine handoff" in joined
         assert (
-            "no generated orders/decisions" in joined or "generates no orders/decisions" in joined
+            "no generated orders/decisions" in joined
+            or "generate no orders/decisions" in joined
+            or "generates no orders/decisions" in joined
         )
         assert "no scoring" in joined
         assert "no recommendation" in joined

@@ -50,6 +50,39 @@ class PaperPreviewBundleRefusal:
     generated_decision_count: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class PaperPreviewBundleBoundaryMatrixRow:
+    """One immutable local diagnostic row for a refused bundle boundary."""
+
+    boundary_kind: str
+    refused: bool
+    reason: str
+    bundle_kind: str
+    scenario_name: str
+    export_sink: str = "none"
+    cloud_sink: str = "none"
+    external_export: bool = False
+    generated_order_count: int = 0
+    generated_decision_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewBundleBoundaryMatrixReport:
+    """Immutable in-memory report proving local bundle boundaries are refused."""
+
+    bundle_kind: str
+    scenario_name: str
+    row_count: int
+    rows: tuple[PaperPreviewBundleBoundaryMatrixRow, ...]
+    report_kind: str = "local_bundle_boundary_refusal_matrix"
+    all_refused: bool = True
+    export_sink: str = "none"
+    cloud_sink: str = "none"
+    external_export: bool = False
+    generated_order_count: int = 0
+    generated_decision_count: int = 0
+
+
 _ALLOWED_BOUNDARIES = frozenset(item.value for item in PaperPreviewBundleBoundary)
 
 
@@ -67,6 +100,43 @@ def build_local_bundle_refusal(
         scenario_name=bundle.scenario_name,
         generated_order_count=bundle.generated_order_count,
         generated_decision_count=bundle.generated_decision_count,
+    )
+
+
+def build_local_bundle_boundary_matrix(
+    bundle: PaperPreviewLocalDecisionBundle,
+) -> PaperPreviewBundleBoundaryMatrixReport:
+    """Build deterministic in-memory refusal matrix for every local bundle boundary."""
+
+    rows = tuple(
+        _matrix_row_from_refusal(build_local_bundle_refusal(bundle, boundary))
+        for boundary in PaperPreviewBundleBoundary
+    )
+    return PaperPreviewBundleBoundaryMatrixReport(
+        bundle_kind=bundle.bundle_kind,
+        scenario_name=bundle.scenario_name,
+        row_count=len(rows),
+        rows=rows,
+        all_refused=all(row.refused for row in rows),
+        generated_order_count=bundle.generated_order_count,
+        generated_decision_count=bundle.generated_decision_count,
+    )
+
+
+def _matrix_row_from_refusal(
+    refusal: PaperPreviewBundleRefusal,
+) -> PaperPreviewBundleBoundaryMatrixRow:
+    return PaperPreviewBundleBoundaryMatrixRow(
+        boundary_kind=refusal.boundary_kind,
+        refused=refusal.refused,
+        reason=refusal.reason,
+        bundle_kind=refusal.bundle_kind,
+        scenario_name=refusal.scenario_name,
+        export_sink=refusal.export_sink,
+        cloud_sink=refusal.cloud_sink,
+        external_export=refusal.external_export,
+        generated_order_count=refusal.generated_order_count,
+        generated_decision_count=refusal.generated_decision_count,
     )
 
 
@@ -92,7 +162,10 @@ def _normalize_boundary_kind(boundary_kind: str | PaperPreviewBundleBoundary) ->
 __all__ = [
     "PaperPreviewBundleBoundary",
     "PaperPreviewBundleBoundaryError",
+    "PaperPreviewBundleBoundaryMatrixReport",
+    "PaperPreviewBundleBoundaryMatrixRow",
     "PaperPreviewBundleRefusal",
+    "build_local_bundle_boundary_matrix",
     "build_local_bundle_refusal",
     "refuse_local_bundle_boundary",
 ]

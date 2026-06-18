@@ -13,6 +13,7 @@ from bot_core.runtime.paper_audit_journal import PaperAuditSeverity
 from bot_core.runtime.paper_preview_bundle_boundary import (
     PaperPreviewBundleBoundary,
     PaperPreviewBundleBoundaryError,
+    build_local_bundle_boundary_matrix,
     build_local_bundle_refusal,
     refuse_local_bundle_boundary,
 )
@@ -1379,6 +1380,230 @@ def _local_bundle_result():
             name="bundle-boundary",
         )
     )
+
+
+def test_bundle_boundary_matrix_exists_for_local_bundle() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    report = build_local_bundle_boundary_matrix(result.local_bundle)
+
+    assert report.report_kind == "local_bundle_boundary_refusal_matrix"
+    assert report.bundle_kind == result.local_bundle.bundle_kind
+    assert report.scenario_name == result.local_bundle.scenario_name
+    assert report.row_count == len(PaperPreviewBundleBoundary)
+    assert len(report.rows) == len(PaperPreviewBundleBoundary)
+    assert report.all_refused is True
+    assert report.export_sink == "none"
+    assert report.cloud_sink == "none"
+    assert report.external_export is False
+    assert report.generated_order_count == 0
+    assert report.generated_decision_count == 0
+
+
+def test_bundle_boundary_matrix_contains_every_boundary_once_in_enum_order() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    report = build_local_bundle_boundary_matrix(result.local_bundle)
+    expected = tuple(boundary.value for boundary in PaperPreviewBundleBoundary)
+
+    assert tuple(row.boundary_kind for row in report.rows) == expected
+    assert {row.boundary_kind for row in report.rows} == set(expected)
+    assert len({row.boundary_kind for row in report.rows}) == len(PaperPreviewBundleBoundary)
+    assert all(row.refused is True for row in report.rows)
+
+
+def test_bundle_boundary_matrix_rows_mirror_refusal_data() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    report = build_local_bundle_boundary_matrix(result.local_bundle)
+
+    for row, boundary in zip(report.rows, PaperPreviewBundleBoundary, strict=True):
+        refusal = build_local_bundle_refusal(result.local_bundle, boundary)
+        assert row.boundary_kind == refusal.boundary_kind
+        assert row.reason == refusal.reason
+        assert row.bundle_kind == result.local_bundle.bundle_kind
+        assert row.scenario_name == result.local_bundle.scenario_name
+        assert row.generated_order_count == 0
+        assert row.generated_decision_count == 0
+        assert row.export_sink == "none"
+        assert row.cloud_sink == "none"
+        assert row.external_export is False
+
+
+def test_bundle_boundary_matrix_covers_export_serialization_cloud_external() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    rows = {
+        row.boundary_kind: row
+        for row in build_local_bundle_boundary_matrix(result.local_bundle).rows
+    }
+
+    for boundary in ("file_export", "serialized_export", "cloud_sink", "external_export"):
+        assert rows[boundary].refused is True
+        assert (
+            rows[boundary].reason
+            == build_local_bundle_refusal(result.local_bundle, boundary).reason
+        )
+
+
+def test_bundle_boundary_matrix_covers_engine_and_order_handoffs() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    rows = {
+        row.boundary_kind: row
+        for row in build_local_bundle_boundary_matrix(result.local_bundle).rows
+    }
+
+    for boundary in (
+        "strategy_engine_handoff",
+        "ai_model_inference_handoff",
+        "scoring_handoff",
+        "recommendation_handoff",
+        "decision_envelope_handoff",
+        "trading_controller_handoff",
+        "order_generation_handoff",
+    ):
+        assert rows[boundary].refused is True
+        assert rows[boundary].generated_order_count == 0
+        assert rows[boundary].generated_decision_count == 0
+
+
+def test_bundle_boundary_matrix_has_no_file_network_or_serialization_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    original_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("matrix must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network used")),
+    )
+    monkeypatch.setattr(
+        socket,
+        "socket",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("socket used")),
+    )
+
+    report = build_local_bundle_boundary_matrix(result.local_bundle)
+
+    for forbidden in (
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+    ):
+        assert not hasattr(report, forbidden)
+        assert all(not hasattr(row, forbidden) for row in report.rows)
+
+
+def test_bundle_boundary_matrix_is_deterministic_and_immutable() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+
+    first = build_local_bundle_boundary_matrix(result.local_bundle)
+    second = build_local_bundle_boundary_matrix(result.local_bundle)
+
+    assert first == second
+    assert isinstance(first.rows, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.export_sink = "file"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.rows[0] = first.rows[0]  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.rows[0].export_sink = "file"  # type: ignore[misc]
+
+
+def test_bundle_boundary_matrix_does_not_affect_paper_flow() -> None:
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    result = runner.run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="matrix-stable", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="matrix-stable", fill_price=100),
+            name="matrix-stable-flow",
+        )
+    )
+    assert result.local_bundle is not None
+    before = _snapshot_counts(runner)
+
+    report = build_local_bundle_boundary_matrix(result.local_bundle)
+
+    assert report.row_count == len(PaperPreviewBundleBoundary)
+    assert _snapshot_counts(runner) == before
+    assert before == (
+        result.summary.order_event_count,
+        result.summary.trade_count,
+        result.summary.audit_event_count,
+    )
+
+
+def test_bundle_boundary_matrix_has_no_decision_account_live_secret_export_surface() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    report = build_local_bundle_boundary_matrix(result.local_bundle)
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+
+    forbidden = {
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "order_payload",
+    }
+    for item in (result.local_bundle, report, *report.rows, runner):
+        for name in forbidden:
+            assert not hasattr(item, name)
 
 
 def test_bundle_boundary_refuses_file_export_without_file_write(
