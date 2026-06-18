@@ -267,6 +267,46 @@ class PaperPreviewDecisionDryRunAuditTrail:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperPreviewLocalDecisionBundle:
+    """Immutable local context/artifact/audit bundle for preview diagnostics.
+
+    The bundle is an in-memory data contract only. It links already-built
+    scenario summary, market context, decision context, dry-run artifact, and
+    local artifact audit trail without exporting, serializing, scoring,
+    recommending, creating decisions, generating orders, reading accounts,
+    reading credentials, or contacting cloud/live sinks.
+    """
+
+    scenario_name: str
+    step_count: int
+    decision_status: str
+    has_market_context: bool
+    market_symbols: tuple[str, ...]
+    trade_count: int
+    position_count: int
+    audit_event_count: int
+    artifact_kind: str
+    artifact_no_action_reason: str
+    audit_entry_count: int
+    audit_event_types: tuple[str, ...]
+    quote_count: int = 0
+    candle_set_count: int = 0
+    order_event_count: int = 0
+    terminal_order_count: int = 0
+    realized_pnl_total: float = 0.0
+    risk_source: str = "placeholder"
+    risk_checks_enabled: bool = False
+    paper_symbols: tuple[str, ...] = ()
+    bundle_kind: str = "local_context_artifact_audit_bundle"
+    generated_order_count: int = 0
+    generated_decision_count: int = 0
+    export_sink: str = "none"
+    cloud_sink: str = "none"
+    external_export: bool = False
+    blocked_engine_integrations: tuple[str, ...] = _BLOCKED_ENGINE_INTEGRATIONS
+
+
+@dataclass(frozen=True, slots=True)
 class PaperPreviewScenarioResult:
     """Result returned after running a local paper preview scenario."""
 
@@ -280,6 +320,7 @@ class PaperPreviewScenarioResult:
     dry_run_artifact_audit: PaperPreviewDecisionDryRunAuditTrail = field(
         default_factory=lambda: PaperPreviewDecisionDryRunAuditTrail(entries=())
     )
+    local_bundle: PaperPreviewLocalDecisionBundle | None = None
 
 
 class PaperPreviewScenarioRunner:
@@ -332,6 +373,9 @@ class PaperPreviewScenarioRunner:
             decision_context, summary, final_snapshot, market_context
         )
         dry_run_artifact_audit = self._build_dry_run_artifact_audit(dry_run_artifact)
+        local_bundle = self._build_local_bundle(
+            decision_context, summary, dry_run_artifact, dry_run_artifact_audit
+        )
         return PaperPreviewScenarioResult(
             scenario_name=scenario.name,
             step_results=tuple(step_results),
@@ -341,6 +385,40 @@ class PaperPreviewScenarioRunner:
             decision_context=decision_context,
             dry_run_artifact=dry_run_artifact,
             dry_run_artifact_audit=dry_run_artifact_audit,
+            local_bundle=local_bundle,
+        )
+
+    @staticmethod
+    def _build_local_bundle(
+        decision_context: PaperPreviewDecisionContext,
+        summary: PaperPreviewScenarioSummary,
+        artifact: PaperPreviewDecisionDryRunArtifact,
+        audit_trail: PaperPreviewDecisionDryRunAuditTrail,
+    ) -> PaperPreviewLocalDecisionBundle:
+        return PaperPreviewLocalDecisionBundle(
+            scenario_name=summary.scenario_name,
+            step_count=summary.step_count,
+            decision_status=decision_context.decision_status,
+            has_market_context=decision_context.has_market_context,
+            market_symbols=tuple(sorted(decision_context.market_symbols)),
+            trade_count=summary.trade_count,
+            position_count=summary.position_count,
+            audit_event_count=summary.audit_event_count,
+            generated_order_count=decision_context.generated_order_count,
+            generated_decision_count=decision_context.generated_decision_count,
+            artifact_kind=artifact.artifact_kind,
+            artifact_no_action_reason=artifact.no_action_reason,
+            audit_entry_count=len(audit_trail.entries),
+            audit_event_types=tuple(entry.event_type for entry in audit_trail.entries),
+            quote_count=artifact.quote_count,
+            candle_set_count=artifact.candle_set_count,
+            order_event_count=artifact.order_event_count,
+            terminal_order_count=summary.terminal_order_count,
+            realized_pnl_total=summary.realized_pnl_total,
+            risk_source=artifact.risk_source,
+            risk_checks_enabled=artifact.risk_checks_enabled,
+            paper_symbols=summary.symbols,
+            blocked_engine_integrations=artifact.blocked_engine_integrations,
         )
 
     @staticmethod
@@ -598,6 +676,7 @@ __all__ = [
     "PaperPreviewDecisionDryRunAuditEntry",
     "PaperPreviewDecisionDryRunAuditTrail",
     "PaperPreviewDecisionDryRunArtifact",
+    "PaperPreviewLocalDecisionBundle",
     "PaperPreviewScenario",
     "PaperPreviewScenarioAction",
     "PaperPreviewScenarioError",
