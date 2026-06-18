@@ -229,6 +229,44 @@ class PaperPreviewDecisionDryRunArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperPreviewDecisionDryRunAuditEntry:
+    """Immutable local-only audit entry for dry-run artifact creation.
+
+    This entry is a deterministic in-memory diagnostic marker. It is not a
+    telemetry sink, export record, strategy decision, recommendation, order
+    intent, account snapshot, credential container, or cloud event.
+    """
+
+    artifact_kind: str
+    scenario_name: str
+    step_count: int
+    decision_status: str
+    generated_order_count: int
+    generated_decision_count: int
+    no_action_reason: str
+    has_market_context: bool
+    market_symbols: tuple[str, ...]
+    quote_count: int
+    candle_set_count: int
+    trade_count: int
+    position_count: int
+    audit_event_count: int
+    risk_source: str
+    risk_checks_enabled: bool
+    event_type: str = "decision_dry_run_artifact_created"
+    export_sink: str = "none"
+    cloud_sink: str = "none"
+    external_export: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewDecisionDryRunAuditTrail:
+    """Tuple-based local in-memory audit trail for dry-run artifact evidence."""
+
+    entries: tuple[PaperPreviewDecisionDryRunAuditEntry, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PaperPreviewScenarioResult:
     """Result returned after running a local paper preview scenario."""
 
@@ -239,6 +277,9 @@ class PaperPreviewScenarioResult:
     market_context: PaperPreviewMarketContext | None = None
     decision_context: PaperPreviewDecisionContext | None = None
     dry_run_artifact: PaperPreviewDecisionDryRunArtifact | None = None
+    dry_run_artifact_audit: PaperPreviewDecisionDryRunAuditTrail = field(
+        default_factory=lambda: PaperPreviewDecisionDryRunAuditTrail(entries=())
+    )
 
 
 class PaperPreviewScenarioRunner:
@@ -290,6 +331,7 @@ class PaperPreviewScenarioRunner:
         dry_run_artifact = self._build_dry_run_artifact(
             decision_context, summary, final_snapshot, market_context
         )
+        dry_run_artifact_audit = self._build_dry_run_artifact_audit(dry_run_artifact)
         return PaperPreviewScenarioResult(
             scenario_name=scenario.name,
             step_results=tuple(step_results),
@@ -298,6 +340,34 @@ class PaperPreviewScenarioRunner:
             market_context=market_context,
             decision_context=decision_context,
             dry_run_artifact=dry_run_artifact,
+            dry_run_artifact_audit=dry_run_artifact_audit,
+        )
+
+    @staticmethod
+    def _build_dry_run_artifact_audit(
+        artifact: PaperPreviewDecisionDryRunArtifact,
+    ) -> PaperPreviewDecisionDryRunAuditTrail:
+        return PaperPreviewDecisionDryRunAuditTrail(
+            entries=(
+                PaperPreviewDecisionDryRunAuditEntry(
+                    artifact_kind=artifact.artifact_kind,
+                    scenario_name=artifact.scenario_name,
+                    step_count=artifact.step_count,
+                    decision_status=artifact.decision_status,
+                    generated_order_count=artifact.generated_order_count,
+                    generated_decision_count=artifact.generated_decision_count,
+                    no_action_reason=artifact.no_action_reason,
+                    has_market_context=artifact.has_market_context,
+                    market_symbols=tuple(sorted(artifact.market_symbols)),
+                    quote_count=artifact.quote_count,
+                    candle_set_count=artifact.candle_set_count,
+                    trade_count=artifact.trade_count,
+                    position_count=artifact.position_count,
+                    audit_event_count=artifact.audit_event_count,
+                    risk_source=artifact.risk_source,
+                    risk_checks_enabled=artifact.risk_checks_enabled,
+                ),
+            )
         )
 
     @staticmethod
@@ -525,6 +595,8 @@ def _metadata_key_is_secret(key: object) -> bool:
 __all__ = [
     "PaperPreviewDecisionContext",
     "PaperPreviewDecisionContextSummary",
+    "PaperPreviewDecisionDryRunAuditEntry",
+    "PaperPreviewDecisionDryRunAuditTrail",
     "PaperPreviewDecisionDryRunArtifact",
     "PaperPreviewScenario",
     "PaperPreviewScenarioAction",
