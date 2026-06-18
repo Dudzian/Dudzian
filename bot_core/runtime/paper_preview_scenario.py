@@ -187,6 +187,47 @@ class PaperPreviewDecisionContextSummary:
     generated_decision_count: int
 
 
+_BLOCKED_ENGINE_INTEGRATIONS = (
+    "strategy_engine",
+    "ai_model_inference",
+    "decision_envelope",
+    "trading_controller",
+    "order_generation",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewDecisionDryRunArtifact:
+    """Immutable context-only dry-run artifact for future decision inputs.
+
+    The artifact is diagnostic only: it mirrors already-built scenario, market,
+    paper, and risk context without evaluating strategies, scoring, recommending,
+    generating decisions, creating orders, reading accounts/secrets, or exporting.
+    """
+
+    scenario_name: str
+    step_count: int
+    decision_status: str
+    market_symbols: tuple[str, ...]
+    has_market_context: bool
+    trade_count: int
+    position_count: int
+    audit_event_count: int
+    realized_pnl_total: float
+    risk_source: str
+    risk_checks_enabled: bool
+    quote_count: int = 0
+    candle_set_count: int = 0
+    order_event_count: int = 0
+    terminal_order_count: int = 0
+    paper_symbols: tuple[str, ...] = ()
+    artifact_kind: str = "context_only_dry_run"
+    generated_order_count: int = 0
+    generated_decision_count: int = 0
+    no_action_reason: str = "dry_run_context_only"
+    blocked_engine_integrations: tuple[str, ...] = _BLOCKED_ENGINE_INTEGRATIONS
+
+
 @dataclass(frozen=True, slots=True)
 class PaperPreviewScenarioResult:
     """Result returned after running a local paper preview scenario."""
@@ -197,6 +238,7 @@ class PaperPreviewScenarioResult:
     summary: PaperPreviewScenarioSummary
     market_context: PaperPreviewMarketContext | None = None
     decision_context: PaperPreviewDecisionContext | None = None
+    dry_run_artifact: PaperPreviewDecisionDryRunArtifact | None = None
 
 
 class PaperPreviewScenarioRunner:
@@ -245,6 +287,9 @@ class PaperPreviewScenarioRunner:
         final_snapshot = self.flow.snapshot()
         summary = self._build_summary(scenario.name, final_snapshot, step_results)
         decision_context = self._build_decision_context(scenario, summary, market_context)
+        dry_run_artifact = self._build_dry_run_artifact(
+            decision_context, summary, final_snapshot, market_context
+        )
         return PaperPreviewScenarioResult(
             scenario_name=scenario.name,
             step_results=tuple(step_results),
@@ -252,6 +297,37 @@ class PaperPreviewScenarioRunner:
             summary=summary,
             market_context=market_context,
             decision_context=decision_context,
+            dry_run_artifact=dry_run_artifact,
+        )
+
+    @staticmethod
+    def _build_dry_run_artifact(
+        decision_context: PaperPreviewDecisionContext,
+        summary: PaperPreviewScenarioSummary,
+        final_snapshot: PaperPreviewSnapshot,
+        market_context: PaperPreviewMarketContext | None,
+    ) -> PaperPreviewDecisionDryRunArtifact:
+        quote_count = len(market_context.quotes) if market_context is not None else 0
+        candle_set_count = len(market_context.candle_sets) if market_context is not None else 0
+        return PaperPreviewDecisionDryRunArtifact(
+            scenario_name=decision_context.scenario_name,
+            step_count=decision_context.step_count,
+            decision_status=decision_context.decision_status,
+            market_symbols=decision_context.market_symbols,
+            has_market_context=decision_context.has_market_context,
+            trade_count=decision_context.trade_count,
+            position_count=decision_context.position_count,
+            audit_event_count=decision_context.audit_event_count,
+            realized_pnl_total=decision_context.realized_pnl_total,
+            risk_source=decision_context.risk.source,
+            risk_checks_enabled=decision_context.risk.risk_checks_enabled,
+            quote_count=quote_count,
+            candle_set_count=candle_set_count,
+            order_event_count=len(final_snapshot.order_events),
+            terminal_order_count=summary.terminal_order_count,
+            paper_symbols=summary.symbols,
+            generated_order_count=decision_context.generated_order_count,
+            generated_decision_count=decision_context.generated_decision_count,
         )
 
     @staticmethod
@@ -449,6 +525,7 @@ def _metadata_key_is_secret(key: object) -> bool:
 __all__ = [
     "PaperPreviewDecisionContext",
     "PaperPreviewDecisionContextSummary",
+    "PaperPreviewDecisionDryRunArtifact",
     "PaperPreviewScenario",
     "PaperPreviewScenarioAction",
     "PaperPreviewScenarioError",
