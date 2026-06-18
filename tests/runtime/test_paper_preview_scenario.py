@@ -15,6 +15,11 @@ from bot_core.runtime.paper_preview_scenario import (
     PaperPreviewScenarioRunner,
     PaperPreviewScenarioStep,
 )
+from bot_core.runtime.read_only_market_data import (
+    InMemoryReadOnlyMarketDataProvider,
+    MarketCandle,
+    MarketQuote,
+)
 from bot_core.runtime.preview_modes import (
     PreviewMode,
     PreviewModeContractError,
@@ -398,3 +403,224 @@ def test_snapshot_determinism_ordering_and_sorted_symbols() -> None:
         "audit-000006",
     ]
     assert result.summary.symbols == ("AAAUSDT", "ZZZUSDT")
+
+
+def _market_provider() -> InMemoryReadOnlyMarketDataProvider:
+    return InMemoryReadOnlyMarketDataProvider(
+        quotes={
+            "BTCUSDT": MarketQuote(
+                "BTCUSDT", bid=100.0, ask=101.0, last=100.5, timestamp="2026-06-18T00:00:00Z"
+            ),
+            "ETHUSDT": MarketQuote(
+                "ETHUSDT", bid=10.0, ask=11.0, last=10.5, timestamp="2026-06-18T00:00:01Z"
+            ),
+        },
+        candles={
+            ("BTCUSDT", "1m"): (
+                MarketCandle("BTCUSDT", "1m", "2026-06-18T00:00:00Z", 100, 102, 99, 101, 5),
+                MarketCandle("BTCUSDT", "1m", "2026-06-18T00:01:00Z", 101, 103, 100, 102, 6),
+            ),
+            ("ETHUSDT", "1m"): (
+                MarketCandle("ETHUSDT", "1m", "2026-06-18T00:00:00Z", 10, 12, 9, 11, 7),
+            ),
+        },
+    )
+
+
+def test_scenario_with_read_only_market_context_keeps_paper_flow() -> None:
+    result = PaperPreviewScenarioRunner(market_data_provider=_market_provider()).run(
+        PaperPreviewScenario(
+            name="market-context",
+            market_symbols=("ETHUSDT", "BTCUSDT"),
+            steps=(
+                PaperPreviewScenarioStep(
+                    action="submit", order_id="buy", symbol="BTCUSDT", side="buy", quantity=1
+                ),
+                PaperPreviewScenarioStep(action="fill", order_id="buy", fill_price=100),
+            ),
+        )
+    )
+
+    assert result.market_context is not None
+    assert result.market_context.symbols == ("BTCUSDT", "ETHUSDT")
+    assert tuple(quote.symbol for quote in result.market_context.quotes) == ("BTCUSDT", "ETHUSDT")
+    assert tuple(quote.last for quote in result.market_context.quotes) == (100.5, 10.5)
+    assert result.market_context.candle_sets == ()
+    assert result.summary.trade_count == 1
+    assert result.summary.order_event_count == 2
+    assert result.summary.audit_event_count == 3
+
+
+def test_scenario_with_read_only_market_candles_context_is_deterministic() -> None:
+    result = PaperPreviewScenarioRunner(market_data_provider=_market_provider()).run(
+        PaperPreviewScenario(
+            name="candles-context",
+            market_symbols=("ETHUSDT", "BTCUSDT"),
+            market_timeframe="1m",
+            market_candle_limit=99,
+            steps=(
+                PaperPreviewScenarioStep(
+                    action="submit", order_id="buy", symbol="ETHUSDT", side="buy", quantity=1
+                ),
+                PaperPreviewScenarioStep(action="fill", order_id="buy", fill_price=10),
+            ),
+        )
+    )
+
+    assert result.market_context is not None
+    assert result.market_context.symbols == ("BTCUSDT", "ETHUSDT")
+    assert tuple((item.symbol, item.timeframe) for item in result.market_context.candle_sets) == (
+        ("BTCUSDT", "1m"),
+        ("ETHUSDT", "1m"),
+    )
+    assert tuple(len(item.candles) for item in result.market_context.candle_sets) == (2, 1)
+    assert isinstance(result.market_context.candle_sets, tuple)
+    with pytest.raises(AttributeError):
+        result.market_context.candle_sets.append("x")  # type: ignore[attr-defined]
+
+
+def test_scenario_without_market_context_keeps_existing_path() -> None:
+    result = PaperPreviewScenarioRunner(market_data_provider=_market_provider()).run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="buy", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="buy", fill_price=100),
+        )
+    )
+
+    assert result.market_context is None
+    assert result.summary.trade_count == 1
+
+
+def test_missing_market_provider_raises_before_paper_mutation() -> None:
+    runner = PaperPreviewScenarioRunner()
+
+    with pytest.raises(PaperPreviewScenarioError, match="market_data_provider is required"):
+        runner.run(
+            PaperPreviewScenario(
+                name="missing-provider",
+                market_symbols=("BTCUSDT",),
+                steps=(
+                    PaperPreviewScenarioStep(
+                        action="submit", order_id="buy", symbol="BTCUSDT", side="buy", quantity=1
+                    ),
+                ),
+            )
+        )
+
+    assert _snapshot_counts(runner) == (0, 0, 0)
+
+
+def test_unknown_market_symbol_raises_before_paper_mutation() -> None:
+    runner = PaperPreviewScenarioRunner(market_data_provider=_market_provider())
+
+    with pytest.raises(PaperPreviewScenarioError, match="unknown market data symbol"):
+        runner.run(
+            PaperPreviewScenario(
+                name="unknown-symbol",
+                market_symbols=("DOGEUSDT",),
+                steps=(
+                    PaperPreviewScenarioStep(
+                        action="submit", order_id="buy", symbol="BTCUSDT", side="buy", quantity=1
+                    ),
+                ),
+            )
+        )
+
+    assert _snapshot_counts(runner) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"market_timeframe": "1m"}, "provided together"),
+        ({"market_candle_limit": 1}, "provided together"),
+        ({"market_timeframe": "1m", "market_candle_limit": 0}, "must be > 0"),
+        ({"market_timeframe": " ", "market_candle_limit": 1}, "non-empty"),
+    ],
+)
+def test_invalid_market_request_raises_before_paper_mutation(
+    kwargs: dict[str, object], message: str
+) -> None:
+    runner = PaperPreviewScenarioRunner(market_data_provider=_market_provider())
+
+    with pytest.raises(PaperPreviewScenarioError, match=message):
+        runner.run(
+            PaperPreviewScenario(
+                name="invalid-market",
+                market_symbols=("BTCUSDT",),
+                steps=(
+                    PaperPreviewScenarioStep(
+                        action="submit", order_id="buy", symbol="BTCUSDT", side="buy", quantity=1
+                    ),
+                ),
+                **kwargs,
+            )
+        )
+
+    assert _snapshot_counts(runner) == (0, 0, 0)
+
+
+def test_read_only_market_policy_gate_for_scenario_context() -> None:
+    policy = build_preview_mode_policy(
+        PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    )
+    assert policy.capabilities == (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.READ_ONLY_MARKET, (capability,))
+
+
+def test_scenario_market_context_keeps_account_order_method_separation() -> None:
+    runner = PaperPreviewScenarioRunner(market_data_provider=_market_provider())
+    forbidden = {
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions",
+        "get_open_orders",
+        "create_order",
+        "submit_order",
+        "cancel_order",
+        "read_credentials",
+    }
+
+    assert forbidden.isdisjoint(set(dir(runner.market_data_provider)))
+    assert forbidden.isdisjoint(set(dir(runner)))
+
+
+def test_market_context_has_no_secret_metadata_surface() -> None:
+    result = PaperPreviewScenarioRunner(market_data_provider=_market_provider()).run(
+        PaperPreviewScenario(
+            name="secret-surface",
+            market_symbols=("BTCUSDT",),
+            steps=(
+                PaperPreviewScenarioStep(
+                    action="submit", order_id="buy", symbol="BTCUSDT", side="buy", quantity=1
+                ),
+            ),
+        )
+    )
+
+    assert result.market_context is not None
+    for field in (
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+    ):
+        assert not hasattr(result.market_context, field)

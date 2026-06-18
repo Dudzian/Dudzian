@@ -14,6 +14,12 @@ from typing import Mapping, Sequence
 
 from bot_core.runtime.paper_event_spine import TERMINAL_PAPER_ORDER_STATUSES
 from bot_core.runtime.paper_preview_flow import PaperPreviewFlow, PaperPreviewSnapshot
+from bot_core.runtime.read_only_market_data import (
+    MarketCandle,
+    ReadOnlyMarketDataError,
+    ReadOnlyMarketDataProvider,
+    ReadOnlyMarketDataSnapshot,
+)
 from bot_core.runtime.preview_modes import (
     PreviewMode,
     PreviewModeContractError,
@@ -77,6 +83,34 @@ class PaperPreviewScenario:
 
     name: str
     steps: tuple[PaperPreviewScenarioStep, ...]
+    market_symbols: tuple[str, ...] = ()
+    market_timeframe: str | None = None
+    market_candle_limit: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewMarketCandles:
+    """Immutable read-only candle slice captured for one symbol/timeframe."""
+
+    symbol: str
+    timeframe: str
+    candles: tuple[MarketCandle, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewMarketContext:
+    """Immutable read-only market context captured before paper execution."""
+
+    snapshot: ReadOnlyMarketDataSnapshot
+    candle_sets: tuple[PaperPreviewMarketCandles, ...] = ()
+
+    @property
+    def symbols(self) -> tuple[str, ...]:
+        return self.snapshot.symbols
+
+    @property
+    def quotes(self):
+        return self.snapshot.quotes
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +151,7 @@ class PaperPreviewScenarioResult:
     step_results: tuple[PaperPreviewScenarioStepResult, ...]
     final_snapshot: PaperPreviewSnapshot
     summary: PaperPreviewScenarioSummary
+    market_context: PaperPreviewMarketContext | None = None
 
 
 class PaperPreviewScenarioRunner:
@@ -128,6 +163,7 @@ class PaperPreviewScenarioRunner:
         flow: PaperPreviewFlow | None = None,
         created_at: str | None = None,
         policy: PreviewModePolicy | None = None,
+        market_data_provider: ReadOnlyMarketDataProvider | None = None,
     ) -> None:
         self.policy = policy or build_preview_mode_policy(PreviewMode.PAPER, _REQUIRED_CAPABILITIES)
         if self.policy.mode is not PreviewMode.PAPER:
@@ -139,11 +175,13 @@ class PaperPreviewScenarioRunner:
                 "PaperPreviewScenarioRunner requires paper preview capabilities"
             )
         self.flow = flow or PaperPreviewFlow(created_at=created_at)
+        self.market_data_provider = market_data_provider
 
     def run(self, scenario: PaperPreviewScenario) -> PaperPreviewScenarioResult:
         """Validate and run all scenario steps sequentially, failing fast on errors."""
 
         validated_actions = self._preflight_validate(scenario)
+        market_context = self._build_market_context(scenario)
         step_results: list[PaperPreviewScenarioStepResult] = []
         for index, (step, action) in enumerate(zip(scenario.steps, validated_actions, strict=True)):
             result = self._execute_step(action, step)
@@ -165,7 +203,58 @@ class PaperPreviewScenarioRunner:
             step_results=tuple(step_results),
             final_snapshot=final_snapshot,
             summary=self._build_summary(scenario.name, final_snapshot, step_results),
+            market_context=market_context,
         )
+
+    def _build_market_context(
+        self, scenario: PaperPreviewScenario
+    ) -> PaperPreviewMarketContext | None:
+        symbols = tuple(
+            sorted({self._normalize_market_symbol(symbol) for symbol in scenario.market_symbols})
+        )
+        if not symbols:
+            return None
+        if self.market_data_provider is None:
+            raise PaperPreviewScenarioError("market_data_provider is required for market_symbols")
+        try:
+            snapshot = self.market_data_provider.snapshot(symbols)
+            candle_sets: tuple[PaperPreviewMarketCandles, ...] = ()
+            if scenario.market_timeframe is not None and scenario.market_candle_limit is not None:
+                timeframe = scenario.market_timeframe.strip()
+                candle_sets = tuple(
+                    PaperPreviewMarketCandles(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        candles=self.market_data_provider.get_candles(
+                            symbol, timeframe, scenario.market_candle_limit
+                        ),
+                    )
+                    for symbol in snapshot.symbols
+                )
+        except ReadOnlyMarketDataError as exc:
+            raise PaperPreviewScenarioError(str(exc)) from exc
+        return PaperPreviewMarketContext(snapshot=snapshot, candle_sets=candle_sets)
+
+    def _validate_market_request(self, scenario: PaperPreviewScenario) -> None:
+        for symbol in scenario.market_symbols:
+            self._normalize_market_symbol(symbol)
+        has_timeframe = scenario.market_timeframe is not None
+        has_limit = scenario.market_candle_limit is not None
+        if has_timeframe != has_limit:
+            raise PaperPreviewScenarioError(
+                "market_timeframe and market_candle_limit must be provided together"
+            )
+        if scenario.market_timeframe is not None and not scenario.market_timeframe.strip():
+            raise PaperPreviewScenarioError("market_timeframe must be non-empty")
+        if scenario.market_candle_limit is not None and scenario.market_candle_limit <= 0:
+            raise PaperPreviewScenarioError("market_candle_limit must be > 0")
+
+    @staticmethod
+    def _normalize_market_symbol(symbol: str) -> str:
+        normalized = str(symbol).strip().upper()
+        if not normalized:
+            raise PaperPreviewScenarioError("market symbol must be non-empty")
+        return normalized
 
     def _execute_step(self, action: PaperPreviewScenarioAction, step: PaperPreviewScenarioStep):
         if action is PaperPreviewScenarioAction.SUBMIT:
@@ -198,6 +287,7 @@ class PaperPreviewScenarioRunner:
         self, scenario: PaperPreviewScenario
     ) -> tuple[PaperPreviewScenarioAction, ...]:
         self._validate_scenario(scenario)
+        self._validate_market_request(scenario)
         return tuple(self._validate_step(step) for step in scenario.steps)
 
     @staticmethod
@@ -293,6 +383,8 @@ __all__ = [
     "PaperPreviewScenario",
     "PaperPreviewScenarioAction",
     "PaperPreviewScenarioError",
+    "PaperPreviewMarketCandles",
+    "PaperPreviewMarketContext",
     "PaperPreviewScenarioResult",
     "PaperPreviewScenarioRunner",
     "PaperPreviewScenarioStep",
