@@ -12,6 +12,7 @@ from bot_core.runtime.paper_preview_scenario import (
     PaperPreviewDecisionContext,
     PaperPreviewDecisionDryRunAuditEntry,
     PaperPreviewDecisionDryRunAuditTrail,
+    PaperPreviewLocalDecisionBundle,
     PaperPreviewRiskPlaceholder,
     PaperPreviewScenario,
     PaperPreviewScenarioAction,
@@ -1055,6 +1056,294 @@ def test_dry_run_preview_policy_allows_read_only_and_paper_but_blocks_live() -> 
     assert read_only.capabilities == (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
     assert RuntimeCapability.PAPER_ORDER_SUBMIT in paper.capabilities
     assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in paper.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+def test_local_bundle_exists_after_successful_scenario() -> None:
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="bundle", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="bundle", fill_price=100),
+            name="bundle",
+        )
+    )
+
+    assert result.dry_run_artifact is not None
+    assert len(result.dry_run_artifact_audit.entries) == 1
+    assert result.local_bundle is not None
+    assert result.local_bundle.bundle_kind == "local_context_artifact_audit_bundle"
+
+
+def test_local_bundle_mirrors_decision_context_artifact_and_audit() -> None:
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="mirror-bundle", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="mirror-bundle", fill_price=100),
+            name="mirror-bundle",
+        )
+    )
+
+    bundle = result.local_bundle
+    context = result.decision_context
+    artifact = result.dry_run_artifact
+    assert bundle is not None
+    assert context is not None
+    assert artifact is not None
+    assert bundle.scenario_name == context.scenario_name == result.summary.scenario_name
+    assert bundle.step_count == context.step_count == result.summary.step_count
+    assert bundle.decision_status == context.decision_status
+    assert bundle.artifact_kind == artifact.artifact_kind
+    assert bundle.artifact_no_action_reason == artifact.no_action_reason
+    assert bundle.audit_entry_count == 1
+    assert bundle.audit_event_types == ("decision_dry_run_artifact_created",)
+    assert bundle.generated_order_count == 0
+    assert bundle.generated_decision_count == 0
+
+
+def test_local_bundle_includes_market_context_summary() -> None:
+    result = PaperPreviewScenarioRunner(market_data_provider=_market_provider()).run(
+        PaperPreviewScenario(
+            name="bundle-market",
+            market_symbols=("ETHUSDT", "BTCUSDT"),
+            market_timeframe="1m",
+            market_candle_limit=2,
+            steps=(
+                PaperPreviewScenarioStep(
+                    action="submit", order_id="buy", symbol="BTCUSDT", side="buy", quantity=1
+                ),
+                PaperPreviewScenarioStep(action="fill", order_id="buy", fill_price=100),
+            ),
+        )
+    )
+
+    bundle = result.local_bundle
+    assert bundle is not None
+    assert bundle.has_market_context is True
+    assert bundle.market_symbols == ("BTCUSDT", "ETHUSDT")
+    assert bundle.quote_count == 2
+    assert bundle.candle_set_count == 2
+
+
+def test_local_bundle_without_market_context_summary_is_empty() -> None:
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit",
+                order_id="bundle-no-market",
+                symbol="BTCUSDT",
+                side="buy",
+                quantity=1,
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="bundle-no-market", fill_price=100),
+            name="bundle-no-market",
+        )
+    )
+
+    bundle = result.local_bundle
+    assert bundle is not None
+    assert bundle.has_market_context is False
+    assert bundle.market_symbols == ()
+    assert bundle.quote_count == 0
+    assert bundle.candle_set_count == 0
+
+
+def test_local_bundle_no_export_no_cloud_and_no_file_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("file writes must not be used")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="no-export", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="no-export", fill_price=100),
+            name="no-export",
+        )
+    )
+
+    bundle = result.local_bundle
+    assert bundle is not None
+    assert bundle.export_sink == "none"
+    assert bundle.cloud_sink == "none"
+    assert bundle.external_export is False
+    assert not hasattr(bundle, "export_path")
+    assert not hasattr(bundle, "file_path")
+    assert not hasattr(bundle, "cloud_url")
+
+
+def test_local_bundle_does_not_affect_paper_flow_counts_or_audit() -> None:
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="bundle-flow", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="bundle-flow", fill_price=100),
+            name="bundle-flow",
+        )
+    )
+
+    bundle = result.local_bundle
+    artifact = result.dry_run_artifact
+    assert bundle is not None
+    assert artifact is not None
+    assert (
+        bundle.order_event_count == artifact.order_event_count == result.summary.order_event_count
+    )
+    assert bundle.trade_count == artifact.trade_count == result.summary.trade_count
+    assert (
+        bundle.audit_event_count == artifact.audit_event_count == result.summary.audit_event_count
+    )
+    assert [event.event_type for event in result.final_snapshot.audit_events] == [
+        "order_accepted",
+        "order_filled",
+        "trade_recorded",
+    ]
+    assert len(result.final_snapshot.order_events) == 2
+    assert len(result.final_snapshot.portfolio.trades) == 1
+
+
+def test_local_bundle_is_immutable_and_deterministic() -> None:
+    scenario = _scenario(
+        PaperPreviewScenarioStep(
+            action="submit", order_id="det-bundle", symbol="BTCUSDT", side="buy", quantity=1
+        ),
+        PaperPreviewScenarioStep(action="fill", order_id="det-bundle", fill_price=100),
+        name="det-bundle",
+    )
+    first = PaperPreviewScenarioRunner(created_at="fixed").run(scenario).local_bundle
+    second = PaperPreviewScenarioRunner(created_at="fixed").run(scenario).local_bundle
+
+    assert first == second
+    assert first is not None
+    assert isinstance(first, PaperPreviewLocalDecisionBundle)
+    with pytest.raises(AttributeError):
+        first.generated_order_count = 1  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        first.market_symbols.append("X")  # type: ignore[attr-defined]
+
+
+def test_local_bundle_has_no_decision_scoring_recommendation_surface() -> None:
+    result = PaperPreviewScenarioRunner().run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="bundle-surface", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="bundle-surface", fill_price=100),
+        )
+    )
+    bundle = result.local_bundle
+    assert bundle is not None
+    forbidden = {
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+    }
+    assert forbidden.isdisjoint(set(dir(bundle)))
+    assert forbidden.isdisjoint(set(dir(PaperPreviewScenarioRunner())))
+
+
+def test_local_bundle_has_no_account_live_secret_or_export_surface() -> None:
+    result = PaperPreviewScenarioRunner().run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="bundle-secret", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="bundle-secret", fill_price=100),
+        )
+    )
+    bundle = result.local_bundle
+    assert bundle is not None
+    forbidden = {
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export",
+        "external_export_sink",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    assert forbidden.isdisjoint(set(dir(bundle)))
+    assert forbidden.isdisjoint(set(dir(PaperPreviewScenarioRunner())))
+
+
+def test_local_bundle_preserves_blocked_engine_integrations() -> None:
+    result = PaperPreviewScenarioRunner().run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="blocked", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="blocked", fill_price=100),
+        )
+    )
+
+    bundle = result.local_bundle
+    assert bundle is not None
+    assert {
+        "strategy_engine",
+        "ai_model_inference",
+        "decision_envelope",
+        "trading_controller",
+        "order_generation",
+    }.issubset(set(bundle.blocked_engine_integrations))
+
+
+def test_local_bundle_preview_policy_keeps_live_capabilities_blocked() -> None:
+    read_only_policy = build_preview_mode_policy(
+        PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    )
+    paper_policy = build_preview_mode_policy(
+        PreviewMode.PAPER,
+        (RuntimeCapability.PAPER_ORDER_SUBMIT, RuntimeCapability.PAPER_ORDER_LIFECYCLE),
+    )
+    assert read_only_policy.capabilities == (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    assert paper_policy.capabilities == (
+        RuntimeCapability.PAPER_ORDER_SUBMIT,
+        RuntimeCapability.PAPER_ORDER_LIFECYCLE,
+    )
     for capability in (
         RuntimeCapability.LIVE_ORDER_SUBMIT,
         RuntimeCapability.REAL_EXCHANGE_FILL,
