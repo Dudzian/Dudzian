@@ -10,6 +10,8 @@ import pytest
 from bot_core.runtime.paper_audit_journal import PaperAuditSeverity
 from bot_core.runtime.paper_preview_scenario import (
     PaperPreviewDecisionContext,
+    PaperPreviewDecisionDryRunAuditEntry,
+    PaperPreviewDecisionDryRunAuditTrail,
     PaperPreviewRiskPlaceholder,
     PaperPreviewScenario,
     PaperPreviewScenarioAction,
@@ -799,6 +801,12 @@ def test_dry_run_artifact_exists_after_successful_scenario() -> None:
     assert artifact.generated_order_count == 0
     assert artifact.generated_decision_count == 0
     assert artifact.no_action_reason == "dry_run_context_only"
+    assert result.dry_run_artifact_audit.entries
+    assert len(result.dry_run_artifact_audit.entries) == 1
+    entry = result.dry_run_artifact_audit.entries[0]
+    assert entry.event_type == "decision_dry_run_artifact_created"
+    assert entry.artifact_kind == "context_only_dry_run"
+    assert entry.no_action_reason == "dry_run_context_only"
 
 
 def test_dry_run_artifact_mirrors_decision_context_and_risk() -> None:
@@ -830,6 +838,17 @@ def test_dry_run_artifact_mirrors_decision_context_and_risk() -> None:
     assert artifact.realized_pnl_total == context.realized_pnl_total
     assert artifact.risk_source == context.risk.source == "unit-risk"
     assert artifact.risk_checks_enabled is context.risk.risk_checks_enabled is True
+    entry = result.dry_run_artifact_audit.entries[0]
+    assert entry.scenario_name == artifact.scenario_name == result.summary.scenario_name
+    assert entry.step_count == artifact.step_count == result.summary.step_count
+    assert entry.decision_status == artifact.decision_status
+    assert entry.generated_order_count == artifact.generated_order_count == 0
+    assert entry.generated_decision_count == artifact.generated_decision_count == 0
+    assert entry.trade_count == artifact.trade_count == result.summary.trade_count
+    assert entry.position_count == artifact.position_count == result.summary.position_count
+    assert entry.audit_event_count == artifact.audit_event_count == result.summary.audit_event_count
+    assert entry.risk_source == artifact.risk_source == "unit-risk"
+    assert entry.risk_checks_enabled is artifact.risk_checks_enabled is True
 
 
 def test_dry_run_artifact_includes_market_context_summary() -> None:
@@ -855,6 +874,11 @@ def test_dry_run_artifact_includes_market_context_summary() -> None:
     assert artifact.quote_count == 2
     assert artifact.candle_set_count == 2
     assert artifact.paper_symbols == ("BTCUSDT",)
+    entry = result.dry_run_artifact_audit.entries[0]
+    assert entry.has_market_context is True
+    assert entry.market_symbols == ("BTCUSDT", "ETHUSDT")
+    assert entry.quote_count == 2
+    assert entry.candle_set_count == 2
 
 
 def test_dry_run_artifact_without_market_context_summary_is_empty() -> None:
@@ -874,6 +898,11 @@ def test_dry_run_artifact_without_market_context_summary_is_empty() -> None:
     assert artifact.market_symbols == ()
     assert artifact.quote_count == 0
     assert artifact.candle_set_count == 0
+    entry = result.dry_run_artifact_audit.entries[0]
+    assert entry.has_market_context is False
+    assert entry.market_symbols == ()
+    assert entry.quote_count == 0
+    assert entry.candle_set_count == 0
 
 
 def test_dry_run_artifact_does_not_affect_paper_flow_counts_or_audit() -> None:
@@ -897,6 +926,7 @@ def test_dry_run_artifact_does_not_affect_paper_flow_counts_or_audit() -> None:
         "order_filled",
         "trade_recorded",
     ]
+    assert len(result.dry_run_artifact_audit.entries) == 1
 
 
 def test_dry_run_artifact_is_immutable_and_deterministic() -> None:
@@ -907,13 +937,22 @@ def test_dry_run_artifact_is_immutable_and_deterministic() -> None:
         PaperPreviewScenarioStep(action="fill", order_id="det-dry", fill_price=100),
         name="det-dry",
     )
-    first = PaperPreviewScenarioRunner(created_at="fixed").run(scenario).dry_run_artifact
-    second = PaperPreviewScenarioRunner(created_at="fixed").run(scenario).dry_run_artifact
+    first_result = PaperPreviewScenarioRunner(created_at="fixed").run(scenario)
+    second_result = PaperPreviewScenarioRunner(created_at="fixed").run(scenario)
+    first = first_result.dry_run_artifact
+    second = second_result.dry_run_artifact
 
     assert first == second
+    assert first_result.dry_run_artifact_audit == second_result.dry_run_artifact_audit
     assert first is not None
     with pytest.raises(AttributeError):
         first.generated_order_count = 1  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        first_result.dry_run_artifact_audit.entries = ()  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        first_result.dry_run_artifact_audit.entries.append("x")  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        first_result.dry_run_artifact_audit.entries[0].event_type = "changed"  # type: ignore[misc]
 
 
 def test_dry_run_artifact_has_no_decision_scoring_account_secret_or_export_surface() -> None:
@@ -927,7 +966,9 @@ def test_dry_run_artifact_has_no_decision_scoring_account_secret_or_export_surfa
     )
     artifact = result.dry_run_artifact
     assert artifact is not None
-    forbidden = {
+    audit = result.dry_run_artifact_audit
+    entry = audit.entries[0]
+    forbidden_decision_surface = {
         "decide",
         "evaluate_strategy",
         "score",
@@ -939,6 +980,9 @@ def test_dry_run_artifact_has_no_decision_scoring_account_secret_or_export_surfa
         "execute",
         "infer",
         "predict",
+        "confidence",
+    }
+    forbidden_account_secret_surface = {
         "get_balance",
         "get_account",
         "get_account_snapshot",
@@ -955,12 +999,30 @@ def test_dry_run_artifact_has_no_decision_scoring_account_secret_or_export_surfa
         "credentials",
         "token",
         "private_key",
+        "external_export_sink",
+    }
+    forbidden_artifact_only = {
         "export",
         "cloud_sink",
     }
 
-    assert forbidden.isdisjoint(set(dir(artifact)))
-    assert forbidden.isdisjoint(set(dir(PaperPreviewScenarioRunner())))
+    assert forbidden_decision_surface.isdisjoint(set(dir(artifact)))
+    assert forbidden_decision_surface.isdisjoint(set(dir(audit)))
+    assert forbidden_decision_surface.isdisjoint(set(dir(entry)))
+    assert forbidden_decision_surface.isdisjoint(set(dir(PaperPreviewScenarioRunner())))
+    assert forbidden_account_secret_surface.isdisjoint(set(dir(artifact)))
+    assert forbidden_account_secret_surface.isdisjoint(set(dir(audit)))
+    assert forbidden_account_secret_surface.isdisjoint(set(dir(entry)))
+    assert forbidden_account_secret_surface.isdisjoint(set(dir(PaperPreviewScenarioRunner())))
+    assert forbidden_artifact_only.isdisjoint(set(dir(artifact)))
+    assert entry.export_sink == "none"
+    assert entry.cloud_sink == "none"
+    assert entry.external_export is False
+    assert not hasattr(entry, "export_path")
+    assert not hasattr(entry, "file_path")
+    assert not hasattr(entry, "cloud_url")
+    assert isinstance(entry, PaperPreviewDecisionDryRunAuditEntry)
+    assert isinstance(audit, PaperPreviewDecisionDryRunAuditTrail)
 
 
 def test_dry_run_artifact_lists_blocked_integrations() -> None:
