@@ -48,6 +48,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
+                    "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -82,6 +83,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
+                    "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -135,6 +137,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
+                    "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                     "bot_core/runtime/read_only_market_data.py",
                     "tests/runtime/test_read_only_market_data.py",
@@ -172,6 +175,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
+                    "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -202,6 +206,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
+                    "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_flow.py",
                     "tests/runtime/test_paper_preview_flow.py",
@@ -245,6 +250,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_bundle_boundary.py",
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
+                    "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -371,15 +377,18 @@ def build_report() -> dict[str, Any]:
         },
     }
     read_model_gap = (
-        "Local read model can summarize bundle + boundary matrix for future UI/runtime "
+        "Local scenario runner can produce deterministic local context/artifact/audit bundle; "
+        "local read model can summarize bundle + boundary matrix for future UI/runtime "
         "integration; read model boundary matrix refuses QML/PySide/UI/runtime/export/cloud/engine "
-        "boundaries; read model and read model matrix are local/static-only; read model is "
-        "not QML/PySide/UI-bound, not runtime-backed, and bundle/read model/matrix "
-        "generate no orders/decisions; "
-        "no scoring, no recommendation, no strategy engine, no AI/model inference, no "
-        "DecisionEnvelope integration, no TradingController integration, no file export, "
-        "no serialization export, no cloud sink, no external export, and no serialization "
-        "payload."
+        "boundaries; UI/runtime preflight audit lists missing requirements before real "
+        "integration; preflight/read model/matrix are local/static-only; preflight is not "
+        "QML/PySide/UI-bound; preflight is not runtime-backed; bundle/read model/matrix/preflight "
+        "generate no orders/decisions; no scoring, no recommendation, no strategy engine, "
+        "no AI/model inference, no DecisionEnvelope integration, no TradingController integration, "
+        "no file export, no serialization export, no cloud sink, no external export; market context "
+        "is in-memory/static-local fixture only; READ_ONLY_MARKET_FETCH is preview-safe; "
+        "account/balance/credentials/order/fill/live side effects remain blocked; no real market "
+        "adapter/fetch yet; no app runtime loop; no UI integration; no testnet/sandbox adapter."
     )
     for section_name in (
         "ai_decision_governor",
@@ -393,7 +402,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-3.14 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence, local bundle boundary refusal matrix evidence, and local preview bundle read model evidence, and local read model boundary refusal matrix evidence; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-3.15 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence, local bundle boundary refusal matrix evidence, and local preview bundle read model evidence, local read model boundary refusal matrix evidence, and local/static UI/runtime preflight audit evidence; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed",
         "sections": sections,
     }
     validate_report(payload)

@@ -195,11 +195,16 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.14" in scope
-    assert (
-        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence, local bundle boundary refusal matrix evidence, and local preview bundle read model evidence, and local read model boundary refusal matrix evidence"
-        in scope
-    )
+    assert "FUNCTIONAL-PREVIEW-3.15" in scope
+    for phrase in (
+        "local paper event spine",
+        "read-only market data contract unit evidence",
+        "deterministic local context/artifact/audit bundle",
+        "local preview bundle read model evidence",
+        "local read model boundary refusal matrix evidence",
+        "local/static UI/runtime preflight audit evidence",
+    ):
+        assert phrase in scope
     assert (
         "no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed"
         in scope
@@ -447,3 +452,44 @@ def test_bundle_read_model_readiness_evidence_stays_partial_static_local() -> No
         assert "no recommendation" in joined
         assert "decisionenvelope integration" in joined
         assert "tradingcontroller integration" in joined
+
+
+def test_ui_runtime_preflight_readiness_evidence_stays_partial_static_local() -> None:
+    payload = _load_report()
+    sections = payload["sections"]
+    for name in (
+        "ai_decision_governor",
+        "alerts_telemetry_audit",
+        "preview_mode_contract",
+        "paper_terminal_order_lifecycle",
+        "data_source_market_feed",
+    ):
+        section = sections[name]
+        joined = "\n".join(
+            [*section["evidence_files"], *section["gaps"], section["recommended_next_step"]]
+        ).lower()
+        assert section["status"] == "partial"
+        assert section["runtime_backed"] is False
+        assert section["supports_read_only_real_data"] is False
+        assert "paper_preview_ui_runtime_preflight.py" in joined
+        assert (
+            "ui/runtime preflight audit lists missing requirements before real integration"
+            in joined
+        )
+        assert "preflight/read model/matrix are local/static-only" in joined
+        assert "preflight is not qml/pyside/ui-bound" in joined
+        assert "preflight is not runtime-backed" in joined
+        assert "generate no orders/decisions" in joined
+        assert "no scoring" in joined
+        assert "no recommendation" in joined
+        assert "no strategy engine" in joined
+        assert "no ai/model inference" in joined
+        assert "no decisionenvelope integration" in joined
+        assert "no tradingcontroller integration" in joined
+        assert "no file export" in joined
+        assert "no serialization export" in joined
+        assert "no cloud sink" in joined
+        assert "no external export" in joined
+        assert "no app runtime loop" in joined
+        assert "no ui integration" in joined
+        assert "no testnet/sandbox adapter" in joined
