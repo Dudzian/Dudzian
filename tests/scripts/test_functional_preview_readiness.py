@@ -195,9 +195,9 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.13" in scope
+    assert "FUNCTIONAL-PREVIEW-3.14" in scope
     assert (
-        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence, local bundle boundary refusal matrix evidence, and local preview bundle read model evidence"
+        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence, local bundle boundary refusal matrix evidence, and local preview bundle read model evidence, and local read model boundary refusal matrix evidence"
         in scope
     )
     assert (
@@ -433,6 +433,9 @@ def test_bundle_read_model_readiness_evidence_stays_partial_static_local() -> No
         assert "paper_preview_bundle_read_model.py" in joined
         assert "read model" in joined
         assert "future ui/runtime integration" in joined
+        assert (
+            "read model boundary matrix refuses qml/pyside/ui/runtime/export/cloud/engine" in joined
+        )
         assert "local/static" in joined or "static-local" in joined
         assert "not qml/pyside/ui-bound" in joined or "no ui integration" in joined
         assert "not runtime-backed" in joined or "no app runtime loop" in joined

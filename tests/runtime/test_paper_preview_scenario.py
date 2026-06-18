@@ -19,7 +19,9 @@ from bot_core.runtime.paper_preview_bundle_boundary import (
 )
 from bot_core.runtime.paper_preview_bundle_read_model import (
     PaperPreviewBundleReadModelError,
+    PaperPreviewReadModelBoundary,
     build_paper_preview_bundle_read_model,
+    build_paper_preview_read_model_boundary_matrix,
 )
 from bot_core.runtime.paper_preview_scenario import (
     PaperPreviewDecisionContext,
@@ -2077,5 +2079,251 @@ def test_bundle_read_model_has_no_decision_account_live_secret_export_ui_surface
         "QObject",
     }
     for item in (model, result.local_bundle, matrix, runner):
+        for name in forbidden:
+            assert not hasattr(item, name)
+
+
+def _read_model_boundary_report_for_result(result):
+    model, _ = _read_model_for_result(result)
+    return model, build_paper_preview_read_model_boundary_matrix(model)
+
+
+def test_read_model_boundary_matrix_exists_for_local_read_model() -> None:
+    result = _local_bundle_result()
+    assert result.local_bundle is not None
+    bundle_matrix = build_local_bundle_boundary_matrix(result.local_bundle)
+    read_model = build_paper_preview_bundle_read_model(result.local_bundle, bundle_matrix)
+
+    report = build_paper_preview_read_model_boundary_matrix(read_model)
+
+    assert report.report_kind == "local_read_model_boundary_refusal_matrix"
+    assert report.row_count == len(PaperPreviewReadModelBoundary)
+    assert len(report.rows) == len(PaperPreviewReadModelBoundary)
+    assert report.all_refused is True
+
+
+def test_read_model_boundary_matrix_contains_all_boundaries_once_in_order() -> None:
+    _, report = _read_model_boundary_report_for_result(_local_bundle_result())
+    expected = tuple(boundary.value for boundary in PaperPreviewReadModelBoundary)
+
+    assert tuple(row.boundary_kind for row in report.rows) == expected
+    assert {row.boundary_kind for row in report.rows} == set(expected)
+    assert len({row.boundary_kind for row in report.rows}) == len(expected)
+    assert expected == (
+        "qml_binding",
+        "pyside_bridge",
+        "ui_runtime_binding",
+        "app_runtime_loop",
+        "controller_handoff",
+        "trading_controller_handoff",
+        "decision_envelope_handoff",
+        "strategy_engine_handoff",
+        "ai_model_inference_handoff",
+        "scoring_handoff",
+        "recommendation_handoff",
+        "order_generation_handoff",
+        "file_export",
+        "serialized_export",
+        "cloud_sink",
+        "external_export",
+    )
+
+
+def test_read_model_boundary_matrix_rows_mirror_read_model_flags() -> None:
+    model, report = _read_model_boundary_report_for_result(_local_bundle_result())
+
+    assert report.model_kind == model.model_kind
+    assert report.scenario_name == model.scenario_name
+    assert report.read_only is True
+    assert report.runtime_backed is False
+    assert report.ui_bound is False
+    assert report.generated_order_count == 0
+    assert report.generated_decision_count == 0
+    assert report.export_sink == "none"
+    assert report.cloud_sink == "none"
+    assert report.external_export is False
+    for row in report.rows:
+        assert row.model_kind == model.model_kind
+        assert row.scenario_name == model.scenario_name
+        assert row.read_only is True
+        assert row.runtime_backed is False
+        assert row.ui_bound is False
+        assert row.generated_order_count == 0
+        assert row.generated_decision_count == 0
+        assert row.export_sink == "none"
+        assert row.cloud_sink == "none"
+        assert row.external_export is False
+
+
+def test_read_model_boundary_matrix_refuses_ui_runtime_engine_and_export_boundaries() -> None:
+    _, report = _read_model_boundary_report_for_result(_local_bundle_result())
+    rows = {row.boundary_kind: row for row in report.rows}
+
+    for boundary in (
+        "qml_binding",
+        "pyside_bridge",
+        "ui_runtime_binding",
+        "app_runtime_loop",
+        "controller_handoff",
+        "strategy_engine_handoff",
+        "ai_model_inference_handoff",
+        "scoring_handoff",
+        "recommendation_handoff",
+        "decision_envelope_handoff",
+        "trading_controller_handoff",
+        "order_generation_handoff",
+        "file_export",
+        "serialized_export",
+        "cloud_sink",
+        "external_export",
+    ):
+        assert rows[boundary].refused is True
+        assert rows[boundary].reason == f"local read model boundary refuses {boundary}"
+
+
+def test_read_model_boundary_matrix_has_no_file_network_serialization_ui_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model, _ = _read_model_boundary_report_for_result(_local_bundle_result())
+    original_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        if any(token in mode for token in ("w", "a", "+", "x")):
+            raise AssertionError("read model boundary matrix must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network used")),
+    )
+    monkeypatch.setattr(
+        socket,
+        "socket",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("socket used")),
+    )
+
+    report = build_paper_preview_read_model_boundary_matrix(model)
+
+    for forbidden in (
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+        "runtime_handle",
+    ):
+        assert not hasattr(report, forbidden)
+        assert all(not hasattr(row, forbidden) for row in report.rows)
+
+
+def test_read_model_boundary_matrix_is_deterministic_and_immutable() -> None:
+    model, first = _read_model_boundary_report_for_result(_local_bundle_result())
+    second = build_paper_preview_read_model_boundary_matrix(model)
+
+    assert first == second
+    assert isinstance(first.rows, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.ui_bound = True  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.rows[0] = first.rows[0]  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.rows[0].ui_bound = True  # type: ignore[misc]
+
+
+def test_read_model_boundary_matrix_does_not_affect_paper_flow() -> None:
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    result = runner.run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit",
+                order_id="read-boundary-stable",
+                symbol="BTCUSDT",
+                side="buy",
+                quantity=1,
+            ),
+            PaperPreviewScenarioStep(
+                action="fill", order_id="read-boundary-stable", fill_price=100
+            ),
+            name="read-boundary-stable",
+        )
+    )
+    assert result.local_bundle is not None
+    before = _snapshot_counts(runner)
+    model, _ = _read_model_for_result(result)
+
+    report = build_paper_preview_read_model_boundary_matrix(model)
+
+    assert report.row_count == len(PaperPreviewReadModelBoundary)
+    assert _snapshot_counts(runner) == before
+    assert before == (
+        result.summary.order_event_count,
+        result.summary.trade_count,
+        result.summary.audit_event_count,
+    )
+
+
+def test_read_model_boundary_matrix_has_no_forbidden_surface() -> None:
+    model, report = _read_model_boundary_report_for_result(_local_bundle_result())
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    forbidden = {
+        "bind_qml",
+        "bind_pyside",
+        "attach_ui",
+        "start_runtime",
+        "run_loop",
+        "connect_signal",
+        "emit_signal",
+        "create_controller",
+        "serialize_for_ui",
+        "qml",
+        "qml_object",
+        "QObject",
+        "signal",
+        "slot",
+        "runtime_handle",
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    for item in (model, report, *report.rows, runner):
         for name in forbidden:
             assert not hasattr(item, name)
