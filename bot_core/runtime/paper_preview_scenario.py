@@ -78,6 +78,17 @@ class PaperPreviewScenarioStep:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperPreviewRiskPlaceholder:
+    """Immutable context-only risk placeholder; it does not enforce limits."""
+
+    max_position_notional: float | None = None
+    max_order_quantity: float | None = None
+    max_daily_loss: float | None = None
+    risk_checks_enabled: bool = False
+    source: str = "placeholder"
+
+
+@dataclass(frozen=True, slots=True)
 class PaperPreviewScenario:
     """In-memory paper preview scenario definition."""
 
@@ -86,6 +97,7 @@ class PaperPreviewScenario:
     market_symbols: tuple[str, ...] = ()
     market_timeframe: str | None = None
     market_candle_limit: int | None = None
+    risk: PaperPreviewRiskPlaceholder | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +156,38 @@ class PaperPreviewScenarioSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperPreviewDecisionContext:
+    """Immutable context-only contract for future paper scenario decisions.
+
+    This object only summarizes completed local paper scenario state. It does not
+    evaluate strategies, score opportunities, generate decisions, create orders,
+    submit orders, enforce risk, read accounts, read credentials, or export data.
+    """
+
+    scenario_name: str
+    step_count: int
+    market_symbols: tuple[str, ...]
+    has_market_context: bool
+    trade_count: int
+    position_count: int
+    audit_event_count: int
+    realized_pnl_total: float
+    risk: PaperPreviewRiskPlaceholder
+    decision_status: str = "context_only"
+    generated_order_count: int = 0
+    generated_decision_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewDecisionContextSummary:
+    """Small immutable summary proving the decision context is no-action only."""
+
+    decision_status: str
+    generated_order_count: int
+    generated_decision_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class PaperPreviewScenarioResult:
     """Result returned after running a local paper preview scenario."""
 
@@ -152,6 +196,7 @@ class PaperPreviewScenarioResult:
     final_snapshot: PaperPreviewSnapshot
     summary: PaperPreviewScenarioSummary
     market_context: PaperPreviewMarketContext | None = None
+    decision_context: PaperPreviewDecisionContext | None = None
 
 
 class PaperPreviewScenarioRunner:
@@ -198,12 +243,34 @@ class PaperPreviewScenarioRunner:
                 )
             )
         final_snapshot = self.flow.snapshot()
+        summary = self._build_summary(scenario.name, final_snapshot, step_results)
+        decision_context = self._build_decision_context(scenario, summary, market_context)
         return PaperPreviewScenarioResult(
             scenario_name=scenario.name,
             step_results=tuple(step_results),
             final_snapshot=final_snapshot,
-            summary=self._build_summary(scenario.name, final_snapshot, step_results),
+            summary=summary,
             market_context=market_context,
+            decision_context=decision_context,
+        )
+
+    @staticmethod
+    def _build_decision_context(
+        scenario: PaperPreviewScenario,
+        summary: PaperPreviewScenarioSummary,
+        market_context: PaperPreviewMarketContext | None,
+    ) -> PaperPreviewDecisionContext:
+        market_symbols = market_context.symbols if market_context is not None else ()
+        return PaperPreviewDecisionContext(
+            scenario_name=summary.scenario_name,
+            step_count=summary.step_count,
+            market_symbols=tuple(sorted(market_symbols)),
+            has_market_context=market_context is not None,
+            trade_count=summary.trade_count,
+            position_count=summary.position_count,
+            audit_event_count=summary.audit_event_count,
+            realized_pnl_total=summary.realized_pnl_total,
+            risk=scenario.risk or PaperPreviewRiskPlaceholder(),
         )
 
     def _build_market_context(
@@ -380,9 +447,12 @@ def _metadata_key_is_secret(key: object) -> bool:
 
 
 __all__ = [
+    "PaperPreviewDecisionContext",
+    "PaperPreviewDecisionContextSummary",
     "PaperPreviewScenario",
     "PaperPreviewScenarioAction",
     "PaperPreviewScenarioError",
+    "PaperPreviewRiskPlaceholder",
     "PaperPreviewMarketCandles",
     "PaperPreviewMarketContext",
     "PaperPreviewScenarioResult",

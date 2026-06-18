@@ -9,6 +9,8 @@ import pytest
 
 from bot_core.runtime.paper_audit_journal import PaperAuditSeverity
 from bot_core.runtime.paper_preview_scenario import (
+    PaperPreviewDecisionContext,
+    PaperPreviewRiskPlaceholder,
     PaperPreviewScenario,
     PaperPreviewScenarioAction,
     PaperPreviewScenarioError,
@@ -90,6 +92,30 @@ def test_happy_path_scenario_submit_and_fill_updates_snapshot_and_summary() -> N
     assert result.summary.symbols == ("BTCUSDT",)
     assert result.summary.terminal_order_count == 1
     assert result.summary.failed_step_count == 0
+
+
+def test_decision_context_exists_after_successful_scenario() -> None:
+    result = PaperPreviewScenarioRunner(created_at="fixed").run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="buy-ctx", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="buy-ctx", fill_price=100),
+            name="decision-context",
+        )
+    )
+
+    context = result.decision_context
+    assert context is not None
+    assert context.scenario_name == "decision-context"
+    assert context.step_count == 2
+    assert context.trade_count == result.summary.trade_count == 1
+    assert context.position_count == result.summary.position_count == 1
+    assert context.audit_event_count == result.summary.audit_event_count == 3
+    assert context.realized_pnl_total == result.summary.realized_pnl_total == 0
+    assert context.decision_status == "context_only"
+    assert context.generated_order_count == 0
+    assert context.generated_decision_count == 0
 
 
 def test_partial_then_final_fill_scenario_is_deterministic() -> None:
@@ -449,6 +475,13 @@ def test_scenario_with_read_only_market_context_keeps_paper_flow() -> None:
     assert result.summary.trade_count == 1
     assert result.summary.order_event_count == 2
     assert result.summary.audit_event_count == 3
+    assert result.decision_context is not None
+    assert result.decision_context.has_market_context is True
+    assert result.decision_context.market_symbols == ("BTCUSDT", "ETHUSDT")
+    assert result.decision_context.trade_count == result.summary.trade_count
+    assert result.decision_context.audit_event_count == result.summary.audit_event_count
+    assert result.decision_context.generated_order_count == 0
+    assert result.decision_context.generated_decision_count == 0
 
 
 def test_scenario_with_read_only_market_candles_context_is_deterministic() -> None:
@@ -491,6 +524,127 @@ def test_scenario_without_market_context_keeps_existing_path() -> None:
 
     assert result.market_context is None
     assert result.summary.trade_count == 1
+    assert result.decision_context is not None
+    assert result.decision_context.has_market_context is False
+    assert result.decision_context.market_symbols == ()
+    assert result.decision_context.trade_count == result.summary.trade_count
+
+
+def test_decision_context_default_risk_placeholder_has_no_enforcement() -> None:
+    result = PaperPreviewScenarioRunner().run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit",
+                order_id="risk-default",
+                symbol="BTCUSDT",
+                side="buy",
+                quantity=10,
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="risk-default", fill_price=100),
+        )
+    )
+
+    assert result.decision_context is not None
+    assert result.decision_context.risk.source == "placeholder"
+    assert result.decision_context.risk.risk_checks_enabled is False
+    assert result.summary.trade_count == 1
+    assert result.decision_context.generated_order_count == 0
+
+
+def test_custom_risk_placeholder_is_context_only_and_does_not_block_flow() -> None:
+    risk = PaperPreviewRiskPlaceholder(
+        max_position_notional=1.0,
+        max_order_quantity=0.1,
+        max_daily_loss=2.0,
+        risk_checks_enabled=False,
+        source="unit-test-placeholder",
+    )
+    result = PaperPreviewScenarioRunner().run(
+        PaperPreviewScenario(
+            name="custom-risk",
+            risk=risk,
+            steps=(
+                PaperPreviewScenarioStep(
+                    action="submit",
+                    order_id="risk-custom",
+                    symbol="BTCUSDT",
+                    side="buy",
+                    quantity=10,
+                ),
+                PaperPreviewScenarioStep(action="fill", order_id="risk-custom", fill_price=100),
+            ),
+        )
+    )
+
+    assert result.decision_context is not None
+    assert result.decision_context.risk == risk
+    assert result.summary.trade_count == 1
+    assert result.decision_context.generated_order_count == 0
+    assert result.decision_context.generated_decision_count == 0
+
+
+def test_decision_context_and_risk_placeholder_are_immutable_and_deterministic() -> None:
+    scenario = _scenario(
+        PaperPreviewScenarioStep(
+            action="submit", order_id="det", symbol="BTCUSDT", side="buy", quantity=1
+        ),
+        PaperPreviewScenarioStep(action="fill", order_id="det", fill_price=100),
+        name="det-context",
+    )
+    first = PaperPreviewScenarioRunner(created_at="fixed").run(scenario).decision_context
+    second = PaperPreviewScenarioRunner(created_at="fixed").run(scenario).decision_context
+
+    assert first == second
+    assert first is not None
+    with pytest.raises(AttributeError):
+        first.generated_order_count = 1  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        first.risk.source = "changed"  # type: ignore[misc]
+
+
+def test_decision_context_has_no_decision_engine_account_or_secret_surface() -> None:
+    result = PaperPreviewScenarioRunner().run(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="surface", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="surface", fill_price=100),
+        )
+    )
+    assert result.decision_context is not None
+    forbidden_methods = {
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "generate_order",
+        "execute",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "export",
+        "cloud_sink",
+    }
+    forbidden_fields = {
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+    }
+
+    assert forbidden_methods.isdisjoint(set(dir(result.decision_context)))
+    assert forbidden_methods.isdisjoint(set(dir(PaperPreviewScenarioRunner())))
+    assert forbidden_fields.isdisjoint(set(dir(result.decision_context)))
+    assert forbidden_fields.isdisjoint(set(dir(result.decision_context.risk)))
+    assert isinstance(result.decision_context, PaperPreviewDecisionContext)
 
 
 def test_missing_market_provider_raises_before_paper_mutation() -> None:
