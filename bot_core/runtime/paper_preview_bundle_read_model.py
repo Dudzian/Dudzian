@@ -9,11 +9,91 @@ or starts runtime loops.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from bot_core.runtime.paper_preview_bundle_boundary import (
     PaperPreviewBundleBoundaryMatrixReport,
 )
 from bot_core.runtime.paper_preview_scenario import PaperPreviewLocalDecisionBundle
+
+
+class PaperPreviewReadModelBoundary(StrEnum):
+    """Forbidden read-model boundary kinds that always fail closed locally."""
+
+    QML_BINDING = "qml_binding"
+    PYSIDE_BRIDGE = "pyside_bridge"
+    UI_RUNTIME_BINDING = "ui_runtime_binding"
+    APP_RUNTIME_LOOP = "app_runtime_loop"
+    CONTROLLER_HANDOFF = "controller_handoff"
+    TRADING_CONTROLLER_HANDOFF = "trading_controller_handoff"
+    DECISION_ENVELOPE_HANDOFF = "decision_envelope_handoff"
+    STRATEGY_ENGINE_HANDOFF = "strategy_engine_handoff"
+    AI_MODEL_INFERENCE_HANDOFF = "ai_model_inference_handoff"
+    SCORING_HANDOFF = "scoring_handoff"
+    RECOMMENDATION_HANDOFF = "recommendation_handoff"
+    ORDER_GENERATION_HANDOFF = "order_generation_handoff"
+    FILE_EXPORT = "file_export"
+    SERIALIZED_EXPORT = "serialized_export"
+    CLOUD_SINK = "cloud_sink"
+    EXTERNAL_EXPORT = "external_export"
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewReadModelBoundaryRefusal:
+    """Immutable no-action marker for a refused read-model boundary."""
+
+    boundary_kind: str
+    reason: str
+    model_kind: str
+    scenario_name: str
+    refused: bool = True
+    read_only: bool = True
+    runtime_backed: bool = False
+    ui_bound: bool = False
+    export_sink: str = "none"
+    cloud_sink: str = "none"
+    external_export: bool = False
+    generated_order_count: int = 0
+    generated_decision_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewReadModelBoundaryMatrixRow:
+    """One immutable local diagnostic row for a refused read-model boundary."""
+
+    boundary_kind: str
+    refused: bool
+    reason: str
+    model_kind: str
+    scenario_name: str
+    read_only: bool = True
+    runtime_backed: bool = False
+    ui_bound: bool = False
+    export_sink: str = "none"
+    cloud_sink: str = "none"
+    external_export: bool = False
+    generated_order_count: int = 0
+    generated_decision_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PaperPreviewReadModelBoundaryMatrixReport:
+    """Immutable report proving local read-model boundaries are refused."""
+
+    model_kind: str
+    scenario_name: str
+    row_count: int
+    rows: tuple[PaperPreviewReadModelBoundaryMatrixRow, ...]
+    report_kind: str = "local_read_model_boundary_refusal_matrix"
+    all_refused: bool = True
+    read_only: bool = True
+    runtime_backed: bool = False
+    ui_bound: bool = False
+    export_sink: str = "none"
+    cloud_sink: str = "none"
+    external_export: bool = False
+    generated_order_count: int = 0
+    generated_decision_count: int = 0
 
 
 class PaperPreviewBundleReadModelError(ValueError):
@@ -131,6 +211,67 @@ def build_paper_preview_bundle_read_model(
     )
 
 
+def build_paper_preview_read_model_boundary_matrix(
+    read_model: PaperPreviewBundleReadModel,
+) -> PaperPreviewReadModelBoundaryMatrixReport:
+    """Build deterministic in-memory refusal matrix for every read-model boundary."""
+
+    rows = tuple(
+        _read_model_matrix_row_from_refusal(
+            PaperPreviewReadModelBoundaryRefusal(
+                boundary_kind=boundary.value,
+                reason=f"local read model boundary refuses {boundary.value}",
+                model_kind=read_model.model_kind,
+                scenario_name=read_model.scenario_name,
+                read_only=read_model.read_only,
+                runtime_backed=read_model.runtime_backed,
+                ui_bound=read_model.ui_bound,
+                export_sink=read_model.export_sink,
+                cloud_sink=read_model.cloud_sink,
+                external_export=read_model.external_export,
+                generated_order_count=read_model.generated_order_count,
+                generated_decision_count=read_model.generated_decision_count,
+            )
+        )
+        for boundary in PaperPreviewReadModelBoundary
+    )
+    return PaperPreviewReadModelBoundaryMatrixReport(
+        model_kind=read_model.model_kind,
+        scenario_name=read_model.scenario_name,
+        row_count=len(rows),
+        rows=rows,
+        all_refused=all(row.refused for row in rows),
+        read_only=read_model.read_only,
+        runtime_backed=read_model.runtime_backed,
+        ui_bound=read_model.ui_bound,
+        export_sink=read_model.export_sink,
+        cloud_sink=read_model.cloud_sink,
+        external_export=read_model.external_export,
+        generated_order_count=read_model.generated_order_count,
+        generated_decision_count=read_model.generated_decision_count,
+    )
+
+
+def _read_model_matrix_row_from_refusal(
+    refusal: PaperPreviewReadModelBoundaryRefusal,
+) -> PaperPreviewReadModelBoundaryMatrixRow:
+    return PaperPreviewReadModelBoundaryMatrixRow(
+        boundary_kind=refusal.boundary_kind,
+        refused=refusal.refused,
+        reason=refusal.reason,
+        model_kind=refusal.model_kind,
+        scenario_name=refusal.scenario_name,
+        read_only=refusal.read_only,
+        runtime_backed=refusal.runtime_backed,
+        ui_bound=refusal.ui_bound,
+        export_sink=refusal.export_sink,
+        cloud_sink=refusal.cloud_sink,
+        external_export=refusal.external_export,
+        generated_order_count=refusal.generated_order_count,
+        generated_decision_count=refusal.generated_decision_count,
+    )
+
+
 def _validate_consistency(
     bundle: PaperPreviewLocalDecisionBundle,
     matrix: PaperPreviewBundleBoundaryMatrixReport,
@@ -147,8 +288,13 @@ def _validate_consistency(
 
 __all__ = [
     "PaperPreviewBoundaryReadRow",
+    "PaperPreviewReadModelBoundary",
+    "PaperPreviewReadModelBoundaryMatrixReport",
+    "PaperPreviewReadModelBoundaryMatrixRow",
+    "PaperPreviewReadModelBoundaryRefusal",
     "PaperPreviewBundleReadModel",
     "PaperPreviewBundleReadModelError",
     "PaperPreviewBundleReadModelStatus",
     "build_paper_preview_bundle_read_model",
+    "build_paper_preview_read_model_boundary_matrix",
 ]
