@@ -195,9 +195,9 @@ def test_strategy_model_backtest_replay_evidence_files_are_existing_and_tracked(
 def test_functional_preview_3_scope_remains_local_unit_only() -> None:
     payload = _load_report()
     scope = payload["scope"]
-    assert "FUNCTIONAL-PREVIEW-3.6" in scope
+    assert "FUNCTIONAL-PREVIEW-3.7" in scope
     assert (
-        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, and static/local scenario-level read-only market context evidence"
+        "local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, and context-only paper scenario decision-context contract evidence"
         in scope
     )
     assert (
@@ -348,3 +348,28 @@ def test_read_only_market_contract_is_static_local_evidence_only() -> None:
     assert "external export" in joined
     assert "scenario runner can carry deterministic read-only market context" in joined
     assert "in-memory/static-local fixture" in joined
+
+
+def test_decision_context_readiness_evidence_stays_partial_static_local() -> None:
+    payload = _load_report()
+    sections = payload["sections"]
+    for name in (
+        "ai_decision_governor",
+        "paper_terminal_order_lifecycle",
+        "data_source_market_feed",
+    ):
+        section = sections[name]
+        joined = "\n".join(
+            [*section["evidence_files"], *section["gaps"], section["recommended_next_step"]]
+        ).lower()
+        assert section["status"] == "partial"
+        assert section["runtime_backed"] is False
+        assert section["supports_read_only_real_data"] is False
+        assert "paper_preview_scenario.py" in joined
+        assert "decision context" in joined or "decision-context" in joined
+        assert "context-only" in joined
+        assert "generates no orders/decisions" in joined
+        assert "no strategy engine" in joined
+        assert "ai/model inference" in joined
+        assert "decisionenvelope integration" in joined
+        assert "tradingcontroller integration" in joined

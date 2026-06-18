@@ -90,10 +90,11 @@ def build_report() -> dict[str, Any]:
                 "Preview profile is explicitly in-process/local and points at a sample OHLCV dataset, not a test-server or read-only real-market source.",
                 "A preview-scoped read-only market data contract now exists for static/local in-memory quote/candle/snapshot proof, but it is not a real adapter or real feed.",
                 "Local scenario runner can carry deterministic read-only market context from in-memory/static-local fixtures before paper step execution.",
+                "Local scenario runner can produce deterministic decision context after execution; decision context is context-only and generates no orders/decisions, with no strategy engine, AI/model inference, DecisionEnvelope integration, or TradingController integration.",
                 "gRPC/UI fallback code can expose runtime-shaped snapshots, but this audit found no real-data-backed preview proof of read-only feed ingestion.",
                 "No real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export is implemented for this contract.",
             ],
-            "recommended_next_step": "Keep the read-only market data contract and scenario market context as partial/static-local evidence: the local scenario runner can carry deterministic read-only market context, market context is in-memory/static-local fixture only, READ_ONLY_MARKET_FETCH is preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export exists yet.",
+            "recommended_next_step": "Keep the read-only market data contract, scenario market context, and scenario decision context as partial/static-local evidence: the local scenario runner can carry deterministic read-only market context and produce deterministic context-only decision context that generates no orders/decisions, market context is in-memory/static-local fixture only, READ_ONLY_MARKET_FETCH is preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no strategy engine, AI/model inference, DecisionEnvelope integration, TradingController integration, real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export exists yet.",
         },
         "scanner_opportunity_pipeline": {
             "status": "static_mock_only",
@@ -127,9 +128,13 @@ def build_report() -> dict[str, Any]:
                     "ui/backend/demo_data.py",
                     "tests/test_run_decision_engine_smoke_script.py",
                     "data/decision_engine/paper/candidates.json",
+                    "bot_core/runtime/paper_preview_scenario.py",
+                    "tests/runtime/test_paper_preview_scenario.py",
+                    "bot_core/runtime/read_only_market_data.py",
+                    "tests/runtime/test_read_only_market_data.py",
                 ]
             ),
-            "runtime_backed": True,
+            "runtime_backed": False,
             "static_qml_only": False,
             "supports_test_server": False,
             "supports_read_only_real_data": False,
@@ -138,8 +143,11 @@ def build_report() -> dict[str, Any]:
                 "Preview decision rows can be loaded from runtime journal/stream plumbing, but default first-run data is a static demo snapshot.",
                 "Paper decision-engine smoke inputs are file fixtures, not a preview proof of live read-only market input.",
                 "Confidence/reason/risk fields in the preview default are supplied as serialized demo values unless a runtime source is configured.",
+                "Local scenario runner can produce a deterministic context-only decision context after paper scenario execution, including scenario state, optional in-memory/static-local market context summary, paper snapshot counts, and risk placeholders.",
+                "Decision context is context-only and generates no orders/decisions; it is not a strategy engine, AI/model inference path, DecisionEnvelope integration, or TradingController integration.",
+                "Market context is in-memory/static-local fixture only; no real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export exists yet.",
             ],
-            "recommended_next_step": "Wire a paper/preview decision source to deterministic read-only market fixtures and assert computed confidence/risk provenance.",
+            "recommended_next_step": "Keep ai_decision_governor partial/static-local: local scenario runner can produce deterministic decision context, decision context is context-only and generates no orders/decisions, no strategy engine, no AI/model inference, no DecisionEnvelope integration, no TradingController integration, market context is in-memory/static-local fixture only, READ_ONLY_MARKET_FETCH is preview-safe, and account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch, app runtime loop, UI integration, testnet/sandbox adapter, cloud sink, or external export exists yet.",
         },
         "paper_terminal_order_lifecycle": {
             "status": "partial",
@@ -170,11 +178,12 @@ def build_report() -> dict[str, Any]:
                 "Local paper audit/alerts consumer now exists as separate unit-level evidence and consumes paper order/trade events locally without cloud/export/live side effects.",
                 "Local composition proof exists: paper spine, portfolio reducer, and audit journal are wired together locally for submit/reject/cancel/partial/fill snapshot evidence.",
                 "Local scenario fixture runner exists and drives PaperPreviewFlow with deterministic in-memory scenarios; it can carry deterministic read-only market context from an in-memory/static-local fixture; no file loader/export is implemented.",
+                "Local scenario runner can produce deterministic decision context after execution; decision context is context-only and generates no orders/decisions with no strategy engine, AI/model inference, DecisionEnvelope integration, or TradingController integration.",
                 "UI/runtime integration still missing; this is not app-runtime-backed evidence and no runtime loop is started.",
                 "No cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects are proven or introduced here.",
                 "Testnet execution and read-only market feed still missing; this paper spine does not fetch market data or use sandbox/testnet adapters.",
             ],
-            "recommended_next_step": "Keep the local composition proof partial: paper spine + portfolio reducer + audit journal are wired together locally, and a deterministic in-memory local scenario fixture runner now drives PaperPreviewFlow, but there is no app runtime loop, no UI integration, no file loader/export, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects.",
+            "recommended_next_step": "Keep the local composition proof partial: paper spine + portfolio reducer + audit journal are wired together locally, a deterministic in-memory local scenario fixture runner now drives PaperPreviewFlow, and the runner can produce context-only decision context with no generated orders/decisions, but there is no strategy engine, no AI/model inference, no DecisionEnvelope integration, no TradingController integration, no app runtime loop, no UI integration, no file loader/export, no cloud sink, no external export, no testnet/sandbox adapter, no real market adapter/fetch, and no live exchange/order/account side effects.",
         },
         "portfolio_positions_trades": {
             "status": "partial",
@@ -351,7 +360,7 @@ def build_report() -> dict[str, Any]:
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-3.6 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, and static/local scenario-level read-only market context evidence; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, or live order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-3.7 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, and context-only paper scenario decision-context contract evidence; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, or live order I/O executed",
         "sections": sections,
     }
     validate_report(payload)
