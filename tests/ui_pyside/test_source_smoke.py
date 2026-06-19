@@ -278,6 +278,28 @@ def test_block_c_read_only_binding_visible_source_evidence_green() -> None:
     assert evidence["no_action_controls"] is True
 
 
+def test_block_c_read_only_binding_visible_source_allows_safe_export_label() -> None:
+    safe_source = (
+        'objectName: "operatorDashboardBlockCReadOnlyBindingSummary" '
+        'descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel" '
+        "BLOK C — UI READ-ONLY BINDING "
+        "BLOK B contract-complete static-local "
+        "integration gate: blocked "
+        "runtime loop: not started "
+        "runtime backed: false "
+        "UI runtime integration: false "
+        "decision/export/live readiness: false "
+        "read-only binding only"
+    )
+
+    evidence = _block_c_read_only_binding_visible_source_evidence(safe_source)
+
+    assert evidence["all_block_c_read_only_binding_visible_source_checks_passed"] is True
+    assert evidence["failed_checks"] == []
+    assert evidence["decision_export_live_false_text_present"] is True
+    assert evidence["no_action_controls"] is True
+
+
 def test_block_c_read_only_binding_visible_source_evidence_fails_closed() -> None:
     unsafe_source = (
         'objectName: "operatorDashboardBlockCReadOnlyBindingSummary" '
@@ -290,6 +312,32 @@ def test_block_c_read_only_binding_visible_source_evidence_fails_closed() -> Non
     assert evidence["all_block_c_read_only_binding_visible_source_checks_passed"] is False
     assert "labels_present" in evidence["failed_checks"]
     assert "no_action_controls" in evidence["failed_checks"]
+
+
+@pytest.mark.parametrize("forbidden_token", ("onClicked", "exportButton", "exportHandler"))
+def test_block_c_read_only_binding_visible_source_blocks_action_controls(
+    forbidden_token: str,
+) -> None:
+    unsafe_source = (
+        'objectName: "operatorDashboardBlockCReadOnlyBindingSummary" '
+        'descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel" '
+        "BLOK C — UI READ-ONLY BINDING "
+        "BLOK B contract-complete static-local "
+        "integration gate: blocked "
+        "runtime loop: not started "
+        "runtime backed: false "
+        "UI runtime integration: false "
+        "decision/export/live readiness: false "
+        "read-only binding only "
+        f"{forbidden_token}"
+    )
+
+    evidence = _block_c_read_only_binding_visible_source_evidence(unsafe_source)
+
+    assert evidence["all_block_c_read_only_binding_visible_source_checks_passed"] is False
+    assert evidence["labels_present"] is True
+    assert evidence["no_action_controls"] is False
+    assert evidence["failed_checks"] == ["no_action_controls"]
 
 
 def test_preview_launch_readiness_evidence_helper_contract() -> None:
