@@ -37,6 +37,7 @@ from ui.pyside_app.preview_read_only_binding import (
     PreviewReadOnlyBindingError,
     PreviewReadOnlyBindingSnapshot,
     build_preview_read_only_binding_snapshot,
+    build_preview_read_only_binding_ui_state,
 )
 
 
@@ -71,6 +72,41 @@ FORBIDDEN_SURFACE_NAMES = {
     "account_balance",
     "live_adapter",
     "testnet_adapter",
+    "action",
+    "command",
+    "callback",
+    "handle",
+    "account",
+}
+
+EXPECTED_UI_STATE_KEYS = {
+    "bindingKind",
+    "blockName",
+    "blockStatus",
+    "nextBlock",
+    "readyForBlockC",
+    "readyForUiRuntimeIntegration",
+    "readyForDecisionEngine",
+    "readyForExport",
+    "readyForLive",
+    "integrationGateStatus",
+    "serviceKind",
+    "scenarioName",
+    "closureScore",
+    "evidenceStageCount",
+    "evidenceStageNames",
+    "checklistPassedCount",
+    "checklistTotalCount",
+    "runtimeLoopStarted",
+    "runtimeBacked",
+    "uiBound",
+    "readOnly",
+    "paperOnly",
+    "generatedOrderCount",
+    "generatedDecisionCount",
+    "exportSink",
+    "cloudSink",
+    "externalExport",
 }
 
 
@@ -223,3 +259,101 @@ def test_binding_is_deterministic_and_immutable() -> None:
         first.block_status = "changed"  # type: ignore[misc]
     with pytest.raises(TypeError):
         first.evidence_stage_names[0] = "changed"  # type: ignore[index]
+
+
+def test_ui_state_maps_snapshot_values_to_camel_case() -> None:
+    snapshot = build_preview_read_only_binding_snapshot(_closure())
+
+    state = build_preview_read_only_binding_ui_state(snapshot)
+
+    assert set(state) == EXPECTED_UI_STATE_KEYS
+    assert state["bindingKind"] == snapshot.binding_kind
+    assert state["blockName"] == snapshot.block_name
+    assert state["blockStatus"] == snapshot.block_status
+    assert state["nextBlock"] == snapshot.next_block
+    assert state["readyForBlockC"] is snapshot.ready_for_block_c
+    assert state["readyForUiRuntimeIntegration"] is snapshot.ready_for_ui_runtime_integration
+    assert state["readyForDecisionEngine"] is snapshot.ready_for_decision_engine
+    assert state["readyForExport"] is snapshot.ready_for_export
+    assert state["readyForLive"] is snapshot.ready_for_live
+    assert state["integrationGateStatus"] == snapshot.integration_gate_status
+    assert state["serviceKind"] == snapshot.service_kind
+    assert state["scenarioName"] == snapshot.scenario_name
+    assert state["closureScore"] == snapshot.closure_score
+    assert state["evidenceStageCount"] == snapshot.evidence_stage_count
+    assert state["evidenceStageNames"] == snapshot.evidence_stage_names
+    assert state["checklistPassedCount"] == snapshot.checklist_passed_count
+    assert state["checklistTotalCount"] == snapshot.checklist_total_count
+    assert state["runtimeLoopStarted"] is snapshot.runtime_loop_started
+    assert state["runtimeBacked"] is snapshot.runtime_backed
+    assert state["uiBound"] is snapshot.ui_bound
+    assert state["readOnly"] is snapshot.read_only
+    assert state["paperOnly"] is snapshot.paper_only
+    assert state["generatedOrderCount"] == snapshot.generated_order_count
+    assert state["generatedDecisionCount"] == snapshot.generated_decision_count
+    assert state["exportSink"] == snapshot.export_sink
+    assert state["cloudSink"] == snapshot.cloud_sink
+    assert state["externalExport"] is snapshot.external_export
+
+
+def test_ui_state_has_no_action_callbacks_methods_or_unsafe_fields() -> None:
+    state = build_preview_read_only_binding_ui_state(
+        build_preview_read_only_binding_snapshot(_closure())
+    )
+    surface = set(state)
+
+    assert FORBIDDEN_SURFACE_NAMES.isdisjoint(surface)
+    assert all(not callable(value) for value in state.values())
+    assert state["exportSink"] == "none"
+    assert state["cloudSink"] == "none"
+    assert state["readyForLive"] is False
+
+
+@pytest.mark.parametrize(
+    ("field_name", "unsafe_value"),
+    [
+        ("binding_kind", "wrong"),
+        ("ready_for_ui_runtime_integration", True),
+        ("integration_gate_status", "open"),
+        ("runtime_loop_started", True),
+        ("runtime_backed", True),
+        ("ui_bound", True),
+        ("generated_order_count", 1),
+        ("generated_decision_count", 1),
+        ("export_sink", "file"),
+        ("cloud_sink", "prod"),
+        ("external_export", True),
+    ],
+)
+def test_ui_state_fails_closed_on_unsafe_snapshot(field_name: str, unsafe_value: object) -> None:
+    snapshot = build_preview_read_only_binding_snapshot(_closure())
+
+    with pytest.raises(PreviewReadOnlyBindingError):
+        build_preview_read_only_binding_ui_state(replace(snapshot, **{field_name: unsafe_value}))
+
+
+def test_ui_state_is_deterministic_and_has_no_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = build_preview_read_only_binding_snapshot(_closure())
+    original_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("file writes must not be used")
+        return original_open(file, mode, *args, **kwargs)
+
+    def forbidden(*args: object, **kwargs: object):
+        raise AssertionError("side effect must not be used")
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(threading, "Thread", forbidden)
+    monkeypatch.setattr(threading, "Timer", forbidden)
+
+    first = build_preview_read_only_binding_ui_state(snapshot)
+    second = build_preview_read_only_binding_ui_state(snapshot)
+
+    assert first == second
+    assert isinstance(first["evidenceStageNames"], tuple)

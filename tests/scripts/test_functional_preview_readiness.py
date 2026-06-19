@@ -166,7 +166,7 @@ def test_settings_and_strategy_frontend_parity_evidence_is_not_overstated() -> N
     assert strategy["runtime_backed"] is False
 
 
-def test_preview_mode_contract_includes_block_c_visible_source_proof() -> None:
+def test_preview_mode_contract_includes_block_c_controlled_ui_state_proof() -> None:
     payload = _load_report()
     section = payload["sections"]["preview_mode_contract"]
     evidence = set(section["evidence_files"])
@@ -181,13 +181,22 @@ def test_preview_mode_contract_includes_block_c_visible_source_proof() -> None:
     assert section["runtime_backed"] is False
     assert section["supports_read_only_real_data"] is False
     joined = "\n".join([*section["gaps"], section["recommended_next_step"]])
-    assert "BLOK C now has static-local UI read-only source/visible panel proof" in joined
+    assert (
+        "BLOK C now maps PreviewReadOnlyBindingSnapshot into controlled read-only UI state values"
+        in joined
+    )
     assert "source smoke confirms a read-only visible summary" in joined
     assert "UI proof does not start runtime loop" in joined
     assert "integration gate remains blocked" in joined
     assert "ready_for_ui_runtime_integration remains false" in joined
+    assert "values copied from static-local BLOK B closure evidence" in joined
     assert (
-        "next step should be wiring read-only binding values into controlled UI state, still without actions"
+        "state does not expose commands/actions/export/live/testnet/account/secret handles"
+        in joined
+    )
+    assert "QML/source proof remains read-only" in joined
+    assert (
+        "next step should be read-only UI state boundary/refusal proof or controlled QML value consumption, still without actions"
         in joined
     )
 
@@ -563,7 +572,10 @@ def test_service_snapshot_history_readiness_evidence_stays_partial_static_local(
         assert "no generated decisions/orders" in joined
         assert "no real market adapter/fetch" in joined
         assert "no testnet/sandbox adapter" in joined
-        assert "blok c now has static-local ui read-only source/visible panel proof" in joined
+        assert (
+            "blok c now maps previewreadonlybindingsnapshot into controlled read-only ui state values"
+            in joined
+        )
 
 
 def test_block_b_closure_readiness_evidence_stays_contract_complete_static_local() -> None:
@@ -604,4 +616,7 @@ def test_block_b_closure_readiness_evidence_stays_contract_complete_static_local
         assert "no generated decisions/orders" in joined
         assert "no real market adapter/fetch" in joined
         assert "no testnet/sandbox adapter" in joined
-        assert "blok c now has static-local ui read-only source/visible panel proof" in joined
+        assert (
+            "blok c now maps previewreadonlybindingsnapshot into controlled read-only ui state values"
+            in joined
+        )

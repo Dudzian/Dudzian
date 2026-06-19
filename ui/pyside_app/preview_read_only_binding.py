@@ -95,6 +95,81 @@ def build_preview_read_only_binding_snapshot(
     )
 
 
+def build_preview_read_only_binding_ui_state(
+    snapshot: PreviewReadOnlyBindingSnapshot,
+) -> dict[str, object]:
+    """Build controlled camelCase UI state from a safe read-only snapshot.
+
+    The returned state is a plain deterministic value map for source-smoke/QML
+    consumption.  It intentionally contains no callbacks, command names, action
+    tokens, handles, writable paths, export targets, live/testnet/account/secret
+    paths, timestamps, UUIDs, or randomized values.
+    """
+
+    _validate_binding_snapshot(snapshot)
+    return {
+        "bindingKind": snapshot.binding_kind,
+        "blockName": snapshot.block_name,
+        "blockStatus": snapshot.block_status,
+        "nextBlock": snapshot.next_block,
+        "readyForBlockC": snapshot.ready_for_block_c,
+        "readyForUiRuntimeIntegration": snapshot.ready_for_ui_runtime_integration,
+        "readyForDecisionEngine": snapshot.ready_for_decision_engine,
+        "readyForExport": snapshot.ready_for_export,
+        "readyForLive": snapshot.ready_for_live,
+        "integrationGateStatus": snapshot.integration_gate_status,
+        "serviceKind": snapshot.service_kind,
+        "scenarioName": snapshot.scenario_name,
+        "closureScore": snapshot.closure_score,
+        "evidenceStageCount": snapshot.evidence_stage_count,
+        "evidenceStageNames": tuple(snapshot.evidence_stage_names),
+        "checklistPassedCount": snapshot.checklist_passed_count,
+        "checklistTotalCount": snapshot.checklist_total_count,
+        "runtimeLoopStarted": snapshot.runtime_loop_started,
+        "runtimeBacked": snapshot.runtime_backed,
+        "uiBound": snapshot.ui_bound,
+        "readOnly": snapshot.read_only,
+        "paperOnly": snapshot.paper_only,
+        "generatedOrderCount": snapshot.generated_order_count,
+        "generatedDecisionCount": snapshot.generated_decision_count,
+        "exportSink": snapshot.export_sink,
+        "cloudSink": snapshot.cloud_sink,
+        "externalExport": snapshot.external_export,
+    }
+
+
+def _validate_binding_snapshot(snapshot: PreviewReadOnlyBindingSnapshot) -> None:
+    checks = (
+        (
+            snapshot.binding_kind == "static_local_block_b_closure_ui_read_only_binding",
+            "binding_kind",
+        ),
+        (snapshot.block_status == "contract_complete_static_local", "block_status"),
+        (snapshot.ready_for_block_c is True, "ready_for_block_c"),
+        (
+            snapshot.ready_for_ui_runtime_integration is False,
+            "ready_for_ui_runtime_integration",
+        ),
+        (snapshot.ready_for_decision_engine is False, "ready_for_decision_engine"),
+        (snapshot.ready_for_export is False, "ready_for_export"),
+        (snapshot.ready_for_live is False, "ready_for_live"),
+        (snapshot.integration_gate_status == "blocked", "integration_gate_status"),
+        (snapshot.runtime_loop_started is False, "runtime_loop_started"),
+        (snapshot.runtime_backed is False, "runtime_backed"),
+        (snapshot.ui_bound is False, "ui_bound"),
+        (snapshot.read_only is True, "read_only"),
+        (snapshot.paper_only is True, "paper_only"),
+        (snapshot.generated_order_count == 0, "generated_order_count"),
+        (snapshot.generated_decision_count == 0, "generated_decision_count"),
+        (snapshot.export_sink == "none", "export_sink"),
+        (snapshot.cloud_sink == "none", "cloud_sink"),
+        (snapshot.external_export is False, "external_export"),
+    )
+    for passed, label in checks:
+        if not passed:
+            raise PreviewReadOnlyBindingError(label)
+
+
 def _validate_closure_report(closure_report: PaperPreviewRuntimeServiceClosureReport) -> None:
     checks = (
         (
@@ -131,4 +206,5 @@ __all__ = [
     "PreviewReadOnlyBindingError",
     "PreviewReadOnlyBindingSnapshot",
     "build_preview_read_only_binding_snapshot",
+    "build_preview_read_only_binding_ui_state",
 ]
