@@ -3943,3 +3943,362 @@ def test_runtime_service_lifecycle_preview_policy_keeps_live_capabilities_blocke
     ):
         with pytest.raises(PreviewModeContractError):
             build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+from bot_core.runtime.paper_preview_runtime_service_read_api import (
+    PaperPreviewRuntimeServiceReadApiError,
+    PaperPreviewRuntimeServiceReadApiView,
+    build_paper_preview_runtime_service_read_api,
+)
+
+
+def _runtime_read_api_inputs():
+    snapshot = _runtime_service_snapshot()
+    matrix = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    contract = build_paper_preview_runtime_service_lifecycle_contract(snapshot, matrix)
+    return snapshot, matrix, contract
+
+
+def test_runtime_service_read_api_exists_and_mirrors_snapshot_matrix_lifecycle() -> None:
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    view = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+
+    assert isinstance(view, PaperPreviewRuntimeServiceReadApiView)
+    assert view.view_kind == "local_runtime_service_snapshot_read_api"
+    assert view.service_kind == snapshot.service_kind == "local_paper_preview_runtime_service"
+    assert view.scenario_name == snapshot.scenario_name
+    assert view.order_event_count == snapshot.order_event_count
+    assert view.trade_count == snapshot.trade_count
+    assert view.audit_event_count == snapshot.audit_event_count
+    assert view.position_count == snapshot.position_count
+    assert view.has_market_context == snapshot.has_market_context
+    assert view.market_symbols == snapshot.market_symbols
+    assert view.blocking_items == snapshot.blocking_items
+    assert view.blocking_check_count == snapshot.blocking_check_count
+    assert view.integration_gate_status == "blocked"
+    assert view.boundary_matrix_report_kind == matrix.report_kind
+    assert view.lifecycle_contract_kind == contract.contract_kind
+    assert view.lifecycle_allowed_commands == contract.allowed_commands
+    assert view.lifecycle_refused_commands == contract.refused_commands
+    assert view.boundary_row_count == matrix.row_count
+    assert view.lifecycle_allowed_command_count == contract.allowed_command_count
+    assert view.lifecycle_refused_command_count == contract.refused_command_count
+
+
+def test_runtime_service_read_api_mirrors_safety_flags() -> None:
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    view = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+
+    assert view.single_shot is True
+    assert view.runtime_loop_started is False
+    assert view.runtime_backed is False
+    assert view.ui_bound is False
+    assert view.read_only is True
+    assert view.paper_only is True
+    assert view.ready_for_ui_runtime_integration is False
+    assert view.ready_for_decision_engine is False
+    assert view.ready_for_export is False
+    assert view.generated_order_count == 0
+    assert view.generated_decision_count == 0
+    assert view.export_sink == "none"
+    assert view.cloud_sink == "none"
+    assert view.external_export is False
+    assert view.local_bundle_present is True
+    assert view.read_model_present is True
+    assert view.preflight_present is True
+    assert view.integration_gate_present is True
+
+
+def test_runtime_service_read_api_handles_market_and_no_market_context() -> None:
+    market_snapshot = PaperPreviewRuntimeService(
+        market_data_provider=_market_provider(), created_at="fixed"
+    ).run_once(
+        PaperPreviewScenario(
+            name="read-api-market",
+            market_symbols=("ETHUSDT", "BTCUSDT"),
+            market_timeframe="1m",
+            market_candle_limit=1,
+            steps=_service_scenario("read-api-market").steps,
+        )
+    )
+    market_matrix = build_paper_preview_runtime_service_boundary_matrix(market_snapshot)
+    market_contract = build_paper_preview_runtime_service_lifecycle_contract(
+        market_snapshot, market_matrix
+    )
+    market_view = build_paper_preview_runtime_service_read_api(
+        market_snapshot, market_matrix, market_contract
+    )
+    no_market_snapshot, no_market_matrix, no_market_contract = _runtime_read_api_inputs()
+    no_market_view = build_paper_preview_runtime_service_read_api(
+        no_market_snapshot, no_market_matrix, no_market_contract
+    )
+
+    assert market_view.has_market_context is True
+    assert market_view.market_symbols == ("BTCUSDT", "ETHUSDT")
+    assert no_market_view.has_market_context is False
+    assert no_market_view.market_symbols == ()
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "unsafe_value"),
+    (
+        ("snapshot", "service_kind", "unsafe"),
+        ("matrix", "report_kind", "unsafe"),
+        ("contract", "contract_kind", "unsafe"),
+        ("matrix", "service_kind", "unsafe"),
+        ("contract", "service_kind", "unsafe"),
+        ("matrix", "scenario_name", "unsafe"),
+        ("contract", "scenario_name", "unsafe"),
+        ("matrix", "all_refused", False),
+        ("matrix", "row_count", -1),
+        ("contract", "command_count", -1),
+        ("contract", "allowed_command_count", -1),
+        ("contract", "refused_command_count", -1),
+        ("snapshot", "single_shot", False),
+        ("matrix", "single_shot", False),
+        ("contract", "single_shot", False),
+        ("snapshot", "runtime_loop_started", True),
+        ("matrix", "runtime_loop_started", True),
+        ("contract", "runtime_loop_started", True),
+        ("snapshot", "runtime_backed", True),
+        ("matrix", "runtime_backed", True),
+        ("contract", "runtime_backed", True),
+        ("snapshot", "ui_bound", True),
+        ("matrix", "ui_bound", True),
+        ("contract", "ui_bound", True),
+        ("snapshot", "read_only", False),
+        ("matrix", "read_only", False),
+        ("contract", "read_only", False),
+        ("snapshot", "paper_only", False),
+        ("matrix", "paper_only", False),
+        ("contract", "paper_only", False),
+        ("snapshot", "integration_gate_status", "ready"),
+        ("matrix", "integration_gate_status", "ready"),
+        ("contract", "integration_gate_status", "ready"),
+        ("snapshot", "ready_for_ui_runtime_integration", True),
+        ("matrix", "ready_for_ui_runtime_integration", True),
+        ("contract", "ready_for_ui_runtime_integration", True),
+        ("snapshot", "ready_for_decision_engine", True),
+        ("matrix", "ready_for_decision_engine", True),
+        ("contract", "ready_for_decision_engine", True),
+        ("snapshot", "ready_for_export", True),
+        ("matrix", "ready_for_export", True),
+        ("contract", "ready_for_export", True),
+        ("snapshot", "generated_order_count", 1),
+        ("matrix", "generated_order_count", 1),
+        ("contract", "generated_order_count", 1),
+        ("snapshot", "generated_decision_count", 1),
+        ("matrix", "generated_decision_count", 1),
+        ("contract", "generated_decision_count", 1),
+        ("snapshot", "export_sink", "file"),
+        ("matrix", "export_sink", "file"),
+        ("contract", "export_sink", "file"),
+        ("snapshot", "cloud_sink", "prod"),
+        ("matrix", "cloud_sink", "prod"),
+        ("contract", "cloud_sink", "prod"),
+        ("snapshot", "external_export", True),
+        ("matrix", "external_export", True),
+        ("contract", "external_export", True),
+    ),
+)
+def test_runtime_service_read_api_fails_closed(
+    target: str, field: str, unsafe_value: object
+) -> None:
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    if target == "snapshot":
+        snapshot = dataclasses.replace(snapshot, **{field: unsafe_value})
+    elif target == "matrix":
+        matrix = dataclasses.replace(matrix, **{field: unsafe_value})
+    else:
+        contract = dataclasses.replace(contract, **{field: unsafe_value})
+    with pytest.raises(PaperPreviewRuntimeServiceReadApiError, match=field):
+        build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+
+
+def test_runtime_service_read_api_no_side_effects_or_forbidden_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    original_open = builtins.open
+
+    def fail_on_write(file, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("read API must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", fail_on_write)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no network")),
+    )
+    monkeypatch.setattr(
+        socket, "socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no socket"))
+    )
+    import threading
+
+    monkeypatch.setattr(
+        threading,
+        "Thread",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no thread")),
+    )
+    monkeypatch.setattr(
+        threading,
+        "Timer",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no timer")),
+    )
+
+    view = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+    forbidden = {
+        "start",
+        "start_loop",
+        "run_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+        "runtime_handle",
+    }
+    assert forbidden.isdisjoint(set(view.__dataclass_fields__))
+
+
+def test_runtime_service_read_api_is_deterministic_immutable_and_preserves_flow() -> None:
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    before = (
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.blocking_items,
+        snapshot.scenario_result.summary,
+    )
+    first = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+    second = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+    after = (
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.blocking_items,
+        snapshot.scenario_result.summary,
+    )
+
+    assert first == second
+    assert after == before
+    assert isinstance(first.lifecycle_allowed_commands, tuple)
+    assert isinstance(first.lifecycle_refused_commands, tuple)
+    assert isinstance(first.market_symbols, tuple)
+    assert isinstance(first.blocking_items, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.service_kind = "changed"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.lifecycle_allowed_commands[0] = "changed"  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        first.market_symbols.append("X")  # type: ignore[attr-defined]
+
+
+def test_runtime_service_read_api_does_not_add_forbidden_surfaces() -> None:
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    view = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+    service = PaperPreviewRuntimeService(created_at="fixed")
+    objects = (
+        view,
+        contract,
+        contract.command_decisions[0],
+        matrix,
+        matrix.rows[0],
+        snapshot,
+        service,
+    )
+    forbidden = {
+        "bind_qml",
+        "bind_pyside",
+        "attach_ui",
+        "start_runtime",
+        "run_loop",
+        "connect_signal",
+        "emit_signal",
+        "create_controller",
+        "serialize_for_ui",
+        "qml",
+        "qml_object",
+        "QObject",
+        "signal",
+        "slot",
+        "runtime_handle",
+        "start",
+        "start_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    for obj in objects:
+        assert forbidden.isdisjoint(set(dir(obj)))
+
+
+def test_runtime_service_read_api_preview_policy_keeps_live_capabilities_blocked() -> None:
+    policy = PaperPreviewScenarioRunner(created_at="fixed").policy
+    read_only_policy = build_preview_mode_policy(
+        PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    )
+    assert RuntimeCapability.READ_ONLY_MARKET_FETCH in read_only_policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in policy.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
