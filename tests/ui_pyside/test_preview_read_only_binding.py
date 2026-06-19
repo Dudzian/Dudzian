@@ -37,6 +37,7 @@ from ui.pyside_app.preview_read_only_binding import (
     PreviewReadOnlyBindingError,
     PreviewReadOnlyBindingSnapshot,
     PreviewReadOnlyBindingUiStateBoundaryRow,
+    build_default_preview_read_only_binding_ui_state,
     build_preview_read_only_binding_snapshot,
     build_preview_read_only_binding_ui_state,
     build_preview_read_only_binding_ui_state_boundary_matrix,

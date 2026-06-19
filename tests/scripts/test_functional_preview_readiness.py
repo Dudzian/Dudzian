@@ -185,9 +185,12 @@ def test_preview_mode_contract_includes_block_c_controlled_ui_state_proof() -> N
         "BLOK C now maps PreviewReadOnlyBindingSnapshot into controlled read-only UI state values"
         in joined
     )
+    assert "BLOK C QML panel now consumes controlled read-only UI state values" in joined
+    assert "safe blocked/false/none/zero fallbacks" in joined
     assert "BLOK C now has a read-only UI state boundary/no-action matrix" in joined
     assert "matrix refuses action handlers, command dispatch, lifecycle execution" in joined
-    assert "source smoke confirms a read-only visible summary" in joined
+    assert "source smoke confirms controlled QML value consumption" in joined
+    assert "values originate from PreviewReadOnlyBindingSnapshot via controlled UI state" in joined
     assert "UI proof does not start runtime loop" in joined
     assert "integration gate remains blocked" in joined
     assert "ready_for_ui_runtime_integration remains false" in joined
@@ -198,7 +201,7 @@ def test_preview_mode_contract_includes_block_c_controlled_ui_state_proof() -> N
     )
     assert "QML/source proof remains read-only" in joined
     assert (
-        "next step should be controlled QML value consumption from read-only state, still without actions"
+        "next step should be read-only UI state runtime bridge preflight or controlled PySide bridge exposure, still without actions"
         in joined
     )
 
