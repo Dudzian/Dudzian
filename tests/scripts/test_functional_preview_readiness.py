@@ -211,7 +211,7 @@ def test_preview_mode_contract_includes_block_c_controlled_ui_state_proof() -> N
     )
     assert "QML/source proof remains read-only" in joined
     assert (
-        "next step should be PySide-enabled read-only bridge smoke or BLOK C closure audit, still without actions"
+        "BLOK C is closure-audited as read-only binding; next step is BLOK D — UI ACTION DISPATCH DO PAPER RUNTIME, still without runtime loop/live/export"
         in joined
     )
 

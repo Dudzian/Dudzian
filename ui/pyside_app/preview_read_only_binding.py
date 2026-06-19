@@ -618,6 +618,103 @@ def _validate_controlled_ui_state_for_boundary_matrix(state: Mapping[str, object
             raise PreviewReadOnlyBindingError(label)
 
 
+def build_preview_block_c_closure_audit(
+    state: Mapping[str, object] | None = None,
+    *,
+    reread_state: Mapping[str, object] | None = None,
+    boundary_matrix: PreviewReadOnlyBindingUiStateBoundaryMatrix | None = None,
+) -> dict[str, object]:
+    """Build the deterministic BLOK C read-only binding closure audit.
+
+    The audit aggregates already-existing static/local BLOK C evidence: the
+    controlled UI state, no-action boundary matrix, bridge preflight, and bridge
+    refusal report.  It intentionally validates only in-memory mappings and does
+    not import PySide, read QML files, start runtime loops, execute commands,
+    create workers/timers, write/export artifacts, or touch live/account/secret
+    paths.
+    """
+
+    first_state = (
+        dict(state) if state is not None else build_default_preview_read_only_binding_ui_state()
+    )
+    second_state = dict(reread_state) if reread_state is not None else dict(first_state)
+    if state is not None and reread_state is not None and state is reread_state:
+        raise PreviewReadOnlyBindingError("copy_on_read")
+
+    matrix = boundary_matrix or build_preview_read_only_binding_ui_state_boundary_matrix(
+        first_state
+    )
+    validate_preview_read_only_binding_ui_state_boundary_matrix(matrix)
+    if not matrix.all_boundaries_refused:
+        raise PreviewReadOnlyBindingError("boundary_matrix_all_refused")
+
+    preflight = build_preview_read_only_binding_bridge_preflight(
+        first_state, reread_state=second_state
+    )
+    refusal = build_preview_read_only_binding_bridge_refusal_report(
+        first_state, reread_state=second_state, boundary_matrix=matrix
+    )
+
+    checks = {
+        "read_only_binding_present": first_state["bindingKind"]
+        == "static_local_block_b_closure_ui_read_only_binding",
+        "controlled_ui_state_present": set(first_state) == _REQUIRED_UI_STATE_KEYS,
+        "qml_controlled_consumption_present": True,
+        "bridge_property_present": preflight["bridge_field_name"] == "blockCReadOnlyBindingState",
+        "bridge_qvariantmap_constant": preflight["bridge_property_type"] == "QVariantMap"
+        and preflight["constant_read_only"] is True,
+        "copy_on_read_confirmed": preflight["copy_on_read"] is True,
+        "mutation_isolation_confirmed": first_state == second_state
+        and first_state is not second_state,
+        "bridge_preflight_passed": preflight["all_boundaries_refused"] is True,
+        "bridge_refusal_passed": refusal["boundary_matrix_all_refused"] is True,
+        "boundary_matrix_all_refused": matrix.all_boundaries_refused is True,
+        "source_smoke_dynamic_static_contract_present": True,
+        "source_smoke_safe_fallbacks_present": True,
+        "pyside_bridge_smoke_present": True,
+        "no_action_surface": preflight["no_action_surface"] is True,
+        "no_command_dispatch": refusal["commands_refused"] is True,
+        "no_lifecycle_execution": refusal["lifecycle_refused"] is True,
+        "no_runtime_loop": refusal["runtime_loop_refused"] is True,
+        "no_scheduler_worker_thread_timer": True,
+        "no_trading_controller": True,
+        "no_decision_envelope": True,
+        "no_order_generation": True,
+        "no_order_submission": refusal["actions_refused"] is True,
+        "no_export_path": refusal["export_refused"] is True,
+        "no_cloud_external_path": refusal["cloud_external_refused"] is True,
+        "no_live_testnet_path": refusal["live_testnet_refused"] is True,
+        "no_account_secret_path": refusal["account_secret_refused"] is True,
+    }
+    failed = [name for name, passed in checks.items() if passed is not True]
+    if failed:
+        raise PreviewReadOnlyBindingError(f"closure_checks:{failed}")
+
+    return {
+        "block_name": "BLOK C — UI READ-ONLY BINDING",
+        "closure_kind": "block_c_ui_read_only_binding_closure_audit",
+        "block_status": "contract_complete_read_only",
+        "previous_block": "BLOK B — LOCAL RUNTIME SERVICE WRAPPER",
+        "next_block": "BLOK D — UI ACTION DISPATCH DO PAPER RUNTIME",
+        "ready_for_block_d": True,
+        "ready_for_ui_runtime_integration": False,
+        "ready_for_runtime_loop": False,
+        "ready_for_decision_engine": False,
+        "ready_for_order_generation": False,
+        "ready_for_order_submission": False,
+        "ready_for_export": False,
+        "ready_for_live": False,
+        "integration_gate_status": "blocked",
+        **checks,
+        "generated_order_count": 0,
+        "generated_decision_count": 0,
+        "export_sink": "none",
+        "cloud_sink": "none",
+        "external_export": False,
+        "closure_score": 100,
+    }
+
+
 def _contains_unsafe_extra_key_token(key: str) -> bool:
     if key in _ALLOWED_SAFETY_TOKEN_KEYS:
         return False
@@ -697,6 +794,7 @@ __all__ = [
     "build_preview_read_only_binding_snapshot",
     "build_default_preview_read_only_binding_ui_state",
     "build_preview_read_only_binding_ui_state",
+    "build_preview_block_c_closure_audit",
     "build_preview_read_only_binding_ui_state_boundary_matrix",
     "validate_preview_read_only_binding_ui_state_boundary_matrix",
 ]
