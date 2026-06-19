@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -10,40 +12,96 @@ from pathlib import Path
 
 import pytest
 
-from ui.pyside_app.app import AppOptions
-from ui.pyside_app.smoke import (
-    PREVIEW_LAUNCH_READINESS_CHECKS,
-    FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS,
-    FRONTEND_LIVE_PARITY_SMOKE_KEYS,
-    FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS,
-    FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS,
-    FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS,
-    FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS,
-    FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS,
-    FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS,
-    FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS,
-    FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS,
-    FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS,
-    FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS,
-    TYPED_PREVIEW_BRIDGE_AUDIT_KEYS,
-    TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS,
-    _audit_typed_preview_bridge,
-    _build_alerts_telemetry_live_shape_evidence,
-    _build_frontend_live_parity_evidence,
-    _build_market_scanner_live_field_evidence,
-    _build_operator_workflow_evidence,
-    _build_portfolio_live_shape_evidence,
-    _build_order_lifecycle_parity_evidence,
-    _build_risk_live_safety_controls_evidence,
-    _build_runtime_session_control_live_shape_evidence,
-    _build_settings_config_live_shape_evidence,
-    _build_strategy_model_replay_live_shape_evidence,
-    _build_terminal_order_form_parity_evidence,
-    _rows_contain_tokens,
-    _preview_launch_readiness_evidence,
-    _rows_contain_tokens,
-    _typed_preview_bridge_consumer_evidence,
+PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
+pytestmark = pytest.mark.skipif(
+    not PYSIDE6_AVAILABLE,
+    reason="Środowisko testowe nie udostępnia PySide6; source-smoke UI wymaga Qt/PySide6.",
 )
+
+_PYSIDE_SOURCE_SMOKE_SYMBOLS_LOADED = False
+_PYSIDE_SOURCE_SMOKE_SYMBOL_NAMES = (
+    "PREVIEW_LAUNCH_READINESS_CHECKS",
+    "FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS",
+    "FRONTEND_LIVE_PARITY_SMOKE_KEYS",
+    "FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS",
+    "FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS",
+    "FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS",
+    "FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS",
+    "FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS",
+    "FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS",
+    "FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS",
+    "FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS",
+    "FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS",
+    "FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS",
+    "TYPED_PREVIEW_BRIDGE_AUDIT_KEYS",
+    "TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS",
+    "_audit_typed_preview_bridge",
+    "_build_alerts_telemetry_live_shape_evidence",
+    "_build_frontend_live_parity_evidence",
+    "_build_market_scanner_live_field_evidence",
+    "_build_operator_workflow_evidence",
+    "_build_portfolio_live_shape_evidence",
+    "_build_order_lifecycle_parity_evidence",
+    "_build_risk_live_safety_controls_evidence",
+    "_build_runtime_session_control_live_shape_evidence",
+    "_build_settings_config_live_shape_evidence",
+    "_build_strategy_model_replay_live_shape_evidence",
+    "_build_terminal_order_form_parity_evidence",
+    "_rows_contain_tokens",
+    "_preview_launch_readiness_evidence",
+    "_typed_preview_bridge_consumer_evidence",
+)
+
+# Populated by _load_pyside_source_smoke_symbols() in PySide6-enabled test runs.
+AppOptions = None
+PREVIEW_LAUNCH_READINESS_CHECKS = None
+FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS = None
+FRONTEND_LIVE_PARITY_SMOKE_KEYS = None
+FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS = None
+FRONTEND_MARKET_SCANNER_LIVE_FIELD_REQUIRED_CHECKS = None
+FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS = None
+FRONTEND_PORTFOLIO_LIVE_SHAPE_REQUIRED_CHECKS = None
+FRONTEND_RISK_LIVE_SAFETY_REQUIRED_CHECKS = None
+FRONTEND_RUNTIME_SESSION_CONTROL_REQUIRED_CHECKS = None
+FRONTEND_SETTINGS_CONFIG_LIVE_SHAPE_REQUIRED_CHECKS = None
+FRONTEND_STRATEGY_MODEL_REPLAY_REQUIRED_CHECKS = None
+FRONTEND_TERMINAL_ORDER_FORM_REQUIRED_CHECKS = None
+FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS = None
+TYPED_PREVIEW_BRIDGE_AUDIT_KEYS = None
+TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS = None
+_audit_typed_preview_bridge = None
+_build_alerts_telemetry_live_shape_evidence = None
+_build_frontend_live_parity_evidence = None
+_build_market_scanner_live_field_evidence = None
+_build_operator_workflow_evidence = None
+_build_portfolio_live_shape_evidence = None
+_build_order_lifecycle_parity_evidence = None
+_build_risk_live_safety_controls_evidence = None
+_build_runtime_session_control_live_shape_evidence = None
+_build_settings_config_live_shape_evidence = None
+_build_strategy_model_replay_live_shape_evidence = None
+_build_terminal_order_form_parity_evidence = None
+_rows_contain_tokens = None
+_preview_launch_readiness_evidence = None
+_typed_preview_bridge_consumer_evidence = None
+
+
+def _load_pyside_source_smoke_symbols() -> None:
+    global _PYSIDE_SOURCE_SMOKE_SYMBOLS_LOADED
+    if _PYSIDE_SOURCE_SMOKE_SYMBOLS_LOADED:
+        return
+    app_module = importlib.import_module("ui.pyside_app.app")
+    smoke_module = importlib.import_module("ui.pyside_app.smoke")
+    globals()["AppOptions"] = app_module.AppOptions
+    for symbol_name in _PYSIDE_SOURCE_SMOKE_SYMBOL_NAMES:
+        globals()[symbol_name] = getattr(smoke_module, symbol_name)
+    _PYSIDE_SOURCE_SMOKE_SYMBOLS_LOADED = True
+
+
+@pytest.fixture(autouse=True)
+def _load_pyside_source_smoke_symbols_fixture() -> None:
+    _load_pyside_source_smoke_symbols()
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SMOKE_SOURCE = REPO_ROOT / "ui" / "pyside_app" / "smoke.py"
