@@ -707,6 +707,25 @@ def test_operator_workflow_qml_scanner_pair_wins_over_terminal_default_fallback(
     assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
 
 
+def test_operator_workflow_terminal_panel_open_revalidates_shared_terminal_pair() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert 'if (panelId === "terminalPanel")' in main_window
+    assert "ensureSelectedTerminalPair()" in main_window
+    assert "function showPanel(panelId)" in main_window
+    assert "currentPanelId = panelId" in main_window
+
+
+def test_operator_workflow_paper_terminal_active_pair_uses_shared_state_before_default() -> None:
+    terminal = (QML_SOURCE_ROOT / "views" / "PaperTerminal.qml").read_text(encoding="utf-8")
+
+    assert "readonly property string activePair" in terminal
+    assert "previewState.selectedTerminalPair" in terminal
+    assert "previewState.selectedPairs[0]" in terminal
+    assert 'previewState.selectedPairs[0] : "BTC/USDT"' in terminal
+    assert '"LINK/USDT"' not in terminal
+
+
 def test_operator_workflow_pair_state_matches_canonical_values() -> None:
     updates_shared, terminal_matches, diagnostic = _operator_pair_state_matches(
         " btc-usdt ", "BTC/USDT", "BTC/USDT"
