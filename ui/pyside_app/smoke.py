@@ -585,12 +585,22 @@ def _preview_launch_readiness_evidence(payload: dict[str, object]) -> dict[str, 
 BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS = (
     "BLOK C — UI READ-ONLY BINDING",
     "BLOK B contract-complete static-local",
-    "integration gate: blocked",
-    "runtime loop: not started",
-    "runtime backed: false",
-    "UI runtime integration: false",
     "decision/export/live readiness: false",
     "read-only binding only",
+)
+
+BLOCK_C_READ_ONLY_BINDING_CONTROLLED_SOURCE_TOKENS = (
+    'typedBridgeValue("blockCReadOnlyBindingState", null)',
+    'blockCReadOnlyBindingValue("integrationGateStatus", "blocked")',
+    'blockCReadOnlyBindingValue("runtimeLoopStarted", false)',
+    'blockCReadOnlyBindingValue("runtimeBacked", false)',
+    'blockCReadOnlyBindingValue("readyForUiRuntimeIntegration", false)',
+    'blockCReadOnlyBindingValue("uiBound", false)',
+    'blockCReadOnlyBindingValue("generatedOrderCount", 0)',
+    'blockCReadOnlyBindingValue("generatedDecisionCount", 0)',
+    'blockCReadOnlyBindingValue("exportSink", "none")',
+    'blockCReadOnlyBindingValue("cloudSink", "none")',
+    'blockCReadOnlyBindingValue("externalExport", false)',
 )
 
 
@@ -642,18 +652,7 @@ def _block_c_read_only_binding_visible_source_evidence(
         "cloudSink",
         "externalExport",
     )
-    safe_fallback_tokens = (
-        '"integrationGateStatus", "blocked"',
-        '"readyForUiRuntimeIntegration", false',
-        '"runtimeLoopStarted", false',
-        '"runtimeBacked", false',
-        '"uiBound", false',
-        '"generatedOrderCount", 0',
-        '"generatedDecisionCount", 0',
-        '"exportSink", "none"',
-        '"cloudSink", "none"',
-        '"externalExport", false',
-    )
+    safe_fallback_tokens = BLOCK_C_READ_ONLY_BINDING_CONTROLLED_SOURCE_TOKENS
     checks = {
         "panel_source_present": panel_marker in source and label_marker in source,
         "labels_present": labels_present,
@@ -666,11 +665,17 @@ def _block_c_read_only_binding_visible_source_evidence(
                 "read-only binding only",
             ),
         ),
-        "integration_gate_blocked_text_present": "integration gate: blocked" in source,
-        "runtime_loop_not_started_text_present": "runtime loop: not started" in source,
-        "runtime_backed_false_text_present": "runtime backed: false" in source,
-        "ready_for_ui_runtime_integration_false_text_present": (
-            "UI runtime integration: false" in source
+        "integration_gate_blocked_fallback_present": (
+            'blockCReadOnlyBindingValue("integrationGateStatus", "blocked")' in source
+        ),
+        "runtime_loop_not_started_fallback_present": (
+            'blockCReadOnlyBindingValue("runtimeLoopStarted", false)' in source
+        ),
+        "runtime_backed_false_fallback_present": (
+            'blockCReadOnlyBindingValue("runtimeBacked", false)' in source
+        ),
+        "ready_for_ui_runtime_integration_false_fallback_present": (
+            'blockCReadOnlyBindingValue("readyForUiRuntimeIntegration", false)' in source
         ),
         "decision_export_live_false_text_present": (
             "decision/export/live readiness: false" in source

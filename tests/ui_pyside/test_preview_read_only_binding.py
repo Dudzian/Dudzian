@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import socket
 import threading
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError, replace
 
 import pytest
@@ -40,6 +41,7 @@ from ui.pyside_app.preview_read_only_binding import (
     build_default_preview_read_only_binding_ui_state,
     build_preview_read_only_binding_snapshot,
     build_preview_read_only_binding_bridge_preflight,
+    build_preview_read_only_binding_bridge_refusal_report,
     build_preview_read_only_binding_ui_state,
     build_preview_read_only_binding_ui_state_boundary_matrix,
     validate_preview_read_only_binding_ui_state_boundary_matrix,
@@ -625,3 +627,120 @@ def test_bridge_preflight_fails_closed_on_unsafe_state() -> None:
 
     with pytest.raises(PreviewReadOnlyBindingError):
         build_preview_read_only_binding_bridge_preflight(state, reread_state=dict(state))
+
+
+def test_bridge_refusal_report_accepts_controlled_negative_controls() -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+    reread_state = dict(state)
+
+    report = build_preview_read_only_binding_bridge_refusal_report(state, reread_state=reread_state)
+
+    assert report == {
+        "bridge_field_name": "blockCReadOnlyBindingState",
+        "refusal_kind": "block_c_read_only_bridge_negative_controls",
+        "read_only_bridge": True,
+        "copy_on_read_required": True,
+        "setters_refused": True,
+        "slots_refused": True,
+        "actions_refused": True,
+        "commands_refused": True,
+        "lifecycle_refused": True,
+        "runtime_loop_refused": True,
+        "export_refused": True,
+        "cloud_external_refused": True,
+        "live_testnet_refused": True,
+        "account_secret_refused": True,
+        "boundary_matrix_all_refused": True,
+        "integration_gate_status": "blocked",
+        "ready_for_ui_runtime_integration": False,
+        "runtime_backed": False,
+        "runtime_loop_started": False,
+        "ui_bound": False,
+        "generated_order_count": 0,
+        "generated_decision_count": 0,
+        "export_sink": "none",
+        "cloud_sink": "none",
+        "external_export": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("mutator", "expected_error"),
+    [
+        (lambda state: state.pop("readOnly"), "missing_ui_state_keys"),
+        (lambda state: state.__setitem__("submitOrderHandler", "blocked"), "unsafe_ui_state_key"),
+        (
+            lambda state: state.__setitem__("scenarioName", lambda: "unsafe"),
+            "callable_ui_state_value",
+        ),
+        (
+            lambda state: state.__setitem__("readyForUiRuntimeIntegration", True),
+            "readyForUiRuntimeIntegration",
+        ),
+        (lambda state: state.__setitem__("runtimeLoopStarted", True), "runtimeLoopStarted"),
+        (lambda state: state.__setitem__("runtimeBacked", True), "runtimeBacked"),
+        (lambda state: state.__setitem__("uiBound", True), "uiBound"),
+        (lambda state: state.__setitem__("generatedOrderCount", 1), "generatedOrderCount"),
+        (lambda state: state.__setitem__("generatedDecisionCount", 1), "generatedDecisionCount"),
+        (lambda state: state.__setitem__("exportSink", "file"), "exportSink"),
+        (lambda state: state.__setitem__("cloudSink", "prod"), "cloudSink"),
+        (lambda state: state.__setitem__("externalExport", True), "externalExport"),
+    ],
+)
+def test_bridge_refusal_report_rejects_unsafe_state(
+    mutator: Callable[[dict[str, object]], object], expected_error: str
+) -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+    mutator(state)
+
+    with pytest.raises(PreviewReadOnlyBindingError, match=expected_error):
+        build_preview_read_only_binding_bridge_refusal_report(state, reread_state=dict(state))
+
+
+def test_bridge_refusal_report_rejects_same_mapping_reference() -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+
+    with pytest.raises(PreviewReadOnlyBindingError, match="copy_on_read"):
+        build_preview_read_only_binding_bridge_refusal_report(state, reread_state=state)
+
+
+def test_bridge_refusal_report_rejects_unsafe_state_with_safe_injected_matrix() -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+    safe_matrix = build_preview_read_only_binding_ui_state_boundary_matrix(state)
+    state["runtimeLoopStarted"] = True
+
+    with pytest.raises(PreviewReadOnlyBindingError, match="runtimeLoopStarted"):
+        build_preview_read_only_binding_bridge_refusal_report(
+            state, reread_state=dict(state), boundary_matrix=safe_matrix
+        )
+
+
+def test_bridge_refusal_report_rejects_unsafe_extra_key_with_safe_injected_matrix() -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+    safe_matrix = build_preview_read_only_binding_ui_state_boundary_matrix(state)
+    state["submitOrderHandler"] = "unsafe"
+
+    with pytest.raises(PreviewReadOnlyBindingError, match="unsafe_ui_state_key"):
+        build_preview_read_only_binding_bridge_refusal_report(
+            state, reread_state=dict(state), boundary_matrix=safe_matrix
+        )
+
+
+def test_bridge_refusal_report_rejects_allowed_boundary_row() -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+    matrix = build_preview_read_only_binding_ui_state_boundary_matrix(state)
+    unsafe_matrix = replace(
+        matrix,
+        rows=(
+            replace(matrix.rows[0], allowed=True, refused=False),
+            *matrix.rows[1:],
+        ),
+        refused_count=matrix.refused_count - 1,
+        allowed_count=1,
+        all_boundaries_refused=False,
+    )
+
+    with pytest.raises(PreviewReadOnlyBindingError):
+        build_preview_read_only_binding_bridge_refusal_report(
+            state, reread_state=dict(state), boundary_matrix=unsafe_matrix
+        )

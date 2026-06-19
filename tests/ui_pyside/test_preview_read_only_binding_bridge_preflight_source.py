@@ -120,6 +120,11 @@ def test_block_c_qml_consumer_uses_bridge_value_helper_and_safe_fallbacks() -> N
         "execute",
         "exportButton",
         "exportHandler",
+        "startRuntime",
+        "stopRuntime",
+        "runRuntime",
+        "command",
+        "lifecycle",
     )
     offenders = [token for token in forbidden_action_tokens if token in panel]
     assert offenders == []
