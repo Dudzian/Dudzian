@@ -16,6 +16,7 @@
         "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
         "bot_core/runtime/paper_preview_integration_gate.py",
         "bot_core/runtime/paper_preview_runtime_service.py",
+        "bot_core/runtime/paper_preview_runtime_service_boundary.py",
         "tests/runtime/test_paper_preview_scenario.py",
         "bot_core/runtime/read_only_market_data.py",
         "tests/runtime/test_read_only_market_data.py"
@@ -26,7 +27,7 @@
         "Confidence/reason/risk fields in the preview default are supplied as serialized demo values unless a runtime source is configured.",
         "Local scenario runner can produce a deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix after paper scenario execution, including scenario state, optional in-memory/static-local market context summary, decision context, dry-run artifact, local artifact audit trail, no-action markers, no-export/no-cloud markers, and blocked engine integration markers.",
         "Dry-run artifact, local bundle, bundle boundary matrix, and local read model are context-only/static-local and generate no orders/decisions; they are not scoring, recommendation, strategy engine, AI/model inference path, DecisionEnvelope integration, TradingController integration, file export, serialization export, cloud sink, external export, or engine handoff.",
-        "Market context is in-memory/static-local fixture only; no real market adapter/fetch yet, no app runtime loop, UI integration, testnet/sandbox adapter, file export, serialization export, cloud sink, external export, serialization payload, or engine handoff exists yet.",
+        "Market context is in-memory/static-local fixture only; no real market adapter/fetch yet, no app runtime loop, UI integration, testnet/sandbox adapter, file export, serialization export, cloud sink, external export, serialization payload, or engine handoff exists yet. Local runtime service wrapper boundary/no-loop matrix refuses runtime loop, scheduler/worker/background, UI binding, controller, decision, export/cloud, live and adapter boundaries; wrapper remains single-shot/static-local; no app runtime loop; no UI binding; no controller handoff; no decision engine; no export/cloud/serialization; no generated decisions/orders; no real market adapter/fetch; no testnet/sandbox adapter. Next step should be local runtime service lifecycle command contract or local snapshot read API, still no loop/UI.",
         "Local scenario runner can produce deterministic local context/artifact/audit bundle; local read model can summarize bundle + boundary matrix for future UI/runtime integration; read model boundary matrix refuses QML/PySide/UI/runtime/export/cloud/engine boundaries; UI/runtime preflight audit lists missing requirements before real integration; preflight/read model/matrix are local/static-only; preflight is not QML/PySide/UI-bound; preflight is not runtime-backed; bundle/read model/matrix/preflight generate no orders/decisions; no scoring, no recommendation, no strategy engine, no AI/model inference, no DecisionEnvelope integration, no TradingController integration, no file export, no serialization export, no cloud sink, no external export; no export/cloud/serialization; market context is in-memory/static-local fixture only; READ_ONLY_MARKET_FETCH is preview-safe; account/balance/credentials/order/fill/live side effects remain blocked; no real market adapter/fetch yet; no app runtime loop; no UI integration; no testnet/sandbox adapter.",
         "BLOK B started: local runtime service wrapper is single-shot/static-local; wrapper can compose local scenario result, bundle, read model, preflight and integration gate; wrapper is not app runtime loop; wrapper is not UI binding; integration gate still blocks real UI/runtime integration; no controller handoff; no decision engine; no export/cloud/serialization; no generated decisions/orders; existing dry-run decision artifact remains context-only; bundle boundary/export refusal still refuses file export, serialization export, cloud sink, external export, and engine handoff; no real market adapter/fetch; no testnet/sandbox adapter; next step should prove wrapper boundary matrix/refusals or service lifecycle no-loop contract."
       ],
@@ -54,6 +55,7 @@
         "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
         "bot_core/runtime/paper_preview_integration_gate.py",
         "bot_core/runtime/paper_preview_runtime_service.py",
+        "bot_core/runtime/paper_preview_runtime_service_boundary.py",
         "tests/runtime/test_paper_preview_scenario.py"
       ],
       "gaps": [
@@ -91,6 +93,7 @@
         "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
         "bot_core/runtime/paper_preview_integration_gate.py",
         "bot_core/runtime/paper_preview_runtime_service.py",
+        "bot_core/runtime/paper_preview_runtime_service_boundary.py",
         "tests/runtime/test_paper_preview_scenario.py"
       ],
       "gaps": [
@@ -155,10 +158,11 @@
         "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
         "bot_core/runtime/paper_preview_integration_gate.py",
         "bot_core/runtime/paper_preview_runtime_service.py",
+        "bot_core/runtime/paper_preview_runtime_service_boundary.py",
         "tests/runtime/test_paper_preview_scenario.py"
       ],
       "gaps": [
-        "Local paper event spine exists with deterministic accepted, rejected, partial fill, fill, and cancel unit-level lifecycle tests and no live exchange/order/account side effects.",
+        "Local paper event spine exists with deterministic accepted, rejected, partial fill, fill, and cancel unit-level lifecycle tests and no live exchange/order/account side effects. Local runtime service wrapper boundary/no-loop matrix refuses runtime loop, scheduler/worker/background, UI binding, controller, decision, export/cloud, live and adapter boundaries; wrapper remains single-shot/static-local; no app runtime loop; no UI binding; no controller handoff; no decision engine; no export/cloud/serialization; no generated decisions/orders; no real market adapter/fetch; no testnet/sandbox adapter. Next step should be local runtime service lifecycle command contract or local snapshot read API, still no loop/UI.",
         "Local paper portfolio reducer now exists as separate unit-level evidence; app runtime/UI integration still missing.",
         "Local paper audit/alerts consumer now exists as separate unit-level evidence and consumes paper order/trade events locally without cloud/export/live side effects.",
         "Local composition proof exists: paper spine, portfolio reducer, and audit journal are wired together locally for submit/reject/cancel/partial/fill snapshot evidence.",
@@ -188,6 +192,7 @@
         "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
         "bot_core/runtime/paper_preview_integration_gate.py",
         "bot_core/runtime/paper_preview_runtime_service.py",
+        "bot_core/runtime/paper_preview_runtime_service_boundary.py",
         "tests/runtime/test_paper_preview_scenario.py",
         "bot_core/runtime/paper_preview_flow.py",
         "tests/runtime/test_paper_preview_flow.py",
@@ -200,7 +205,7 @@
       ],
       "gaps": [
         "Local paper portfolio reducer exists and consumes PaperOrderEvent fill events as static/local unit evidence.",
-        "Paper fills produce deterministic trades/positions and basic realized PnL for long closes without live exchange/order/account side effects.",
+        "Paper fills produce deterministic trades/positions and basic realized PnL for long closes without live exchange/order/account side effects. Local runtime service wrapper boundary/no-loop matrix refuses runtime loop, scheduler/worker/background, UI binding, controller, decision, export/cloud, live and adapter boundaries; wrapper remains single-shot/static-local; no app runtime loop; no UI binding; no controller handoff; no decision engine; no export/cloud/serialization; no generated decisions/orders; no real market adapter/fetch; no testnet/sandbox adapter. Next step should be local runtime service lifecycle command contract or local snapshot read API, still no loop/UI.",
         "Rejected, cancelled, accepted, and other non-fill paper events do not mutate portfolio trades/positions.",
         "App runtime/UI integration still missing; this is not app-runtime-backed portfolio evidence.",
         "Local paper audit/alerts consumer now consumes PaperTrade records as static/local unit evidence without mutating portfolio state.",
@@ -209,7 +214,7 @@
         "Testnet/read-only market feed still missing; no test-server, sandbox, read-only real-data, live account, or balance path is proven here."
       ],
       "paper_only_execution_safe": true,
-      "recommended_next_step": "Keep the local paper portfolio reducer partial: paper fills produce deterministic trades/positions, non-fill events do not mutate portfolio, local composition proof wires trades/positions to audit locally, and a deterministic in-memory scenario runner exists, but there is no app runtime loop, no UI integration, no file loader/export, no file export, no serialization export, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects.",
+      "recommended_next_step": "Keep the local paper portfolio reducer partial: paper fills produce deterministic trades/positions, non-fill events do not mutate portfolio, local composition proof wires trades/positions to audit locally, and a deterministic in-memory scenario runner exists, but there is no app runtime loop, no UI integration, no file loader/export, no file export, no serialization export, no cloud sink, no external export, no testnet/read-only market feed, and no live exchange/order/account side effects. Local runtime service wrapper boundary/no-loop matrix refuses runtime loop, scheduler/worker/background, UI binding, controller, decision, export/cloud, live and adapter boundaries; wrapper remains single-shot/static-local; no app runtime loop; no UI binding; no controller handoff; no decision engine; no export/cloud/serialization; no generated decisions/orders; no real market adapter/fetch; no testnet/sandbox adapter. Next step should be local runtime service lifecycle command contract or local snapshot read API, still no loop/UI.",
       "runtime_backed": false,
       "static_qml_only": false,
       "status": "partial",
@@ -228,6 +233,7 @@
         "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
         "bot_core/runtime/paper_preview_integration_gate.py",
         "bot_core/runtime/paper_preview_runtime_service.py",
+        "bot_core/runtime/paper_preview_runtime_service_boundary.py",
         "tests/runtime/test_paper_preview_scenario.py"
       ],
       "gaps": [

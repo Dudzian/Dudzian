@@ -3223,3 +3223,351 @@ def test_local_runtime_service_wrapper_preview_policy_blocks_live_capabilities()
     ):
         with pytest.raises(PreviewModeContractError):
             build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+from bot_core.runtime.paper_preview_runtime_service import (
+    PaperPreviewRuntimeService,
+    run_paper_preview_runtime_service_once,
+)
+from bot_core.runtime.paper_preview_runtime_service_boundary import (
+    PAPER_PREVIEW_RUNTIME_SERVICE_BOUNDARIES,
+    PaperPreviewRuntimeServiceBoundaryError,
+    build_paper_preview_runtime_service_boundary_matrix,
+)
+
+
+_RUNTIME_SERVICE_BOUNDARY_ORDER = (
+    "app_runtime_loop",
+    "scheduler_loop",
+    "worker_loop",
+    "background_thread",
+    "background_timer",
+    "async_task",
+    "qml_binding",
+    "pyside_bridge",
+    "ui_runtime_binding",
+    "controller_handoff",
+    "trading_controller_handoff",
+    "decision_envelope_handoff",
+    "strategy_engine_handoff",
+    "ai_model_inference_handoff",
+    "scoring_handoff",
+    "recommendation_handoff",
+    "order_generation_handoff",
+    "real_market_adapter",
+    "testnet_sandbox_adapter",
+    "live_exchange_io",
+    "account_balance_fetch",
+    "live_credentials_read",
+    "file_export",
+    "serialized_export",
+    "cloud_sink",
+    "external_export",
+)
+
+
+def _runtime_service_snapshot():
+    return run_paper_preview_runtime_service_once(
+        _scenario(
+            PaperPreviewScenarioStep(
+                action="submit", order_id="boundary-buy", symbol="BTCUSDT", side="buy", quantity=1
+            ),
+            PaperPreviewScenarioStep(action="fill", order_id="boundary-buy", fill_price=100),
+            name="runtime-service-boundary",
+        ),
+        created_at="fixed",
+    )
+
+
+def test_runtime_service_boundary_matrix_exists_and_contains_all_boundaries_in_order() -> None:
+    snapshot = _runtime_service_snapshot()
+    report = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+
+    assert report.report_kind == "local_runtime_service_boundary_no_loop_matrix"
+    assert report.row_count == len(PAPER_PREVIEW_RUNTIME_SERVICE_BOUNDARIES)
+    assert report.all_refused is True
+    assert tuple(row.boundary_kind for row in report.rows) == _RUNTIME_SERVICE_BOUNDARY_ORDER
+    assert PAPER_PREVIEW_RUNTIME_SERVICE_BOUNDARIES == _RUNTIME_SERVICE_BOUNDARY_ORDER
+    assert len(set(row.boundary_kind for row in report.rows)) == report.row_count
+
+
+def test_runtime_service_boundary_rows_mirror_service_safety_flags() -> None:
+    snapshot = _runtime_service_snapshot()
+    report = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+
+    assert report.service_kind == snapshot.service_kind
+    assert report.scenario_name == snapshot.scenario_name
+    assert report.single_shot is True
+    assert report.runtime_loop_started is False
+    assert report.runtime_backed is False
+    assert report.ui_bound is False
+    assert report.read_only is True
+    assert report.paper_only is True
+    assert report.integration_gate_status == "blocked"
+    assert report.ready_for_ui_runtime_integration is False
+    assert report.ready_for_decision_engine is False
+    assert report.ready_for_export is False
+    assert report.generated_order_count == 0
+    assert report.generated_decision_count == 0
+    assert report.export_sink == "none"
+    assert report.cloud_sink == "none"
+    assert report.external_export is False
+    for row in report.rows:
+        assert row.refused is True
+        assert row.service_kind == snapshot.service_kind
+        assert row.scenario_name == snapshot.scenario_name
+        assert row.single_shot is True
+        assert row.runtime_loop_started is False
+        assert row.runtime_backed is False
+        assert row.ui_bound is False
+        assert row.read_only is True
+        assert row.paper_only is True
+        assert row.integration_gate_status == "blocked"
+        assert row.ready_for_ui_runtime_integration is False
+        assert row.ready_for_decision_engine is False
+        assert row.ready_for_export is False
+        assert row.generated_order_count == 0
+        assert row.generated_decision_count == 0
+        assert row.export_sink == "none"
+        assert row.cloud_sink == "none"
+        assert row.external_export is False
+
+
+@pytest.mark.parametrize("boundary", _RUNTIME_SERVICE_BOUNDARY_ORDER[:6])
+def test_runtime_service_boundary_refuses_lifecycle_boundaries(boundary: str) -> None:
+    report = build_paper_preview_runtime_service_boundary_matrix(_runtime_service_snapshot())
+    rows = {row.boundary_kind: row for row in report.rows}
+    assert rows[boundary].refused is True
+
+
+@pytest.mark.parametrize("boundary", _RUNTIME_SERVICE_BOUNDARY_ORDER[6:11])
+def test_runtime_service_boundary_refuses_ui_runtime_controller_boundaries(boundary: str) -> None:
+    report = build_paper_preview_runtime_service_boundary_matrix(_runtime_service_snapshot())
+    rows = {row.boundary_kind: row for row in report.rows}
+    assert rows[boundary].refused is True
+
+
+@pytest.mark.parametrize("boundary", _RUNTIME_SERVICE_BOUNDARY_ORDER[11:17])
+def test_runtime_service_boundary_refuses_decision_order_boundaries(boundary: str) -> None:
+    report = build_paper_preview_runtime_service_boundary_matrix(_runtime_service_snapshot())
+    rows = {row.boundary_kind: row for row in report.rows}
+    assert rows[boundary].refused is True
+
+
+@pytest.mark.parametrize("boundary", _RUNTIME_SERVICE_BOUNDARY_ORDER[17:])
+def test_runtime_service_boundary_refuses_adapter_live_export_boundaries(boundary: str) -> None:
+    report = build_paper_preview_runtime_service_boundary_matrix(_runtime_service_snapshot())
+    rows = {row.boundary_kind: row for row in report.rows}
+    assert rows[boundary].refused is True
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_value"),
+    (
+        ("service_kind", "unsafe"),
+        ("single_shot", False),
+        ("runtime_loop_started", True),
+        ("runtime_backed", True),
+        ("ui_bound", True),
+        ("read_only", False),
+        ("paper_only", False),
+        ("integration_gate_status", "ready"),
+        ("ready_for_ui_runtime_integration", True),
+        ("ready_for_decision_engine", True),
+        ("ready_for_export", True),
+        ("generated_order_count", 1),
+        ("generated_decision_count", 1),
+        ("export_sink", "file"),
+        ("cloud_sink", "prod"),
+        ("external_export", True),
+    ),
+)
+def test_runtime_service_boundary_matrix_fails_closed(field: str, unsafe_value: object) -> None:
+    snapshot = dataclasses.replace(_runtime_service_snapshot(), **{field: unsafe_value})
+    with pytest.raises(PaperPreviewRuntimeServiceBoundaryError, match=field):
+        build_paper_preview_runtime_service_boundary_matrix(snapshot)
+
+
+def test_runtime_service_boundary_matrix_has_no_side_effects_or_forbidden_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _runtime_service_snapshot()
+
+    original_open = builtins.open
+
+    def fail_on_write(file, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("matrix must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", fail_on_write)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no network")),
+    )
+    monkeypatch.setattr(
+        socket, "socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no socket"))
+    )
+
+    import threading
+
+    monkeypatch.setattr(
+        threading,
+        "Thread",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no thread")),
+    )
+    monkeypatch.setattr(
+        threading,
+        "Timer",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no timer")),
+    )
+
+    report = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    forbidden = {
+        "start",
+        "start_loop",
+        "run_loop",
+        "stop_loop",
+        "schedule",
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+        "runtime_handle",
+    }
+    assert forbidden.isdisjoint(set(report.__dataclass_fields__))
+    for row in report.rows:
+        assert forbidden.isdisjoint(set(row.__dataclass_fields__))
+
+
+def test_runtime_service_boundary_matrix_is_deterministic_and_immutable() -> None:
+    snapshot = _runtime_service_snapshot()
+    first = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    second = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+
+    assert first == second
+    assert isinstance(first.rows, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.row_count = 0  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.rows[0].refused = False  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.rows[0] = first.rows[0]  # type: ignore[index]
+
+
+def test_runtime_service_boundary_matrix_does_not_mutate_snapshot_or_paper_flow() -> None:
+    snapshot = _runtime_service_snapshot()
+    before = (
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.blocking_items,
+        snapshot.scenario_result.summary,
+    )
+
+    build_paper_preview_runtime_service_boundary_matrix(snapshot)
+
+    after = (
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.blocking_items,
+        snapshot.scenario_result.summary,
+    )
+    assert after == before
+
+
+def test_runtime_service_boundary_matrix_does_not_add_forbidden_surfaces() -> None:
+    snapshot = _runtime_service_snapshot()
+    service = PaperPreviewRuntimeService(created_at="fixed")
+    report = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    objects = (report, report.rows[0], snapshot, service)
+    forbidden = {
+        "bind_qml",
+        "bind_pyside",
+        "attach_ui",
+        "start_runtime",
+        "run_loop",
+        "connect_signal",
+        "emit_signal",
+        "create_controller",
+        "serialize_for_ui",
+        "qml",
+        "qml_object",
+        "QObject",
+        "signal",
+        "slot",
+        "runtime_handle",
+        "start",
+        "start_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    for obj in objects:
+        assert forbidden.isdisjoint(set(dir(obj)))
+
+
+def test_runtime_service_boundary_preview_policy_keeps_live_capabilities_blocked() -> None:
+    policy = PaperPreviewScenarioRunner(created_at="fixed").policy
+    read_only_policy = build_preview_mode_policy(
+        PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    )
+    assert RuntimeCapability.READ_ONLY_MARKET_FETCH in read_only_policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in policy.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
