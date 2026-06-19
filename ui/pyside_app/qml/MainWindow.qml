@@ -1099,7 +1099,7 @@ ApplicationWindow {
         appendPreviewAlert(rejected ? "Warning" : "Info", "Scanner", rejected ? "Scanner rejected setup" : "Scanner candidate found", bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, "Market Scanner", bestRow.pair, "Explain candidate")
     }
     function runMarketScannerBurst(count) { var ticks = Math.max(0, Number(count) || 0); for (var i = 0; i < ticks; ++i) runMarketScannerTick() }
-    function selectScannerPair(pair) { scannerSelectedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; selectedTerminalPair = scannerSelectedPair; explainScannerCandidate(scannerSelectedPair) }
+    function selectScannerPair(pair) { var requestedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; var row = scannerRowByPair(requestedPair); scannerSelectedPair = row ? row.pair : requestedPair; selectedTerminalPair = scannerSelectedPair; explainScannerCandidate(scannerSelectedPair); selectedTerminalPair = scannerSelectedPair }
     function addScannerPairToWatchlist(pair) { if (pair && !hasValue(scannerWatchlistPairs, pair)) scannerWatchlistPairs = scannerWatchlistPairs.concat([pair]); refreshScannerBuckets() }
     function removeScannerPairFromWatchlist(pair) { var copy = scannerWatchlistPairs ? scannerWatchlistPairs.slice() : []; var idx = copy.indexOf(pair); if (idx >= 0) copy.splice(idx, 1); scannerWatchlistPairs = copy; refreshScannerBuckets() }
     function blacklistScannerPair(pair) { if (pair && !hasValue(blacklistPairs, pair)) blacklistPairs = blacklistPairs.concat([pair]); rebuildMarketScannerRows() }
@@ -1512,7 +1512,7 @@ ApplicationWindow {
         updatePaperEquityPreview(event.status, Number(event.total))
         updatePaperPositionPreview(event)
         appendTerminalLog(event.action + " " + event.pair + " • " + event.status + " • " + event.reason)
-        appendPaperTelemetry("paper order event " + event.action + " " + event.pair + " • " + event.status)
+        appendPaperTelemetry("paper order event " + event.action + " " + event.pair + " • " + event.status + " • " + event.reason)
         appendPaperDecision(event.action, event.reason, event.pair, event.status)
         appendPreviewAlert(event.status === "blocked" ? "Warning" : "Info", "Paper", event.status === "blocked" ? "Paper order blocked" : "Paper order simulated", event.action + " " + event.pair + " • " + event.reason, "Paper Terminal", event.pair, "Explain event")
         terminalSelectedBottomTab = "Orders"
