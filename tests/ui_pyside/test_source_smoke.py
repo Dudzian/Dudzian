@@ -21,6 +21,7 @@ pytestmark = pytest.mark.skipif(
 _PYSIDE_SOURCE_SMOKE_SYMBOLS_LOADED = False
 _PYSIDE_SOURCE_SMOKE_SYMBOL_NAMES = (
     "PREVIEW_LAUNCH_READINESS_CHECKS",
+    "BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS",
     "FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS",
     "FRONTEND_LIVE_PARITY_SMOKE_KEYS",
     "FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS",
@@ -36,6 +37,7 @@ _PYSIDE_SOURCE_SMOKE_SYMBOL_NAMES = (
     "TYPED_PREVIEW_BRIDGE_AUDIT_KEYS",
     "TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS",
     "_audit_typed_preview_bridge",
+    "_block_c_read_only_binding_visible_source_evidence",
     "_build_alerts_telemetry_live_shape_evidence",
     "_build_frontend_live_parity_evidence",
     "_build_market_scanner_live_field_evidence",
@@ -55,6 +57,7 @@ _PYSIDE_SOURCE_SMOKE_SYMBOL_NAMES = (
 # Populated by _load_pyside_source_smoke_symbols() in PySide6-enabled test runs.
 AppOptions = None
 PREVIEW_LAUNCH_READINESS_CHECKS = None
+BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS = None
 FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS = None
 FRONTEND_LIVE_PARITY_SMOKE_KEYS = None
 FRONTEND_ALERTS_TELEMETRY_LIVE_SHAPE_REQUIRED_CHECKS = None
@@ -70,6 +73,7 @@ FRONTEND_ORDER_LIFECYCLE_REQUIRED_CHECKS = None
 TYPED_PREVIEW_BRIDGE_AUDIT_KEYS = None
 TYPED_PREVIEW_BRIDGE_QML_CONSUMER_EVIDENCE_CHECKS = None
 _audit_typed_preview_bridge = None
+_block_c_read_only_binding_visible_source_evidence = None
 _build_alerts_telemetry_live_shape_evidence = None
 _build_frontend_live_parity_evidence = None
 _build_market_scanner_live_field_evidence = None
@@ -242,6 +246,50 @@ def _preview_launch_ready_payload() -> dict[str, object]:
             },
         },
     }
+
+
+def test_block_c_read_only_binding_visible_source_contract() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+    dashboard_source = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS" in smoke_source
+    assert "def _block_c_read_only_binding_visible_source_evidence" in smoke_source
+    assert "operatorDashboardBlockCReadOnlyBindingSummary" in dashboard_source
+    assert "previewBlockCReadOnlyBindingSummaryLabel" in dashboard_source
+    for label in BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS:
+        assert label in dashboard_source
+
+
+def test_block_c_read_only_binding_visible_source_evidence_green() -> None:
+    dashboard_source = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(
+        encoding="utf-8"
+    )
+
+    evidence = _block_c_read_only_binding_visible_source_evidence(dashboard_source)
+
+    assert evidence["all_block_c_read_only_binding_visible_source_checks_passed"] is True
+    assert evidence["failed_checks"] == []
+    assert evidence["object_name"] == "operatorDashboardBlockCReadOnlyBindingSummary"
+    assert evidence["description_object_name"] == "previewBlockCReadOnlyBindingSummaryLabel"
+    assert evidence["panel_source_present"] is True
+    assert evidence["labels_present"] is True
+    assert evidence["no_action_controls"] is True
+
+
+def test_block_c_read_only_binding_visible_source_evidence_fails_closed() -> None:
+    unsafe_source = (
+        'objectName: "operatorDashboardBlockCReadOnlyBindingSummary" '
+        'descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel" '
+        "BLOK C — UI READ-ONLY BINDING runtime backed: true onClicked"
+    )
+
+    evidence = _block_c_read_only_binding_visible_source_evidence(unsafe_source)
+
+    assert evidence["all_block_c_read_only_binding_visible_source_checks_passed"] is False
+    assert "labels_present" in evidence["failed_checks"]
+    assert "no_action_controls" in evidence["failed_checks"]
 
 
 def test_preview_launch_readiness_evidence_helper_contract() -> None:

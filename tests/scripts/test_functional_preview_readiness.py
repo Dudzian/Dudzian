@@ -166,6 +166,32 @@ def test_settings_and_strategy_frontend_parity_evidence_is_not_overstated() -> N
     assert strategy["runtime_backed"] is False
 
 
+def test_preview_mode_contract_includes_block_c_visible_source_proof() -> None:
+    payload = _load_report()
+    section = payload["sections"]["preview_mode_contract"]
+    evidence = set(section["evidence_files"])
+    assert {
+        "ui/pyside_app/preview_read_only_binding.py",
+        "ui/pyside_app/smoke.py",
+        "ui/pyside_app/qml/views/OperatorDashboard.qml",
+        "tests/ui_pyside/test_preview_read_only_binding.py",
+        "tests/ui_pyside/test_source_smoke.py",
+    }.issubset(evidence)
+    assert section["status"] == "partial"
+    assert section["runtime_backed"] is False
+    assert section["supports_read_only_real_data"] is False
+    joined = "\n".join([*section["gaps"], section["recommended_next_step"]])
+    assert "BLOK C now has static-local UI read-only source/visible panel proof" in joined
+    assert "source smoke confirms a read-only visible summary" in joined
+    assert "UI proof does not start runtime loop" in joined
+    assert "integration gate remains blocked" in joined
+    assert "ready_for_ui_runtime_integration remains false" in joined
+    assert (
+        "next step should be wiring read-only binding values into controlled UI state, still without actions"
+        in joined
+    )
+
+
 def test_data_source_market_feed_does_not_use_generic_pyside_live_shape_as_feed_proof() -> None:
     payload = _load_report()
     section = payload["sections"]["data_source_market_feed"]
@@ -537,7 +563,7 @@ def test_service_snapshot_history_readiness_evidence_stays_partial_static_local(
         assert "no generated decisions/orders" in joined
         assert "no real market adapter/fetch" in joined
         assert "no testnet/sandbox adapter" in joined
-        assert "next block should be blok c" in joined
+        assert "blok c now has static-local ui read-only source/visible panel proof" in joined
 
 
 def test_block_b_closure_readiness_evidence_stays_contract_complete_static_local() -> None:
@@ -578,4 +604,4 @@ def test_block_b_closure_readiness_evidence_stays_contract_complete_static_local
         assert "no generated decisions/orders" in joined
         assert "no real market adapter/fetch" in joined
         assert "no testnet/sandbox adapter" in joined
-        assert "next block should be blok c" in joined
+        assert "blok c now has static-local ui read-only source/visible panel proof" in joined
