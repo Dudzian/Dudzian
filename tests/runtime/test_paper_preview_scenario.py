@@ -3258,7 +3258,11 @@ _RUNTIME_SERVICE_BOUNDARY_ORDER = (
     "testnet_sandbox_adapter",
     "live_exchange_io",
     "account_balance_fetch",
+    "live_account_snapshot_read",
     "live_credentials_read",
+    "json_serialization",
+    "yaml_serialization",
+    "csv_serialization",
     "file_export",
     "serialized_export",
     "cloud_sink",
@@ -3598,6 +3602,8 @@ _LIFECYCLE_REFUSED_COMMANDS = (
     "bind_qml",
     "bind_pyside",
     "attach_ui",
+    "lifecycle_command_execution",
+    "command_dispatcher",
     "controller_handoff",
     "trading_controller_handoff",
     "decision_envelope_handoff",
@@ -3611,7 +3617,11 @@ _LIFECYCLE_REFUSED_COMMANDS = (
     "testnet_sandbox_adapter_handoff",
     "live_exchange_io",
     "account_balance_fetch",
+    "live_account_snapshot_read",
     "live_credentials_read",
+    "json_serialization",
+    "yaml_serialization",
+    "csv_serialization",
     "file_export",
     "serialized_export",
     "cloud_sink",
@@ -4284,6 +4294,357 @@ def test_runtime_service_read_api_does_not_add_forbidden_surfaces() -> None:
 
 
 def test_runtime_service_read_api_preview_policy_keeps_live_capabilities_blocked() -> None:
+    policy = PaperPreviewScenarioRunner(created_at="fixed").policy
+    read_only_policy = build_preview_mode_policy(
+        PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    )
+    assert RuntimeCapability.READ_ONLY_MARKET_FETCH in read_only_policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in policy.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+from bot_core.runtime.paper_preview_runtime_service_read_api_boundary import (
+    PAPER_PREVIEW_RUNTIME_SERVICE_READ_API_BOUNDARIES,
+    PaperPreviewRuntimeServiceReadApiBoundaryError,
+    PaperPreviewRuntimeServiceReadApiBoundaryMatrixReport,
+    build_paper_preview_runtime_service_read_api_boundary_matrix,
+)
+
+_READ_API_BOUNDARIES = (
+    "qml_binding",
+    "pyside_bridge",
+    "ui_runtime_binding",
+    "ui_signal_emission",
+    "app_runtime_loop",
+    "lifecycle_command_execution",
+    "command_dispatcher",
+    "scheduler_loop",
+    "worker_loop",
+    "background_thread",
+    "background_timer",
+    "async_task",
+    "controller_handoff",
+    "trading_controller_handoff",
+    "decision_envelope_handoff",
+    "strategy_engine_handoff",
+    "ai_model_inference_handoff",
+    "scoring_handoff",
+    "recommendation_handoff",
+    "order_generation_handoff",
+    "order_submission",
+    "real_market_adapter",
+    "testnet_sandbox_adapter",
+    "live_exchange_io",
+    "account_balance_fetch",
+    "live_account_snapshot_read",
+    "live_credentials_read",
+    "json_serialization",
+    "yaml_serialization",
+    "csv_serialization",
+    "file_export",
+    "serialized_export",
+    "cloud_sink",
+    "external_export",
+)
+
+
+def _runtime_read_api_boundary_report():
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    view = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+    return (
+        snapshot,
+        matrix,
+        contract,
+        view,
+        build_paper_preview_runtime_service_read_api_boundary_matrix(view),
+    )
+
+
+def test_runtime_service_read_api_boundary_matrix_exists() -> None:
+    snapshot, matrix, contract, view, report = _runtime_read_api_boundary_report()
+
+    assert isinstance(snapshot, PaperPreviewRuntimeServiceSnapshot)
+    assert matrix.report_kind == "local_runtime_service_boundary_no_loop_matrix"
+    assert contract.contract_kind == "local_runtime_service_lifecycle_command_contract"
+    assert isinstance(view, PaperPreviewRuntimeServiceReadApiView)
+    assert isinstance(report, PaperPreviewRuntimeServiceReadApiBoundaryMatrixReport)
+    assert report.report_kind == "local_runtime_service_read_api_boundary_no_export_matrix"
+    assert report.row_count == len(PAPER_PREVIEW_RUNTIME_SERVICE_READ_API_BOUNDARIES)
+    assert report.all_refused is True
+
+
+def test_runtime_service_read_api_boundary_matrix_contains_boundaries_once_in_order() -> None:
+    *_, report = _runtime_read_api_boundary_report()
+
+    assert PAPER_PREVIEW_RUNTIME_SERVICE_READ_API_BOUNDARIES == _READ_API_BOUNDARIES
+    assert tuple(row.boundary_kind for row in report.rows) == _READ_API_BOUNDARIES
+    assert len(report.rows) == len(set(row.boundary_kind for row in report.rows))
+
+
+def test_runtime_service_read_api_boundary_rows_mirror_read_api_flags() -> None:
+    *_, view, report = _runtime_read_api_boundary_report()
+
+    assert report.view_kind == view.view_kind
+    assert report.service_kind == view.service_kind
+    assert report.scenario_name == view.scenario_name
+    for row in (report, *report.rows):
+        assert row.view_kind == view.view_kind
+        assert row.service_kind == view.service_kind
+        assert row.scenario_name == view.scenario_name
+        assert row.single_shot is True
+        assert row.runtime_loop_started is False
+        assert row.runtime_backed is False
+        assert row.ui_bound is False
+        assert row.read_only is True
+        assert row.paper_only is True
+        assert row.integration_gate_status == "blocked"
+        assert row.ready_for_ui_runtime_integration is False
+        assert row.ready_for_decision_engine is False
+        assert row.ready_for_export is False
+        assert row.generated_order_count == 0
+        assert row.generated_decision_count == 0
+        assert row.export_sink == "none"
+        assert row.cloud_sink == "none"
+        assert row.external_export is False
+
+
+@pytest.mark.parametrize("boundary", _READ_API_BOUNDARIES)
+def test_runtime_service_read_api_boundary_matrix_refuses_every_boundary(boundary: str) -> None:
+    *_, report = _runtime_read_api_boundary_report()
+    rows = {row.boundary_kind: row for row in report.rows}
+
+    assert rows[boundary].refused is True
+    assert rows[boundary].reason == "refused_by_local_static_read_api_boundary_no_export_matrix"
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_value"),
+    (
+        ("view_kind", "unsafe"),
+        ("service_kind", "unsafe"),
+        ("single_shot", False),
+        ("runtime_loop_started", True),
+        ("runtime_backed", True),
+        ("ui_bound", True),
+        ("read_only", False),
+        ("paper_only", False),
+        ("integration_gate_status", "ready"),
+        ("ready_for_ui_runtime_integration", True),
+        ("ready_for_decision_engine", True),
+        ("ready_for_export", True),
+        ("generated_order_count", 1),
+        ("generated_decision_count", 1),
+        ("export_sink", "file"),
+        ("cloud_sink", "prod"),
+        ("external_export", True),
+        ("lifecycle_allowed_command_count", -1),
+        ("lifecycle_refused_command_count", -1),
+        ("boundary_row_count", 0),
+        ("lifecycle_allowed_commands", ("start_runtime_loop",)),
+        ("lifecycle_refused_commands", ("start_runtime_loop",)),
+    ),
+)
+def test_runtime_service_read_api_boundary_matrix_fails_closed(
+    field: str, unsafe_value: object
+) -> None:
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    view = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+    view = dataclasses.replace(view, **{field: unsafe_value})
+
+    with pytest.raises(PaperPreviewRuntimeServiceReadApiBoundaryError, match=field):
+        build_paper_preview_runtime_service_read_api_boundary_matrix(view)
+
+
+def test_runtime_service_read_api_boundary_matrix_no_side_effects_or_forbidden_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    view = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+    original_open = builtins.open
+
+    def fail_on_write(file, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("read API boundary matrix must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", fail_on_write)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no network")),
+    )
+    monkeypatch.setattr(
+        socket, "socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no socket"))
+    )
+    import threading
+
+    monkeypatch.setattr(
+        threading,
+        "Thread",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no thread")),
+    )
+    monkeypatch.setattr(
+        threading,
+        "Timer",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no timer")),
+    )
+
+    report = build_paper_preview_runtime_service_read_api_boundary_matrix(view)
+    forbidden = {
+        "start",
+        "start_loop",
+        "run_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+        "runtime_handle",
+    }
+    assert forbidden.isdisjoint(set(report.__dataclass_fields__))
+    for row in report.rows:
+        assert forbidden.isdisjoint(set(row.__dataclass_fields__))
+
+
+def test_runtime_service_read_api_boundary_matrix_is_deterministic_immutable_and_preserves_flow() -> (
+    None
+):
+    snapshot, matrix, contract = _runtime_read_api_inputs()
+    view = build_paper_preview_runtime_service_read_api(snapshot, matrix, contract)
+    before = (
+        view.order_event_count,
+        view.trade_count,
+        view.audit_event_count,
+        view.blocking_items,
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.scenario_result.summary,
+    )
+    first = build_paper_preview_runtime_service_read_api_boundary_matrix(view)
+    second = build_paper_preview_runtime_service_read_api_boundary_matrix(view)
+    after = (
+        view.order_event_count,
+        view.trade_count,
+        view.audit_event_count,
+        view.blocking_items,
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.scenario_result.summary,
+    )
+
+    assert first == second
+    assert after == before
+    assert isinstance(first.rows, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.row_count = 0  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.rows[0].refused = False  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.rows[0] = first.rows[0]  # type: ignore[index]
+
+
+def test_runtime_service_read_api_boundary_matrix_does_not_add_forbidden_surfaces() -> None:
+    snapshot, matrix, contract, view, report = _runtime_read_api_boundary_report()
+    service = PaperPreviewRuntimeService(created_at="fixed")
+    objects = (
+        report,
+        report.rows[0],
+        view,
+        contract,
+        contract.command_decisions[0],
+        matrix,
+        matrix.rows[0],
+        snapshot,
+        service,
+    )
+    forbidden = {
+        "bind_qml",
+        "bind_pyside",
+        "attach_ui",
+        "start_runtime",
+        "run_loop",
+        "connect_signal",
+        "emit_signal",
+        "create_controller",
+        "serialize_for_ui",
+        "qml",
+        "qml_object",
+        "QObject",
+        "signal",
+        "slot",
+        "runtime_handle",
+        "start",
+        "start_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    for obj in objects:
+        assert forbidden.isdisjoint(set(dir(obj)))
+
+
+def test_runtime_service_read_api_boundary_preview_policy_keeps_live_capabilities_blocked() -> None:
     policy = PaperPreviewScenarioRunner(created_at="fixed").policy
     read_only_policy = build_preview_mode_policy(
         PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
