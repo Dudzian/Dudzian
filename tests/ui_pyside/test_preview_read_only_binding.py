@@ -36,8 +36,11 @@ from bot_core.runtime.paper_preview_scenario import PaperPreviewScenario, PaperP
 from ui.pyside_app.preview_read_only_binding import (
     PreviewReadOnlyBindingError,
     PreviewReadOnlyBindingSnapshot,
+    PreviewReadOnlyBindingUiStateBoundaryRow,
     build_preview_read_only_binding_snapshot,
     build_preview_read_only_binding_ui_state,
+    build_preview_read_only_binding_ui_state_boundary_matrix,
+    validate_preview_read_only_binding_ui_state_boundary_matrix,
 )
 
 
@@ -77,6 +80,30 @@ FORBIDDEN_SURFACE_NAMES = {
     "callback",
     "handle",
     "account",
+}
+
+
+EXPECTED_BOUNDARY_ROWS = {
+    "qml_action_handler",
+    "command_dispatch",
+    "lifecycle_execution",
+    "runtime_loop",
+    "scheduler_worker_thread_timer",
+    "order_generation",
+    "order_submission",
+    "decision_engine",
+    "trading_controller",
+    "decision_envelope",
+    "strategy_ai_scoring_recommendation",
+    "live_adapter",
+    "testnet_adapter",
+    "real_market_fetch",
+    "account_balance_fetch",
+    "credentials_secret_read",
+    "file_export",
+    "serialization_export",
+    "cloud_external_export",
+    "writable_state_mutation",
 }
 
 EXPECTED_UI_STATE_KEYS = {
@@ -357,3 +384,150 @@ def test_ui_state_is_deterministic_and_has_no_side_effects(
 
     assert first == second
     assert isinstance(first["evidenceStageNames"], tuple)
+
+
+def test_ui_state_boundary_matrix_refuses_all_required_boundaries() -> None:
+    state = build_preview_read_only_binding_ui_state(
+        build_preview_read_only_binding_snapshot(_closure())
+    )
+
+    matrix = build_preview_read_only_binding_ui_state_boundary_matrix(state)
+
+    assert matrix.matrix_kind == "block_c_read_only_ui_state_no_action_boundary_matrix"
+    assert matrix.block_name == "BLOK C — UI READ-ONLY BINDING"
+    assert matrix.source_binding_kind == state["bindingKind"]
+    assert matrix.source_state_key_count == len(EXPECTED_UI_STATE_KEYS)
+    assert {row.boundary_name for row in matrix.rows} == EXPECTED_BOUNDARY_ROWS
+    assert matrix.row_count == len(EXPECTED_BOUNDARY_ROWS)
+    assert matrix.refused_count == matrix.row_count
+    assert matrix.allowed_count == 0
+    assert matrix.all_boundaries_refused is True
+    assert all(row.refused is True for row in matrix.rows)
+    assert all(row.allowed is False for row in matrix.rows)
+    assert all(row.no_side_effect is True for row in matrix.rows)
+
+
+def test_ui_state_boundary_matrix_copies_safety_flags() -> None:
+    snapshot = build_preview_read_only_binding_snapshot(_closure())
+
+    matrix = build_preview_read_only_binding_ui_state_boundary_matrix(snapshot)
+
+    assert matrix.read_only is True
+    assert matrix.static_local is True
+    assert matrix.integration_gate_status == "blocked"
+    assert matrix.ready_for_ui_runtime_integration is False
+    assert matrix.runtime_loop_started is False
+    assert matrix.runtime_backed is False
+    assert matrix.ui_bound is False
+    assert matrix.generated_order_count == 0
+    assert matrix.generated_decision_count == 0
+    assert matrix.export_sink == "none"
+    assert matrix.cloud_sink == "none"
+    assert matrix.external_export is False
+
+
+def test_ui_state_boundary_matrix_fails_closed_on_missing_required_key() -> None:
+    state = build_preview_read_only_binding_ui_state(
+        build_preview_read_only_binding_snapshot(_closure())
+    )
+    state.pop("readOnly")
+
+    with pytest.raises(PreviewReadOnlyBindingError):
+        build_preview_read_only_binding_ui_state_boundary_matrix(state)
+
+
+def test_ui_state_boundary_matrix_fails_closed_on_unsafe_extra_key() -> None:
+    state = build_preview_read_only_binding_ui_state(
+        build_preview_read_only_binding_snapshot(_closure())
+    )
+    state["submitOrderHandler"] = "blocked"
+
+    with pytest.raises(PreviewReadOnlyBindingError):
+        build_preview_read_only_binding_ui_state_boundary_matrix(state)
+
+
+@pytest.mark.parametrize(
+    ("key", "unsafe_value"),
+    [
+        ("readyForUiRuntimeIntegration", True),
+        ("integrationGateStatus", "open"),
+        ("runtimeLoopStarted", True),
+        ("runtimeBacked", True),
+        ("uiBound", True),
+        ("generatedOrderCount", 1),
+        ("generatedDecisionCount", 1),
+        ("exportSink", "file"),
+        ("cloudSink", "prod"),
+        ("externalExport", True),
+    ],
+)
+def test_ui_state_boundary_matrix_fails_closed_on_unsafe_state_value(
+    key: str, unsafe_value: object
+) -> None:
+    state = build_preview_read_only_binding_ui_state(
+        build_preview_read_only_binding_snapshot(_closure())
+    )
+    state[key] = unsafe_value
+
+    with pytest.raises(PreviewReadOnlyBindingError):
+        build_preview_read_only_binding_ui_state_boundary_matrix(state)
+
+
+def test_ui_state_boundary_matrix_fails_closed_on_allowed_row() -> None:
+    matrix = build_preview_read_only_binding_ui_state_boundary_matrix(
+        build_preview_read_only_binding_snapshot(_closure())
+    )
+    unsafe_rows = (
+        PreviewReadOnlyBindingUiStateBoundaryRow(
+            boundary_name="qml_action_handler",
+            allowed=True,
+            refused=False,
+            reason="unsafe",
+            source="test",
+            evidence="test",
+            checked_tokens=("action",),
+            no_side_effect=True,
+        ),
+        *matrix.rows[1:],
+    )
+    unsafe_matrix = replace(
+        matrix,
+        rows=unsafe_rows,
+        refused_count=matrix.refused_count - 1,
+        allowed_count=1,
+        all_boundaries_refused=False,
+    )
+
+    with pytest.raises(PreviewReadOnlyBindingError):
+        validate_preview_read_only_binding_ui_state_boundary_matrix(unsafe_matrix)
+
+
+def test_ui_state_boundary_matrix_is_deterministic_immutable_and_side_effect_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = build_preview_read_only_binding_snapshot(_closure())
+    original_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("file writes must not be used")
+        return original_open(file, mode, *args, **kwargs)
+
+    def forbidden(*args: object, **kwargs: object):
+        raise AssertionError("side effect must not be used")
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(threading, "Thread", forbidden)
+    monkeypatch.setattr(threading, "Timer", forbidden)
+
+    first = build_preview_read_only_binding_ui_state_boundary_matrix(snapshot)
+    second = build_preview_read_only_binding_ui_state_boundary_matrix(snapshot)
+
+    assert first == second
+    assert isinstance(first.rows, tuple)
+    with pytest.raises(FrozenInstanceError):
+        first.allowed_count = 1  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.rows[0] = first.rows[1]  # type: ignore[index]

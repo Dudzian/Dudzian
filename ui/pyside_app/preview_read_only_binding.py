@@ -9,6 +9,7 @@ live/testnet data, read accounts/secrets, or write/export/serialize payloads.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 from bot_core.runtime.paper_preview_runtime_service_closure import (
     PaperPreviewRuntimeServiceClosureReport,
@@ -46,6 +47,47 @@ class PreviewReadOnlyBindingSnapshot:
     ui_bound: bool
     read_only: bool
     paper_only: bool
+    generated_order_count: int
+    generated_decision_count: int
+    export_sink: str
+    cloud_sink: str
+    external_export: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewReadOnlyBindingUiStateBoundaryRow:
+    """Single refused no-action boundary for controlled BLOK C UI state."""
+
+    boundary_name: str
+    allowed: bool
+    refused: bool
+    reason: str
+    source: str
+    evidence: str
+    checked_tokens: tuple[str, ...]
+    no_side_effect: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewReadOnlyBindingUiStateBoundaryMatrix:
+    """Immutable fail-closed no-action matrix for controlled BLOK C UI state."""
+
+    matrix_kind: str
+    block_name: str
+    source_binding_kind: str
+    source_state_key_count: int
+    rows: tuple[PreviewReadOnlyBindingUiStateBoundaryRow, ...]
+    row_count: int
+    refused_count: int
+    allowed_count: int
+    all_boundaries_refused: bool
+    read_only: bool
+    static_local: bool
+    integration_gate_status: str
+    ready_for_ui_runtime_integration: bool
+    runtime_loop_started: bool
+    runtime_backed: bool
+    ui_bound: bool
     generated_order_count: int
     generated_decision_count: int
     export_sink: str
@@ -138,6 +180,258 @@ def build_preview_read_only_binding_ui_state(
     }
 
 
+_REQUIRED_UI_STATE_KEYS = frozenset(
+    {
+        "bindingKind",
+        "blockName",
+        "blockStatus",
+        "nextBlock",
+        "readyForBlockC",
+        "readyForUiRuntimeIntegration",
+        "readyForDecisionEngine",
+        "readyForExport",
+        "readyForLive",
+        "integrationGateStatus",
+        "serviceKind",
+        "scenarioName",
+        "closureScore",
+        "evidenceStageCount",
+        "evidenceStageNames",
+        "checklistPassedCount",
+        "checklistTotalCount",
+        "runtimeLoopStarted",
+        "runtimeBacked",
+        "uiBound",
+        "readOnly",
+        "paperOnly",
+        "generatedOrderCount",
+        "generatedDecisionCount",
+        "exportSink",
+        "cloudSink",
+        "externalExport",
+    }
+)
+
+_ALLOWED_SAFETY_TOKEN_KEYS = frozenset(
+    {
+        "generatedOrderCount",
+        "generatedDecisionCount",
+        "exportSink",
+        "cloudSink",
+        "externalExport",
+        "readyForLive",
+        "readyForExport",
+        "readyForDecisionEngine",
+        "readyForUiRuntimeIntegration",
+        "integrationGateStatus",
+        "runtimeLoopStarted",
+        "runtimeBacked",
+    }
+)
+
+_UNSAFE_EXTRA_KEY_TOKENS = (
+    "action",
+    "command",
+    "callback",
+    "handler",
+    "execute",
+    "start",
+    "stop",
+    "submit",
+    "cancel",
+    "order",
+    "orderSubmit",
+    "generateOrder",
+    "lifecycle",
+    "scheduler",
+    "worker",
+    "thread",
+    "timer",
+    "async",
+    "websocket",
+    "socket",
+    "http",
+    "export",
+    "serialize",
+    "filePath",
+    "cloud",
+    "external",
+    "live",
+    "testnet",
+    "account",
+    "balance",
+    "credential",
+    "secret",
+    "TradingController",
+    "DecisionEnvelope",
+    "strategy",
+    "scoring",
+    "recommendation",
+    "confidence",
+)
+
+_BOUNDARY_ROW_SPECS = (
+    ("qml_action_handler", ("action", "handler", "callback")),
+    ("command_dispatch", ("command", "execute")),
+    ("lifecycle_execution", ("lifecycle", "start", "stop")),
+    ("runtime_loop", ("runtimeLoopStarted", "runtimeBacked")),
+    ("scheduler_worker_thread_timer", ("scheduler", "worker", "thread", "timer", "async")),
+    ("order_generation", ("generateOrder", "order")),
+    ("order_submission", ("orderSubmit", "submit", "cancel")),
+    ("decision_engine", ("readyForDecisionEngine", "decision")),
+    ("trading_controller", ("TradingController", "controller")),
+    ("decision_envelope", ("DecisionEnvelope", "decision")),
+    ("strategy_ai_scoring_recommendation", ("strategy", "scoring", "recommendation", "confidence")),
+    ("live_adapter", ("live", "readyForLive")),
+    ("testnet_adapter", ("testnet",)),
+    ("real_market_fetch", ("http", "websocket", "socket")),
+    ("account_balance_fetch", ("account", "balance")),
+    ("credentials_secret_read", ("credential", "secret")),
+    ("file_export", ("filePath", "exportSink")),
+    ("serialization_export", ("serialize", "export")),
+    ("cloud_external_export", ("cloudSink", "externalExport")),
+    ("writable_state_mutation", ("readOnly", "uiBound")),
+)
+
+
+def build_preview_read_only_binding_ui_state_boundary_matrix(
+    snapshot_or_state: PreviewReadOnlyBindingSnapshot | Mapping[str, object],
+) -> PreviewReadOnlyBindingUiStateBoundaryMatrix:
+    """Build a deterministic fail-closed no-action matrix for BLOK C UI state."""
+
+    if isinstance(snapshot_or_state, PreviewReadOnlyBindingSnapshot):
+        state = build_preview_read_only_binding_ui_state(snapshot_or_state)
+    else:
+        state = dict(snapshot_or_state)
+    _validate_controlled_ui_state_for_boundary_matrix(state)
+
+    rows = tuple(
+        PreviewReadOnlyBindingUiStateBoundaryRow(
+            boundary_name=boundary_name,
+            allowed=False,
+            refused=True,
+            reason="controlled BLOK C UI state is static-local read-only data, not an action/runtime/export/live boundary",
+            source="PreviewReadOnlyBindingSnapshot controlled UI state",
+            evidence="integration gate blocked; runtime/UI/export/live safety flags remain false/none/zero",
+            checked_tokens=tuple(checked_tokens),
+            no_side_effect=True,
+        )
+        for boundary_name, checked_tokens in _BOUNDARY_ROW_SPECS
+    )
+    matrix = PreviewReadOnlyBindingUiStateBoundaryMatrix(
+        matrix_kind="block_c_read_only_ui_state_no_action_boundary_matrix",
+        block_name="BLOK C — UI READ-ONLY BINDING",
+        source_binding_kind=str(state["bindingKind"]),
+        source_state_key_count=len(state),
+        rows=rows,
+        row_count=len(rows),
+        refused_count=sum(1 for row in rows if row.refused),
+        allowed_count=sum(1 for row in rows if row.allowed),
+        all_boundaries_refused=all(row.refused and not row.allowed for row in rows),
+        read_only=state["readOnly"] is True,
+        static_local=True,
+        integration_gate_status=str(state["integrationGateStatus"]),
+        ready_for_ui_runtime_integration=state["readyForUiRuntimeIntegration"] is True,
+        runtime_loop_started=state["runtimeLoopStarted"] is True,
+        runtime_backed=state["runtimeBacked"] is True,
+        ui_bound=state["uiBound"] is True,
+        generated_order_count=int(state["generatedOrderCount"]),
+        generated_decision_count=int(state["generatedDecisionCount"]),
+        export_sink=str(state["exportSink"]),
+        cloud_sink=str(state["cloudSink"]),
+        external_export=state["externalExport"] is True,
+    )
+    validate_preview_read_only_binding_ui_state_boundary_matrix(matrix)
+    return matrix
+
+
+def validate_preview_read_only_binding_ui_state_boundary_matrix(
+    matrix: PreviewReadOnlyBindingUiStateBoundaryMatrix,
+) -> None:
+    """Fail closed if a BLOK C UI state boundary matrix overclaims or allows actions."""
+
+    checks = (
+        (
+            matrix.matrix_kind == "block_c_read_only_ui_state_no_action_boundary_matrix",
+            "matrix_kind",
+        ),
+        (matrix.block_name == "BLOK C — UI READ-ONLY BINDING", "block_name"),
+        (
+            matrix.source_binding_kind == "static_local_block_b_closure_ui_read_only_binding",
+            "source_binding_kind",
+        ),
+        (matrix.source_state_key_count == len(_REQUIRED_UI_STATE_KEYS), "source_state_key_count"),
+        (matrix.row_count == len(matrix.rows) == len(_BOUNDARY_ROW_SPECS), "row_count"),
+        (matrix.refused_count == matrix.row_count, "refused_count"),
+        (matrix.allowed_count == 0, "allowed_count"),
+        (matrix.all_boundaries_refused is True, "all_boundaries_refused"),
+        (matrix.read_only is True, "read_only"),
+        (matrix.static_local is True, "static_local"),
+        (matrix.integration_gate_status == "blocked", "integration_gate_status"),
+        (matrix.ready_for_ui_runtime_integration is False, "ready_for_ui_runtime_integration"),
+        (matrix.runtime_loop_started is False, "runtime_loop_started"),
+        (matrix.runtime_backed is False, "runtime_backed"),
+        (matrix.ui_bound is False, "ui_bound"),
+        (matrix.generated_order_count == 0, "generated_order_count"),
+        (matrix.generated_decision_count == 0, "generated_decision_count"),
+        (matrix.export_sink == "none", "export_sink"),
+        (matrix.cloud_sink == "none", "cloud_sink"),
+        (matrix.external_export is False, "external_export"),
+    )
+    for passed, label in checks:
+        if not passed:
+            raise PreviewReadOnlyBindingError(label)
+    for row in matrix.rows:
+        if row.allowed or not row.refused or not row.no_side_effect:
+            raise PreviewReadOnlyBindingError(f"boundary_row:{row.boundary_name}")
+
+
+def _validate_controlled_ui_state_for_boundary_matrix(state: Mapping[str, object]) -> None:
+    missing = _REQUIRED_UI_STATE_KEYS.difference(state)
+    if missing:
+        raise PreviewReadOnlyBindingError(f"missing_ui_state_keys:{sorted(missing)}")
+    for key in state:
+        if key not in _REQUIRED_UI_STATE_KEYS and _contains_unsafe_extra_key_token(key):
+            raise PreviewReadOnlyBindingError(f"unsafe_ui_state_key:{key}")
+    if set(state) != _REQUIRED_UI_STATE_KEYS:
+        raise PreviewReadOnlyBindingError("unexpected_ui_state_keys")
+    if any(callable(value) for value in state.values()):
+        raise PreviewReadOnlyBindingError("callable_ui_state_value")
+    checks = (
+        (
+            state["bindingKind"] == "static_local_block_b_closure_ui_read_only_binding",
+            "bindingKind",
+        ),
+        (state["blockStatus"] == "contract_complete_static_local", "blockStatus"),
+        (state["readyForBlockC"] is True, "readyForBlockC"),
+        (state["readyForUiRuntimeIntegration"] is False, "readyForUiRuntimeIntegration"),
+        (state["readyForDecisionEngine"] is False, "readyForDecisionEngine"),
+        (state["readyForExport"] is False, "readyForExport"),
+        (state["readyForLive"] is False, "readyForLive"),
+        (state["integrationGateStatus"] == "blocked", "integrationGateStatus"),
+        (state["runtimeLoopStarted"] is False, "runtimeLoopStarted"),
+        (state["runtimeBacked"] is False, "runtimeBacked"),
+        (state["uiBound"] is False, "uiBound"),
+        (state["readOnly"] is True, "readOnly"),
+        (state["paperOnly"] is True, "paperOnly"),
+        (state["generatedOrderCount"] == 0, "generatedOrderCount"),
+        (state["generatedDecisionCount"] == 0, "generatedDecisionCount"),
+        (state["exportSink"] == "none", "exportSink"),
+        (state["cloudSink"] == "none", "cloudSink"),
+        (state["externalExport"] is False, "externalExport"),
+    )
+    for passed, label in checks:
+        if not passed:
+            raise PreviewReadOnlyBindingError(label)
+
+
+def _contains_unsafe_extra_key_token(key: str) -> bool:
+    if key in _ALLOWED_SAFETY_TOKEN_KEYS:
+        return False
+    lowered = key.lower()
+    return any(token.lower() in lowered for token in _UNSAFE_EXTRA_KEY_TOKENS)
+
+
 def _validate_binding_snapshot(snapshot: PreviewReadOnlyBindingSnapshot) -> None:
     checks = (
         (
@@ -205,6 +499,10 @@ def _validate_closure_report(closure_report: PaperPreviewRuntimeServiceClosureRe
 __all__ = [
     "PreviewReadOnlyBindingError",
     "PreviewReadOnlyBindingSnapshot",
+    "PreviewReadOnlyBindingUiStateBoundaryMatrix",
+    "PreviewReadOnlyBindingUiStateBoundaryRow",
     "build_preview_read_only_binding_snapshot",
     "build_preview_read_only_binding_ui_state",
+    "build_preview_read_only_binding_ui_state_boundary_matrix",
+    "validate_preview_read_only_binding_ui_state_boundary_matrix",
 ]
