@@ -2139,6 +2139,8 @@ ApplicationWindow {
         currentPanelId = panelId
         if (layoutController)
             layoutController.setPanelVisibility(panelId, true)
+        if (panelId === "terminalPanel")
+            ensureSelectedTerminalPair()
     }
 
     function showOperatorDashboard() {
