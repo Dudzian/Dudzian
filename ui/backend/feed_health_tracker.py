@@ -260,9 +260,13 @@ class FeedHealthTracker:
             stats_payload.update(
                 {"min_ms": 0.0, "max_ms": 0.0, "avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0}
             )
-        if "lastLatencyMs" in health:
-            stats_payload["last_latency_ms"] = float(health["lastLatencyMs"])
-            stats_payload["lastLatencyMs"] = float(health["lastLatencyMs"])
+        last_latency_value = health.get("lastLatencyMs")
+        if last_latency_value is None and latencies:
+            last_latency_value = latencies[-1]
+        if last_latency_value is not None:
+            last_latency_ms = max(0.0, float(last_latency_value))
+            stats_payload["last_latency_ms"] = last_latency_ms
+            stats_payload["lastLatencyMs"] = last_latency_ms
         latency_p95 = float(stats_payload.get("p95_ms", 0.0))
         stats_payload["latency_p95_ms"] = latency_p95
         stats_payload["p95_seconds"] = latency_p95 / 1000.0
