@@ -43,6 +43,7 @@ _PYSIDE_SOURCE_SMOKE_SYMBOL_NAMES = (
     "_build_frontend_live_parity_evidence",
     "_build_market_scanner_live_field_evidence",
     "_build_operator_workflow_evidence",
+    "_operator_pair_state_matches",
     "_build_portfolio_live_shape_evidence",
     "_build_order_lifecycle_parity_evidence",
     "_build_risk_live_safety_controls_evidence",
@@ -80,6 +81,7 @@ _build_alerts_telemetry_live_shape_evidence = None
 _build_frontend_live_parity_evidence = None
 _build_market_scanner_live_field_evidence = None
 _build_operator_workflow_evidence = None
+_operator_pair_state_matches = None
 _build_portfolio_live_shape_evidence = None
 _build_order_lifecycle_parity_evidence = None
 _build_risk_live_safety_controls_evidence = None
@@ -669,11 +671,54 @@ def test_operator_workflow_evidence_helper_contract() -> None:
         "if continuity_pair:\n"
         '        _invoke_qml(root, "selectScannerPair", continuity_pair)\n'
         "        _process_events()\n"
-        '    selected_pair = _string_property(root, "scannerSelectedPair")'
+        '    selected_pair = _string_property(root, "scannerSelectedPair")\n'
+        '    _invoke_show_panel(root, "terminalPanel")\n'
+        "    _process_events()\n"
+        '    selected_terminal_pair = _string_property(root, "selectedTerminalPair")'
     ) in smoke_source
     assert "operator_source_diagnostic" not in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS
     for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS:
         assert key in smoke_source
+
+
+def test_operator_workflow_pair_state_matches_canonical_values() -> None:
+    updates_shared, terminal_matches, diagnostic = _operator_pair_state_matches(
+        " btc-usdt ", "BTC/USDT", "BTC/USDT"
+    )
+
+    assert updates_shared is True
+    assert terminal_matches is True
+    assert diagnostic["selected_candidate_pair_raw"] == " btc-usdt "
+    assert diagnostic["selected_candidate_pair_canonical"] == "BTC/USDT"
+    assert diagnostic["terminal_selected_pair_canonical"] == "BTC/USDT"
+
+
+def test_operator_workflow_pair_state_fails_closed_when_terminal_pair_differs() -> None:
+    updates_shared, terminal_matches, diagnostic = _operator_pair_state_matches(
+        "BTC/USDT", "BTC/USDT", "ETH/USDT"
+    )
+
+    assert updates_shared is False
+    assert terminal_matches is False
+    assert diagnostic["scanner_selected_pair_raw"] == "BTC/USDT"
+    assert diagnostic["terminal_selected_pair_raw"] == "ETH/USDT"
+
+
+def test_operator_workflow_runtime_audit_selects_flushes_opens_terminal_then_compares() -> None:
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert (
+        '        _invoke_qml(root, "selectScannerPair", continuity_pair)\n'
+        "        _process_events()\n"
+        '    selected_pair = _string_property(root, "scannerSelectedPair")\n'
+        '    _invoke_show_panel(root, "terminalPanel")\n'
+        "    _process_events()\n"
+        '    selected_terminal_pair = _string_property(root, "selectedTerminalPair")'
+    ) in smoke_source
+    assert "_operator_pair_state_matches(" in smoke_source
+    assert "operator_scanner_selected_pair_diagnostic" in smoke_source
+    assert "operator_terminal_selected_pair_diagnostic" in smoke_source
+    assert "operator_pair_match_diagnostic" in smoke_source
 
 
 def test_operator_workflow_evidence_complete() -> None:
