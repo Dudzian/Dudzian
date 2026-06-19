@@ -4663,3 +4663,507 @@ def test_runtime_service_read_api_boundary_preview_policy_keeps_live_capabilitie
     ):
         with pytest.raises(PreviewModeContractError):
             build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+from bot_core.runtime.paper_preview_runtime_service_refusal_executor import (
+    PaperPreviewRuntimeServiceRefusalAttempt,
+    PaperPreviewRuntimeServiceRefusalExecutorError,
+    PaperPreviewRuntimeServiceRefusalExecutorReport,
+    PaperPreviewRuntimeServiceRefusalResult,
+    attempt_paper_preview_runtime_service_refusal,
+    build_paper_preview_runtime_service_refusal_executor_report,
+)
+
+_ALLOWED_REFUSAL_EXECUTOR_COMMANDS = (
+    "run_once_local_scenario",
+    "read_local_snapshot",
+    "inspect_integration_gate",
+    "inspect_boundary_matrix",
+)
+
+
+def _runtime_refusal_executor_inputs():
+    snapshot, service_matrix, contract, view, read_api_matrix = _runtime_read_api_boundary_report()
+    return snapshot, service_matrix, contract, view, read_api_matrix
+
+
+def _attempt_boundary(boundary: str) -> PaperPreviewRuntimeServiceRefusalResult:
+    _, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+    return attempt_paper_preview_runtime_service_refusal(
+        view,
+        read_api_matrix,
+        contract,
+        attempted_kind="boundary",
+        attempted_name=boundary,
+    )
+
+
+def _attempt_command(command: str) -> PaperPreviewRuntimeServiceRefusalResult:
+    _, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+    return attempt_paper_preview_runtime_service_refusal(
+        view,
+        read_api_matrix,
+        contract,
+        attempted_kind="command",
+        attempted_name=command,
+    )
+
+
+def test_runtime_service_refusal_executor_proof_exists() -> None:
+    snapshot, service_matrix, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+
+    assert isinstance(snapshot, PaperPreviewRuntimeServiceSnapshot)
+    assert service_matrix.report_kind == "local_runtime_service_boundary_no_loop_matrix"
+    assert contract.contract_kind == "local_runtime_service_lifecycle_command_contract"
+    assert view.view_kind == "local_runtime_service_snapshot_read_api"
+    assert read_api_matrix.report_kind == "local_runtime_service_read_api_boundary_no_export_matrix"
+
+    result = attempt_paper_preview_runtime_service_refusal(
+        view,
+        read_api_matrix,
+        contract,
+        attempted_kind="boundary",
+        attempted_name="json_serialization",
+    )
+
+    assert isinstance(result, PaperPreviewRuntimeServiceRefusalResult)
+    assert result.attempted_kind == "boundary"
+    assert result.attempted_name == "json_serialization"
+    assert result.refused is True
+    assert result.executed is False
+    assert "refusal" in result.reason
+    assert result.view_kind == view.view_kind
+    assert result.service_kind == view.service_kind
+    assert result.scenario_name == view.scenario_name
+    assert result.single_shot is True
+    assert result.runtime_loop_started is False
+    assert result.runtime_backed is False
+    assert result.ui_bound is False
+    assert result.read_only is True
+    assert result.paper_only is True
+    assert result.integration_gate_status == "blocked"
+    assert result.generated_order_count == 0
+    assert result.generated_decision_count == 0
+    assert result.export_sink == "none"
+    assert result.cloud_sink == "none"
+    assert result.external_export is False
+
+
+@pytest.mark.parametrize("boundary", _READ_API_BOUNDARIES)
+def test_runtime_service_refusal_executor_refused_boundaries_are_non_executed(
+    boundary: str,
+) -> None:
+    first = _attempt_boundary(boundary)
+    second = _attempt_boundary(boundary)
+
+    assert first == second
+    assert first.refused is True
+    assert first.executed is False
+    assert first.reason == "refusal: refused_by_local_static_read_api_boundary_no_export_matrix"
+
+
+@pytest.mark.parametrize("command", _runtime_read_api_inputs()[2].refused_commands)
+def test_runtime_service_refusal_executor_refused_lifecycle_commands_are_non_executed(
+    command: str,
+) -> None:
+    result = _attempt_command(command)
+
+    assert result.attempted_kind == "command"
+    assert result.attempted_name == command
+    assert result.refused is True
+    assert result.executed is False
+    assert (
+        result.reason == "refusal: refused_by_local_static_single_shot_lifecycle_command_contract"
+    )
+
+
+def test_runtime_service_refusal_executor_covers_explicit_refused_commands() -> None:
+    for command in (
+        "command_dispatcher",
+        "lifecycle_command_execution",
+        "start_runtime_loop",
+        "json_serialization",
+        "file_export",
+        "cloud_sink",
+        "external_export",
+    ):
+        result = _attempt_command(command)
+        assert result.refused is True
+        assert result.executed is False
+
+
+@pytest.mark.parametrize("command", _ALLOWED_REFUSAL_EXECUTOR_COMMANDS)
+def test_runtime_service_refusal_executor_allowed_local_introspection_is_static_only(
+    command: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+
+    def fail_runner(*args, **kwargs):
+        raise AssertionError("refusal executor must not call scenario runner")
+
+    monkeypatch.setattr(PaperPreviewScenarioRunner, "run", fail_runner)
+    result = attempt_paper_preview_runtime_service_refusal(
+        view, read_api_matrix, contract, attempted_kind="command", attempted_name=command
+    )
+
+    assert result.attempted_kind == "command"
+    assert result.attempted_name == command
+    assert result.refused is False
+    assert result.executed is False
+    reason = result.reason.lower()
+    assert "static local introspection" in reason
+    assert "already-composed local evidence" in reason
+    assert "does not execute commands" in reason
+
+
+def test_runtime_service_refusal_executor_report_aggregates_attempts() -> None:
+    _, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+    attempts = (
+        PaperPreviewRuntimeServiceRefusalAttempt("boundary", "json_serialization"),
+        PaperPreviewRuntimeServiceRefusalAttempt("command", "command_dispatcher"),
+        PaperPreviewRuntimeServiceRefusalAttempt("command", "read_local_snapshot"),
+    )
+
+    report = build_paper_preview_runtime_service_refusal_executor_report(
+        view, read_api_matrix, contract, attempts
+    )
+
+    assert isinstance(report, PaperPreviewRuntimeServiceRefusalExecutorReport)
+    assert report.report_kind == "local_runtime_service_refusal_executor_proof"
+    assert report.attempt_count == 3
+    assert report.refused_attempt_count == 2
+    assert report.executed_attempt_count == 0
+    assert report.all_refused_or_static_ack is True
+    assert report.single_shot is True
+    assert report.runtime_loop_started is False
+    assert report.runtime_backed is False
+    assert report.ui_bound is False
+    assert report.read_only is True
+    assert report.paper_only is True
+    assert report.integration_gate_status == "blocked"
+    assert report.generated_order_count == 0
+    assert report.generated_decision_count == 0
+    assert report.export_sink == "none"
+    assert report.cloud_sink == "none"
+    assert report.external_export is False
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "unsafe_value", "match"),
+    (
+        ("view", "view_kind", "unsafe", "view.view_kind"),
+        ("matrix", "report_kind", "unsafe", "read_api_boundary_matrix.report_kind"),
+        ("contract", "contract_kind", "unsafe", "lifecycle_contract.contract_kind"),
+        ("matrix", "service_kind", "unsafe", "matrix.service_kind"),
+        ("contract", "service_kind", "unsafe", "contract.service_kind"),
+        ("matrix", "scenario_name", "unsafe", "matrix.scenario_name"),
+        ("contract", "scenario_name", "unsafe", "contract.scenario_name"),
+        ("matrix", "all_refused", False, "matrix.all_refused"),
+        ("matrix", "row_count", -1, "matrix.row_count"),
+        ("contract", "command_count", -1, "lifecycle_contract.command_count"),
+        ("contract", "allowed_command_count", -1, "lifecycle_contract.allowed_command_count"),
+        ("contract", "refused_command_count", -1, "lifecycle_contract.refused_command_count"),
+        ("view", "single_shot", False, "view.single_shot"),
+        ("matrix", "runtime_loop_started", True, "read_api_boundary_matrix.runtime_loop_started"),
+        ("contract", "runtime_backed", True, "lifecycle_contract.runtime_backed"),
+        ("view", "ui_bound", True, "view.ui_bound"),
+        ("matrix", "read_only", False, "read_api_boundary_matrix.read_only"),
+        ("contract", "paper_only", False, "lifecycle_contract.paper_only"),
+        ("view", "integration_gate_status", "ready", "view.integration_gate_status"),
+        ("matrix", "generated_order_count", 1, "read_api_boundary_matrix.generated_order_count"),
+        ("contract", "generated_decision_count", 1, "lifecycle_contract.generated_decision_count"),
+        ("view", "export_sink", "file", "view.export_sink"),
+        ("matrix", "cloud_sink", "prod", "read_api_boundary_matrix.cloud_sink"),
+        ("contract", "external_export", True, "lifecycle_contract.external_export"),
+        (
+            "contract",
+            "allowed_commands",
+            ("read_local_snapshot",),
+            "lifecycle_contract.allowed_commands",
+        ),
+    ),
+)
+def test_runtime_service_refusal_executor_fails_closed_for_inconsistent_inputs(
+    target: str, field: str, unsafe_value: object, match: str
+) -> None:
+    _, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+    if target == "view":
+        view = dataclasses.replace(view, **{field: unsafe_value})
+    elif target == "matrix":
+        read_api_matrix = dataclasses.replace(read_api_matrix, **{field: unsafe_value})
+    else:
+        contract = dataclasses.replace(contract, **{field: unsafe_value})
+
+    with pytest.raises(PaperPreviewRuntimeServiceRefusalExecutorError, match=match):
+        attempt_paper_preview_runtime_service_refusal(
+            view,
+            read_api_matrix,
+            contract,
+            attempted_kind="boundary",
+            attempted_name="json_serialization",
+        )
+
+
+def test_runtime_service_refusal_executor_fails_closed_for_unknown_attempts() -> None:
+    _, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+    with pytest.raises(PaperPreviewRuntimeServiceRefusalExecutorError, match="unknown boundary"):
+        attempt_paper_preview_runtime_service_refusal(
+            view, read_api_matrix, contract, attempted_kind="boundary", attempted_name="unknown"
+        )
+    with pytest.raises(PaperPreviewRuntimeServiceRefusalExecutorError, match="unknown command"):
+        attempt_paper_preview_runtime_service_refusal(
+            view, read_api_matrix, contract, attempted_kind="command", attempted_name="unknown"
+        )
+    with pytest.raises(PaperPreviewRuntimeServiceRefusalExecutorError, match="attempted_kind"):
+        attempt_paper_preview_runtime_service_refusal(
+            view,
+            read_api_matrix,
+            contract,
+            attempted_kind="unsafe",
+            attempted_name="unknown",  # type: ignore[arg-type]
+        )
+
+
+def test_runtime_service_refusal_executor_no_file_network_thread_timer_or_forbidden_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+    original_open = builtins.open
+
+    def fail_on_write(file, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("refusal executor must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", fail_on_write)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no network")),
+    )
+    monkeypatch.setattr(
+        socket, "socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no socket"))
+    )
+    import threading
+
+    monkeypatch.setattr(
+        threading,
+        "Thread",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no thread")),
+    )
+    monkeypatch.setattr(
+        threading,
+        "Timer",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no timer")),
+    )
+
+    results = tuple(
+        attempt_paper_preview_runtime_service_refusal(
+            view,
+            read_api_matrix,
+            contract,
+            attempted_kind="command" if name in contract.refused_commands else "boundary",
+            attempted_name=name,
+        )
+        for name in ("json_serialization", "command_dispatcher")
+    ) + tuple(
+        attempt_paper_preview_runtime_service_refusal(
+            view, read_api_matrix, contract, attempted_kind="command", attempted_name=command
+        )
+        for command in _ALLOWED_REFUSAL_EXECUTOR_COMMANDS
+    )
+    report = build_paper_preview_runtime_service_refusal_executor_report(
+        view,
+        read_api_matrix,
+        contract,
+        tuple(
+            PaperPreviewRuntimeServiceRefusalAttempt(r.attempted_kind, r.attempted_name)
+            for r in results
+        ),
+    )
+    forbidden = {
+        "start",
+        "start_loop",
+        "run_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+        "runtime_handle",
+    }
+    for obj in (*results, report):
+        assert forbidden.isdisjoint(set(obj.__dataclass_fields__))
+
+
+def test_runtime_service_refusal_executor_is_deterministic_immutable_and_preserves_flow() -> None:
+    snapshot, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+    before = (
+        view.order_event_count,
+        view.trade_count,
+        view.audit_event_count,
+        view.blocking_items,
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.scenario_result.summary,
+    )
+    first = attempt_paper_preview_runtime_service_refusal(
+        view,
+        read_api_matrix,
+        contract,
+        attempted_kind="boundary",
+        attempted_name="json_serialization",
+    )
+    second = attempt_paper_preview_runtime_service_refusal(
+        view,
+        read_api_matrix,
+        contract,
+        attempted_kind="boundary",
+        attempted_name="json_serialization",
+    )
+    attempts = (PaperPreviewRuntimeServiceRefusalAttempt("boundary", "json_serialization"),)
+    first_report = build_paper_preview_runtime_service_refusal_executor_report(
+        view, read_api_matrix, contract, attempts
+    )
+    second_report = build_paper_preview_runtime_service_refusal_executor_report(
+        view, read_api_matrix, contract, attempts
+    )
+    after = (
+        view.order_event_count,
+        view.trade_count,
+        view.audit_event_count,
+        view.blocking_items,
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.scenario_result.summary,
+    )
+
+    assert first == second
+    assert first_report == second_report
+    assert after == before
+    assert isinstance(first_report.attempts, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.refused = False  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first_report.attempt_count = 0  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first_report.attempts[0] = first  # type: ignore[index]
+
+
+def test_runtime_service_refusal_executor_does_not_add_forbidden_surfaces() -> None:
+    snapshot, _, contract, view, read_api_matrix = _runtime_refusal_executor_inputs()
+    service = PaperPreviewRuntimeService(created_at="fixed")
+    result = _attempt_boundary("json_serialization")
+    report = build_paper_preview_runtime_service_refusal_executor_report(
+        view,
+        read_api_matrix,
+        contract,
+        (PaperPreviewRuntimeServiceRefusalAttempt("command", "read_local_snapshot"),),
+    )
+    objects = (
+        result,
+        report,
+        view,
+        contract,
+        contract.command_decisions[0],
+        read_api_matrix,
+        read_api_matrix.rows[0],
+        snapshot,
+        service,
+    )
+    forbidden = {
+        "bind_qml",
+        "bind_pyside",
+        "attach_ui",
+        "start_runtime",
+        "run_loop",
+        "connect_signal",
+        "emit_signal",
+        "create_controller",
+        "serialize_for_ui",
+        "qml",
+        "qml_object",
+        "QObject",
+        "signal",
+        "slot",
+        "runtime_handle",
+        "start",
+        "start_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    for obj in objects:
+        assert forbidden.isdisjoint(set(dir(obj)))
+
+
+def test_runtime_service_refusal_executor_preview_policy_keeps_live_capabilities_blocked() -> None:
+    policy = PaperPreviewScenarioRunner(created_at="fixed").policy
+    read_only_policy = build_preview_mode_policy(
+        PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    )
+    assert RuntimeCapability.READ_ONLY_MARKET_FETCH in read_only_policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in policy.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
