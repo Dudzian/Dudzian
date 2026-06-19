@@ -681,6 +681,30 @@ def test_operator_workflow_evidence_helper_contract() -> None:
         assert key in smoke_source
 
 
+def test_operator_workflow_qml_select_scanner_pair_propagates_to_terminal_source_of_truth() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert "function selectScannerPair(pair)" in main_window
+    assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
+    assert "whitelistPairs = selectedPairs.slice()" in main_window
+    assert (
+        "selectedTerminalPair = scannerSelectedPair; explainScannerCandidate(scannerSelectedPair); selectedTerminalPair = scannerSelectedPair"
+        in main_window
+    )
+
+
+def test_operator_workflow_qml_scanner_pair_wins_over_terminal_default_fallback() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+
+    assert (
+        'property string selectedTerminalPair: selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT"'
+        in main_window
+    )
+    assert "function ensureSelectedTerminalPair()" in main_window
+    assert "selectedTerminalPair = selectedPairs[0]" in main_window
+    assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
+
+
 def test_operator_workflow_pair_state_matches_canonical_values() -> None:
     updates_shared, terminal_matches, diagnostic = _operator_pair_state_matches(
         " btc-usdt ", "BTC/USDT", "BTC/USDT"
