@@ -2905,3 +2905,321 @@ def test_integration_readiness_gate_preview_policy_keeps_live_capabilities_block
     ):
         with pytest.raises(PreviewModeContractError):
             build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+from bot_core.runtime.paper_preview_runtime_service import (
+    PaperPreviewRuntimeService,
+    PaperPreviewRuntimeServiceError,
+    PaperPreviewRuntimeServiceSnapshot,
+    run_paper_preview_runtime_service_once,
+)
+
+
+def _service_scenario(name: str = "runtime-service") -> PaperPreviewScenario:
+    return _scenario(
+        PaperPreviewScenarioStep(
+            action="submit", order_id=f"{name}-buy", symbol="BTCUSDT", side="buy", quantity=1
+        ),
+        PaperPreviewScenarioStep(action="fill", order_id=f"{name}-buy", fill_price=100),
+        name=name,
+    )
+
+
+def test_local_runtime_service_wrapper_exists_and_builds_full_contract_chain() -> None:
+    result = run_paper_preview_runtime_service_once(_service_scenario(), created_at="fixed")
+
+    assert isinstance(result, PaperPreviewRuntimeServiceSnapshot)
+    assert result.service_kind == "local_paper_preview_runtime_service"
+    assert result.scenario_name == "runtime-service"
+    assert result.mode == "paper"
+    assert result.single_shot is True
+    assert result.runtime_loop_started is False
+    assert result.ui_bound is False
+    assert result.runtime_backed is False
+    assert result.paper_only is True
+    assert result.read_only is True
+    assert result.scenario_result is not None
+    assert result.local_bundle_present is True
+    assert result.bundle_boundary_matrix_present is True
+    assert result.read_model_present is True
+    assert result.read_model_boundary_matrix_present is True
+    assert result.preflight_present is True
+    assert result.integration_gate_present is True
+    assert result.integration_gate_status == "blocked"
+    assert result.ready_for_ui_runtime_integration is False
+    assert result.ready_for_decision_engine is False
+    assert result.ready_for_export is False
+    assert result.generated_order_count == 0
+    assert result.generated_decision_count == 0
+    assert result.export_sink == "none"
+    assert result.cloud_sink == "none"
+    assert result.external_export is False
+
+
+def test_local_runtime_service_wrapper_preserves_paper_flow_summary() -> None:
+    result = run_paper_preview_runtime_service_once(
+        _service_scenario("summary"), created_at="fixed"
+    )
+
+    assert result.order_event_count == result.scenario_result.summary.order_event_count == 2
+    assert result.trade_count == result.scenario_result.summary.trade_count == 1
+    assert result.audit_event_count == result.scenario_result.summary.audit_event_count == 3
+    assert result.position_count == result.scenario_result.summary.position_count == 1
+    assert result.has_market_context is False
+    assert result.market_symbols == ()
+    assert result.read_model_kind == "local_preview_bundle_read_model"
+    assert result.gate_kind == "local_preview_integration_readiness_gate"
+    assert result.preflight_report_kind == "local_preview_ui_runtime_preflight"
+    assert result.blocking_check_count == len(result.blocking_items) > 0
+
+
+def test_local_runtime_service_wrapper_handles_market_and_no_market_context() -> None:
+    market_result = PaperPreviewRuntimeService(
+        market_data_provider=_market_provider(), created_at="fixed"
+    ).run_once(
+        PaperPreviewScenario(
+            name="market-service",
+            market_symbols=("ETHUSDT", "BTCUSDT"),
+            market_timeframe="1m",
+            market_candle_limit=1,
+            steps=_service_scenario("market-service").steps,
+        )
+    )
+    no_market_result = run_paper_preview_runtime_service_once(
+        _service_scenario("no-market-service"), created_at="fixed"
+    )
+
+    assert market_result.has_market_context is True
+    assert market_result.market_symbols == ("BTCUSDT", "ETHUSDT")
+    assert no_market_result.has_market_context is False
+    assert no_market_result.market_symbols == ()
+
+
+class _NoBundleRunner(PaperPreviewScenarioRunner):
+    def run(self, scenario: PaperPreviewScenario):  # type: ignore[override]
+        result = super().run(scenario)
+        return dataclasses.replace(result, local_bundle=None)
+
+
+def test_local_runtime_service_wrapper_fails_closed_for_missing_local_bundle() -> None:
+    service = PaperPreviewRuntimeService(
+        created_at="fixed",
+        scenario_runner_factory=lambda **kwargs: _NoBundleRunner(**kwargs),
+    )
+
+    with pytest.raises(PaperPreviewRuntimeServiceError, match="local bundle"):
+        service.run_once(_service_scenario("missing-bundle"))
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("status", "passed", "blocked"),
+        ("ready_for_ui_runtime_integration", True, "UI/runtime"),
+        ("ready_for_decision_engine", True, "decision-engine"),
+        ("ready_for_export", True, "export"),
+        ("generated_order_count", 1, "generated_order_count"),
+        ("generated_decision_count", 1, "generated_decision_count"),
+        ("export_sink", "file", "export_sink"),
+        ("cloud_sink", "prod", "cloud_sink"),
+        ("external_export", True, "external_export"),
+    ],
+)
+def test_local_runtime_service_wrapper_fails_closed_for_unsafe_gate_markers(
+    field: str, value: object, message: str
+) -> None:
+    def unsafe_gate(preflight):
+        gate = build_paper_preview_integration_readiness_gate(preflight)
+        return dataclasses.replace(gate, **{field: value})
+
+    service = PaperPreviewRuntimeService(created_at="fixed", gate_builder=unsafe_gate)
+
+    with pytest.raises(PaperPreviewRuntimeServiceError, match=message):
+        service.run_once(_service_scenario(f"unsafe-{field}"))
+
+
+def test_local_runtime_service_wrapper_has_no_runtime_loop_or_background_surface() -> None:
+    result = run_paper_preview_runtime_service_once(
+        _service_scenario("surface"), created_at="fixed"
+    )
+    forbidden = {
+        "start",
+        "start_loop",
+        "run_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "runtime_handle",
+    }
+
+    assert forbidden.isdisjoint(set(dir(PaperPreviewRuntimeService())))
+    assert forbidden.isdisjoint(set(dir(result)))
+
+
+def test_local_runtime_service_wrapper_has_no_file_network_serialization_or_ui_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_open = builtins.open
+
+    def guarded_open(file, mode="r", *args, **kwargs):
+        if any(token in mode for token in ("w", "a", "+", "x")):
+            raise AssertionError("unexpected write")
+        return real_open(file, mode, *args, **kwargs)
+
+    def fail_network(*args, **kwargs):
+        raise AssertionError("unexpected network")
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(socket, "create_connection", fail_network)
+    monkeypatch.setattr(socket, "socket", fail_network)
+
+    result = run_paper_preview_runtime_service_once(_service_scenario("no-io"), created_at="fixed")
+    forbidden = {
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+    }
+
+    assert forbidden.isdisjoint(set(dir(result)))
+
+
+def test_local_runtime_service_wrapper_is_deterministic_and_immutable() -> None:
+    scenario = _service_scenario("det-service")
+    first = run_paper_preview_runtime_service_once(scenario, created_at="fixed")
+    second = run_paper_preview_runtime_service_once(scenario, created_at="fixed")
+
+    assert dataclasses.is_dataclass(first)
+    assert first.__dataclass_params__.frozen is True
+    assert first.market_symbols == second.market_symbols
+    assert first.blocking_items == second.blocking_items
+    assert (
+        first.service_kind,
+        first.scenario_name,
+        first.integration_gate_status,
+        first.order_event_count,
+        first.trade_count,
+        first.audit_event_count,
+        first.position_count,
+        first.generated_order_count,
+        first.generated_decision_count,
+        first.export_sink,
+        first.cloud_sink,
+        first.external_export,
+    ) == (
+        second.service_kind,
+        second.scenario_name,
+        second.integration_gate_status,
+        second.order_event_count,
+        second.trade_count,
+        second.audit_event_count,
+        second.position_count,
+        second.generated_order_count,
+        second.generated_decision_count,
+        second.export_sink,
+        second.cloud_sink,
+        second.external_export,
+    )
+    with pytest.raises(AttributeError):
+        first.service_kind = "changed"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        first.market_symbols.append("ETHUSDT")  # type: ignore[attr-defined]
+
+
+def test_local_runtime_service_wrapper_keeps_forbidden_surfaces_absent() -> None:
+    result = run_paper_preview_runtime_service_once(
+        _service_scenario("forbidden"), created_at="fixed"
+    )
+    runner = PaperPreviewScenarioRunner(created_at="fixed")
+    chain_objects = (
+        PaperPreviewRuntimeService(),
+        result,
+        runner,
+    )
+    forbidden = {
+        "bind_qml",
+        "bind_pyside",
+        "attach_ui",
+        "start_runtime",
+        "run_loop",
+        "connect_signal",
+        "emit_signal",
+        "create_controller",
+        "serialize_for_ui",
+        "qml",
+        "qml_object",
+        "QObject",
+        "signal",
+        "slot",
+        "runtime_handle",
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "generate_order",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+
+    for obj in chain_objects:
+        assert forbidden.isdisjoint(set(dir(obj)))
+
+
+def test_local_runtime_service_wrapper_preview_policy_blocks_live_capabilities() -> None:
+    assert (
+        RuntimeCapability.READ_ONLY_MARKET_FETCH
+        in build_preview_mode_policy(
+            PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+        ).capabilities
+    )
+    paper_policy = PaperPreviewScenarioRunner(created_at="fixed").policy
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in paper_policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in paper_policy.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))

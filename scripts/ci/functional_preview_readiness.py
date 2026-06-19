@@ -50,6 +50,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "bot_core/runtime/paper_preview_integration_gate.py",
+                    "bot_core/runtime/paper_preview_runtime_service.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -86,6 +87,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "bot_core/runtime/paper_preview_integration_gate.py",
+                    "bot_core/runtime/paper_preview_runtime_service.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -141,6 +143,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "bot_core/runtime/paper_preview_integration_gate.py",
+                    "bot_core/runtime/paper_preview_runtime_service.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                     "bot_core/runtime/read_only_market_data.py",
                     "tests/runtime/test_read_only_market_data.py",
@@ -180,6 +183,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "bot_core/runtime/paper_preview_integration_gate.py",
+                    "bot_core/runtime/paper_preview_runtime_service.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -212,6 +216,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "bot_core/runtime/paper_preview_integration_gate.py",
+                    "bot_core/runtime/paper_preview_runtime_service.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                     "bot_core/runtime/paper_preview_flow.py",
                     "tests/runtime/test_paper_preview_flow.py",
@@ -257,6 +262,7 @@ def build_report() -> dict[str, Any]:
                     "bot_core/runtime/paper_preview_bundle_read_model.py",
                     "bot_core/runtime/paper_preview_ui_runtime_preflight.py",
                     "bot_core/runtime/paper_preview_integration_gate.py",
+                    "bot_core/runtime/paper_preview_runtime_service.py",
                     "tests/runtime/test_paper_preview_scenario.py",
                 ]
             ),
@@ -382,6 +388,16 @@ def build_report() -> dict[str, Any]:
             "recommended_next_step": "Keep the live safety hard gate partial: preserve the existing subprocess/source/payload helper proof and LiveExecutionRouter DI canary disabled/test-mode proof, then add full end-to-end preview coverage for all backend/runtime/live adapter routes plus a paper event spine, preview data-source contract, and read-only market feed proof.",
         },
     }
+    runtime_service_gap = (
+        "BLOK B started: local runtime service wrapper is single-shot/static-local; "
+        "wrapper can compose local scenario result, bundle, read model, preflight and integration gate; "
+        "wrapper is not app runtime loop; wrapper is not UI binding; integration gate still blocks "
+        "real UI/runtime integration; no controller handoff; no decision engine; no export/cloud/serialization; "
+        "no generated decisions/orders; existing dry-run decision artifact remains context-only; "
+        "bundle boundary/export refusal still refuses file export, serialization export, cloud sink, "
+        "external export, and engine handoff; no real market adapter/fetch; no testnet/sandbox adapter; "
+        "next step should prove wrapper boundary matrix/refusals or service lifecycle no-loop contract."
+    )
     read_model_gap = (
         "Local scenario runner can produce deterministic local context/artifact/audit bundle; "
         "local read model can summarize bundle + boundary matrix for future UI/runtime "
@@ -404,11 +420,13 @@ def build_report() -> dict[str, Any]:
         "data_source_market_feed",
     ):
         sections[section_name]["gaps"].append(read_model_gap)
+        sections[section_name]["gaps"].append(runtime_service_gap)
+        sections[section_name]["recommended_next_step"] = runtime_service_gap
 
     payload = {
         "schema_version": "functional_preview_readiness.v1",
         "evaluated_at": "2026-06-16T00:00:00Z",
-        "scope": "FUNCTIONAL-PREVIEW-3.16 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence, local bundle boundary refusal matrix evidence, and local preview bundle read model evidence, local read model boundary refusal matrix evidence, and local/static UI/runtime preflight audit evidence, and local/static integration readiness checklist gate evidence; integration readiness checklist gate blocks transition to real UI/runtime while preflight has blocking checks; BLOK A is contractually complete but not functional UI/runtime integration; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed",
+        "scope": "FUNCTIONAL-PREVIEW-4.0 BLOK B started with local/static single-shot runtime service wrapper contract evidence; FUNCTIONAL-PREVIEW-3.16 local paper event spine, portfolio reducer, local audit/alerts consumer, local composition proof, deterministic in-memory local scenario fixture runner, read-only market data contract unit evidence, static/local scenario-level read-only market context evidence, context-only paper scenario decision-context/dry-run artifact contract evidence, local in-memory dry-run artifact audit-trail evidence, and deterministic local context/artifact/audit bundle plus fail-closed bundle boundary/export refusal and local bundle boundary matrix contract evidence, local bundle boundary refusal matrix evidence, and local preview bundle read model evidence, local read model boundary refusal matrix evidence, and local/static UI/runtime preflight audit evidence, and local/static integration readiness checklist gate evidence; integration readiness checklist gate blocks transition to real UI/runtime while preflight has blocking checks; BLOK A is contractually complete but not functional UI/runtime integration; no runtime loop, UI integration, file loader/export, secrets, real market fetches, live account access, cloud/export sink, external export, serialization export, engine handoff, DecisionEnvelope handoff, TradingController handoff, order generation, or live order I/O executed; local runtime service wrapper is not an app runtime loop, not UI binding, not controller handoff, not decision engine, not export/cloud/serialization, not real market adapter/fetch, and not testnet/sandbox adapter",
         "sections": sections,
     }
     validate_report(payload)
