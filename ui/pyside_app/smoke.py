@@ -582,6 +582,71 @@ def _preview_launch_readiness_evidence(payload: dict[str, object]) -> dict[str, 
     }
 
 
+BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS = (
+    "BLOK C — UI READ-ONLY BINDING",
+    "BLOK B contract-complete static-local",
+    "integration gate: blocked",
+    "runtime loop: not started",
+    "runtime backed: false",
+    "UI runtime integration: false",
+    "decision/export/live readiness: false",
+    "read-only binding only",
+)
+
+
+def _block_c_read_only_binding_visible_source_evidence(
+    qml_source: str | None = None,
+) -> dict[str, object]:
+    """Return source-only BLOK C visible panel proof without starting UI/runtime loops."""
+
+    source = _qml_preview_source() if qml_source is None else qml_source
+    panel_marker = 'objectName: "operatorDashboardBlockCReadOnlyBindingSummary"'
+    label_marker = 'descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel"'
+    forbidden_panel_tokens = (
+        "onClicked",
+        "submit",
+        "cancel",
+        "generate order",
+        "execute",
+        "export",
+        "live readiness: true",
+        "runtime backed: true",
+        "UI runtime integration: true",
+    )
+    panel_start = source.find(panel_marker)
+    panel_slice = source[panel_start : panel_start + 900] if panel_start >= 0 else ""
+    labels_present = _source_has_all(source, BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS)
+    checks = {
+        "panel_source_present": panel_marker in source and label_marker in source,
+        "labels_present": labels_present,
+        "read_only_static_local_text_present": _source_has_all(
+            source,
+            (
+                "BLOK B contract-complete static-local",
+                "read-only binding only",
+            ),
+        ),
+        "integration_gate_blocked_text_present": "integration gate: blocked" in source,
+        "runtime_loop_not_started_text_present": "runtime loop: not started" in source,
+        "runtime_backed_false_text_present": "runtime backed: false" in source,
+        "ready_for_ui_runtime_integration_false_text_present": (
+            "UI runtime integration: false" in source
+        ),
+        "decision_export_live_false_text_present": (
+            "decision/export/live readiness: false" in source
+        ),
+        "no_action_controls": all(token not in panel_slice for token in forbidden_panel_tokens),
+    }
+    failed_checks = [key for key, value in checks.items() if value is not True]
+    return {
+        **checks,
+        "object_name": "operatorDashboardBlockCReadOnlyBindingSummary",
+        "description_object_name": "previewBlockCReadOnlyBindingSummaryLabel",
+        "all_block_c_read_only_binding_visible_source_checks_passed": not failed_checks,
+        "failed_checks": failed_checks,
+    }
+
+
 FRONTEND_LIVE_PARITY_REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
     "dashboard": (
         "operator_dashboard_visible",
