@@ -139,36 +139,72 @@ def test_allowed_actions_list_is_copy_safe_if_returned() -> None:
 
 
 def test_boundary_matrix_confirms_allowed_and_rejected_categories() -> None:
-    allowed = {
-        action: build_paper_runtime_action_dispatch_contract(action)
+    allowed = [
+        build_paper_runtime_action_dispatch_contract(action)
         for action in ALLOWED_PAPER_RUNTIME_ACTIONS
-    }
-    rejected = {
-        "unknown": build_paper_runtime_action_dispatch_contract("unexpected_action"),
-        "live": build_paper_runtime_action_dispatch_contract("live_mode_requested"),
-        "testnet": build_paper_runtime_action_dispatch_contract("testnet_mode_requested"),
-        "order": build_paper_runtime_action_dispatch_contract("order_submission_requested"),
-        "account": build_paper_runtime_action_dispatch_contract("account_fetch_requested"),
-        "export_cloud_secrets": build_paper_runtime_action_dispatch_contract(
-            "cloud_secret_export_requested"
+    ]
+    rejected_actions = {
+        "unknown": ("unexpected_action", "paper_runtime_restart_requested"),
+        "live_prod_real": (
+            "live_runtime_start_requested",
+            "production_runtime_start_requested",
+            "real_trading_enable_requested",
         ),
+        "testnet_sandbox": (
+            "testnet_runtime_start_requested",
+            "sandbox_order_submit_requested",
+        ),
+        "order_generation_submission_fill": (
+            "paper_order_generate_requested",
+            "paper_order_submit_requested",
+            "place_order_requested",
+            "fill_order_requested",
+        ),
+        "account_balance_fetch_wallet": (
+            "account_balance_fetch_requested",
+            "wallet_fetch_requested",
+            "portfolio_fetch_requested",
+        ),
+        "export_cloud_secrets_credentials_api_key": (
+            "cloud_export_requested",
+            "secret_export_requested",
+            "credentials_read_requested",
+            "api_key_fetch_requested",
+        ),
+        "invalid": (None, "", "   ", 123, object()),
     }
+    rejected = [
+        build_paper_runtime_action_dispatch_contract(action)
+        for actions in rejected_actions.values()
+        for action in actions
+    ]
 
-    assert all(item.safe_to_bind_from_ui for item in allowed.values())
-    assert all(item.paper_only and item.local_only for item in allowed.values())
-    assert all(not item.execution_allowed for item in allowed.values())
-    assert all(not item.safe_to_bind_from_ui for item in rejected.values())
-    assert all(item.boundary_checks["fail_closed"] for item in rejected.values())
-    assert all(not item.live_mode_allowed for item in (*allowed.values(), *rejected.values()))
-    assert all(not item.testnet_mode_allowed for item in (*allowed.values(), *rejected.values()))
-    assert all(
-        not item.order_generation_allowed for item in (*allowed.values(), *rejected.values())
-    )
-    assert all(
-        not item.order_submission_allowed for item in (*allowed.values(), *rejected.values())
-    )
-    assert all(item.rejected_actions["live_mode"] for item in rejected.values())
-    assert all(item.rejected_actions["testnet_mode"] for item in rejected.values())
-    assert all(item.rejected_actions["order_generation_submission"] for item in rejected.values())
-    assert all(item.rejected_actions["account_balance_fetch"] for item in rejected.values())
-    assert all(item.rejected_actions["export_cloud_secrets"] for item in rejected.values())
+    for item in allowed:
+        assert item.safe_to_bind_from_ui is True
+        assert item.paper_only is True
+        assert item.local_only is True
+        assert item.execution_allowed is False
+        assert item.execution_performed is False
+        assert item.order_generation_allowed is False
+        assert item.order_submission_allowed is False
+        assert item.live_mode_allowed is False
+        assert item.testnet_mode_allowed is False
+        assert item.refusal_reason == ""
+        assert item.boundary_checks["allowlisted_action"] is True
+
+    for item in rejected:
+        assert item.safe_to_bind_from_ui is False
+        assert item.execution_allowed is False
+        assert item.execution_performed is False
+        assert item.order_generation_allowed is False
+        assert item.order_submission_allowed is False
+        assert item.live_mode_allowed is False
+        assert item.testnet_mode_allowed is False
+        assert item.refusal_reason != ""
+        assert item.blocked_reason == item.refusal_reason
+        assert item.boundary_checks["fail_closed"] is True
+        assert item.rejected_actions["live_mode"]
+        assert item.rejected_actions["testnet_mode"]
+        assert item.rejected_actions["order_generation_submission"]
+        assert item.rejected_actions["account_balance_fetch"]
+        assert item.rejected_actions["export_cloud_secrets"]

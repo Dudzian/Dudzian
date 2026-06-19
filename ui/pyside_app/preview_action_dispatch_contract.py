@@ -10,11 +10,43 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final, Mapping
+from collections.abc import Iterator
+from typing import Final, Mapping, TypeVar
 
 SCHEMA_VERSION: Final[str] = "paper_runtime_action_dispatch_contract.v1"
 DISPATCH_KIND: Final[str] = "block_d_paper_runtime_ui_action_intention"
 RUNTIME_MODE: Final[str] = "paper"
+
+_Key = TypeVar("_Key")
+_Value = TypeVar("_Value")
+
+
+class FrozenMapping(Mapping[_Key, _Value]):
+    """Small immutable mapping that remains compatible with dataclasses.asdict."""
+
+    __slots__ = ("_items", "_lookup")
+
+    def __init__(self, values: Mapping[_Key, _Value]) -> None:
+        self._items = tuple(values.items())
+        self._lookup = dict(self._items)
+
+    def __getitem__(self, key: _Key) -> _Value:
+        return self._lookup[key]
+
+    def __iter__(self) -> Iterator[_Key]:
+        return iter(self._lookup)
+
+    def __len__(self) -> int:
+        return len(self._lookup)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return dict(self.items()) == dict(other.items())
+
+    def __repr__(self) -> str:
+        return f"FrozenMapping({dict(self.items())!r})"
+
 
 ALLOWED_PAPER_RUNTIME_ACTIONS: Final[tuple[str, ...]] = (
     "paper_runtime_start_requested",
@@ -128,7 +160,9 @@ def build_paper_runtime_action_dispatch_contract(
         safe_to_bind_from_ui=safe_to_bind,
         boundary_checks=boundary_checks,
         allowed_actions=tuple(ALLOWED_PAPER_RUNTIME_ACTIONS),
-        rejected_actions={key: tuple(value) for key, value in _REJECTED_ACTION_CATEGORIES.items()},
+        rejected_actions=FrozenMapping(
+            {key: tuple(value) for key, value in _REJECTED_ACTION_CATEGORIES.items()}
+        ),
     )
 
 
@@ -162,7 +196,7 @@ def _build_boundary_checks(safe_to_bind: bool) -> Mapping[str, bool]:
     values = {name: True for name in _BOUNDARY_CHECK_NAMES}
     values["allowlisted_action"] = safe_to_bind
     values["fail_closed"] = not safe_to_bind
-    return values
+    return FrozenMapping(values)
 
 
 __all__ = [
