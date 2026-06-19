@@ -1825,6 +1825,7 @@ def _build_operator_workflow_runtime_audit(root: Any, audit: dict[str, object]) 
     continuity_pair = _string_property(root, "selectedTerminalPair") or "BTC/USDT"
     if continuity_pair:
         _invoke_qml(root, "selectScannerPair", continuity_pair)
+        _process_events()
     selected_pair = _string_property(root, "scannerSelectedPair")
     selected_terminal_pair = _string_property(root, "selectedTerminalPair")
     scanner_rows_text = _rows_repr(root.property("scannerRows"))

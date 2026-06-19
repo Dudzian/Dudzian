@@ -665,6 +665,12 @@ def test_operator_workflow_evidence_helper_contract() -> None:
     assert '"operator_workflow": ("operator_workflow_smoke_complete",)' in smoke_source
     assert "_build_operator_workflow_runtime_audit" in smoke_source
     assert "operator_scanner_rows_runtime_non_empty_diagnostic" in smoke_source
+    assert (
+        "if continuity_pair:\n"
+        '        _invoke_qml(root, "selectScannerPair", continuity_pair)\n'
+        "        _process_events()\n"
+        '    selected_pair = _string_property(root, "scannerSelectedPair")'
+    ) in smoke_source
     assert "operator_source_diagnostic" not in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS
     for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS:
         assert key in smoke_source
