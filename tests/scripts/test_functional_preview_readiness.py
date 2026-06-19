@@ -537,4 +537,45 @@ def test_service_snapshot_history_readiness_evidence_stays_partial_static_local(
         assert "no generated decisions/orders" in joined
         assert "no real market adapter/fetch" in joined
         assert "no testnet/sandbox adapter" in joined
-        assert "next step should be blok b closure audit" in joined
+        assert "next block should be blok c" in joined
+
+
+def test_block_b_closure_readiness_evidence_stays_contract_complete_static_local() -> None:
+    payload = _load_report()
+    sections = payload["sections"]
+    for name in (
+        "ai_decision_governor",
+        "alerts_telemetry_audit",
+        "preview_mode_contract",
+        "paper_terminal_order_lifecycle",
+        "data_source_market_feed",
+    ):
+        section = sections[name]
+        joined = "\n".join(
+            [*section["evidence_files"], *section["gaps"], section["recommended_next_step"]]
+        ).lower()
+        assert section["status"] == "partial"
+        assert section["runtime_backed"] is False
+        assert section["static_qml_only"] is False
+        assert section["supports_test_server"] is False
+        assert section["supports_read_only_real_data"] is False
+        assert section["paper_only_execution_safe"] is True
+        assert "paper_preview_runtime_service_closure.py" in joined
+        assert "contract-complete for static-local evidence" in joined
+        assert "closure audit aggregates service snapshot" in joined
+        assert "ready_for_block_c=true" in joined
+        assert "ready_for_ui_runtime_integration=false" in joined
+        assert "ready_for_decision_engine=false" in joined
+        assert "ready_for_export=false" in joined
+        assert "ready_for_live=false" in joined
+        assert "integration gate remains blocked" in joined
+        assert "wrapper remains single-shot/static-local" in joined
+        assert "no app runtime loop" in joined
+        assert "no ui binding" in joined
+        assert "no controller handoff" in joined
+        assert "no decision engine" in joined
+        assert "no export/cloud/serialization" in joined
+        assert "no generated decisions/orders" in joined
+        assert "no real market adapter/fetch" in joined
+        assert "no testnet/sandbox adapter" in joined
+        assert "next block should be blok c" in joined
