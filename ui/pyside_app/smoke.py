@@ -375,6 +375,43 @@ def _string_property(item: Any, name: str) -> str:
     return str(_variant(item.property(name)) or "")
 
 
+def _canonical_preview_pair(pair: str) -> str:
+    return str(pair or "").strip().upper().replace("-", "/")
+
+
+def _operator_pair_match_diagnostic(
+    selected_candidate_pair: str,
+    scanner_selected_pair: str,
+    terminal_selected_pair: str,
+) -> dict[str, str]:
+    return {
+        "selected_candidate_pair_raw": selected_candidate_pair,
+        "scanner_selected_pair_raw": scanner_selected_pair,
+        "terminal_selected_pair_raw": terminal_selected_pair,
+        "selected_candidate_pair_canonical": _canonical_preview_pair(selected_candidate_pair),
+        "scanner_selected_pair_canonical": _canonical_preview_pair(scanner_selected_pair),
+        "terminal_selected_pair_canonical": _canonical_preview_pair(terminal_selected_pair),
+    }
+
+
+def _operator_pair_state_matches(
+    selected_candidate_pair: str, scanner_selected_pair: str, terminal_selected_pair: str
+) -> tuple[bool, bool, dict[str, str]]:
+    diagnostic = _operator_pair_match_diagnostic(
+        selected_candidate_pair, scanner_selected_pair, terminal_selected_pair
+    )
+    selected_candidate = diagnostic["selected_candidate_pair_canonical"]
+    scanner_selected = diagnostic["scanner_selected_pair_canonical"]
+    terminal_selected = diagnostic["terminal_selected_pair_canonical"]
+    scanner_updates_shared_state = (
+        bool(selected_candidate) and selected_candidate == scanner_selected == terminal_selected
+    )
+    terminal_matches_candidate = (
+        bool(selected_candidate) and terminal_selected == selected_candidate
+    )
+    return scanner_updates_shared_state, terminal_matches_candidate, diagnostic
+
+
 def _bool_property(item: Any, name: str) -> bool:
     return bool(_variant(item.property(name)))
 
@@ -1820,14 +1857,30 @@ def _panel_has_visible_loaded_item(root: Any, panel_id: str) -> bool:
     )
 
 
-def _build_operator_workflow_runtime_audit(root: Any, audit: dict[str, object]) -> dict[str, bool]:
-    workflow: dict[str, bool] = {}
+def _build_operator_workflow_runtime_audit(
+    root: Any, audit: dict[str, object]
+) -> dict[str, object]:
+    workflow: dict[str, object] = {}
     continuity_pair = _string_property(root, "selectedTerminalPair") or "BTC/USDT"
     if continuity_pair:
         _invoke_qml(root, "selectScannerPair", continuity_pair)
         _process_events()
     selected_pair = _string_property(root, "scannerSelectedPair")
+    _invoke_show_panel(root, "terminalPanel")
+    _process_events()
     selected_terminal_pair = _string_property(root, "selectedTerminalPair")
+    selected_candidate_pair = selected_pair
+    (
+        selected_candidate_updates_shared_state,
+        terminal_pair_matches_selected_candidate,
+        pair_match_diagnostic,
+    ) = _operator_pair_state_matches(selected_candidate_pair, selected_pair, selected_terminal_pair)
+    workflow["operator_selected_candidate_pair"] = selected_candidate_pair
+    workflow["operator_scanner_selected_pair"] = selected_pair
+    workflow["operator_terminal_selected_pair"] = selected_terminal_pair
+    workflow["operator_scanner_selected_pair_diagnostic"] = selected_pair
+    workflow["operator_terminal_selected_pair_diagnostic"] = selected_terminal_pair
+    workflow["operator_pair_match_diagnostic"] = pair_match_diagnostic
     scanner_rows_text = _rows_repr(root.property("scannerRows"))
     decision_rows_text = _rows_repr(root.property("decisionPreviewRows"))
     order_rows_text = _rows_repr(root.property("paperOrderRows"))
@@ -1871,7 +1924,7 @@ def _build_operator_workflow_runtime_audit(root: Any, audit: dict[str, object]) 
         audit.get("market_scanner_can_select_candidate_local_only") is True
     )
     workflow["operator_selected_candidate_updates_shared_state"] = (
-        bool(selected_pair) and selected_pair == selected_terminal_pair
+        selected_candidate_updates_shared_state
     )
     workflow["operator_decision_visible_after_candidate"] = (
         audit.get("decision_explainability_state_present") is True
@@ -1901,7 +1954,7 @@ def _build_operator_workflow_runtime_audit(root: Any, audit: dict[str, object]) 
         audit.get("terminal_order_form_visible") is True
     )
     workflow["operator_terminal_pair_matches_selected_candidate"] = (
-        bool(selected_pair) and selected_pair == selected_terminal_pair
+        terminal_pair_matches_selected_candidate
     )
     workflow["operator_order_submission_disabled_visible"] = (
         audit.get("terminal_order_submission_disabled_visible") is True
