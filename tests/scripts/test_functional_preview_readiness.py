@@ -185,6 +185,12 @@ def test_preview_mode_contract_includes_block_c_controlled_ui_state_proof() -> N
         "BLOK C now maps PreviewReadOnlyBindingSnapshot into controlled read-only UI state values"
         in joined
     )
+    assert (
+        "BLOK C now has a read-only PySide bridge preflight for blockCReadOnlyBindingState"
+        in joined
+    )
+    assert "bridge exposes controlled read-only state as copy-on-read QVariantMap" in joined
+    assert "bridge state passes the no-action boundary matrix" in joined
     assert "BLOK C QML panel now consumes controlled read-only UI state values" in joined
     assert "safe blocked/false/none/zero fallbacks" in joined
     assert "BLOK C now has a read-only UI state boundary/no-action matrix" in joined
@@ -201,7 +207,7 @@ def test_preview_mode_contract_includes_block_c_controlled_ui_state_proof() -> N
     )
     assert "QML/source proof remains read-only" in joined
     assert (
-        "next step should be read-only UI state runtime bridge preflight or controlled PySide bridge exposure, still without actions"
+        "next step should be bridge refusal/negative controls or read-only bridge smoke in PySide-enabled CI, still without actions"
         in joined
     )
 

@@ -376,6 +376,58 @@ _BOUNDARY_ROW_SPECS = (
 )
 
 
+def build_preview_read_only_binding_bridge_preflight(
+    state: Mapping[str, object],
+    *,
+    reread_state: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Build a fail-closed preflight report for the PySide BLOK C bridge property.
+
+    The report validates an already-read ``blockCReadOnlyBindingState`` value.
+    When ``reread_state`` is supplied it also proves copy-on-read semantics by
+    requiring a distinct but equal map from a second bridge property read.  This
+    function only inspects in-memory mappings and the existing no-action
+    boundary matrix; it does not import PySide, bind QML, start loops, execute
+    commands, create threads/timers, write/export files, or open sockets.
+    """
+
+    bridge_state = dict(state)
+    if reread_state is None:
+        second_state = dict(state)
+        copy_on_read = True
+    else:
+        second_state = dict(reread_state)
+        copy_on_read = state is not reread_state and bridge_state == second_state
+    if not copy_on_read:
+        raise PreviewReadOnlyBindingError("copy_on_read")
+
+    matrix = build_preview_read_only_binding_ui_state_boundary_matrix(bridge_state)
+    if not matrix.all_boundaries_refused:
+        raise PreviewReadOnlyBindingError("all_boundaries_refused")
+
+    return {
+        "bridge_field_name": "blockCReadOnlyBindingState",
+        "bridge_property_type": "QVariantMap",
+        "constant_read_only": True,
+        "copy_on_read": True,
+        "state_key_count": len(bridge_state),
+        "boundary_matrix_kind": matrix.matrix_kind,
+        "all_boundaries_refused": matrix.all_boundaries_refused,
+        "integration_gate_status": matrix.integration_gate_status,
+        "ready_for_ui_runtime_integration": matrix.ready_for_ui_runtime_integration,
+        "runtime_loop_started": matrix.runtime_loop_started,
+        "runtime_backed": matrix.runtime_backed,
+        "ui_bound": matrix.ui_bound,
+        "generated_order_count": matrix.generated_order_count,
+        "generated_decision_count": matrix.generated_decision_count,
+        "export_sink": matrix.export_sink,
+        "cloud_sink": matrix.cloud_sink,
+        "external_export": matrix.external_export,
+        "read_only": matrix.read_only,
+        "no_action_surface": matrix.all_boundaries_refused,
+    }
+
+
 def build_preview_read_only_binding_ui_state_boundary_matrix(
     snapshot_or_state: PreviewReadOnlyBindingSnapshot | Mapping[str, object],
 ) -> PreviewReadOnlyBindingUiStateBoundaryMatrix:

@@ -39,6 +39,7 @@ from ui.pyside_app.preview_read_only_binding import (
     PreviewReadOnlyBindingUiStateBoundaryRow,
     build_default_preview_read_only_binding_ui_state,
     build_preview_read_only_binding_snapshot,
+    build_preview_read_only_binding_bridge_preflight,
     build_preview_read_only_binding_ui_state,
     build_preview_read_only_binding_ui_state_boundary_matrix,
     validate_preview_read_only_binding_ui_state_boundary_matrix,
@@ -580,3 +581,47 @@ def test_ui_state_boundary_matrix_is_deterministic_immutable_and_side_effect_fre
         first.allowed_count = 1  # type: ignore[misc]
     with pytest.raises(TypeError):
         first.rows[0] = first.rows[1]  # type: ignore[index]
+
+
+def test_bridge_preflight_report_accepts_controlled_copy_on_read_state() -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+    reread_state = dict(state)
+
+    report = build_preview_read_only_binding_bridge_preflight(state, reread_state=reread_state)
+
+    assert report == {
+        "bridge_field_name": "blockCReadOnlyBindingState",
+        "bridge_property_type": "QVariantMap",
+        "constant_read_only": True,
+        "copy_on_read": True,
+        "state_key_count": len(EXPECTED_UI_STATE_KEYS),
+        "boundary_matrix_kind": "block_c_read_only_ui_state_no_action_boundary_matrix",
+        "all_boundaries_refused": True,
+        "integration_gate_status": "blocked",
+        "ready_for_ui_runtime_integration": False,
+        "runtime_loop_started": False,
+        "runtime_backed": False,
+        "ui_bound": False,
+        "generated_order_count": 0,
+        "generated_decision_count": 0,
+        "export_sink": "none",
+        "cloud_sink": "none",
+        "external_export": False,
+        "read_only": True,
+        "no_action_surface": True,
+    }
+
+
+def test_bridge_preflight_fails_closed_on_same_mapping_reference() -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+
+    with pytest.raises(PreviewReadOnlyBindingError, match="copy_on_read"):
+        build_preview_read_only_binding_bridge_preflight(state, reread_state=state)
+
+
+def test_bridge_preflight_fails_closed_on_unsafe_state() -> None:
+    state = build_default_preview_read_only_binding_ui_state()
+    state["runtimeLoopStarted"] = True
+
+    with pytest.raises(PreviewReadOnlyBindingError):
+        build_preview_read_only_binding_bridge_preflight(state, reread_state=dict(state))
