@@ -3571,3 +3571,375 @@ def test_runtime_service_boundary_preview_policy_keeps_live_capabilities_blocked
     ):
         with pytest.raises(PreviewModeContractError):
             build_preview_mode_policy(PreviewMode.PAPER, (capability,))
+
+
+from bot_core.runtime.paper_preview_runtime_service_lifecycle import (
+    PAPER_PREVIEW_RUNTIME_SERVICE_ALLOWED_COMMANDS,
+    PAPER_PREVIEW_RUNTIME_SERVICE_REFUSED_COMMANDS,
+    PaperPreviewRuntimeServiceLifecycleError,
+    build_paper_preview_runtime_service_lifecycle_contract,
+)
+
+_LIFECYCLE_ALLOWED_COMMANDS = (
+    "run_once_local_scenario",
+    "read_local_snapshot",
+    "inspect_integration_gate",
+    "inspect_boundary_matrix",
+)
+_LIFECYCLE_REFUSED_COMMANDS = (
+    "start_runtime_loop",
+    "stop_runtime_loop",
+    "restart_runtime_loop",
+    "schedule_worker",
+    "start_worker",
+    "start_background_thread",
+    "start_background_timer",
+    "start_async_task",
+    "bind_qml",
+    "bind_pyside",
+    "attach_ui",
+    "controller_handoff",
+    "trading_controller_handoff",
+    "decision_envelope_handoff",
+    "strategy_engine_handoff",
+    "ai_model_inference_handoff",
+    "scoring_handoff",
+    "recommendation_handoff",
+    "generate_order",
+    "submit_order",
+    "real_market_adapter_handoff",
+    "testnet_sandbox_adapter_handoff",
+    "live_exchange_io",
+    "account_balance_fetch",
+    "live_credentials_read",
+    "file_export",
+    "serialized_export",
+    "cloud_sink",
+    "external_export",
+)
+
+
+def _runtime_lifecycle_contract():
+    snapshot = _runtime_service_snapshot()
+    matrix = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    return (
+        snapshot,
+        matrix,
+        build_paper_preview_runtime_service_lifecycle_contract(snapshot, matrix),
+    )
+
+
+def test_runtime_service_lifecycle_command_contract_exists_and_counts() -> None:
+    snapshot, matrix, contract = _runtime_lifecycle_contract()
+
+    assert isinstance(snapshot, PaperPreviewRuntimeServiceSnapshot)
+    assert matrix.report_kind == "local_runtime_service_boundary_no_loop_matrix"
+    assert contract.contract_kind == "local_runtime_service_lifecycle_command_contract"
+    assert contract.command_count == contract.allowed_command_count + contract.refused_command_count
+    assert contract.command_count == len(contract.command_decisions)
+
+
+def test_runtime_service_lifecycle_allowed_commands_only_local_static() -> None:
+    _, _, contract = _runtime_lifecycle_contract()
+
+    assert contract.allowed_commands == _LIFECYCLE_ALLOWED_COMMANDS
+    assert PAPER_PREVIEW_RUNTIME_SERVICE_ALLOWED_COMMANDS == _LIFECYCLE_ALLOWED_COMMANDS
+    decisions = {row.command: row for row in contract.command_decisions}
+    forbidden_reason_terms = ("ui", "controller", "decision", "export", "live")
+    for command in contract.allowed_commands:
+        row = decisions[command]
+        assert row.allowed is True
+        assert row.refused is False
+        assert "local" in row.reason
+        assert "static" in row.reason
+        assert "single_shot" in row.reason
+        assert "loop" not in command
+        assert all(term not in command for term in forbidden_reason_terms)
+
+
+def test_runtime_service_lifecycle_refused_commands_complete() -> None:
+    _, _, contract = _runtime_lifecycle_contract()
+    assert contract.refused_commands == _LIFECYCLE_REFUSED_COMMANDS
+    assert PAPER_PREVIEW_RUNTIME_SERVICE_REFUSED_COMMANDS == _LIFECYCLE_REFUSED_COMMANDS
+    decisions = {row.command: row for row in contract.command_decisions}
+    for command in _LIFECYCLE_REFUSED_COMMANDS:
+        assert decisions[command].allowed is False
+        assert decisions[command].refused is True
+
+
+def test_runtime_service_lifecycle_command_order_is_deterministic() -> None:
+    _, _, contract = _runtime_lifecycle_contract()
+    commands = tuple(row.command for row in contract.command_decisions)
+    assert commands == _LIFECYCLE_ALLOWED_COMMANDS + _LIFECYCLE_REFUSED_COMMANDS
+    assert len(commands) == len(set(commands))
+    assert contract.command_count == len(commands)
+
+
+def test_runtime_service_lifecycle_decisions_and_report_mirror_safety_flags() -> None:
+    snapshot, matrix, contract = _runtime_lifecycle_contract()
+
+    assert contract.allowed_command_count == 4
+    assert contract.refused_command_count == len(_LIFECYCLE_REFUSED_COMMANDS)
+    assert contract.service_kind == snapshot.service_kind
+    assert contract.scenario_name == snapshot.scenario_name
+    assert contract.boundary_matrix_report_kind == matrix.report_kind
+    rows = (contract, *contract.command_decisions)
+    for row in rows:
+        assert row.service_kind == snapshot.service_kind
+        assert row.scenario_name == snapshot.scenario_name
+        assert row.single_shot is True
+        assert row.runtime_loop_started is False
+        assert row.runtime_backed is False
+        assert row.ui_bound is False
+        assert row.read_only is True
+        assert row.paper_only is True
+        assert row.integration_gate_status == "blocked"
+        assert row.ready_for_ui_runtime_integration is False
+        assert row.ready_for_decision_engine is False
+        assert row.ready_for_export is False
+        assert row.generated_order_count == 0
+        assert row.generated_decision_count == 0
+        assert row.export_sink == "none"
+        assert row.cloud_sink == "none"
+        assert row.external_export is False
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "unsafe_value"),
+    (
+        ("snapshot", "service_kind", "unsafe"),
+        ("matrix", "report_kind", "unsafe"),
+        ("matrix", "service_kind", "unsafe"),
+        ("matrix", "scenario_name", "unsafe"),
+        ("matrix", "all_refused", False),
+        ("matrix", "row_count", -1),
+        ("snapshot", "single_shot", False),
+        ("matrix", "single_shot", False),
+        ("snapshot", "runtime_loop_started", True),
+        ("matrix", "runtime_loop_started", True),
+        ("snapshot", "runtime_backed", True),
+        ("matrix", "runtime_backed", True),
+        ("snapshot", "ui_bound", True),
+        ("matrix", "ui_bound", True),
+        ("snapshot", "read_only", False),
+        ("matrix", "read_only", False),
+        ("snapshot", "paper_only", False),
+        ("matrix", "paper_only", False),
+        ("snapshot", "integration_gate_status", "ready"),
+        ("matrix", "integration_gate_status", "ready"),
+        ("snapshot", "ready_for_ui_runtime_integration", True),
+        ("matrix", "ready_for_ui_runtime_integration", True),
+        ("snapshot", "ready_for_decision_engine", True),
+        ("matrix", "ready_for_decision_engine", True),
+        ("snapshot", "ready_for_export", True),
+        ("matrix", "ready_for_export", True),
+        ("snapshot", "generated_order_count", 1),
+        ("matrix", "generated_order_count", 1),
+        ("snapshot", "generated_decision_count", 1),
+        ("matrix", "generated_decision_count", 1),
+        ("snapshot", "export_sink", "file"),
+        ("matrix", "export_sink", "file"),
+        ("snapshot", "cloud_sink", "prod"),
+        ("matrix", "cloud_sink", "prod"),
+        ("snapshot", "external_export", True),
+        ("matrix", "external_export", True),
+    ),
+)
+def test_runtime_service_lifecycle_contract_fails_closed(
+    target: str, field: str, unsafe_value: object
+) -> None:
+    snapshot = _runtime_service_snapshot()
+    matrix = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    if target == "snapshot":
+        snapshot = dataclasses.replace(snapshot, **{field: unsafe_value})
+    else:
+        matrix = dataclasses.replace(matrix, **{field: unsafe_value})
+    with pytest.raises(PaperPreviewRuntimeServiceLifecycleError, match=field):
+        build_paper_preview_runtime_service_lifecycle_contract(snapshot, matrix)
+
+
+def test_runtime_service_lifecycle_has_no_side_effects_or_forbidden_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _runtime_service_snapshot()
+    matrix = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    original_open = builtins.open
+
+    def fail_on_write(file, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise AssertionError("lifecycle contract must not write files")
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", fail_on_write)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no network")),
+    )
+    monkeypatch.setattr(
+        socket, "socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no socket"))
+    )
+    import threading
+
+    monkeypatch.setattr(
+        threading,
+        "Thread",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no thread")),
+    )
+    monkeypatch.setattr(
+        threading,
+        "Timer",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no timer")),
+    )
+
+    contract = build_paper_preview_runtime_service_lifecycle_contract(snapshot, matrix)
+    forbidden = {
+        "start",
+        "start_loop",
+        "run_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "export_path",
+        "file_path",
+        "cloud_url",
+        "serialized_payload",
+        "json",
+        "yaml",
+        "csv",
+        "qml_object",
+        "qobject",
+        "signal",
+        "slot",
+        "runtime_handle",
+    }
+    assert forbidden.isdisjoint(set(contract.__dataclass_fields__))
+    for row in contract.command_decisions:
+        assert forbidden.isdisjoint(set(row.__dataclass_fields__))
+
+
+def test_runtime_service_lifecycle_is_deterministic_and_immutable() -> None:
+    snapshot = _runtime_service_snapshot()
+    matrix = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    first = build_paper_preview_runtime_service_lifecycle_contract(snapshot, matrix)
+    second = build_paper_preview_runtime_service_lifecycle_contract(snapshot, matrix)
+
+    assert first == second
+    assert isinstance(first.command_decisions, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.command_count = 0  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.command_decisions[0].allowed = False  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first.command_decisions[0] = first.command_decisions[0]  # type: ignore[index]
+
+
+def test_runtime_service_lifecycle_does_not_mutate_snapshot_or_paper_flow() -> None:
+    snapshot = _runtime_service_snapshot()
+    before = (
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.blocking_items,
+        snapshot.scenario_result.summary,
+    )
+    matrix = build_paper_preview_runtime_service_boundary_matrix(snapshot)
+    build_paper_preview_runtime_service_lifecycle_contract(snapshot, matrix)
+    after = (
+        snapshot.order_event_count,
+        snapshot.trade_count,
+        snapshot.audit_event_count,
+        snapshot.blocking_items,
+        snapshot.scenario_result.summary,
+    )
+    assert after == before
+
+
+def test_runtime_service_lifecycle_does_not_add_forbidden_surfaces() -> None:
+    snapshot, _, contract = _runtime_lifecycle_contract()
+    service = PaperPreviewRuntimeService(created_at="fixed")
+    objects = (contract, contract.command_decisions[0], snapshot, service)
+    forbidden = {
+        "bind_qml",
+        "bind_pyside",
+        "attach_ui",
+        "start_runtime",
+        "run_loop",
+        "connect_signal",
+        "emit_signal",
+        "create_controller",
+        "serialize_for_ui",
+        "qml",
+        "qml_object",
+        "QObject",
+        "signal",
+        "slot",
+        "runtime_handle",
+        "start",
+        "start_loop",
+        "stop_loop",
+        "schedule",
+        "worker",
+        "thread",
+        "timer",
+        "async_task",
+        "decide",
+        "evaluate_strategy",
+        "score",
+        "recommend",
+        "recommendation",
+        "confidence",
+        "order_intent",
+        "execute",
+        "infer",
+        "predict",
+        "serialize_for_engine",
+        "to_json",
+        "to_yaml",
+        "to_csv",
+        "get_balance",
+        "get_account",
+        "get_account_snapshot",
+        "get_positions_from_exchange",
+        "get_open_orders",
+        "read_credentials",
+        "account_balance",
+        "metadata",
+        "api_key",
+        "secret",
+        "password",
+        "passphrase",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "export_path",
+        "file_path",
+        "cloud_url",
+    }
+    for obj in objects:
+        assert forbidden.isdisjoint(set(dir(obj)))
+
+
+def test_runtime_service_lifecycle_preview_policy_keeps_live_capabilities_blocked() -> None:
+    policy = PaperPreviewScenarioRunner(created_at="fixed").policy
+    read_only_policy = build_preview_mode_policy(
+        PreviewMode.READ_ONLY_MARKET, (RuntimeCapability.READ_ONLY_MARKET_FETCH,)
+    )
+    assert RuntimeCapability.READ_ONLY_MARKET_FETCH in read_only_policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_SUBMIT in policy.capabilities
+    assert RuntimeCapability.PAPER_ORDER_LIFECYCLE in policy.capabilities
+    for capability in (
+        RuntimeCapability.LIVE_ORDER_SUBMIT,
+        RuntimeCapability.REAL_EXCHANGE_FILL,
+        RuntimeCapability.LIVE_ACCOUNT_BALANCE_FETCH,
+        RuntimeCapability.LIVE_ACCOUNT_SNAPSHOT_READ,
+        RuntimeCapability.LIVE_CREDENTIALS_READ,
+        RuntimeCapability.PRODUCTION_CLOUD_SINK,
+        RuntimeCapability.EXTERNAL_EXPORT_SINK,
+    ):
+        with pytest.raises(PreviewModeContractError):
+            build_preview_mode_policy(PreviewMode.PAPER, (capability,))
