@@ -337,6 +337,54 @@ def test_ui_state_has_no_action_callbacks_methods_or_unsafe_fields() -> None:
     assert state["readyForLive"] is False
 
 
+def test_default_ui_state_origin_path_matches_controlled_snapshot_contract() -> None:
+    first = build_default_preview_read_only_binding_ui_state()
+    second = build_default_preview_read_only_binding_ui_state()
+
+    assert isinstance(first, dict)
+    assert all(isinstance(key, str) for key in first)
+    assert set(first) == EXPECTED_UI_STATE_KEYS
+    assert first == second
+    assert first["bindingKind"] == "static_local_block_b_closure_ui_read_only_binding"
+    assert first["blockStatus"] == "contract_complete_static_local"
+    assert first["integrationGateStatus"] == "blocked"
+    assert first["readyForUiRuntimeIntegration"] is False
+    assert first["readyForDecisionEngine"] is False
+    assert first["readyForExport"] is False
+    assert first["readyForLive"] is False
+    assert first["runtimeLoopStarted"] is False
+    assert first["runtimeBacked"] is False
+    assert first["uiBound"] is False
+    assert first["generatedOrderCount"] == 0
+    assert first["generatedDecisionCount"] == 0
+    assert first["exportSink"] == "none"
+    assert first["cloudSink"] == "none"
+    assert first["externalExport"] is False
+    assert first["readOnly"] is True
+    assert first["paperOnly"] is True
+    assert all(not callable(value) for value in first.values())
+
+    matrix = build_preview_read_only_binding_ui_state_boundary_matrix(first)
+    assert matrix.all_boundaries_refused is True
+
+    forbidden_extra_key_tokens = {
+        "action",
+        "callback",
+        "handler",
+        "command",
+        "export",
+        "live",
+        "testnet",
+        "account",
+        "secret",
+    }
+    extra_keys = set(first) - EXPECTED_UI_STATE_KEYS
+    assert extra_keys == set()
+    assert all(
+        token not in key.lower() for key in extra_keys for token in forbidden_extra_key_tokens
+    )
+
+
 @pytest.mark.parametrize(
     ("field_name", "unsafe_value"),
     [
