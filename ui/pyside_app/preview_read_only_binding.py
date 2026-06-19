@@ -137,6 +137,88 @@ def build_preview_read_only_binding_snapshot(
     )
 
 
+def build_default_preview_read_only_binding_ui_state() -> dict[str, object]:
+    """Build the deterministic default BLOK C read-only UI state.
+
+    This is a single-shot/static-local projection for QML source consumption.
+    It composes existing BLOK B closure evidence into
+    PreviewReadOnlyBindingSnapshot and then into the controlled camelCase UI
+    state.  It does not start runtime loops, bind writable UI actions, execute
+    lifecycle commands, fetch live/testnet/account data, or export anything.
+    """
+
+    from bot_core.runtime.paper_preview_runtime_service import (
+        run_paper_preview_runtime_service_once,
+    )
+    from bot_core.runtime.paper_preview_runtime_service_boundary import (
+        build_paper_preview_runtime_service_boundary_matrix,
+    )
+    from bot_core.runtime.paper_preview_runtime_service_closure import (
+        build_paper_preview_runtime_service_closure_report,
+    )
+    from bot_core.runtime.paper_preview_runtime_service_history import (
+        build_paper_preview_runtime_service_history,
+    )
+    from bot_core.runtime.paper_preview_runtime_service_lifecycle import (
+        build_paper_preview_runtime_service_lifecycle_contract,
+    )
+    from bot_core.runtime.paper_preview_runtime_service_read_api import (
+        build_paper_preview_runtime_service_read_api,
+    )
+    from bot_core.runtime.paper_preview_runtime_service_read_api_boundary import (
+        build_paper_preview_runtime_service_read_api_boundary_matrix,
+    )
+    from bot_core.runtime.paper_preview_runtime_service_refusal_executor import (
+        PaperPreviewRuntimeServiceRefusalAttempt,
+        build_paper_preview_runtime_service_refusal_executor_report,
+    )
+    from bot_core.runtime.paper_preview_scenario import (
+        PaperPreviewScenario,
+        PaperPreviewScenarioStep,
+    )
+
+    scenario = PaperPreviewScenario(
+        name="ui-read-only-binding",
+        steps=(
+            PaperPreviewScenarioStep(
+                action="submit",
+                order_id="ui-read-only-binding-buy",
+                symbol="BTCUSDT",
+                side="buy",
+                quantity=1,
+            ),
+            PaperPreviewScenarioStep(
+                action="fill",
+                order_id="ui-read-only-binding-buy",
+                fill_price=100,
+            ),
+        ),
+    )
+    service_snapshot = run_paper_preview_runtime_service_once(scenario, created_at="fixed")
+    boundary = build_paper_preview_runtime_service_boundary_matrix(service_snapshot)
+    lifecycle = build_paper_preview_runtime_service_lifecycle_contract(service_snapshot, boundary)
+    view = build_paper_preview_runtime_service_read_api(service_snapshot, boundary, lifecycle)
+    read_boundary = build_paper_preview_runtime_service_read_api_boundary_matrix(view)
+    refusal = build_paper_preview_runtime_service_refusal_executor_report(
+        view,
+        read_boundary,
+        lifecycle,
+        (
+            PaperPreviewRuntimeServiceRefusalAttempt("boundary", "qml_binding"),
+            PaperPreviewRuntimeServiceRefusalAttempt("boundary", "external_export"),
+            PaperPreviewRuntimeServiceRefusalAttempt("command", "read_local_snapshot"),
+        ),
+    )
+    history = build_paper_preview_runtime_service_history(
+        ((view, read_boundary, refusal),), max_entries=3
+    )
+    closure = build_paper_preview_runtime_service_closure_report(
+        service_snapshot, boundary, lifecycle, view, read_boundary, refusal, history
+    )
+    snapshot = build_preview_read_only_binding_snapshot(closure)
+    return build_preview_read_only_binding_ui_state(snapshot)
+
+
 def build_preview_read_only_binding_ui_state(
     snapshot: PreviewReadOnlyBindingSnapshot,
 ) -> dict[str, object]:
@@ -502,6 +584,7 @@ __all__ = [
     "PreviewReadOnlyBindingUiStateBoundaryMatrix",
     "PreviewReadOnlyBindingUiStateBoundaryRow",
     "build_preview_read_only_binding_snapshot",
+    "build_default_preview_read_only_binding_ui_state",
     "build_preview_read_only_binding_ui_state",
     "build_preview_read_only_binding_ui_state_boundary_matrix",
     "validate_preview_read_only_binding_ui_state_boundary_matrix",

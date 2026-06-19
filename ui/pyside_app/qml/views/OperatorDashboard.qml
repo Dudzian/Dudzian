@@ -35,6 +35,14 @@ Components.StyledScrollView {
         return value
     }
 
+    function blockCReadOnlyBindingValue(key, fallback) {
+        return snapshotValue(
+            typedBridgeValue("blockCReadOnlyBindingState", null),
+            key,
+            fallback
+        )
+    }
+
     ColumnLayout {
         width: root.availableWidth
         spacing: 14
@@ -65,7 +73,7 @@ Components.StyledScrollView {
 
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgeContract"; descriptionObjectName: "previewTypedBridgeContractLabel"; designSystem: root.designSystem; title: qsTr("Typed preview bridge contract"); description: qsTr("Typed bridge: %1 • %2").arg(typedBridgeValue("schemaContractValid", false) ? "schema ok" : "schema missing").arg(typedBridgeValue("runtimeBoundaryLocalOnly", false) ? "local-only boundary ok" : "local-only boundary blocked"); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgeDiagnosticMarker"; descriptionObjectName: "previewTypedBridgeDiagnosticMarkerLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge diagnostic marker"); description: qsTr("Local preview read-only diagnostic consumer • offscreen smoke only • not a live trading control path"); Layout.fillWidth: true }
-            Components.PreviewCard { objectName: "operatorDashboardBlockCReadOnlyBindingSummary"; descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel"; designSystem: root.designSystem; title: qsTr("BLOK C — UI READ-ONLY BINDING"); description: qsTr("BLOK B contract-complete static-local • integration gate: blocked • runtime loop: not started • runtime backed: false • UI runtime integration: false • decision/export/live readiness: false • read-only binding only"); Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "operatorDashboardBlockCReadOnlyBindingSummary"; descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel"; designSystem: root.designSystem; title: qsTr("BLOK C — UI READ-ONLY BINDING"); description: qsTr("BLOK B contract-complete static-local • read-only binding only • binding kind: %1 • block status: %2 • integration gate: %3 • runtime loop: %4 • runtime backed: %5 • UI runtime integration: %6 • ui bound: %7 • generated orders: %8 • generated decisions: %9 • export sink: %10 • cloud sink: %11 • external export: %12 • decision/export/live readiness: false").arg(blockCReadOnlyBindingValue("bindingKind", "static_local_block_b_closure_ui_read_only_binding")).arg(blockCReadOnlyBindingValue("blockStatus", "contract_complete_static_local")).arg(blockCReadOnlyBindingValue("integrationGateStatus", "blocked")).arg(blockCReadOnlyBindingValue("runtimeLoopStarted", false) ? "started" : "not started").arg(blockCReadOnlyBindingValue("runtimeBacked", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("readyForUiRuntimeIntegration", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("uiBound", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("generatedOrderCount", 0)).arg(blockCReadOnlyBindingValue("generatedDecisionCount", 0)).arg(blockCReadOnlyBindingValue("exportSink", "none")).arg(blockCReadOnlyBindingValue("cloudSink", "none")).arg(blockCReadOnlyBindingValue("externalExport", false) ? "true" : "false"); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgePaper"; descriptionObjectName: "previewTypedBridgePaperLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge paper snapshot"); description: qsTr("Bridge paper: %1 • orders %2").arg(snapshotValue(typedBridgeValue("paperSessionSnapshot", null), "normalizedState", "—")).arg(snapshotValue(typedBridgeValue("paperSessionSnapshot", null), "orderRows", 0)); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgeScanner"; descriptionObjectName: "previewTypedBridgeScannerLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge scanner snapshot"); description: qsTr("Bridge scanner: %1 • candidates %2").arg(snapshotValue(typedBridgeValue("scannerSnapshot", null), "bestOpportunity", "—")).arg(snapshotValue(typedBridgeValue("scannerSnapshot", null), "candidates", 0)); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgeGovernor"; descriptionObjectName: "previewTypedBridgeGovernorLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge governor snapshot"); description: qsTr("Bridge governor: %1 • %2").arg(snapshotValue(typedBridgeValue("governorSnapshot", null), "latestAction", "—")).arg(snapshotValue(typedBridgeValue("governorSnapshot", null), "latestSymbol", "—")); Layout.fillWidth: true }

@@ -276,6 +276,8 @@ def test_block_c_read_only_binding_visible_source_evidence_green() -> None:
     assert evidence["panel_source_present"] is True
     assert evidence["labels_present"] is True
     assert evidence["no_action_controls"] is True
+    assert evidence["controlled_state_consumption_present"] is True
+    assert evidence["safe_fallbacks_present"] is True
 
 
 def test_block_c_read_only_binding_visible_source_allows_safe_export_label() -> None:
@@ -289,7 +291,20 @@ def test_block_c_read_only_binding_visible_source_allows_safe_export_label() -> 
         "runtime backed: false "
         "UI runtime integration: false "
         "decision/export/live readiness: false "
-        "read-only binding only"
+        "read-only binding only "
+        "blockCReadOnlyBindingValue blockCReadOnlyBindingState bindingKind blockStatus "
+        "integrationGateStatus readyForUiRuntimeIntegration runtimeLoopStarted runtimeBacked "
+        "uiBound generatedOrderCount generatedDecisionCount exportSink cloudSink externalExport "
+        '"integrationGateStatus", "blocked" '
+        '"readyForUiRuntimeIntegration", false '
+        '"runtimeLoopStarted", false '
+        '"runtimeBacked", false '
+        '"uiBound", false '
+        '"generatedOrderCount", 0 '
+        '"generatedDecisionCount", 0 '
+        '"exportSink", "none" '
+        '"cloudSink", "none" '
+        '"externalExport", false'
     )
 
     evidence = _block_c_read_only_binding_visible_source_evidence(safe_source)
@@ -297,6 +312,8 @@ def test_block_c_read_only_binding_visible_source_allows_safe_export_label() -> 
     assert evidence["all_block_c_read_only_binding_visible_source_checks_passed"] is True
     assert evidence["failed_checks"] == []
     assert evidence["decision_export_live_false_text_present"] is True
+    assert evidence["controlled_state_consumption_present"] is True
+    assert evidence["safe_fallbacks_present"] is True
     assert evidence["no_action_controls"] is True
 
 

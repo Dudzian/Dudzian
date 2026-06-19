@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Final
 
+from .preview_read_only_binding import build_default_preview_read_only_binding_ui_state
+
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
 Snapshot = dict[str, object]
@@ -108,6 +110,9 @@ class LocalPreviewStateBridge(QObject):
             "apiKeysRequired": False,
             "runtimeLoopStarted": False,
         }
+        self._block_c_read_only_binding_state: Snapshot = (
+            build_default_preview_read_only_binding_ui_state()
+        )
 
     @Property("QVariantMap", notify=snapshotsChanged)
     def paperSessionSnapshot(self) -> Snapshot:  # type: ignore[override]
@@ -132,6 +137,10 @@ class LocalPreviewStateBridge(QObject):
     @Property("QVariantMap", notify=snapshotsChanged)
     def runtimeBoundaryStatus(self) -> Snapshot:  # type: ignore[override]
         return dict(self._runtime_boundary_status)
+
+    @Property("QVariantMap", constant=True)
+    def blockCReadOnlyBindingState(self) -> Snapshot:  # type: ignore[override]
+        return dict(self._block_c_read_only_binding_state)
 
     @Property("QVariantMap", notify=snapshotsChanged)
     def schemaContract(self) -> Snapshot:  # type: ignore[override]

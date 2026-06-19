@@ -626,9 +626,39 @@ def _block_c_read_only_binding_visible_source_evidence(
     panel_start = source.find(panel_marker)
     panel_slice = source[panel_start : panel_start + 900] if panel_start >= 0 else ""
     labels_present = _source_has_all(source, BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS)
+    controlled_state_keys = (
+        "blockCReadOnlyBindingValue",
+        "blockCReadOnlyBindingState",
+        "bindingKind",
+        "blockStatus",
+        "integrationGateStatus",
+        "readyForUiRuntimeIntegration",
+        "runtimeLoopStarted",
+        "runtimeBacked",
+        "uiBound",
+        "generatedOrderCount",
+        "generatedDecisionCount",
+        "exportSink",
+        "cloudSink",
+        "externalExport",
+    )
+    safe_fallback_tokens = (
+        '"integrationGateStatus", "blocked"',
+        '"readyForUiRuntimeIntegration", false',
+        '"runtimeLoopStarted", false',
+        '"runtimeBacked", false',
+        '"uiBound", false',
+        '"generatedOrderCount", 0',
+        '"generatedDecisionCount", 0',
+        '"exportSink", "none"',
+        '"cloudSink", "none"',
+        '"externalExport", false',
+    )
     checks = {
         "panel_source_present": panel_marker in source and label_marker in source,
         "labels_present": labels_present,
+        "controlled_state_consumption_present": _source_has_all(source, controlled_state_keys),
+        "safe_fallbacks_present": _source_has_all(source, safe_fallback_tokens),
         "read_only_static_local_text_present": _source_has_all(
             source,
             (
