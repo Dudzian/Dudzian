@@ -637,20 +637,15 @@ def _block_c_read_only_binding_visible_source_evidence(
     panel_slice = source[panel_start : panel_start + 900] if panel_start >= 0 else ""
     labels_present = _source_has_all(source, BLOCK_C_READ_ONLY_BINDING_VISIBLE_SOURCE_LABELS)
     controlled_state_keys = (
-        "blockCReadOnlyBindingValue",
-        "blockCReadOnlyBindingState",
-        "bindingKind",
-        "blockStatus",
-        "integrationGateStatus",
-        "readyForUiRuntimeIntegration",
-        "runtimeLoopStarted",
-        "runtimeBacked",
-        "uiBound",
-        "generatedOrderCount",
-        "generatedDecisionCount",
-        "exportSink",
-        "cloudSink",
-        "externalExport",
+        *BLOCK_C_READ_ONLY_BINDING_CONTROLLED_SOURCE_TOKENS,
+        'blockCReadOnlyBindingValue("bindingKind",',
+        'blockCReadOnlyBindingValue("blockStatus",',
+        'blockCReadOnlyBindingValue("uiBound", false)',
+        'blockCReadOnlyBindingValue("generatedOrderCount", 0)',
+        'blockCReadOnlyBindingValue("generatedDecisionCount", 0)',
+        'blockCReadOnlyBindingValue("exportSink", "none")',
+        'blockCReadOnlyBindingValue("cloudSink", "none")',
+        'blockCReadOnlyBindingValue("externalExport", false)',
     )
     safe_fallback_tokens = BLOCK_C_READ_ONLY_BINDING_CONTROLLED_SOURCE_TOKENS
     checks = {

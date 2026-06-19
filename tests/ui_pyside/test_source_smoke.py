@@ -339,6 +339,19 @@ def test_block_c_read_only_binding_visible_source_rejects_missing_blocked_fallba
     assert "integration_gate_blocked_fallback_present" in evidence["failed_checks"]
 
 
+def test_block_c_read_only_binding_visible_source_requires_integration_gate_fallback() -> None:
+    unsafe_source = _block_c_safe_controlled_source(integration_fallback='"open"')
+
+    evidence = _block_c_read_only_binding_visible_source_evidence(unsafe_source)
+
+    assert evidence["all_block_c_read_only_binding_visible_source_checks_passed"] is False
+    assert evidence["safe_fallbacks_present"] is False
+    assert evidence["failed_checks"] == [
+        "controlled_state_consumption_present",
+        "safe_fallbacks_present",
+    ]
+
+
 def test_block_c_read_only_binding_visible_source_evidence_fails_closed() -> None:
     unsafe_source = (
         'objectName: "operatorDashboardBlockCReadOnlyBindingSummary" '
