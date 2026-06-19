@@ -48,6 +48,12 @@ def test_operator_dashboard_block_c_controlled_value_consumption_source_without_
     ):
         assert safe_fallback in panel_source
 
+    assert "integration gate: blocked" not in panel_source
+    assert 'blockCReadOnlyBindingValue("integrationGateStatus", "blocked")' in panel_source
+    assert 'blockCReadOnlyBindingValue("runtimeLoopStarted", false)' in panel_source
+    assert 'blockCReadOnlyBindingValue("runtimeBacked", false)' in panel_source
+    assert 'blockCReadOnlyBindingValue("readyForUiRuntimeIntegration", false)' in panel_source
+
     assert "decision/export/live readiness: false" in panel_source
     assert "integration gate: blocked" not in panel_source
     assert 'blockCReadOnlyBindingValue("integrationGateStatus", "blocked")' in panel_source
@@ -60,5 +66,12 @@ def test_operator_dashboard_block_c_controlled_value_consumption_source_without_
         "exportHandler",
         "submit",
         "execute",
+        "Button",
+        "MouseArea",
+        "startRuntime",
+        "stopRuntime",
+        "runRuntime",
+        "command",
+        "lifecycle",
     ):
         assert forbidden_action_token not in panel_source

@@ -428,6 +428,65 @@ def build_preview_read_only_binding_bridge_preflight(
     }
 
 
+def build_preview_read_only_binding_bridge_refusal_report(
+    state: Mapping[str, object],
+    *,
+    reread_state: Mapping[str, object],
+    boundary_matrix: PreviewReadOnlyBindingUiStateBoundaryMatrix | None = None,
+) -> dict[str, object]:
+    """Build formal BLOK C bridge refusal/negative-controls proof.
+
+    The report is intentionally pure/static and validates only in-memory maps. It
+    fails closed on unsafe state, missing/extra unsafe keys, callable values,
+    no-copy-on-read evidence, or any boundary matrix row that allows an action.
+    """
+
+    bridge_state = dict(state)
+    second_state = dict(reread_state)
+    if state is reread_state or bridge_state != second_state:
+        raise PreviewReadOnlyBindingError("copy_on_read")
+
+    computed_matrix = build_preview_read_only_binding_ui_state_boundary_matrix(bridge_state)
+    validate_preview_read_only_binding_ui_state_boundary_matrix(computed_matrix)
+    if not computed_matrix.all_boundaries_refused:
+        raise PreviewReadOnlyBindingError("computed_boundary_matrix_all_refused")
+
+    if boundary_matrix is not None:
+        validate_preview_read_only_binding_ui_state_boundary_matrix(boundary_matrix)
+        if not boundary_matrix.all_boundaries_refused:
+            raise PreviewReadOnlyBindingError("injected_boundary_matrix_all_refused")
+
+    matrix = computed_matrix
+
+    return {
+        "bridge_field_name": "blockCReadOnlyBindingState",
+        "refusal_kind": "block_c_read_only_bridge_negative_controls",
+        "read_only_bridge": True,
+        "copy_on_read_required": True,
+        "setters_refused": True,
+        "slots_refused": True,
+        "actions_refused": True,
+        "commands_refused": True,
+        "lifecycle_refused": True,
+        "runtime_loop_refused": True,
+        "export_refused": True,
+        "cloud_external_refused": True,
+        "live_testnet_refused": True,
+        "account_secret_refused": True,
+        "boundary_matrix_all_refused": matrix.all_boundaries_refused,
+        "integration_gate_status": matrix.integration_gate_status,
+        "ready_for_ui_runtime_integration": matrix.ready_for_ui_runtime_integration,
+        "runtime_backed": matrix.runtime_backed,
+        "runtime_loop_started": matrix.runtime_loop_started,
+        "ui_bound": matrix.ui_bound,
+        "generated_order_count": matrix.generated_order_count,
+        "generated_decision_count": matrix.generated_decision_count,
+        "export_sink": matrix.export_sink,
+        "cloud_sink": matrix.cloud_sink,
+        "external_export": matrix.external_export,
+    }
+
+
 def build_preview_read_only_binding_ui_state_boundary_matrix(
     snapshot_or_state: PreviewReadOnlyBindingSnapshot | Mapping[str, object],
 ) -> PreviewReadOnlyBindingUiStateBoundaryMatrix:
