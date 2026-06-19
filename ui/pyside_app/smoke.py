@@ -1861,15 +1861,51 @@ def _build_operator_workflow_runtime_audit(
     root: Any, audit: dict[str, object]
 ) -> dict[str, object]:
     workflow: dict[str, object] = {}
-    continuity_pair = _string_property(root, "selectedTerminalPair") or "BTC/USDT"
-    if continuity_pair:
-        _invoke_qml(root, "selectScannerPair", continuity_pair)
+    before_terminal_pair = _string_property(root, "selectedTerminalPair")
+    before_selected_pairs = list(_variant(root.property("selectedPairs")) or [])
+    before_scanner_pair = _string_property(root, "scannerSelectedPair")
+    scanner_first_row = _first_row(root.property("scannerRows"))
+    scanner_first_row_pair = _row_field(scanner_first_row, "pair")
+    selected_candidate_pair = before_scanner_pair or scanner_first_row_pair or "BTC/USDT"
+    workflow["operator_pair_before_select_selected_terminal_pair"] = before_terminal_pair
+    workflow["operator_pair_before_select_selected_pairs"] = before_selected_pairs
+    workflow["operator_pair_before_select_scanner_selected_pair"] = before_scanner_pair
+    workflow["operator_selected_candidate_source_diagnostic"] = (
+        "scannerSelectedPair"
+        if before_scanner_pair
+        else ("scannerRows[0].pair" if scanner_first_row_pair else "fallback")
+    )
+    if selected_candidate_pair:
+        _invoke_qml(root, "selectScannerPair", selected_candidate_pair)
         _process_events()
-    selected_pair = _string_property(root, "scannerSelectedPair")
+    after_select_terminal_pair = _string_property(root, "selectedTerminalPair")
+    after_select_selected_pairs = list(_variant(root.property("selectedPairs")) or [])
+    after_select_scanner_pair = _string_property(root, "scannerSelectedPair")
+    workflow["operator_pair_after_select_selected_terminal_pair"] = after_select_terminal_pair
+    workflow["operator_pair_after_select_selected_pairs"] = after_select_selected_pairs
+    workflow["operator_pair_after_select_scanner_selected_pair"] = after_select_scanner_pair
     _invoke_show_panel(root, "terminalPanel")
     _process_events()
-    selected_terminal_pair = _string_property(root, "selectedTerminalPair")
-    selected_candidate_pair = selected_pair
+    after_terminal_open_terminal_pair = _string_property(root, "selectedTerminalPair")
+    after_terminal_open_selected_pairs = list(_variant(root.property("selectedPairs")) or [])
+    after_terminal_open_scanner_pair = _string_property(root, "scannerSelectedPair")
+    workflow["operator_pair_after_terminal_open_selected_terminal_pair"] = (
+        after_terminal_open_terminal_pair
+    )
+    workflow["operator_pair_after_terminal_open_selected_pairs"] = (
+        after_terminal_open_selected_pairs
+    )
+    workflow["operator_pair_after_terminal_open_scanner_selected_pair"] = (
+        after_terminal_open_scanner_pair
+    )
+    terminal_panel = _find_qml_object(root, "paperTerminalRoot")
+    terminal_panel_active_pair = (
+        _string_property(terminal_panel, "activePair") if terminal_panel is not None else ""
+    )
+    workflow["operator_terminal_panel_active_pair_diagnostic"] = terminal_panel_active_pair
+    selected_pair = after_terminal_open_scanner_pair
+    selected_terminal_pair = after_terminal_open_terminal_pair
+    workflow["operator_selected_pairs_diagnostic"] = after_terminal_open_selected_pairs
     (
         selected_candidate_updates_shared_state,
         terminal_pair_matches_selected_candidate,

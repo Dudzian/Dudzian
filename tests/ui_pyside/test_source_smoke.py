@@ -668,14 +668,16 @@ def test_operator_workflow_evidence_helper_contract() -> None:
     assert "_build_operator_workflow_runtime_audit" in smoke_source
     assert "operator_scanner_rows_runtime_non_empty_diagnostic" in smoke_source
     assert (
-        "if continuity_pair:\n"
-        '        _invoke_qml(root, "selectScannerPair", continuity_pair)\n'
-        "        _process_events()\n"
-        '    selected_pair = _string_property(root, "scannerSelectedPair")\n'
-        '    _invoke_show_panel(root, "terminalPanel")\n'
-        "    _process_events()\n"
-        '    selected_terminal_pair = _string_property(root, "selectedTerminalPair")'
-    ) in smoke_source
+        'selected_candidate_pair = before_scanner_pair or scanner_first_row_pair or "BTC/USDT"'
+        in smoke_source
+    )
+    assert (
+        '        _invoke_qml(root, "selectScannerPair", selected_candidate_pair)\n' in smoke_source
+    )
+    assert "operator_pair_before_select_selected_terminal_pair" in smoke_source
+    assert "operator_pair_after_select_selected_terminal_pair" in smoke_source
+    assert "operator_pair_after_terminal_open_selected_terminal_pair" in smoke_source
+    assert "operator_selected_pairs_diagnostic" in smoke_source
     assert "operator_source_diagnostic" not in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS
     for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS:
         assert key in smoke_source
@@ -732,13 +734,16 @@ def test_operator_workflow_runtime_audit_selects_flushes_opens_terminal_then_com
     smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
 
     assert (
-        '        _invoke_qml(root, "selectScannerPair", continuity_pair)\n'
-        "        _process_events()\n"
-        '    selected_pair = _string_property(root, "scannerSelectedPair")\n'
-        '    _invoke_show_panel(root, "terminalPanel")\n'
-        "    _process_events()\n"
-        '    selected_terminal_pair = _string_property(root, "selectedTerminalPair")'
-    ) in smoke_source
+        'selected_candidate_pair = before_scanner_pair or scanner_first_row_pair or "BTC/USDT"'
+        in smoke_source
+    )
+    assert (
+        '        _invoke_qml(root, "selectScannerPair", selected_candidate_pair)\n' in smoke_source
+    )
+    assert "operator_pair_before_select_selected_pairs" in smoke_source
+    assert "operator_pair_after_select_selected_pairs" in smoke_source
+    assert "operator_pair_after_terminal_open_selected_pairs" in smoke_source
+    assert "operator_terminal_panel_active_pair_diagnostic" in smoke_source
     assert "_operator_pair_state_matches(" in smoke_source
     assert "operator_scanner_selected_pair_diagnostic" in smoke_source
     assert "operator_terminal_selected_pair_diagnostic" in smoke_source
