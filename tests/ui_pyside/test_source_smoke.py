@@ -285,20 +285,25 @@ def test_block_c_read_only_binding_visible_source_evidence_green() -> None:
     assert evidence["safe_fallbacks_present"] is True
 
 
-def _block_c_safe_controlled_source(extra: str = "") -> str:
+def _block_c_safe_controlled_source(
+    *,
+    integration_fallback: str = '"blocked"',
+    extra_panel_token: str = "",
+) -> str:
     return (
         "function blockCReadOnlyBindingValue(key, fallback) {} "
         'typedBridgeValue("blockCReadOnlyBindingState", null) '
         'objectName: "operatorDashboardBlockCReadOnlyBindingSummary" '
+        f"{extra_panel_token} "
         'descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel" '
         "BLOK C — UI READ-ONLY BINDING "
         "BLOK B contract-complete static-local "
         "decision/export/live readiness: false "
         "read-only binding only "
-        "blockCReadOnlyBindingValue blockCReadOnlyBindingState bindingKind blockStatus "
-        "integrationGateStatus readyForUiRuntimeIntegration runtimeLoopStarted runtimeBacked "
-        "uiBound generatedOrderCount generatedDecisionCount exportSink cloudSink externalExport "
-        'blockCReadOnlyBindingValue("integrationGateStatus", "blocked") '
+        'blockCReadOnlyBindingValue("bindingKind", '
+        '"static_local_block_b_closure_ui_read_only_binding") '
+        'blockCReadOnlyBindingValue("blockStatus", "contract_complete_static_local") '
+        f'blockCReadOnlyBindingValue("integrationGateStatus", {integration_fallback}) '
         'blockCReadOnlyBindingValue("readyForUiRuntimeIntegration", false) '
         'blockCReadOnlyBindingValue("runtimeLoopStarted", false) '
         'blockCReadOnlyBindingValue("runtimeBacked", false) '
@@ -308,7 +313,6 @@ def _block_c_safe_controlled_source(extra: str = "") -> str:
         'blockCReadOnlyBindingValue("exportSink", "none") '
         'blockCReadOnlyBindingValue("cloudSink", "none") '
         'blockCReadOnlyBindingValue("externalExport", false) '
-        f"{extra}"
     )
 
 
@@ -346,10 +350,9 @@ def test_block_c_read_only_binding_visible_source_requires_integration_gate_fall
 
     assert evidence["all_block_c_read_only_binding_visible_source_checks_passed"] is False
     assert evidence["safe_fallbacks_present"] is False
-    assert evidence["failed_checks"] == [
-        "controlled_state_consumption_present",
-        "safe_fallbacks_present",
-    ]
+    assert evidence["integration_gate_blocked_fallback_present"] is False
+    assert "safe_fallbacks_present" in evidence["failed_checks"]
+    assert "integration_gate_blocked_fallback_present" in evidence["failed_checks"]
 
 
 def test_block_c_read_only_binding_visible_source_evidence_fails_closed() -> None:
@@ -370,7 +373,7 @@ def test_block_c_read_only_binding_visible_source_evidence_fails_closed() -> Non
 def test_block_c_read_only_binding_visible_source_blocks_action_controls(
     forbidden_token: str,
 ) -> None:
-    unsafe_source = _block_c_safe_controlled_source(forbidden_token)
+    unsafe_source = _block_c_safe_controlled_source(extra_panel_token=forbidden_token)
 
     evidence = _block_c_read_only_binding_visible_source_evidence(unsafe_source)
 
