@@ -8,6 +8,10 @@ from ui.backend import DiagnosticsController, LicensingController, RuntimeServic
 
 from .config import UiAppConfig
 from .preview_state_bridge import LocalPreviewStateBridge
+from .preview_action_dispatch_qt_bridge_registration import (
+    PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY,
+    register_paper_runtime_action_dispatch_qt_bridge,
+)
 from .controllers import (
     LayoutProfileController,
     ModeWizardController,
@@ -45,6 +49,7 @@ class QmlContextBridge:
         registry = load_default_theme()
         self.theme_bridge = ThemeBridge(registry, palette=config.theme_palette)
         self.typed_preview_bridge = LocalPreviewStateBridge()
+        self.paper_runtime_action_dispatch_bridge_registration_evidence: dict[str, object] = {}
 
     def install(self) -> None:
         context = self._engine.rootContext()
@@ -61,3 +66,9 @@ class QmlContextBridge:
         )
         context.setContextProperty("theme", self.theme_bridge)
         context.setContextProperty("typedPreviewBridge", self.typed_preview_bridge)
+        self.paper_runtime_action_dispatch_bridge_registration_evidence = (
+            register_paper_runtime_action_dispatch_qt_bridge(
+                context,
+                property_name=PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY,
+            )
+        )
