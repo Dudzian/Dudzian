@@ -23,6 +23,7 @@ BRIDGE_SNAPSHOT_PATH = (
 BRIDGE_PROVIDER_PATH = (
     REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_bridge_provider.py"
 )
+SELECTION_GATE_PATH = REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_selection_gate.py"
 QT_BRIDGE_REGISTRATION_PATH = (
     REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_qt_bridge_registration.py"
 )
@@ -32,6 +33,7 @@ CATALOG_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_catalog"
 SELECTION_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_selection"
 BRIDGE_SNAPSHOT_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_bridge_snapshot"
 BRIDGE_PROVIDER_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_bridge_provider"
+SELECTION_GATE_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_selection_gate"
 QT_BRIDGE_REGISTRATION_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_qt_bridge_registration"
 GUARDED_SOURCE_PATHS = (
     CONTRACT_PATH,
@@ -40,6 +42,7 @@ GUARDED_SOURCE_PATHS = (
     SELECTION_PATH,
     BRIDGE_SNAPSHOT_PATH,
     BRIDGE_PROVIDER_PATH,
+    SELECTION_GATE_PATH,
 )
 
 FORBIDDEN_IMPORT_ROOTS = {
@@ -254,6 +257,7 @@ def test_contract_can_import_without_pyside_io_network_env_or_runtime(
     monkeypatch.delitem(sys.modules, SELECTION_MODULE_NAME, raising=False)
     monkeypatch.delitem(sys.modules, BRIDGE_SNAPSHOT_MODULE_NAME, raising=False)
     monkeypatch.delitem(sys.modules, BRIDGE_PROVIDER_MODULE_NAME, raising=False)
+    monkeypatch.delitem(sys.modules, SELECTION_GATE_MODULE_NAME, raising=False)
 
     module = importlib.import_module(MODULE_NAME)
     audit_module = importlib.import_module(AUDIT_MODULE_NAME)
@@ -261,6 +265,7 @@ def test_contract_can_import_without_pyside_io_network_env_or_runtime(
     selection_module = importlib.import_module(SELECTION_MODULE_NAME)
     bridge_snapshot_module = importlib.import_module(BRIDGE_SNAPSHOT_MODULE_NAME)
     bridge_provider_module = importlib.import_module(BRIDGE_PROVIDER_MODULE_NAME)
+    selection_gate_module = importlib.import_module(SELECTION_GATE_MODULE_NAME)
 
     assert module.RUNTIME_MODE == "paper"
     assert module.ALLOWED_PAPER_RUNTIME_ACTIONS
@@ -269,6 +274,7 @@ def test_contract_can_import_without_pyside_io_network_env_or_runtime(
     assert selection_module.SELECTION_RESULT_KIND
     assert bridge_snapshot_module.BRIDGE_SNAPSHOT_KIND
     assert bridge_provider_module.PROVIDER_KIND
+    assert selection_gate_module.SELECTION_PREVIEW_GATE_KIND
 
 
 def test_contract_rejection_literals_are_limited_to_safe_refusal_categories() -> None:
