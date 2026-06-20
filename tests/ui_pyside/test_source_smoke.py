@@ -702,8 +702,11 @@ def test_operator_workflow_qml_scanner_pair_wins_over_terminal_default_fallback(
         'property string selectedTerminalPair: selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT"'
         in main_window
     )
+    assert "function preferredTerminalPair()" in main_window
     assert "function ensureSelectedTerminalPair()" in main_window
-    assert "selectedTerminalPair = selectedPairs[0]" in main_window
+    assert "var preferredPair = preferredTerminalPair()" in main_window
+    assert "selectedTerminalPair = preferredPair" in main_window
+    assert "if (scannerSelectedPair && scannerSelectedPair.length > 0)" in main_window
     assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
 
 
@@ -721,8 +724,16 @@ def test_operator_workflow_paper_terminal_active_pair_uses_shared_state_before_d
 
     assert "readonly property string activePair" in terminal
     assert "previewState.selectedTerminalPair" in terminal
+    assert "previewState.scannerSelectedPair" in terminal
     assert "previewState.selectedPairs[0]" in terminal
     assert 'previewState.selectedPairs[0] : "BTC/USDT"' in terminal
+    assert terminal.index("previewState.selectedTerminalPair") < terminal.index(
+        "previewState.scannerSelectedPair"
+    )
+    assert terminal.index("previewState.scannerSelectedPair") < terminal.index(
+        "previewState.selectedPairs[0]"
+    )
+    assert terminal.index("previewState.selectedPairs[0]") < terminal.index('"BTC/USDT"')
     assert '"LINK/USDT"' not in terminal
 
 
