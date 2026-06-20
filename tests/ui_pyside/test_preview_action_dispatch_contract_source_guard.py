@@ -14,7 +14,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_contract.py"
+AUDIT_PATH = REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_audit.py"
 MODULE_NAME = "ui.pyside_app.preview_action_dispatch_contract"
+AUDIT_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_audit"
+GUARDED_SOURCE_PATHS = (CONTRACT_PATH, AUDIT_PATH)
 
 FORBIDDEN_IMPORT_ROOTS = {
     "PySide6",
@@ -97,12 +100,12 @@ class _BlockedImport(RuntimeError):
     pass
 
 
-def _source() -> str:
-    return CONTRACT_PATH.read_text(encoding="utf-8")
+def _source(path: Path = CONTRACT_PATH) -> str:
+    return path.read_text(encoding="utf-8")
 
 
-def _tree() -> ast.Module:
-    return ast.parse(_source())
+def _tree(path: Path = CONTRACT_PATH) -> ast.Module:
+    return ast.parse(_source(path))
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -119,17 +122,18 @@ def _attribute_owner_name(node: ast.Attribute) -> str | None:
     return None
 
 
-def _literal_strings() -> list[str]:
+def _literal_strings(path: Path = CONTRACT_PATH) -> list[str]:
     values: list[str] = []
-    for node in ast.walk(_tree()):
+    for node in ast.walk(_tree(path)):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             values.append(node.value)
     return values
 
 
-def test_contract_source_does_not_import_forbidden_modules_or_symbols() -> None:
+@pytest.mark.parametrize("source_path", GUARDED_SOURCE_PATHS)
+def test_contract_source_does_not_import_forbidden_modules_or_symbols(source_path: Path) -> None:
     offenders: list[str] = []
-    for node in ast.walk(_tree()):
+    for node in ast.walk(_tree(source_path)):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split(".", 1)[0]
@@ -146,16 +150,18 @@ def test_contract_source_does_not_import_forbidden_modules_or_symbols() -> None:
     assert offenders == []
 
 
-def test_contract_source_does_not_add_qml_handlers_or_ui_wiring_tokens() -> None:
-    source = _source()
+@pytest.mark.parametrize("source_path", GUARDED_SOURCE_PATHS)
+def test_contract_source_does_not_add_qml_handlers_or_ui_wiring_tokens(source_path: Path) -> None:
+    source = _source(source_path)
 
     offenders = [token for token in FORBIDDEN_QML_HANDLER_TOKENS if token in source]
     assert offenders == []
 
 
-def test_contract_source_does_not_read_env_or_secret_stores() -> None:
+@pytest.mark.parametrize("source_path", GUARDED_SOURCE_PATHS)
+def test_contract_source_does_not_read_env_or_secret_stores(source_path: Path) -> None:
     offenders: list[str] = []
-    for node in ast.walk(_tree()):
+    for node in ast.walk(_tree(source_path)):
         if isinstance(node, ast.Call) and _call_name(node) == "load_dotenv":
             offenders.append("load_dotenv")
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
@@ -170,7 +176,7 @@ def test_contract_source_does_not_read_env_or_secret_stores() -> None:
             offenders.append("keyring")
 
     unsafe_literals = []
-    for literal in _literal_strings():
+    for literal in _literal_strings(source_path):
         lowered = literal.lower()
         if any(term in lowered for term in SAFE_REJECTION_LITERAL_TERMS):
             continue
@@ -181,9 +187,12 @@ def test_contract_source_does_not_read_env_or_secret_stores() -> None:
     assert unsafe_literals == []
 
 
-def test_contract_source_does_not_contain_runtime_or_order_execution_paths() -> None:
+@pytest.mark.parametrize("source_path", GUARDED_SOURCE_PATHS)
+def test_contract_source_does_not_contain_runtime_or_order_execution_paths(
+    source_path: Path,
+) -> None:
     offenders: list[str] = []
-    for node in ast.walk(_tree()):
+    for node in ast.walk(_tree(source_path)):
         if isinstance(node, ast.Call):
             call_name = _call_name(node)
             if call_name in FORBIDDEN_CALL_NAMES:
@@ -219,9 +228,11 @@ def test_contract_can_import_without_pyside_io_network_env_or_runtime(
     monkeypatch.delitem(sys.modules, MODULE_NAME, raising=False)
 
     module = importlib.import_module(MODULE_NAME)
+    audit_module = importlib.import_module(AUDIT_MODULE_NAME)
 
     assert module.RUNTIME_MODE == "paper"
     assert module.ALLOWED_PAPER_RUNTIME_ACTIONS
+    assert audit_module.AUDIT_ENVELOPE_KIND
 
 
 def test_contract_rejection_literals_are_limited_to_safe_refusal_categories() -> None:
