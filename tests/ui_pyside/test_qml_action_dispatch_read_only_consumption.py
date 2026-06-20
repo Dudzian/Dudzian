@@ -57,6 +57,26 @@ def _qml_files() -> tuple[Path, ...]:
     return tuple(sorted(QML_ROOT.rglob("*.qml")))
 
 
+def _source_files_under(root: Path) -> tuple[Path, ...]:
+    source_suffixes = {".py", ".qml"}
+    return tuple(
+        sorted(
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() in source_suffixes
+        )
+    )
+
+
+def _source_lines_containing(pattern: str, root: Path) -> list[str]:
+    return [
+        line.strip()
+        for path in _source_files_under(root)
+        for line in _source(path).splitlines()
+        if pattern in line
+    ]
+
+
 def test_operator_dashboard_reads_action_dispatch_snapshot_read_only() -> None:
     source = _source(OPERATOR_DASHBOARD)
 
@@ -164,14 +184,11 @@ def test_bat_launchers_remain_dev_preview_only_without_bridge_logic() -> None:
 
 
 def test_no_second_engine_or_app_py_ad_hoc_bridge_registration() -> None:
-    result = subprocess.run(
-        ["rg", "-n", "QQmlApplicationEngine\\(", "ui/pyside_app"],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
+    engine_construction_lines = _source_lines_containing(
+        "QQmlApplicationEngine(",
+        REPO_ROOT / "ui" / "pyside_app",
     )
-    assert result.stdout.count("QQmlApplicationEngine()") == 1
+    assert engine_construction_lines == ["engine = QQmlApplicationEngine()"]
 
     app_source = _source(APP)
     assert "paperRuntimeActionDispatchBridge" not in app_source

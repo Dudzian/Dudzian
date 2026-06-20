@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import subprocess
 from dataclasses import is_dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -75,6 +74,26 @@ def _assert_simple_types_only(value: object) -> None:
 
 def _source(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _source_files_under(*roots: Path) -> tuple[Path, ...]:
+    source_suffixes = {".bat", ".json", ".md", ".py", ".qml", ".txt", ".yaml", ".yml"}
+    return tuple(
+        sorted(
+            path
+            for root in roots
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() in source_suffixes
+        )
+    )
+
+
+def _paths_containing(pattern: str, *roots: Path) -> set[str]:
+    return {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in _source_files_under(*roots)
+        if pattern in _source(path)
+    }
 
 
 def test_closure_audit_returns_expected_schema_kind_block_and_status() -> None:
@@ -212,21 +231,12 @@ def test_qml_bridge_property_is_limited_to_operator_dashboard_read_only_snapshot
 
 
 def test_context_property_constant_limited_to_allowed_block_d_sources() -> None:
-    result = subprocess.run(
-        [
-            "rg",
-            "-l",
-            "PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY",
-            "ui/pyside_app",
-            "tests",
-            "docs",
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
+    paths = _paths_containing(
+        "PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY",
+        REPO_ROOT / "ui" / "pyside_app",
+        REPO_ROOT / "tests",
+        REPO_ROOT / "docs",
     )
-    paths = {Path(line).as_posix() for line in result.stdout.splitlines() if line}
 
     assert paths <= {
         "ui/pyside_app/preview_action_dispatch_qt_bridge_registration.py",
