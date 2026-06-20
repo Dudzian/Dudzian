@@ -16,10 +16,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_contract.py"
 AUDIT_PATH = REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_audit.py"
 CATALOG_PATH = REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_catalog.py"
+SELECTION_PATH = REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_selection.py"
 MODULE_NAME = "ui.pyside_app.preview_action_dispatch_contract"
 AUDIT_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_audit"
 CATALOG_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_catalog"
-GUARDED_SOURCE_PATHS = (CONTRACT_PATH, AUDIT_PATH, CATALOG_PATH)
+SELECTION_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_selection"
+GUARDED_SOURCE_PATHS = (CONTRACT_PATH, AUDIT_PATH, CATALOG_PATH, SELECTION_PATH)
 
 FORBIDDEN_IMPORT_ROOTS = {
     "PySide6",
@@ -230,15 +232,18 @@ def test_contract_can_import_without_pyside_io_network_env_or_runtime(
     monkeypatch.delitem(sys.modules, MODULE_NAME, raising=False)
     monkeypatch.delitem(sys.modules, AUDIT_MODULE_NAME, raising=False)
     monkeypatch.delitem(sys.modules, CATALOG_MODULE_NAME, raising=False)
+    monkeypatch.delitem(sys.modules, SELECTION_MODULE_NAME, raising=False)
 
     module = importlib.import_module(MODULE_NAME)
     audit_module = importlib.import_module(AUDIT_MODULE_NAME)
     catalog_module = importlib.import_module(CATALOG_MODULE_NAME)
+    selection_module = importlib.import_module(SELECTION_MODULE_NAME)
 
     assert module.RUNTIME_MODE == "paper"
     assert module.ALLOWED_PAPER_RUNTIME_ACTIONS
     assert audit_module.AUDIT_ENVELOPE_KIND
     assert catalog_module.CATALOG_KIND
+    assert selection_module.SELECTION_RESULT_KIND
 
 
 def test_contract_rejection_literals_are_limited_to_safe_refusal_categories() -> None:
