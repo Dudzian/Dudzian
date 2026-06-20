@@ -25,6 +25,8 @@ FORBIDDEN_NEW_QML_HANDLER_TOKENS = (
     "Connections",
     "TapHandler",
     "Keys.onPressed",
+    "Keys.onReleased",
+    "Shortcut",
 )
 FORBIDDEN_EXECUTION_TOKENS = (
     "dispatch_command",
@@ -97,6 +99,52 @@ def test_operator_dashboard_exposes_no_execution_snapshot_evidence() -> None:
         "preview read-only disabled not executed",
     ):
         assert token in source
+
+
+def test_operator_dashboard_disabled_intent_selection_preflight_surface_is_read_only_and_non_clickable() -> (
+    None
+):
+    source = _source(OPERATOR_DASHBOARD)
+
+    assert "readonly property bool actionDispatchSelectionPreflightLocked" in source
+    assert "readonly property string actionDispatchSelectionPreflightStatus" in source
+    assert "function actionDispatchDisabledIntentSummary(actions)" in source
+    assert "operatorDashboardActionDispatchDisabledIntentSelectionPreflight" in source
+    assert "previewActionDispatchDisabledIntentSelectionPreflightLabel" in source
+    assert "actionDispatchDisabledIntentSummary(actionDispatchActions)" in source
+    assert "actionDispatchActions" in source
+
+    preflight_start = source.index(
+        "operatorDashboardActionDispatchDisabledIntentSelectionPreflight"
+    )
+    preflight_end = source.index("operatorDashboardBlockCReadOnlyBindingSummary")
+    preflight_source = source[preflight_start:preflight_end]
+
+    for token in (
+        "selection locked",
+        "disabled_preflight_only",
+        "disabled intent candidates",
+        "future interaction gate required",
+        "method calls disabled",
+        "bridge selection APIs not called",
+        "execution disabled",
+        "no runtime execution",
+        "no order submission",
+        "no lifecycle execution",
+        "read-only preflight only not executed",
+        "disabled read-only preflight only not executed",
+        "source_control",
+        "audit_status",
+        "safe_to_bind_from_ui",
+        "execution_allowed",
+        "execution_performed",
+    ):
+        assert token in source
+
+    for token in ("Button", "IconButton", *FORBIDDEN_NEW_QML_HANDLER_TOKENS):
+        assert token not in preflight_source
+    for method in FORBIDDEN_QML_BRIDGE_METHODS:
+        assert method not in preflight_source
 
 
 def test_operator_dashboard_action_catalog_surface_is_read_only_and_non_clickable() -> None:
