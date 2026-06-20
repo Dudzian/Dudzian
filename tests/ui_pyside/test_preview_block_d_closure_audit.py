@@ -111,7 +111,7 @@ def test_bridge_is_ready_and_block_e_wired_to_central_context() -> None:
 def test_qml_does_not_consume_bridge_and_real_context_property_registered_once() -> None:
     evidence = build_preview_block_d_closure_audit(REPO_ROOT)
 
-    assert evidence["qml_consumes_bridge"] is False
+    assert evidence["qml_consumes_bridge"] is True
     assert evidence["real_startup_context_property_registered"] is True
     assert evidence["registered_context_property_name"] == "paperRuntimeActionDispatchBridge"
     assert evidence["execution_still_disabled_after_wiring"] is True
@@ -169,7 +169,7 @@ def test_execution_live_testnet_account_secrets_export_flags_are_false() -> None
 def test_next_block_gate_has_one_required_integration_point_and_forbidden_points() -> None:
     gate = build_preview_block_d_closure_audit(REPO_ROOT)["next_block_gate"]
 
-    assert gate["allowed_next_scope"] == "controlled_qml_context_wiring"
+    assert gate["allowed_next_scope"] == "read_only_qml_snapshot_consumption"
     assert gate["required_integration_point"] == RECOMMENDED_FUTURE_INTEGRATION_POINT
     assert list(gate).count("required_integration_point") == 1
     forbidden = gate["forbidden_integration_points"]
@@ -177,7 +177,6 @@ def test_next_block_gate_has_one_required_integration_point_and_forbidden_points
         ".bat launchers",
         "ui/pyside_app/app.py",
         "ui/pyside_app/qml/MainWindow.qml",
-        "ui/pyside_app/qml/views/OperatorDashboard.qml",
         "ui/pyside_app/qml/views/PaperTerminal.qml",
         "ui/pyside_app/preview_state_bridge.py",
         "runtime/order/trading/live/testnet/account/secrets/export paths",
@@ -196,21 +195,20 @@ def test_controlled_wiring_source_guard_for_qml_bridge_and_real_startup() -> Non
     assert "register_paper_runtime_action_dispatch_qt_bridge" not in app_source
 
 
-def test_qml_files_and_bat_launchers_do_not_contain_new_bridge_property() -> None:
-    for path in (*QML_FILES, *BAT_LAUNCHERS):
-        assert "paperRuntimeActionDispatchBridge" not in _source(path)
+def test_qml_bridge_property_is_limited_to_operator_dashboard_read_only_snapshot() -> None:
+    qml_consumers = [
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in QML_FILES
+        if "paperRuntimeActionDispatchBridge" in _source(path)
+    ]
 
-
-def test_no_qml_files_changed_in_worktree() -> None:
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "--", "ui/pyside_app/qml"],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
+    assert qml_consumers == ["ui/pyside_app/qml/views/OperatorDashboard.qml"]
+    operator_source = _source(
+        REPO_ROOT / "ui" / "pyside_app" / "qml" / "views" / "OperatorDashboard.qml"
     )
-
-    assert result.stdout.strip() == ""
+    assert "paperRuntimeActionDispatchBridge.snapshot" in operator_source
+    for path in BAT_LAUNCHERS:
+        assert "paperRuntimeActionDispatchBridge" not in _source(path)
 
 
 def test_context_property_constant_limited_to_allowed_block_d_sources() -> None:
