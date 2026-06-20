@@ -304,3 +304,107 @@ def test_evidence_nested_mappings_are_immutable() -> None:
     reread = build_paper_runtime_action_dispatch_contract("unexpected_action")
     assert reread.boundary_checks["fail_closed"] is True
     assert reread.rejected_actions["live_mode"] == ("live", "prod", "production", "real_trading")
+
+
+QT_BRIDGE_PATH = REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_qt_bridge.py"
+QT_BRIDGE_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_qt_bridge"
+QT_BRIDGE_FORBIDDEN_IMPORTS = {
+    "PySide6.QtQuick",
+    "PySide6.QtQml",
+    "QQmlApplicationEngine",
+    "TradingController",
+    "DecisionEnvelope",
+    "os",
+    "dotenv",
+    "keyring",
+    "socket",
+    "requests",
+    "httpx",
+}
+QT_BRIDGE_FORBIDDEN_TOKENS = (
+    "Button.onClicked",
+    "onClicked:",
+    "MouseArea",
+    "Connections {",
+    "setContextProperty",
+    "QQmlApplicationEngine",
+    "QAbstractListModel",
+    "dispatch_command(",
+    "execute_command(",
+    "start_runtime(",
+    "start_loop(",
+    "submit_order(",
+    "create_order(",
+    "place_order(",
+    "send_order(",
+    "fill_order(",
+)
+QT_BRIDGE_FORBIDDEN_MODULE_TERMS = (
+    "runtime",
+    "trading",
+    "order",
+    "live",
+    "testnet",
+    "account",
+    "secret",
+    "export",
+)
+
+
+def test_qt_bridge_is_the_only_dispatch_preview_module_allowed_to_import_qtcore() -> None:
+    pure_python_offenders = []
+    for source_path in GUARDED_SOURCE_PATHS:
+        source = _source(source_path)
+        if "PySide6" in source or "QtCore" in source:
+            pure_python_offenders.append(str(source_path.relative_to(REPO_ROOT)))
+
+    qt_source = _source(QT_BRIDGE_PATH)
+    assert pure_python_offenders == []
+    assert "from PySide6.QtCore import QObject, Property, Signal, Slot" in qt_source
+
+
+def test_qt_bridge_does_not_import_qml_runtime_trading_or_forbidden_surfaces() -> None:
+    offenders: list[str] = []
+    for node in ast.walk(_tree(QT_BRIDGE_PATH)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in QT_BRIDGE_FORBIDDEN_IMPORTS:
+                    offenders.append(alias.name)
+                if any(term in alias.name.lower() for term in QT_BRIDGE_FORBIDDEN_MODULE_TERMS):
+                    offenders.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imported_names = {alias.name for alias in node.names}
+            if module in QT_BRIDGE_FORBIDDEN_IMPORTS:
+                offenders.append(module)
+            offenders.extend(sorted(imported_names & QT_BRIDGE_FORBIDDEN_IMPORTS))
+            if module != "ui.pyside_app.preview_action_dispatch_bridge_provider" and any(
+                term in module.lower() for term in QT_BRIDGE_FORBIDDEN_MODULE_TERMS
+            ):
+                offenders.append(module)
+
+    assert offenders == []
+
+
+def test_qt_bridge_does_not_add_qml_handlers_engine_or_execution_tokens() -> None:
+    source = _source(QT_BRIDGE_PATH)
+
+    assert [token for token in QT_BRIDGE_FORBIDDEN_TOKENS if token in source] == []
+
+
+def test_qt_bridge_imports_without_engine_registration_or_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_side_effect(*args: object, **kwargs: object) -> None:
+        raise AssertionError("qt bridge import attempted a forbidden side effect")
+
+    monkeypatch.setattr(builtins, "open", forbidden_side_effect)
+    monkeypatch.setattr("os.getenv", forbidden_side_effect)
+    monkeypatch.setattr("socket.socket", forbidden_side_effect)
+    monkeypatch.setattr("socket.create_connection", forbidden_side_effect)
+    monkeypatch.delitem(sys.modules, QT_BRIDGE_MODULE_NAME, raising=False)
+
+    module = importlib.import_module(QT_BRIDGE_MODULE_NAME)
+
+    assert module.QT_BRIDGE_KIND
+    assert module.PaperRuntimeActionDispatchQtBridge
