@@ -66,7 +66,7 @@ Wniosek: `PaperRuntimeActionDispatchQtBridge` nie dubluje istniejącego context 
 - `preview_action_dispatch_bridge_snapshot.py`: serializuje katalog i wybór do QML-safe plain dict.
 - `preview_action_dispatch_bridge_provider.py`: source-only provider przechowujący ostatni lokalny wybór preview.
 - `preview_action_dispatch_qt_bridge.py`: cienki `QObject` z `snapshot`, `previewSelectAction`, `previewSelectSourceControl`, `resetPreviewSelection`; nie rejestruje się sam.
-- `preview_action_dispatch_qt_bridge_registration.py`: kontrolowany helper preflight dla jednego `context.setContextProperty`, ale nie jest wywołany w startupie.
+- `preview_action_dispatch_qt_bridge_registration.py`: kontrolowany helper preflight dla jednego `context.setContextProperty`; w BLOKU E 7.0 jest wywołany wyłącznie w `QmlContextBridge.install()`.
 
 ## Duplication analysis
 
@@ -77,7 +77,7 @@ Wniosek: `PaperRuntimeActionDispatchQtBridge` nie dubluje istniejącego context 
 
 ## Recommended single integration point
 
-Rekomendowane jedyne miejsce przyszłej integracji helpera z 6.8: `ui/pyside_app/qml_bridge.py::QmlContextBridge.install()`, po istniejących instancjach bridge/provider i przed `engine.load(...)`, przez jedną kontrolowaną rejestrację context property `paperRuntimeActionDispatchBridge`.
+Zatwierdzone jedyne miejsce integracji helpera z 6.8: `ui/pyside_app/qml_bridge.py::QmlContextBridge.install()`, po istniejących instancjach bridge/provider i przed `engine.load(...)`, przez jedną kontrolowaną rejestrację context property `paperRuntimeActionDispatchBridge`.
 
 Dlaczego to miejsce:
 
@@ -109,7 +109,7 @@ Nie integrować w:
 Przed realnym wiringiem wymagane minimum:
 
 - Aktualne testy BLOKU D: contract source guard, bridge snapshot, provider, Qt bridge, registration.
-- Source-only test potwierdzający, że `paperRuntimeActionDispatchBridge` jest rejestrowany dokładnie raz i tylko w `QmlContextBridge.install()`.
+- Source/unit test potwierdzający, że `paperRuntimeActionDispatchBridge` jest rejestrowany dokładnie raz i tylko w `QmlContextBridge.install()`.
 - Test, że istniejące context properties (`typedPreviewBridge`, `runtimeState`, `grpcBridge`) pozostają bez zmiany.
 - QML/runtime smoke po obowiązkowym ensure/install PySide6 i UI runtime deps.
 - Test, że `.bat` nadal uruchamia `python -m ui.pyside_app --config ui/config/preview_local.yaml` i nie przełącza na drugi frontend.
@@ -126,10 +126,7 @@ Uzasadnienie: nowy bridge nie dubluje istniejącego bridge'a, ale aplikacja ma j
 BLOK D zostaje formalnie zamknięty statusem `bridge_ready_not_wired` i decyzją
 `CLOSE_BLOCK_D_AS_BRIDGE_READY_NOT_WIRED`.
 
-Closure potwierdza, że pipeline action-dispatch preview jest gotowy jako
-source-only/QML-safe bridge, ale nie został podpięty do realnego startupu,
-`QmlContextBridge.install()` nie rejestruje jeszcze
-`paperRuntimeActionDispatchBridge`, a QML nie konsumuje nowego bridge'a.
+Closure history: BLOK D zamknięto jako source-only/QML-safe bridge bez realnego startup wiring. BLOK E 7.0 rejestruje teraz `paperRuntimeActionDispatchBridge` w centralnym `QmlContextBridge.install()`, a QML nadal nie konsumuje nowego bridge'a.
 
 Jedyny rekomendowany przyszły punkt integracji pozostaje bez zmian:
 `ui/pyside_app/qml_bridge.py::QmlContextBridge.install()`. Kolejny blok może

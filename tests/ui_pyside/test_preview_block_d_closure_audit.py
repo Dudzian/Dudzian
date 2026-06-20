@@ -1,4 +1,4 @@
-"""Source-only tests for BLOK D closure: bridge ready, not wired."""
+"""Source-only tests for BLOK D closure and BLOK E controlled wiring start."""
 
 from __future__ import annotations
 
@@ -97,21 +97,25 @@ def test_closure_decision_is_exact_close_block_d_bridge_ready_not_wired() -> Non
     assert evidence["ready_for_block_e"] is True
 
 
-def test_bridge_is_ready_but_not_wired_to_real_startup() -> None:
+def test_bridge_is_ready_and_block_e_wired_to_central_context() -> None:
     evidence = build_preview_block_d_closure_audit(REPO_ROOT)
 
     assert evidence["bridge_ready"] is True
-    assert evidence["bridge_wired_to_real_startup"] is False
+    assert evidence["block_e_wiring_started"] is True
+    assert evidence["bridge_wired_to_real_startup"] is True
     assert evidence["boundary_checks"]["bridge_ready"] is True
-    assert evidence["boundary_checks"]["bridge_not_wired"] is True
+    assert evidence["boundary_checks"]["block_e_wiring_started"] is True
+    assert evidence["boundary_checks"]["bridge_registered_in_central_context"] is True
 
 
-def test_qml_does_not_consume_bridge_and_real_context_property_not_registered() -> None:
+def test_qml_does_not_consume_bridge_and_real_context_property_registered_once() -> None:
     evidence = build_preview_block_d_closure_audit(REPO_ROOT)
 
     assert evidence["qml_consumes_bridge"] is False
-    assert evidence["real_startup_context_property_registered"] is False
-    assert evidence["boundary_checks"]["real_context_property_not_registered"] is True
+    assert evidence["real_startup_context_property_registered"] is True
+    assert evidence["registered_context_property_name"] == "paperRuntimeActionDispatchBridge"
+    assert evidence["execution_still_disabled_after_wiring"] is True
+    assert evidence["boundary_checks"]["real_context_property_registered_once"] is True
 
 
 def test_recommended_integration_point_is_qml_context_bridge_install() -> None:
@@ -181,13 +185,13 @@ def test_next_block_gate_has_one_required_integration_point_and_forbidden_points
         assert expected in forbidden
 
 
-def test_not_wired_source_guard_for_qml_bridge_and_real_startup() -> None:
+def test_controlled_wiring_source_guard_for_qml_bridge_and_real_startup() -> None:
     qml_bridge_source = _source(QML_BRIDGE)
     app_source = _source(APP)
 
-    assert "paperRuntimeActionDispatchBridge" not in qml_bridge_source
-    assert "preview_action_dispatch_qt_bridge_registration" not in qml_bridge_source
-    assert "register_paper_runtime_action_dispatch_qt_bridge" not in qml_bridge_source
+    assert qml_bridge_source.count("paperRuntimeActionDispatchBridge") == 0
+    assert "preview_action_dispatch_qt_bridge_registration" in qml_bridge_source
+    assert qml_bridge_source.count("register_paper_runtime_action_dispatch_qt_bridge") == 2
     assert "preview_action_dispatch_qt_bridge_registration" not in app_source
     assert "register_paper_runtime_action_dispatch_qt_bridge" not in app_source
 
@@ -230,4 +234,6 @@ def test_context_property_constant_limited_to_allowed_block_d_sources() -> None:
         "ui/pyside_app/preview_action_dispatch_qt_bridge_registration.py",
         "tests/ui_pyside/test_preview_action_dispatch_qt_bridge_registration.py",
         "tests/ui_pyside/test_preview_block_d_closure_audit.py",
+        "tests/ui_pyside/test_qml_context_bridge_action_dispatch_wiring.py",
+        "ui/pyside_app/qml_bridge.py",
     }

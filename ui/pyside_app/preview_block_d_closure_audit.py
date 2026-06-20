@@ -1,9 +1,10 @@
-"""Source-only BLOK D closure audit: bridge ready, not wired.
+"""Source-only BLOK D closure audit with BLOK E wiring status.
 
-This helper freezes the accepted BLOK D decision in deterministic plain data.  It
-performs no runtime wiring, does not import PySide/QML, does not register context
-properties, and does not execute lifecycle, command-dispatch, order, live,
-testnet, account, secrets, export, or cloud paths.
+This helper freezes the accepted BLOK D decision in deterministic plain data and
+records the narrow BLOK E transition: the Qt bridge may now be registered only
+in QmlContextBridge.install().  It still does not import PySide/QML and does not
+execute lifecycle, command-dispatch, order, live, testnet, account, secrets,
+export, or cloud paths.
 """
 
 from __future__ import annotations
@@ -13,8 +14,8 @@ from pathlib import Path
 from typing import Any, Final
 
 SCHEMA_VERSION: Final[str] = "preview_block_d_closure_audit.v1"
-AUDIT_KIND: Final[str] = "block_d_closure_bridge_ready_not_wired"
-BLOCK_STATUS: Final[str] = "bridge_ready_not_wired"
+AUDIT_KIND: Final[str] = "block_d_closure_bridge_ready_block_e_context_wiring_started"
+BLOCK_STATUS: Final[str] = "bridge_ready_block_e_context_wiring_started"
 CLOSURE_DECISION: Final[str] = "CLOSE_BLOCK_D_AS_BRIDGE_READY_NOT_WIRED"
 RECOMMENDED_FUTURE_INTEGRATION_POINT: Final[str] = (
     "ui/pyside_app/qml_bridge.py::QmlContextBridge.install()"
@@ -46,11 +47,12 @@ BOUNDARY_CHECK_NAMES: Final[tuple[str, ...]] = (
     "anti_duplication_audit_complete",
     "single_future_integration_point_identified",
     "bridge_ready",
-    "bridge_not_wired",
+    "block_e_wiring_started",
+    "bridge_registered_in_central_context",
     "qml_not_changed",
     "startup_not_changed",
     "bat_launch_path_not_changed",
-    "real_context_property_not_registered",
+    "real_context_property_registered_once",
     "no_second_frontend",
     "typed_preview_bridge_not_replaced",
     "grpc_bridge_not_replaced",
@@ -66,7 +68,7 @@ BOUNDARY_CHECK_NAMES: Final[tuple[str, ...]] = (
     "account_fetch_disabled",
     "secrets_disabled",
     "export_cloud_disabled",
-    "ready_for_block_e",
+    "execution_still_disabled_after_wiring",
 )
 FORBIDDEN_INTEGRATION_POINTS: Final[tuple[str, ...]] = (
     ".bat launchers",
@@ -83,6 +85,7 @@ REQUIRED_TESTS_BEFORE_WIRING: Final[tuple[str, ...]] = (
     "qt bridge registration",
     "block d closure audit",
     "source-only single registration test",
+    "controlled context wiring test",
     "QML/runtime smoke with installed PySide/UI deps",
     "launch path unchanged test",
     "no-execution boundary test",
@@ -93,7 +96,7 @@ ANTI_DUPLICATION_AUDIT_PATH: Final[str] = (
 
 
 def build_preview_block_d_closure_audit(repo_root: str | Path | None = None) -> dict[str, Any]:
-    """Return copy-safe plain evidence that closes BLOK D without wiring it."""
+    """Return copy-safe plain evidence for BLOK D closure and BLOK E wiring start."""
 
     root = Path(repo_root) if repo_root is not None else Path(__file__).resolve().parents[2]
     pipeline_modules_present = {
@@ -107,10 +110,13 @@ def build_preview_block_d_closure_audit(repo_root: str | Path | None = None) -> 
         "block_status": BLOCK_STATUS,
         "closure_decision": CLOSURE_DECISION,
         "ready_for_block_e": True,
+        "block_e_wiring_started": True,
         "bridge_ready": True,
-        "bridge_wired_to_real_startup": False,
+        "bridge_wired_to_real_startup": True,
         "qml_consumes_bridge": False,
-        "real_startup_context_property_registered": False,
+        "real_startup_context_property_registered": True,
+        "registered_context_property_name": "paperRuntimeActionDispatchBridge",
+        "execution_still_disabled_after_wiring": True,
         "recommended_future_integration_point": RECOMMENDED_FUTURE_INTEGRATION_POINT,
         "launch_path_preserved": True,
         "anti_duplication_audit_present": anti_duplication_audit_present,
@@ -138,8 +144,8 @@ def build_preview_block_d_closure_audit(repo_root: str | Path | None = None) -> 
             "required_tests_before_wiring": list(REQUIRED_TESTS_BEFORE_WIRING),
         },
         "operator_message": (
-            "BLOK D closed as bridge ready, not wired; future wiring must use the "
-            "single QmlContextBridge.install() integration point in a separate scope."
+            "BLOK D closed as bridge ready; BLOK E has started controlled central "
+            "context wiring in QmlContextBridge.install() while execution remains disabled."
         ),
     }
     return deepcopy(evidence)
