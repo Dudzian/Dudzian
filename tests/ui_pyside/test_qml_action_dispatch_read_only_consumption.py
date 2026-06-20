@@ -13,8 +13,8 @@ BAT_LAUNCHERS = (
     REPO_ROOT / "run_ui_preview_visible_doubleclick.bat",
     REPO_ROOT / "scripts" / "windows" / "run_ui_preview_visible.bat",
 )
+ALLOWED_PREVIEW_SELECT_ACTION_CALL = 'paperRuntimeActionDispatchBridge.previewSelectAction("paper_runtime_snapshot_refresh_requested")'
 FORBIDDEN_QML_BRIDGE_METHODS = (
-    "previewSelectAction",
     "previewSelectSourceControl",
     "resetPreviewSelection",
 )
@@ -138,13 +138,10 @@ def test_operator_dashboard_disabled_intent_selection_preflight_surface_is_read_
     assert "readonly property string actionDispatchSelectionPreviewGateStatus" in source
     assert "operatorDashboardActionDispatchSelectionPreviewGate" in source
     assert "previewActionDispatchSelectionPreviewGateLabel" in source
-    assert "selection preview gate: locked/read-only" in source
-    assert "next step may enable previewSelectAction only after tests" in source
-    assert "method calls allowed now" in source
-    assert (
-        "blocked now: previewSelectAction, previewSelectSourceControl, resetPreviewSelection"
-        in source
-    )
+    assert "selection preview gate: controlled preview-only" in source
+    assert "only snapshot refresh previewSelectAction literal is enabled" in source
+    assert "method calls allowed now: one controlled preview call" in source
+    assert "still blocked: previewSelectSourceControl, resetPreviewSelection" in source
     assert "paper/local only" in source
 
     preflight_start = source.index(
@@ -176,6 +173,7 @@ def test_operator_dashboard_disabled_intent_selection_preflight_surface_is_read_
 
     for token in ("Button", "IconButton", *FORBIDDEN_NEW_QML_HANDLER_TOKENS):
         assert token not in preflight_source
+    assert "previewSelectAction(" not in preflight_source
     for method in FORBIDDEN_QML_BRIDGE_METHODS:
         assert method not in preflight_source
 
@@ -205,19 +203,57 @@ def test_qml_bridge_consumption_is_limited_to_operator_dashboard_snapshot_bindin
     assert consumers == ["ui/pyside_app/qml/views/OperatorDashboard.qml"]
 
 
-def test_qml_does_not_call_action_dispatch_bridge_methods() -> None:
+def test_qml_calls_only_allowed_snapshot_refresh_preview_select_action() -> None:
     offenders: dict[str, list[str]] = {}
     for path in _qml_files():
         source = _source(path)
-        hits = [
+        preview_call_count = source.count("paperRuntimeActionDispatchBridge.previewSelectAction(")
+        hits = []
+        expected_call_count = 1 if path == OPERATOR_DASHBOARD else 0
+        if preview_call_count != expected_call_count:
+            hits.append("previewSelectAction")
+        if path == OPERATOR_DASHBOARD and ALLOWED_PREVIEW_SELECT_ACTION_CALL not in source:
+            hits.append("previewSelectAction")
+        hits.extend(
             token
             for token in FORBIDDEN_QML_BRIDGE_METHODS
             if f".{token}(" in source or f"paperRuntimeActionDispatchBridge.{token}" in source
-        ]
+        )
         if hits:
             offenders[path.relative_to(REPO_ROOT).as_posix()] = hits
 
     assert offenders == {}
+
+
+def test_operator_dashboard_preview_selection_result_is_visible_and_no_execution() -> None:
+    source = _source(OPERATOR_DASHBOARD)
+
+    assert "property var actionDispatchLastPreviewSelectionResult" in source
+    assert "operatorDashboardActionDispatchPreviewSelectionResult" in source
+    for token in (
+        "result_status",
+        "requested_action",
+        "normalized_action",
+        "execution_allowed",
+        "execution_performed",
+        "order_submission_allowed",
+        "lifecycle_execution_allowed",
+        "accepted intent not executed",
+        "no runtime/order/lifecycle execution",
+    ):
+        assert token in source
+
+
+def test_operator_dashboard_preview_select_handler_is_fail_closed_and_literal_only() -> None:
+    source = _source(OPERATOR_DASHBOARD)
+
+    assert source.count("onClicked: root.previewSelectSnapshotRefreshOnly()") == 1
+    assert source.count(ALLOWED_PREVIEW_SELECT_ACTION_CALL) == 1
+    assert "bridge_unavailable_fail_closed" in source
+    assert 'typeof paperRuntimeActionDispatchBridge.previewSelectAction !== "function"' in source
+    assert "previewSelectAction(action" not in source
+    assert "previewSelectAction(actionDispatchActions" not in source
+    assert "previewSelectAction(model" not in source
 
 
 def test_qml_read_only_change_does_not_add_handlers_in_diff() -> None:
@@ -232,11 +268,12 @@ def test_qml_read_only_change_does_not_add_handlers_in_diff() -> None:
         line for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")
     ]
 
-    offenders = [
-        token
-        for token in FORBIDDEN_NEW_QML_HANDLER_TOKENS
-        if any(token in line for line in added_lines)
-    ]
+    allowed_handler = '+            Components.PreviewCard { objectName: "operatorDashboardActionDispatchSelectionPreviewGate"'
+    offenders = []
+    for token in FORBIDDEN_NEW_QML_HANDLER_TOKENS:
+        for line in added_lines:
+            if token in line and not (token == "onClicked:" and allowed_handler in line):
+                offenders.append(token)
     assert offenders == []
 
 

@@ -195,7 +195,14 @@ def test_registered_property_consumption_limited_to_operator_dashboard_read_only
         REPO_ROOT / "ui" / "pyside_app" / "qml" / "views" / "OperatorDashboard.qml"
     )
     assert f"{PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY}.snapshot" in operator_source
-    for method in ("previewSelectAction", "previewSelectSourceControl", "resetPreviewSelection"):
+    allowed_call = (
+        "paperRuntimeActionDispatchBridge.previewSelectAction("
+        '"paper_runtime_snapshot_refresh_requested")'
+    )
+    assert operator_source.count(allowed_call) == 1
+    assert "previewSelectAction(action" not in operator_source
+    assert "previewSelectAction(actionDispatchActions" not in operator_source
+    for method in ("previewSelectSourceControl", "resetPreviewSelection"):
         assert f".{method}(" not in operator_source
         assert f"paperRuntimeActionDispatchBridge.{method}" not in operator_source
     for path in (*BAT_LAUNCHERS, APP):
