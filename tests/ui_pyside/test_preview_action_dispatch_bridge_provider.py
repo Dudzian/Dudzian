@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+import ui.pyside_app.preview_action_dispatch_bridge_provider as provider_module
 from ui.pyside_app.preview_action_dispatch_audit import ACCEPTED_INTENT_NOT_EXECUTED
 from ui.pyside_app.preview_action_dispatch_bridge_provider import (
     PROVIDER_KIND,
@@ -207,13 +208,15 @@ def test_provider_reuses_bridge_snapshot_helper(monkeypatch: pytest.MonkeyPatch)
             requested_action_or_control, **kwargs
         )
 
+    # Patch the exact provider module object used for this call; other tests may
+    # delete/re-import sys.modules entries during import side-effect guards.
     monkeypatch.setattr(
-        "ui.pyside_app.preview_action_dispatch_bridge_provider."
+        provider_module,
         "build_paper_runtime_action_dispatch_bridge_snapshot",
         fake_bridge_snapshot,
     )
 
-    snapshot = build_paper_runtime_action_dispatch_bridge_provider_snapshot(
+    snapshot = provider_module.build_paper_runtime_action_dispatch_bridge_provider_snapshot(
         "paper_runtime_start_requested"
     )
 
