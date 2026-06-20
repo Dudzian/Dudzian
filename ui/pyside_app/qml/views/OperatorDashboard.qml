@@ -18,6 +18,8 @@ Components.StyledScrollView {
     readonly property var actionDispatchSelectedResult: snapshotValue(actionDispatchSnapshot, "selected_result", ({}))
     readonly property string actionDispatchSelectedResultStatus: snapshotValue(actionDispatchSelectedResult, "result_status", "no_selection")
     readonly property bool actionDispatchCatalogActionFound: actionDispatchSelectedResult.catalog_action_found === true
+    readonly property var actionDispatchActions: snapshotValue(actionDispatchSnapshot, "actions", [])
+    readonly property int actionDispatchActionCount: actionDispatchActions.length || 0
     contentWidth: availableWidth
     clip: true
     implicitWidth: 1040
@@ -53,6 +55,25 @@ Components.StyledScrollView {
         )
     }
 
+    function actionDispatchActionSummary(actions) {
+        if (actions === undefined || actions === null || actions.length === undefined || actions.length === 0) return qsTr("no actions exposed")
+        var values = []
+        var limit = Math.min(actions.length, 5)
+        for (var index = 0; index < limit; index += 1) {
+            var item = actions[index]
+            values.push(
+                qsTr("%1 [%2] audit=%3 safe=%4 execution_allowed=%5 execution_performed=%6 read-only disabled not executed")
+                    .arg(snapshotValue(item, "action", "unknown_action"))
+                    .arg(snapshotValue(item, "source_control", "unknown_source_control"))
+                    .arg(snapshotValue(item, "audit_status", "unknown_audit_status"))
+                    .arg(snapshotValue(item, "safe_to_bind_from_ui", false) ? "true" : "false")
+                    .arg(snapshotValue(item, "execution_allowed", true) ? "true" : "false")
+                    .arg(snapshotValue(item, "execution_performed", true) ? "true" : "false")
+            )
+        }
+        return values.join(" • ")
+    }
+
     ColumnLayout {
         width: root.availableWidth
         spacing: 14
@@ -85,6 +106,7 @@ Components.StyledScrollView {
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgeDiagnosticMarker"; descriptionObjectName: "previewTypedBridgeDiagnosticMarkerLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge diagnostic marker"); description: qsTr("Local preview read-only diagnostic consumer • offscreen smoke only • not a live trading control path"); Layout.fillWidth: true }
 
             Components.PreviewCard { objectName: "operatorDashboardActionDispatchReadOnlySnapshot"; descriptionObjectName: "previewActionDispatchReadOnlySnapshotLabel"; designSystem: root.designSystem; title: qsTr("BLOK E — action dispatch bridge snapshot"); description: qsTr("Bridge available: %1 • status: %2 • snapshot: %3 • provider: %4 • qt bridge: %5 • execution disabled: %6 • selected result: %7 • catalog action found: %8").arg(actionDispatchStatus === "unavailable" ? "false" : "true").arg(actionDispatchStatus).arg(actionDispatchSnapshotKind).arg(actionDispatchProviderStatus).arg(actionDispatchQtBridgeKind).arg(actionDispatchExecutionDisabled ? "true" : "false").arg(actionDispatchSelectedResultStatus).arg(actionDispatchCatalogActionFound ? "true" : "false"); Layout.fillWidth: true }
+            Components.PreviewCard { objectName: "operatorDashboardActionDispatchReadOnlyActionCatalog"; descriptionObjectName: "previewActionDispatchReadOnlyActionCatalogLabel"; designSystem: root.designSystem; title: qsTr("BLOK E — read-only disabled action catalog"); description: qsTr("action_count: %1 • allowed paper action names/source controls: %2 • execution disabled: true • no order submission • no lifecycle execution • preview read-only disabled not executed").arg(actionDispatchActionCount).arg(actionDispatchActionSummary(actionDispatchActions)); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardBlockCReadOnlyBindingSummary"; descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel"; designSystem: root.designSystem; title: qsTr("BLOK C — UI READ-ONLY BINDING"); description: qsTr("BLOK B contract-complete static-local • read-only binding only • binding kind: %1 • block status: %2 • integration gate: %3 • runtime loop: %4 • runtime backed: %5 • UI runtime integration: %6 • ui bound: %7 • generated orders: %8 • generated decisions: %9 • export sink: %10 • cloud sink: %11 • external export: %12 • decision/export/live readiness: false").arg(blockCReadOnlyBindingValue("bindingKind", "static_local_block_b_closure_ui_read_only_binding")).arg(blockCReadOnlyBindingValue("blockStatus", "contract_complete_static_local")).arg(blockCReadOnlyBindingValue("integrationGateStatus", "blocked")).arg(blockCReadOnlyBindingValue("runtimeLoopStarted", false) ? "started" : "not started").arg(blockCReadOnlyBindingValue("runtimeBacked", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("readyForUiRuntimeIntegration", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("uiBound", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("generatedOrderCount", 0)).arg(blockCReadOnlyBindingValue("generatedDecisionCount", 0)).arg(blockCReadOnlyBindingValue("exportSink", "none")).arg(blockCReadOnlyBindingValue("cloudSink", "none")).arg(blockCReadOnlyBindingValue("externalExport", false) ? "true" : "false"); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgePaper"; descriptionObjectName: "previewTypedBridgePaperLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge paper snapshot"); description: qsTr("Bridge paper: %1 • orders %2").arg(snapshotValue(typedBridgeValue("paperSessionSnapshot", null), "normalizedState", "—")).arg(snapshotValue(typedBridgeValue("paperSessionSnapshot", null), "orderRows", 0)); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgeScanner"; descriptionObjectName: "previewTypedBridgeScannerLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge scanner snapshot"); description: qsTr("Bridge scanner: %1 • candidates %2").arg(snapshotValue(typedBridgeValue("scannerSnapshot", null), "bestOpportunity", "—")).arg(snapshotValue(typedBridgeValue("scannerSnapshot", null), "candidates", 0)); Layout.fillWidth: true }

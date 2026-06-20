@@ -23,6 +23,8 @@ FORBIDDEN_NEW_QML_HANDLER_TOKENS = (
     "onClicked:",
     "MouseArea",
     "Connections",
+    "TapHandler",
+    "Keys.onPressed",
 )
 FORBIDDEN_EXECUTION_TOKENS = (
     "dispatch_command",
@@ -62,6 +64,9 @@ def test_operator_dashboard_reads_action_dispatch_snapshot_read_only() -> None:
     assert "readonly property var actionDispatchSnapshot" in source
     assert "readonly property string actionDispatchStatus" in source
     assert "readonly property bool actionDispatchExecutionDisabled" in source
+    assert "readonly property var actionDispatchActions" in source
+    assert 'snapshotValue(actionDispatchSnapshot, "actions", [])' in source
+    assert "readonly property int actionDispatchActionCount" in source
     assert "operatorDashboardActionDispatchReadOnlySnapshot" in source
     assert "previewActionDispatchReadOnlySnapshotLabel" in source
 
@@ -80,8 +85,33 @@ def test_operator_dashboard_exposes_no_execution_snapshot_evidence() -> None:
         "result_status",
         "catalog_action_found",
         "execution disabled",
+        "actionDispatchActions",
+        "actionDispatchActionCount",
+        "action_count",
+        "allowed paper action names/source controls",
+        "source_control",
+        "audit_status",
+        "safe_to_bind_from_ui",
+        "no order submission",
+        "no lifecycle execution",
+        "preview read-only disabled not executed",
     ):
         assert token in source
+
+
+def test_operator_dashboard_action_catalog_surface_is_read_only_and_non_clickable() -> None:
+    source = _source(OPERATOR_DASHBOARD)
+
+    assert "operatorDashboardActionDispatchReadOnlyActionCatalog" in source
+    assert "previewActionDispatchReadOnlyActionCatalogLabel" in source
+    catalog_start = source.index("operatorDashboardActionDispatchReadOnlyActionCatalog")
+    catalog_end = source.index("operatorDashboardBlockCReadOnlyBindingSummary")
+    catalog_source = source[catalog_start:catalog_end]
+
+    for token in ("Button", "IconButton", *FORBIDDEN_NEW_QML_HANDLER_TOKENS):
+        assert token not in catalog_source
+    for method in FORBIDDEN_QML_BRIDGE_METHODS:
+        assert method not in catalog_source
 
 
 def test_qml_bridge_consumption_is_limited_to_operator_dashboard_snapshot_binding() -> None:
