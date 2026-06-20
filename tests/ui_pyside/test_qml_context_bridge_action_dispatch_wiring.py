@@ -183,8 +183,21 @@ def test_qml_context_bridge_uses_registration_helper_only_in_install() -> None:
     assert "register_paper_runtime_action_dispatch_qt_bridge" in install_source
 
 
-def test_qml_files_bat_launchers_and_app_do_not_consume_registered_property() -> None:
-    for path in (*QML_FILES, *BAT_LAUNCHERS, APP):
+def test_registered_property_consumption_limited_to_operator_dashboard_read_only_snapshot() -> None:
+    qml_consumers = [
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in QML_FILES
+        if PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY in _source(path)
+    ]
+
+    assert qml_consumers == ["ui/pyside_app/qml/views/OperatorDashboard.qml"]
+    operator_source = _source(
+        REPO_ROOT / "ui" / "pyside_app" / "qml" / "views" / "OperatorDashboard.qml"
+    )
+    assert f"{PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY}.snapshot" in operator_source
+    for method in ("previewSelectAction", "previewSelectSourceControl", "resetPreviewSelection"):
+        assert method not in operator_source
+    for path in (*BAT_LAUNCHERS, APP):
         assert PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY not in _source(path)
     assert "register_paper_runtime_action_dispatch_qt_bridge" not in _source(APP)
 

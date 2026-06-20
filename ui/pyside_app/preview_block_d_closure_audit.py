@@ -49,7 +49,7 @@ BOUNDARY_CHECK_NAMES: Final[tuple[str, ...]] = (
     "bridge_ready",
     "block_e_wiring_started",
     "bridge_registered_in_central_context",
-    "qml_not_changed",
+    "qml_read_only_consumption_started",
     "startup_not_changed",
     "bat_launch_path_not_changed",
     "real_context_property_registered_once",
@@ -74,7 +74,6 @@ FORBIDDEN_INTEGRATION_POINTS: Final[tuple[str, ...]] = (
     ".bat launchers",
     "ui/pyside_app/app.py",
     "ui/pyside_app/qml/MainWindow.qml",
-    "ui/pyside_app/qml/views/OperatorDashboard.qml",
     "ui/pyside_app/qml/views/PaperTerminal.qml",
     "ui/pyside_app/preview_state_bridge.py",
     "runtime/order/trading/live/testnet/account/secrets/export paths",
@@ -113,7 +112,7 @@ def build_preview_block_d_closure_audit(repo_root: str | Path | None = None) -> 
         "block_e_wiring_started": True,
         "bridge_ready": True,
         "bridge_wired_to_real_startup": True,
-        "qml_consumes_bridge": False,
+        "qml_consumes_bridge": True,
         "real_startup_context_property_registered": True,
         "registered_context_property_name": "paperRuntimeActionDispatchBridge",
         "execution_still_disabled_after_wiring": True,
@@ -138,14 +137,14 @@ def build_preview_block_d_closure_audit(repo_root: str | Path | None = None) -> 
         "export_cloud_allowed": False,
         "boundary_checks": {name: True for name in BOUNDARY_CHECK_NAMES},
         "next_block_gate": {
-            "allowed_next_scope": "controlled_qml_context_wiring",
+            "allowed_next_scope": "read_only_qml_snapshot_consumption",
             "required_integration_point": RECOMMENDED_FUTURE_INTEGRATION_POINT,
             "forbidden_integration_points": list(FORBIDDEN_INTEGRATION_POINTS),
             "required_tests_before_wiring": list(REQUIRED_TESTS_BEFORE_WIRING),
         },
         "operator_message": (
-            "BLOK D closed as bridge ready; BLOK E has started controlled central "
-            "context wiring in QmlContextBridge.install() while execution remains disabled."
+            "BLOK D closed as bridge ready; BLOK E now consumes the central bridge "
+            "snapshot read-only in QML while execution remains disabled."
         ),
     }
     return deepcopy(evidence)
