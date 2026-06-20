@@ -23,12 +23,16 @@ BRIDGE_SNAPSHOT_PATH = (
 BRIDGE_PROVIDER_PATH = (
     REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_bridge_provider.py"
 )
+QT_BRIDGE_REGISTRATION_PATH = (
+    REPO_ROOT / "ui" / "pyside_app" / "preview_action_dispatch_qt_bridge_registration.py"
+)
 MODULE_NAME = "ui.pyside_app.preview_action_dispatch_contract"
 AUDIT_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_audit"
 CATALOG_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_catalog"
 SELECTION_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_selection"
 BRIDGE_SNAPSHOT_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_bridge_snapshot"
 BRIDGE_PROVIDER_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_bridge_provider"
+QT_BRIDGE_REGISTRATION_MODULE_NAME = "ui.pyside_app.preview_action_dispatch_qt_bridge_registration"
 GUARDED_SOURCE_PATHS = (
     CONTRACT_PATH,
     AUDIT_PATH,
@@ -408,3 +412,78 @@ def test_qt_bridge_imports_without_engine_registration_or_side_effects(
 
     assert module.QT_BRIDGE_KIND
     assert module.PaperRuntimeActionDispatchQtBridge
+
+
+QT_BRIDGE_REGISTRATION_FORBIDDEN_TOKENS = (
+    "Button.onClicked",
+    "onClicked:",
+    "MouseArea",
+    "Connections {",
+    "QQmlApplicationEngine",
+    "QAbstractListModel",
+    "dispatch_command(",
+    "execute_command(",
+    "start_runtime(",
+    "start_loop(",
+    "submit_order(",
+    "create_order(",
+    "place_order(",
+    "send_order(",
+    "fill_order(",
+)
+
+
+def test_registration_helper_does_not_import_qtqml_or_create_engine() -> None:
+    offenders: list[str] = []
+    for node in ast.walk(_tree(QT_BRIDGE_REGISTRATION_PATH)):
+        if isinstance(node, ast.Import):
+            offenders.extend(
+                alias.name for alias in node.names if alias.name in {"PySide6", "PySide6.QtQml"}
+            )
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imported_names = {alias.name for alias in node.names}
+            if module in {"PySide6", "PySide6.QtQml"}:
+                offenders.append(module)
+            offenders.extend(sorted(imported_names & {"QQmlApplicationEngine"}))
+
+    assert offenders == []
+
+
+def test_registration_helper_only_uses_context_property_on_supplied_context() -> None:
+    source = _source(QT_BRIDGE_REGISTRATION_PATH)
+    tree = _tree(QT_BRIDGE_REGISTRATION_PATH)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "set_context_property"
+    ]
+
+    assert "setContextProperty" in source
+    assert len(calls) == 1
+
+
+def test_registration_helper_does_not_add_qml_handlers_engine_or_execution_tokens() -> None:
+    source = _source(QT_BRIDGE_REGISTRATION_PATH)
+
+    assert [token for token in QT_BRIDGE_REGISTRATION_FORBIDDEN_TOKENS if token in source] == []
+
+
+def test_registration_helper_imports_without_engine_or_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_side_effect(*args: object, **kwargs: object) -> None:
+        raise AssertionError("registration helper import attempted a forbidden side effect")
+
+    monkeypatch.setattr(builtins, "open", forbidden_side_effect)
+    monkeypatch.setattr("os.getenv", forbidden_side_effect)
+    monkeypatch.setattr("socket.socket", forbidden_side_effect)
+    monkeypatch.setattr("socket.create_connection", forbidden_side_effect)
+    monkeypatch.delitem(sys.modules, QT_BRIDGE_REGISTRATION_MODULE_NAME, raising=False)
+
+    module = importlib.import_module(QT_BRIDGE_REGISTRATION_MODULE_NAME)
+
+    assert module.QT_BRIDGE_REGISTRATION_KIND
+    assert module.register_paper_runtime_action_dispatch_qt_bridge
