@@ -120,3 +120,20 @@ Przed realnym wiringiem wymagane minimum:
 `CLOSE_BLOCK_D_AS_BRIDGE_READY_NOT_WIRED`
 
 Uzasadnienie: nowy bridge nie dubluje istniejącego bridge'a, ale aplikacja ma już rozbudowany lokalny mock/preview paper UI. Najbezpieczniejszy następny krok to zamknąć BLOK D jako „bridge ready, not wired” i dopiero w kolejnym, osobnym kroku wykonać kontrolowane wiring w jednym miejscu (`QmlContextBridge.install()`), z testem dokładnie jednej rejestracji i bez zmian launcherów/startupu/QML mock controls.
+
+## FUNCTIONAL-PREVIEW-6.10 closure audit
+
+BLOK D zostaje formalnie zamknięty statusem `bridge_ready_not_wired` i decyzją
+`CLOSE_BLOCK_D_AS_BRIDGE_READY_NOT_WIRED`.
+
+Closure potwierdza, że pipeline action-dispatch preview jest gotowy jako
+source-only/QML-safe bridge, ale nie został podpięty do realnego startupu,
+`QmlContextBridge.install()` nie rejestruje jeszcze
+`paperRuntimeActionDispatchBridge`, a QML nie konsumuje nowego bridge'a.
+
+Jedyny rekomendowany przyszły punkt integracji pozostaje bez zmian:
+`ui/pyside_app/qml_bridge.py::QmlContextBridge.install()`. Kolejny blok może
+rozpocząć wyłącznie kontrolowane wiring w osobnym zakresie albo formalny BLOK E;
+launchery `.bat`, `ui/pyside_app/app.py`, pliki QML, `typedPreviewBridge`,
+`grpcBridge`, `runtimeState` oraz ścieżki runtime/order/live/testnet/account/
+secrets/export/cloud pozostają poza zakresem tego closure.
