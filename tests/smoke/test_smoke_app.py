@@ -54,20 +54,29 @@ def test_qml_runtime_overview_manifest_exists() -> None:
 def test_optional_qt_loading() -> None:
     """Jeżeli PySide6 jest dostępny, upewnij się, że podstawowy komponent ładuje się poprawnie."""
     try:
-        from PySide6.QtCore import QCoreApplication
+        from PySide6.QtGui import QGuiApplication
         from PySide6.QtQml import QQmlApplicationEngine
     except ModuleNotFoundError:
         pytest.skip("Brak biblioteki PySide6")
+    except ImportError as exc:
+        pytest.skip(
+            f"Brak wsparcia QtQuick/GL w środowisku testowym: import PySide6 Qt failed: {exc}"
+        )
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    existing_app = QCoreApplication.instance()
+    existing_app = QGuiApplication.instance()
     created_app = existing_app is None
-    app = existing_app or QCoreApplication([])
+    app = existing_app or QGuiApplication([])
     engine = QQmlApplicationEngine()
     engine.load(Path("ui/qml/onboarding/LicenseWizard.qml"))
     if not engine.rootObjects():
         errors = [str(err.toString()) for err in getattr(engine, "errors", lambda: [])()]
-        pytest.skip("Brak wsparcia QtQuick/GL w środowisku testowym: %s" % (errors or "unknown"))
+        error_text = (
+            "; ".join(errors)
+            if errors
+            else "QQmlApplicationEngine.load returned no root objects and no QML errors"
+        )
+        pytest.skip(f"Brak wsparcia QtQuick/GL w środowisku testowym: {error_text}")
     # Zakończ aplikację tylko jeśli ten test utworzył nową instancję.
     if created_app:
         app.quit()
