@@ -134,10 +134,23 @@ def test_operator_dashboard_disabled_intent_selection_preflight_surface_is_read_
     assert "actionDispatchDisabledIntentSummary(actionDispatchActions)" in source
     assert "actionDispatchActions" in source
 
+    assert "readonly property var actionDispatchSelectionPreviewGate" in source
+    assert "readonly property string actionDispatchSelectionPreviewGateStatus" in source
+    assert "operatorDashboardActionDispatchSelectionPreviewGate" in source
+    assert "previewActionDispatchSelectionPreviewGateLabel" in source
+    assert "selection preview gate: locked/read-only" in source
+    assert "next step may enable previewSelectAction only after tests" in source
+    assert "method calls allowed now" in source
+    assert (
+        "blocked now: previewSelectAction, previewSelectSourceControl, resetPreviewSelection"
+        in source
+    )
+    assert "paper/local only" in source
+
     preflight_start = source.index(
         "operatorDashboardActionDispatchDisabledIntentSelectionPreflight"
     )
-    preflight_end = source.index("operatorDashboardBlockCReadOnlyBindingSummary")
+    preflight_end = source.index("operatorDashboardActionDispatchSelectionPreviewGate")
     preflight_source = source[preflight_start:preflight_end]
 
     for token in (
@@ -173,7 +186,7 @@ def test_operator_dashboard_action_catalog_surface_is_read_only_and_non_clickabl
     assert "operatorDashboardActionDispatchReadOnlyActionCatalog" in source
     assert "previewActionDispatchReadOnlyActionCatalogLabel" in source
     catalog_start = source.index("operatorDashboardActionDispatchReadOnlyActionCatalog")
-    catalog_end = source.index("operatorDashboardBlockCReadOnlyBindingSummary")
+    catalog_end = source.index("operatorDashboardActionDispatchDisabledIntentSelectionPreflight")
     catalog_source = source[catalog_start:catalog_end]
 
     for token in ("Button", "IconButton", *FORBIDDEN_NEW_QML_HANDLER_TOKENS):
@@ -196,7 +209,11 @@ def test_qml_does_not_call_action_dispatch_bridge_methods() -> None:
     offenders: dict[str, list[str]] = {}
     for path in _qml_files():
         source = _source(path)
-        hits = [token for token in FORBIDDEN_QML_BRIDGE_METHODS if token in source]
+        hits = [
+            token
+            for token in FORBIDDEN_QML_BRIDGE_METHODS
+            if f".{token}(" in source or f"paperRuntimeActionDispatchBridge.{token}" in source
+        ]
         if hits:
             offenders[path.relative_to(REPO_ROOT).as_posix()] = hits
 

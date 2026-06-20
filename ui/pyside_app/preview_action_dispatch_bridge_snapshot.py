@@ -23,6 +23,9 @@ from ui.pyside_app.preview_action_dispatch_selection import (
     PaperRuntimeActionDispatchSelectionResult,
     build_paper_runtime_action_dispatch_selection_result,
 )
+from ui.pyside_app.preview_action_dispatch_selection_gate import (
+    build_paper_runtime_action_dispatch_selection_preview_gate,
+)
 
 BRIDGE_SNAPSHOT_SCHEMA_VERSION: Final[str] = "paper_runtime_action_dispatch_bridge_snapshot.v1"
 BRIDGE_SNAPSHOT_KIND: Final[str] = "block_d_qml_safe_action_dispatch_bridge_snapshot"
@@ -91,6 +94,7 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
         "action_count": len(actions),
         "actions": actions,
         "selected_result": selected_payload,
+        "selection_preview_gate": build_paper_runtime_action_dispatch_selection_preview_gate(),
         "boundary_checks": boundary_checks,
         "operator_message": _operator_message(status),
         "status": status,

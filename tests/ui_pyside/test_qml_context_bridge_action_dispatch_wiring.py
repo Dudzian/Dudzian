@@ -196,7 +196,8 @@ def test_registered_property_consumption_limited_to_operator_dashboard_read_only
     )
     assert f"{PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY}.snapshot" in operator_source
     for method in ("previewSelectAction", "previewSelectSourceControl", "resetPreviewSelection"):
-        assert method not in operator_source
+        assert f".{method}(" not in operator_source
+        assert f"paperRuntimeActionDispatchBridge.{method}" not in operator_source
     for path in (*BAT_LAUNCHERS, APP):
         assert PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY not in _source(path)
     assert "register_paper_runtime_action_dispatch_qt_bridge" not in _source(APP)
