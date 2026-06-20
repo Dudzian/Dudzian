@@ -15,7 +15,7 @@ Components.StyledScrollView {
     readonly property color sellTint: Qt.rgba(1.0, 0.31, 0.37, 0.18)
     readonly property color buyText: Qt.rgba(0.56, 1.0, 0.77, 1.0)
     readonly property color sellText: Qt.rgba(1.0, 0.62, 0.66, 1.0)
-    readonly property string activePair: previewState.selectedTerminalPair && previewState.selectedTerminalPair.length > 0 ? previewState.selectedTerminalPair : (previewState.selectedPairs && previewState.selectedPairs.length > 0 ? previewState.selectedPairs[0] : "BTC/USDT")
+    readonly property string activePair: previewState.selectedTerminalPair && previewState.selectedTerminalPair.length > 0 ? previewState.selectedTerminalPair : (previewState.scannerSelectedPair && previewState.scannerSelectedPair.length > 0 ? previewState.scannerSelectedPair : (previewState.selectedPairs && previewState.selectedPairs.length > 0 ? previewState.selectedPairs[0] : "BTC/USDT"))
     readonly property real orderValue: Number(previewState.terminalTotal)
     readonly property string feeEstimate: isNaN(orderValue) ? "0.00 USDT" : (orderValue * 0.001).toFixed(2) + " USDT"
     readonly property string availableBalance: "100,000.00 USDT paper balance"

@@ -1229,7 +1229,16 @@ ApplicationWindow {
 
 
     function currentTerminalPair() { return selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT" }
-    function setTerminalPair(pair) { selectedTerminalPair = pair && pair.length > 0 ? pair : currentTerminalPair() }
+    function preferredTerminalPair() {
+        if (selectedTerminalPair && selectedTerminalPair.length > 0 && hasValue(selectedPairs, selectedTerminalPair))
+            return selectedTerminalPair
+        if (scannerSelectedPair && scannerSelectedPair.length > 0 && (!selectedPairs || selectedPairs.length === 0 || hasValue(selectedPairs, scannerSelectedPair)))
+            return scannerSelectedPair
+        if (selectedPairs && selectedPairs.length > 0)
+            return selectedPairs[0]
+        return "BTC/USDT"
+    }
+    function setTerminalPair(pair) { selectedTerminalPair = pair && pair.length > 0 ? pair : preferredTerminalPair() }
     function setTerminalSide(side) { terminalSide = side === "SELL" ? "SELL" : "BUY" }
     function setTerminalOrderType(type) { terminalOrderType = type === "MARKET" ? "MARKET" : "LIMIT" }
     function setTerminalTimeframe(timeframe) { terminalTimeframe = timeframe && timeframe.length > 0 ? timeframe : "15m" }
@@ -1543,10 +1552,9 @@ ApplicationWindow {
     }
     function saveStrategyPreview(name) { lastStrategySaveStatus = "Zapisano lokalny preview strategii: " + name + " • runtime config write disabled • live execution disabled" }
     function ensureSelectedTerminalPair() {
-        if (selectedPairs.length > 0 && !hasValue(selectedPairs, selectedTerminalPair))
-            selectedTerminalPair = selectedPairs[0]
-        if (!selectedTerminalPair || selectedTerminalPair.length === 0)
-            selectedTerminalPair = currentTerminalPair()
+        var preferredPair = preferredTerminalPair()
+        if (preferredPair && preferredPair.length > 0)
+            selectedTerminalPair = preferredPair
     }
     function syncUniverseSelectionState(message) {
         ensureSelectedTerminalPair()
