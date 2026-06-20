@@ -79,6 +79,11 @@ def _runtime_dependencies() -> tuple[RuntimeDependency, ...]:
             requirement="grpcio>=1.62,<2",
             reason="imported by UI/backend gRPC bridge paths reached from UI smoke bootstrap",
         ),
+        RuntimeDependency(
+            module="google.protobuf",
+            requirement="protobuf>=5",
+            reason="imported by generated protobuf/gRPC paths reached from UI smoke bootstrap",
+        ),
     )
 
 
