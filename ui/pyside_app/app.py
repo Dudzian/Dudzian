@@ -267,7 +267,15 @@ def main(argv: list[str] | None = None) -> int:
     if options.smoke:
         from .smoke import run_smoke
 
-        return run_smoke(options, output=sys.stdout, force_offscreen=options.offscreen)
+        exit_code = run_smoke(options, output=sys.stdout, force_offscreen=options.offscreen)
+        # Offscreen smoke has already printed JSON and completed its own artifact cleanup;
+        # bypass slow Qt/PySide interpreter teardown so subprocess-based smoke guards exit
+        # deterministically before their fixed timeout without changing product runtime mode.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        if options.offscreen:
+            os._exit(exit_code)
+        return exit_code
     app = BotPysideApplication(options)
     return app.run()
 

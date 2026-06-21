@@ -29,6 +29,9 @@ from ui.pyside_app.preview_action_dispatch_selection_gate import (
 from ui.pyside_app.preview_decision_engine_dry_run_audit_envelope import (
     build_preview_decision_engine_dry_run_audit_envelope,
 )
+from ui.pyside_app.preview_paper_order_audit_envelope import (
+    build_preview_paper_order_audit_envelope,
+)
 
 BRIDGE_SNAPSHOT_SCHEMA_VERSION: Final[str] = "paper_runtime_action_dispatch_bridge_snapshot.v1"
 BRIDGE_SNAPSHOT_KIND: Final[str] = "block_d_qml_safe_action_dispatch_bridge_snapshot"
@@ -85,6 +88,31 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
     boundary_checks = _bridge_boundary_checks(action_catalog, selected_payload, has_selection)
     status = selected_payload["result_status"]
     decision_engine_dry_run_audit_envelope = build_preview_decision_engine_dry_run_audit_envelope()
+    paper_order_audit_envelope = build_preview_paper_order_audit_envelope()
+    paper_order_audit_summary = dict(paper_order_audit_envelope["audit_summary"])
+    paper_order_audit_boundary_checks = dict(paper_order_audit_envelope["boundary_checks"])
+    paper_order_audit_no_execution_summary = {
+        "all_events_no_intent_generated": bool(
+            paper_order_audit_summary["all_events_no_intent_generated"]
+        ),
+        "all_events_no_order_generated": bool(
+            paper_order_audit_summary["all_events_no_order_generated"]
+        ),
+        "all_events_no_submission": bool(paper_order_audit_summary["all_events_no_submission"]),
+        "all_events_no_fills": bool(paper_order_audit_summary["all_events_no_fills"]),
+        "all_events_no_runtime_execution": bool(
+            paper_order_audit_summary["all_events_no_runtime_execution"]
+        ),
+        "all_events_no_live_or_testnet": bool(
+            paper_order_audit_summary["all_events_no_live_or_testnet"]
+        ),
+        "all_events_no_account_or_secrets": bool(
+            paper_order_audit_summary["all_events_no_account_or_secrets"]
+        ),
+        "all_events_no_export": bool(paper_order_audit_summary["all_events_no_export"]),
+        "audit_export_allowed": bool(paper_order_audit_boundary_checks["audit_export_allowed"]),
+        "audit_export_performed": bool(paper_order_audit_boundary_checks["audit_export_performed"]),
+    }
 
     return {
         "schema_version": BRIDGE_SNAPSHOT_SCHEMA_VERSION,
@@ -105,6 +133,21 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
         ),
         "ready_for_block_f_5": True,
         "next_step_after_ui_surface": "FUNCTIONAL-PREVIEW-8.5",
+        "paper_order_audit_envelope": paper_order_audit_envelope,
+        "paper_order_audit_status": paper_order_audit_envelope["audit_envelope_status"],
+        "paper_order_audit_ready_for_next_step": bool(
+            paper_order_audit_envelope["ready_for_block_g_4"]
+        ),
+        "paper_order_audit_next_step": paper_order_audit_envelope["next_step"],
+        "paper_order_audit_ready_for_ui_surface": True,
+        "paper_order_audit_ready_for_block_g_4": bool(
+            paper_order_audit_envelope["ready_for_block_g_4"]
+        ),
+        "paper_order_audit_event_count": int(paper_order_audit_summary["event_count"]),
+        "paper_order_audit_unknown_input_key_events": int(
+            paper_order_audit_summary["unknown_input_key_events"]
+        ),
+        "paper_order_audit_no_execution_summary": paper_order_audit_no_execution_summary,
         "boundary_checks": boundary_checks,
         "operator_message": _operator_message(status),
         "status": status,
