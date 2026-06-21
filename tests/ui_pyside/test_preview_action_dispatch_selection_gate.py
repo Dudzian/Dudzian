@@ -18,10 +18,22 @@ from ui.pyside_app.preview_action_dispatch_selection_gate import (
 )
 
 SIMPLE_TYPES = (dict, list, str, bool, int, type(None))
+ALLOWED_CURRENT_METHOD = {
+    "method": "previewSelectAction",
+    "action": "paper_runtime_snapshot_refresh_requested",
+    "availability": "enabled_preview_only",
+    "execution_allowed": False,
+    "execution_performed": False,
+}
 BLOCKED_METHODS = {
-    "previewSelectAction",
     "previewSelectSourceControl",
     "resetPreviewSelection",
+}
+BLOCKED_ACTIONS = {
+    "paper_runtime_start_requested",
+    "paper_runtime_stop_requested",
+    "paper_runtime_pause_requested",
+    "paper_runtime_resume_requested",
 }
 
 
@@ -39,7 +51,8 @@ def _assert_simple_types_only(value: object) -> None:
 
 
 def _assert_gate_locked_no_execution(gate: dict[str, Any]) -> None:
-    assert gate["qml_method_calls_allowed_now"] is False
+    assert gate["qml_method_calls_allowed_now"] is True
+    assert gate["dynamic_action_dispatch_allowed"] is False
     assert gate["execution_allowed"] is False
     assert gate["execution_performed"] is False
     assert gate["order_submission_allowed"] is False
@@ -59,18 +72,14 @@ def test_selection_preview_gate_contract_is_locked_read_only_and_qml_safe() -> N
     assert gate["gate_schema_version"] == SELECTION_PREVIEW_GATE_SCHEMA_VERSION
     assert gate["gate_kind"] == SELECTION_PREVIEW_GATE_KIND
     assert gate["gate_status"] == SELECTION_PREVIEW_GATE_STATUS
-    assert gate["selection_preview_allowed_in_next_step"] is True
+    assert gate["selection_preview_allowed_in_next_step"] is False
     assert gate["runtime_mode"] == "paper"
+    assert gate["allowed_current_qml_methods"] == [ALLOWED_CURRENT_METHOD]
+    assert gate["allowed_next_qml_methods"] == []
     assert set(gate["blocked_current_qml_methods"]) == BLOCKED_METHODS
-    assert gate["allowed_next_qml_methods"] == [
-        {
-            "method": "previewSelectAction",
-            "availability": "next_step_only_not_active_now",
-            "condition": "enable only after source guards, QML no-handler audit, and smoke tests pass",
-        }
-    ]
-    assert "locked/read-only" in gate["operator_message"]
-    assert "next step may enable previewSelectAction" in gate["operator_message"]
+    assert set(gate["blocked_current_actions"]) == BLOCKED_ACTIONS
+    assert "exactly one controlled preview-only QML method call now" in gate["operator_message"]
+    assert "All execution" in gate["operator_message"]
     _assert_gate_locked_no_execution(gate)
     _assert_simple_types_only(gate)
     json.dumps(gate, sort_keys=True)
@@ -79,13 +88,16 @@ def test_selection_preview_gate_contract_is_locked_read_only_and_qml_safe() -> N
 def test_selection_preview_gate_is_deterministic_and_copy_safe() -> None:
     first = build_paper_runtime_action_dispatch_selection_preview_gate()
     first["blocked_current_qml_methods"].clear()
-    first["allowed_next_qml_methods"][0]["method"] = "mutated"
+    first["blocked_current_actions"].clear()
+    first["allowed_current_qml_methods"][0]["method"] = "mutated"
 
     second = build_paper_runtime_action_dispatch_selection_preview_gate()
     third = build_paper_runtime_action_dispatch_selection_preview_gate()
 
     assert set(second["blocked_current_qml_methods"]) == BLOCKED_METHODS
-    assert second["allowed_next_qml_methods"][0]["method"] == "previewSelectAction"
+    assert set(second["blocked_current_actions"]) == BLOCKED_ACTIONS
+    assert second["allowed_current_qml_methods"] == [ALLOWED_CURRENT_METHOD]
+    assert second["allowed_next_qml_methods"] == []
     assert second == third
 
 

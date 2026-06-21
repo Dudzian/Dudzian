@@ -73,6 +73,44 @@ def test_default_snapshot_no_selection_is_preview_only_fail_closed() -> None:
     _assert_snapshot_no_execution(snapshot)
 
 
+def test_snapshot_selection_preview_gate_declares_one_allowed_preview_call_only() -> None:
+    snapshot = build_paper_runtime_action_dispatch_bridge_snapshot()
+    gate = snapshot["selection_preview_gate"]
+
+    assert gate["qml_method_calls_allowed_now"] is True
+    assert gate["allowed_current_qml_methods"] == [
+        {
+            "method": "previewSelectAction",
+            "action": "paper_runtime_snapshot_refresh_requested",
+            "availability": "enabled_preview_only",
+            "execution_allowed": False,
+            "execution_performed": False,
+        }
+    ]
+    assert set(gate["blocked_current_qml_methods"]) == {
+        "previewSelectSourceControl",
+        "resetPreviewSelection",
+    }
+    assert set(gate["blocked_current_actions"]) == {
+        "paper_runtime_start_requested",
+        "paper_runtime_stop_requested",
+        "paper_runtime_pause_requested",
+        "paper_runtime_resume_requested",
+    }
+    assert gate["dynamic_action_dispatch_allowed"] is False
+    assert gate["execution_allowed"] is False
+    assert gate["execution_performed"] is False
+    assert gate["order_submission_allowed"] is False
+    assert gate["lifecycle_execution_allowed"] is False
+    assert gate["live_mode_allowed"] is False
+    assert gate["testnet_mode_allowed"] is False
+    assert gate["account_fetch_allowed"] is False
+    assert gate["secrets_export_allowed"] is False
+    assert gate["cloud_export_allowed"] is False
+    assert gate["paper_only"] is True
+    assert gate["local_only"] is True
+
+
 def test_allowed_action_snapshot_is_accepted_not_executed() -> None:
     snapshot = build_paper_runtime_action_dispatch_bridge_snapshot("paper_runtime_start_requested")
 
