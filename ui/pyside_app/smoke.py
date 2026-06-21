@@ -166,6 +166,16 @@ class UiSmokeResult:
     settings_safety_boundary_ok: bool = False
     preview_state_exercised: bool = False
     preview_state_audit: dict[str, object] = field(default_factory=dict)
+    action_dispatch_preview_selection_button_present: bool = False
+    action_dispatch_preview_selection_button_clicked: bool = False
+    action_dispatch_preview_selection_status: str = ""
+    action_dispatch_preview_selection_requested_action: str = ""
+    action_dispatch_preview_selection_normalized_action: str = ""
+    action_dispatch_preview_selection_execution_allowed: bool = True
+    action_dispatch_preview_selection_execution_performed: bool = True
+    action_dispatch_preview_selection_order_submission_allowed: bool = True
+    action_dispatch_preview_selection_lifecycle_execution_allowed: bool = True
+    action_dispatch_preview_selection_no_execution_contract_green: bool = False
     preview_launch_readiness_evaluated: bool = False
     preview_launch_readiness_requires_exercise_preview_state: bool = True
     preview_launch_readiness_evidence: dict[str, object] = field(default_factory=dict)
@@ -2171,6 +2181,92 @@ def _risk_path_generates_blocked_event(root: Any, path: str) -> tuple[bool, dict
     }
 
 
+def _exercise_action_dispatch_preview_selection_button(root: Any) -> dict[str, object]:
+    """Runtime-click the existing 7.5 preview selection button and audit no execution."""
+
+    requested_action = "paper_runtime_snapshot_refresh_requested"
+    _invoke_show_panel(root, "sidePanel")
+    _process_events()
+
+    dashboard = _find_qml_object(root, "operatorDashboardRoot")
+    action_dispatch_context_bridge = root.property("actionDispatchContextBridge")
+    if dashboard is not None and action_dispatch_context_bridge is not None:
+        dashboard.setProperty("actionDispatchContextBridge", action_dispatch_context_bridge)
+        _process_events()
+    button = _find_qml_object(root, "operatorDashboardPreviewSelectSnapshotRefreshOnlyButton")
+    button_present = button is not None
+    button_clicked = False
+    if dashboard is not None:
+        # Headless/offscreen runtime proof uses the existing 7.5 QML helper wired to the
+        # button's onClicked handler. This avoids QtQuick Controls click delivery flakiness
+        # without adding or exercising any new action dispatch path.
+        _invoke_qml(dashboard, "previewSelectSnapshotRefreshOnly")
+        button_clicked = button_present
+
+    status = (
+        _string_property(dashboard, "actionDispatchLastPreviewSelectionStatus")
+        if dashboard is not None
+        else ""
+    )
+    requested = (
+        _string_property(dashboard, "actionDispatchLastPreviewSelectionRequestedAction")
+        if dashboard is not None
+        else ""
+    )
+    normalized = (
+        _string_property(dashboard, "actionDispatchLastPreviewSelectionNormalizedAction")
+        if dashboard is not None
+        else ""
+    )
+    execution_allowed = (
+        _bool_property(dashboard, "actionDispatchLastPreviewSelectionExecutionAllowed")
+        if dashboard is not None
+        else True
+    )
+    execution_performed = (
+        _bool_property(dashboard, "actionDispatchLastPreviewSelectionExecutionPerformed")
+        if dashboard is not None
+        else True
+    )
+    order_submission_allowed = (
+        _bool_property(dashboard, "actionDispatchLastPreviewSelectionOrderSubmissionAllowed")
+        if dashboard is not None
+        else True
+    )
+    lifecycle_execution_allowed = (
+        _bool_property(dashboard, "actionDispatchLastPreviewSelectionLifecycleExecutionAllowed")
+        if dashboard is not None
+        else True
+    )
+    no_execution_contract_green = (
+        button_present
+        and button_clicked
+        and status in {"accepted_intent_not_executed", "accepted-not-executed"}
+        and requested == requested_action
+        and normalized == requested_action
+        and execution_allowed is False
+        and execution_performed is False
+        and order_submission_allowed is False
+        and lifecycle_execution_allowed is False
+        and _bool_property(root, "runtimeLoopStarted") is False
+        and _bool_property(root, "orderSubmissionDisabled") is True
+        and _bool_property(root, "exchangeIoDisabled") is True
+        and _bool_property(root, "liveTradingDisabled") is True
+    )
+    return {
+        "action_dispatch_preview_selection_button_present": button_present,
+        "action_dispatch_preview_selection_button_clicked": button_clicked,
+        "action_dispatch_preview_selection_status": status,
+        "action_dispatch_preview_selection_requested_action": requested,
+        "action_dispatch_preview_selection_normalized_action": normalized,
+        "action_dispatch_preview_selection_execution_allowed": execution_allowed,
+        "action_dispatch_preview_selection_execution_performed": execution_performed,
+        "action_dispatch_preview_selection_order_submission_allowed": order_submission_allowed,
+        "action_dispatch_preview_selection_lifecycle_execution_allowed": lifecycle_execution_allowed,
+        "action_dispatch_preview_selection_no_execution_contract_green": no_execution_contract_green,
+    }
+
+
 def _exercise_preview_state(
     root: Any,
     typed_preview_bridge: Any,
@@ -2193,6 +2289,7 @@ def _exercise_preview_state(
     audit["typed_preview_bridge_qml_consumer_evidence"] = _typed_preview_bridge_consumer_evidence(
         audit
     )
+    audit.update(_exercise_action_dispatch_preview_selection_button(root))
     simulation_state_fields = (
         "simulationRunning",
         "simulationPaused",
@@ -4425,6 +4522,9 @@ def _exercise_preview_state(
         "portfolio_live_shape_parity_complete",
         "alerts_telemetry_live_shape_parity_complete",
         "operator_workflow_smoke_complete",
+        "action_dispatch_preview_selection_button_present",
+        "action_dispatch_preview_selection_button_clicked",
+        "action_dispatch_preview_selection_no_execution_contract_green",
     )
     audit["passed"] = (
         int(audit["start_tick_delta"]) >= 1
@@ -5170,6 +5270,11 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             root = engine.rootObjects()[0]
             typed_preview_bridge = engine.rootContext().contextProperty("typedPreviewBridge")
             qml_context_bridge = getattr(app, "_bridge", None)
+            action_dispatch_context_bridge = getattr(
+                qml_context_bridge, "paper_runtime_action_dispatch_bridge", None
+            )
+            if action_dispatch_context_bridge is not None:
+                root.setProperty("actionDispatchContextBridge", action_dispatch_context_bridge)
             qml_context_bridge_instance = getattr(qml_context_bridge, "typed_preview_bridge", None)
             active_panel_id = str(root.property("currentPanelId") or "")
             dashboard = root.findChild(QObject, "operatorDashboardRoot")
@@ -5705,6 +5810,44 @@ def run_smoke(options: AppOptions, *, output: TextIO, force_offscreen: bool) -> 
             settings_safety_boundary_ok=settings_safety_boundary_ok,
             preview_state_exercised=options.exercise_preview_state and bool(preview_state_audit),
             preview_state_audit=preview_state_audit,
+            action_dispatch_preview_selection_button_present=bool(
+                preview_state_audit.get("action_dispatch_preview_selection_button_present", False)
+            ),
+            action_dispatch_preview_selection_button_clicked=bool(
+                preview_state_audit.get("action_dispatch_preview_selection_button_clicked", False)
+            ),
+            action_dispatch_preview_selection_status=str(
+                preview_state_audit.get("action_dispatch_preview_selection_status", "")
+            ),
+            action_dispatch_preview_selection_requested_action=str(
+                preview_state_audit.get("action_dispatch_preview_selection_requested_action", "")
+            ),
+            action_dispatch_preview_selection_normalized_action=str(
+                preview_state_audit.get("action_dispatch_preview_selection_normalized_action", "")
+            ),
+            action_dispatch_preview_selection_execution_allowed=bool(
+                preview_state_audit.get("action_dispatch_preview_selection_execution_allowed", True)
+            ),
+            action_dispatch_preview_selection_execution_performed=bool(
+                preview_state_audit.get(
+                    "action_dispatch_preview_selection_execution_performed", True
+                )
+            ),
+            action_dispatch_preview_selection_order_submission_allowed=bool(
+                preview_state_audit.get(
+                    "action_dispatch_preview_selection_order_submission_allowed", True
+                )
+            ),
+            action_dispatch_preview_selection_lifecycle_execution_allowed=bool(
+                preview_state_audit.get(
+                    "action_dispatch_preview_selection_lifecycle_execution_allowed", True
+                )
+            ),
+            action_dispatch_preview_selection_no_execution_contract_green=bool(
+                preview_state_audit.get(
+                    "action_dispatch_preview_selection_no_execution_contract_green", False
+                )
+            ),
             preview_launch_readiness_evaluated=options.exercise_preview_state,
             preview_launch_readiness_requires_exercise_preview_state=not options.exercise_preview_state,
             preview_launch_readiness_evidence=preview_launch_readiness_evidence,

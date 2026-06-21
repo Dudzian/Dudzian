@@ -221,11 +221,14 @@ def test_qml_bridge_property_is_limited_to_operator_dashboard_read_only_snapshot
         if "paperRuntimeActionDispatchBridge" in _source(path)
     ]
 
-    assert qml_consumers == ["ui/pyside_app/qml/views/OperatorDashboard.qml"]
+    assert qml_consumers == [
+        "ui/pyside_app/qml/MainWindow.qml",
+        "ui/pyside_app/qml/views/OperatorDashboard.qml",
+    ]
     operator_source = _source(
         REPO_ROOT / "ui" / "pyside_app" / "qml" / "views" / "OperatorDashboard.qml"
     )
-    assert "paperRuntimeActionDispatchBridge.snapshot" in operator_source
+    assert "actionDispatchContextBridge.snapshot" in operator_source
     for path in BAT_LAUNCHERS:
         assert "paperRuntimeActionDispatchBridge" not in _source(path)
 

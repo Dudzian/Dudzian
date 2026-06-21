@@ -82,7 +82,7 @@ def _source_lines_containing(pattern: str, root: Path) -> list[str]:
 def test_operator_dashboard_reads_action_dispatch_snapshot_read_only() -> None:
     source = _source(OPERATOR_DASHBOARD)
 
-    assert source.count("paperRuntimeActionDispatchBridge.snapshot") == 1
+    assert source.count("actionDispatchContextBridge.snapshot") == 1
     assert "readonly property var actionDispatchSnapshot" in source
     assert "readonly property string actionDispatchStatus" in source
     assert "readonly property bool actionDispatchExecutionDisabled" in source
@@ -200,7 +200,10 @@ def test_qml_bridge_consumption_is_limited_to_operator_dashboard_snapshot_bindin
         if "paperRuntimeActionDispatchBridge" in _source(path)
     ]
 
-    assert consumers == ["ui/pyside_app/qml/views/OperatorDashboard.qml"]
+    assert consumers == [
+        "ui/pyside_app/qml/MainWindow.qml",
+        "ui/pyside_app/qml/views/OperatorDashboard.qml",
+    ]
 
 
 def test_qml_calls_only_allowed_snapshot_refresh_preview_select_action() -> None:

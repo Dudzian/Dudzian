@@ -38,6 +38,7 @@ class PaperRuntimeActionDispatchQtBridge(QObject):
 
         return self._snapshot_payload(self._provider.snapshot())
 
+    @Slot(str, result="QVariantMap")
     @Slot(str, bool, str, result="QVariantMap")
     def previewSelectAction(
         self,

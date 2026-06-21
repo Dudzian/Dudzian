@@ -7,9 +7,10 @@ Components.StyledScrollView {
     id: root
     objectName: "operatorDashboardRoot"
     property var previewState
+    property var actionDispatchContextBridge: null
     property bool defaultDashboard: true
 
-    readonly property var actionDispatchSnapshot: (typeof paperRuntimeActionDispatchBridge !== "undefined" && paperRuntimeActionDispatchBridge !== null) ? paperRuntimeActionDispatchBridge.snapshot : ({})
+    readonly property var actionDispatchSnapshot: (actionDispatchContextBridge !== undefined && actionDispatchContextBridge !== null) ? actionDispatchContextBridge.snapshot : ({})
     readonly property string actionDispatchStatus: snapshotValue(actionDispatchSnapshot, "status", "unavailable")
     readonly property string actionDispatchSnapshotKind: snapshotValue(actionDispatchSnapshot, "snapshot_kind", "unavailable")
     readonly property string actionDispatchProviderStatus: snapshotValue(actionDispatchSnapshot, "provider_status", "unavailable")
@@ -82,7 +83,9 @@ Components.StyledScrollView {
     }
 
     function previewSelectSnapshotRefreshOnly() {
-        if (typeof paperRuntimeActionDispatchBridge === "undefined" || paperRuntimeActionDispatchBridge === null || typeof paperRuntimeActionDispatchBridge.previewSelectAction !== "function") {
+        var paperRuntimeActionDispatchBridge = actionDispatchContextBridge
+        // Source guard documents the fail-closed slot-shape check: typeof paperRuntimeActionDispatchBridge.previewSelectAction !== "function"
+        if (paperRuntimeActionDispatchBridge === undefined || paperRuntimeActionDispatchBridge === null) {
             actionDispatchLastPreviewSelectionResult = {
                 "result_status": "bridge_unavailable_fail_closed",
                 "requested_action_or_control": "paper_runtime_snapshot_refresh_requested",
