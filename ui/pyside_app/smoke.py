@@ -1884,6 +1884,9 @@ def _build_operator_workflow_runtime_audit(
     workflow["operator_pair_after_select_selected_terminal_pair"] = after_select_terminal_pair
     workflow["operator_pair_after_select_selected_pairs"] = after_select_selected_pairs
     workflow["operator_pair_after_select_scanner_selected_pair"] = after_select_scanner_pair
+    workflow["operator_pair_after_select_selected_terminal_pair_last_writer"] = _string_property(
+        root, "selectedTerminalPairLastWriter"
+    )
     _invoke_show_panel(root, "terminalPanel")
     _process_events()
     after_terminal_open_terminal_pair = _string_property(root, "selectedTerminalPair")
@@ -1897,6 +1900,9 @@ def _build_operator_workflow_runtime_audit(
     )
     workflow["operator_pair_after_terminal_open_scanner_selected_pair"] = (
         after_terminal_open_scanner_pair
+    )
+    workflow["operator_pair_after_terminal_open_selected_terminal_pair_last_writer"] = (
+        _string_property(root, "selectedTerminalPairLastWriter")
     )
     terminal_panel = _find_qml_object(root, "paperTerminalRoot")
     terminal_panel_active_pair = (
