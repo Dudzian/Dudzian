@@ -47,6 +47,14 @@ Components.StyledScrollView {
     readonly property bool actionDispatchLastPreviewSelectionExecutionPerformed: snapshotValue(actionDispatchLastPreviewSelectionResult, "execution_performed", false) === true
     readonly property bool actionDispatchLastPreviewSelectionOrderSubmissionAllowed: snapshotValue(actionDispatchLastPreviewSelectionResult, "order_submission_allowed", false) === true
     readonly property bool actionDispatchLastPreviewSelectionLifecycleExecutionAllowed: snapshotValue(actionDispatchLastPreviewSelectionResult, "lifecycle_execution_allowed", false) === true
+    readonly property var decisionEngineDryRunAuditEnvelope: snapshotValue(actionDispatchSnapshot, "decision_engine_dry_run_audit_envelope", ({}))
+    readonly property var decisionEngineDryRunAuditSummary: snapshotValue(decisionEngineDryRunAuditEnvelope, "audit_summary", ({}))
+    readonly property var decisionEngineDryRunAuditEvents: snapshotValue(decisionEngineDryRunAuditEnvelope, "audit_events", [])
+    readonly property string decisionEngineDryRunAuditStatus: snapshotValue(decisionEngineDryRunAuditEnvelope, "audit_envelope_status", "unavailable")
+    readonly property string decisionEngineDryRunAuditNextStep: snapshotValue(decisionEngineDryRunAuditEnvelope, "next_step", "FUNCTIONAL-PREVIEW-8.4")
+    readonly property string decisionEngineDryRunUiSurfaceStatus: snapshotValue(actionDispatchSnapshot, "decision_engine_dry_run_ui_surface_status", "read_only_surface_ready_no_engine_execution")
+    readonly property string decisionEngineDryRunNextStepAfterUiSurface: snapshotValue(actionDispatchSnapshot, "next_step_after_ui_surface", "FUNCTIONAL-PREVIEW-8.5")
+    readonly property bool decisionEngineDryRunReadyForBlockF5: snapshotValue(actionDispatchSnapshot, "ready_for_block_f_5", false) === true
     contentWidth: availableWidth
     clip: true
     implicitWidth: 1040
@@ -138,6 +146,22 @@ Components.StyledScrollView {
         return values.join(" • ")
     }
 
+    function decisionEngineDryRunAuditEventSummary(events) {
+        if (events === undefined || events === null || events.length === undefined || events.length === 0) return qsTr("no audit events exposed • dry-run read-only • no engine execution • no orders")
+        var values = []
+        var limit = Math.min(events.length, 6)
+        for (var index = 0; index < limit; index += 1) {
+            var item = events[index]
+            values.push(
+                qsTr("%1/%2 status=%3 dry-run read-only no engine execution no orders")
+                    .arg(snapshotValue(item, "case_id", "unknown_case"))
+                    .arg(snapshotValue(item, "audit_event_id", "unknown_event"))
+                    .arg(snapshotValue(item, "event_status", "unknown_status"))
+            )
+        }
+        return values.join(" • ")
+    }
+
     ColumnLayout {
         width: root.availableWidth
         spacing: 14
@@ -174,6 +198,39 @@ Components.StyledScrollView {
             Components.PreviewCard { objectName: "operatorDashboardActionDispatchDisabledIntentSelectionPreflight"; descriptionObjectName: "previewActionDispatchDisabledIntentSelectionPreflightLabel"; designSystem: root.designSystem; title: qsTr("BLOK E — disabled intent selection preflight"); description: qsTr("selection locked: %1 • status: %2 • disabled intent candidates: %3 • future interaction gate required • method calls disabled • bridge selection APIs not called • execution disabled • no runtime execution • no order submission • no lifecycle execution • read-only preflight only not executed").arg(actionDispatchSelectionPreflightLocked ? "true" : "false").arg(actionDispatchSelectionPreflightStatus).arg(actionDispatchDisabledIntentSummary(actionDispatchActions)); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardActionDispatchSelectionPreviewGate"; descriptionObjectName: "previewActionDispatchSelectionPreviewGateLabel"; designSystem: root.designSystem; title: qsTr("BLOK E — selection preview gate"); description: qsTr("selection preview gate: controlled preview-only • status: %1 • only snapshot refresh previewSelectAction literal is enabled • method calls allowed now: one controlled preview call • still blocked: previewSelectSourceControl, resetPreviewSelection, dynamic actions, start/stop/pause/resume • execution allowed: %2 • order submission allowed: %3 • lifecycle execution allowed: %4 • paper/local only: %5/%6 • accepted-not-executed/no runtime execution").arg(actionDispatchSelectionPreviewGateStatus).arg(actionDispatchSelectionPreviewGateExecutionAllowed ? "true" : "false").arg(actionDispatchSelectionPreviewGateOrderSubmissionAllowed ? "true" : "false").arg(actionDispatchSelectionPreviewGateLifecycleExecutionAllowed ? "true" : "false").arg(actionDispatchSelectionPreviewGatePaperOnly ? "true" : "false").arg(actionDispatchSelectionPreviewGateLocalOnly ? "true" : "false"); Layout.fillWidth: true; Components.IconButton { objectName: "operatorDashboardPreviewSelectSnapshotRefreshOnlyButton"; designSystem: root.designSystem; text: qsTr("Preview-only select snapshot refresh (no execution)"); helpText: qsTr("Calls only paperRuntimeActionDispatchBridge.previewSelectAction for paper_runtime_snapshot_refresh_requested; fail-closed if bridge unavailable; no runtime/order/lifecycle execution"); subtle: true; onClicked: root.previewSelectSnapshotRefreshOnly() } }
             Components.PreviewCard { objectName: "operatorDashboardActionDispatchPreviewSelectionResult"; descriptionObjectName: "previewActionDispatchPreviewSelectionResultLabel"; designSystem: root.designSystem; title: qsTr("BLOK E — preview selection result"); description: qsTr("preview-only selected result: %1 • requested_action: %2 • normalized_action: %3 • execution_allowed: %4 • execution_performed: %5 • order_submission_allowed: %6 • lifecycle_execution_allowed: %7 • accepted intent not executed • no runtime/order/lifecycle execution").arg(actionDispatchLastPreviewSelectionStatus).arg(actionDispatchLastPreviewSelectionRequestedAction).arg(actionDispatchLastPreviewSelectionNormalizedAction).arg(actionDispatchLastPreviewSelectionExecutionAllowed ? "true" : "false").arg(actionDispatchLastPreviewSelectionExecutionPerformed ? "true" : "false").arg(actionDispatchLastPreviewSelectionOrderSubmissionAllowed ? "true" : "false").arg(actionDispatchLastPreviewSelectionLifecycleExecutionAllowed ? "true" : "false"); Layout.fillWidth: true }
+            Components.PreviewCard {
+                objectName: "operatorDashboardDecisionEngineDryRunAuditCard"
+                designSystem: root.designSystem
+                title: qsTr("BLOK F 8.4 — Decision Engine Dry-Run Audit Envelope")
+                description: qsTr("Dry-run read-only UI surface from 8.3 audit envelope • no engine execution • no orders • UI surface status: %1 • ready for 8.5: %2").arg(decisionEngineDryRunUiSurfaceStatus).arg(decisionEngineDryRunReadyForBlockF5 ? "true" : "false")
+                Layout.fillWidth: true
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Label {
+                        objectName: "operatorDashboardDecisionEngineDryRunAuditStatus"
+                        text: qsTr("status: %1 • dry_run_mode: %2 • next_step: %3 • next_step_after_ui_surface: %4 • read-only • no engine execution • no orders").arg(decisionEngineDryRunAuditStatus).arg(snapshotValue(decisionEngineDryRunAuditEnvelope, "dry_run_mode", "local_paper_dry_run")).arg(decisionEngineDryRunAuditNextStep).arg(decisionEngineDryRunNextStepAfterUiSurface)
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardDecisionEngineDryRunAuditSummary"
+                        text: qsTr("event_count: %1 • all_events_no_engine_execution: %2 • all_events_no_order_generation: %3 • all_events_no_export: %4 • local_only/paper_only/dry_run_only preserved").arg(snapshotValue(decisionEngineDryRunAuditSummary, "audit_event_count", 0)).arg(snapshotValue(decisionEngineDryRunAuditSummary, "all_events_no_engine_execution", false) ? "true" : "false").arg(snapshotValue(decisionEngineDryRunAuditSummary, "all_events_no_order_generation", false) ? "true" : "false").arg(snapshotValue(decisionEngineDryRunAuditSummary, "all_events_no_export", false) ? "true" : "false")
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardDecisionEngineDryRunAuditEvents"
+                        text: decisionEngineDryRunAuditEventSummary(decisionEngineDryRunAuditEvents)
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+            }
             Components.PreviewCard { objectName: "operatorDashboardBlockCReadOnlyBindingSummary"; descriptionObjectName: "previewBlockCReadOnlyBindingSummaryLabel"; designSystem: root.designSystem; title: qsTr("BLOK C — UI READ-ONLY BINDING"); description: qsTr("BLOK B contract-complete static-local • read-only binding only • binding kind: %1 • block status: %2 • integration gate: %3 • runtime loop: %4 • runtime backed: %5 • UI runtime integration: %6 • ui bound: %7 • generated orders: %8 • generated decisions: %9 • export sink: %10 • cloud sink: %11 • external export: %12 • decision/export/live readiness: false").arg(blockCReadOnlyBindingValue("bindingKind", "static_local_block_b_closure_ui_read_only_binding")).arg(blockCReadOnlyBindingValue("blockStatus", "contract_complete_static_local")).arg(blockCReadOnlyBindingValue("integrationGateStatus", "blocked")).arg(blockCReadOnlyBindingValue("runtimeLoopStarted", false) ? "started" : "not started").arg(blockCReadOnlyBindingValue("runtimeBacked", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("readyForUiRuntimeIntegration", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("uiBound", false) ? "true" : "false").arg(blockCReadOnlyBindingValue("generatedOrderCount", 0)).arg(blockCReadOnlyBindingValue("generatedDecisionCount", 0)).arg(blockCReadOnlyBindingValue("exportSink", "none")).arg(blockCReadOnlyBindingValue("cloudSink", "none")).arg(blockCReadOnlyBindingValue("externalExport", false) ? "true" : "false"); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgePaper"; descriptionObjectName: "previewTypedBridgePaperLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge paper snapshot"); description: qsTr("Bridge paper: %1 • orders %2").arg(snapshotValue(typedBridgeValue("paperSessionSnapshot", null), "normalizedState", "—")).arg(snapshotValue(typedBridgeValue("paperSessionSnapshot", null), "orderRows", 0)); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardTypedBridgeScanner"; descriptionObjectName: "previewTypedBridgeScannerLabel"; designSystem: root.designSystem; title: qsTr("Typed bridge scanner snapshot"); description: qsTr("Bridge scanner: %1 • candidates %2").arg(snapshotValue(typedBridgeValue("scannerSnapshot", null), "bestOpportunity", "—")).arg(snapshotValue(typedBridgeValue("scannerSnapshot", null), "candidates", 0)); Layout.fillWidth: true }

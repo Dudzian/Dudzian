@@ -27,7 +27,7 @@ from ui.pyside_app.preview_action_dispatch_qt_bridge import (
 )
 from ui.pyside_app.preview_action_dispatch_selection import UNKNOWN_SELECTION_STATUS
 
-SIMPLE_TYPES = (dict, list, str, bool, int, type(None))
+SIMPLE_TYPES = (dict, list, str, bool, int, float, type(None))
 
 
 def _assert_no_execution(snapshot: dict[str, Any]) -> None:

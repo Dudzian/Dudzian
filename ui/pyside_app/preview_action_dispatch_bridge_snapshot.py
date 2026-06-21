@@ -26,6 +26,9 @@ from ui.pyside_app.preview_action_dispatch_selection import (
 from ui.pyside_app.preview_action_dispatch_selection_gate import (
     build_paper_runtime_action_dispatch_selection_preview_gate,
 )
+from ui.pyside_app.preview_decision_engine_dry_run_audit_envelope import (
+    build_preview_decision_engine_dry_run_audit_envelope,
+)
 
 BRIDGE_SNAPSHOT_SCHEMA_VERSION: Final[str] = "paper_runtime_action_dispatch_bridge_snapshot.v1"
 BRIDGE_SNAPSHOT_KIND: Final[str] = "block_d_qml_safe_action_dispatch_bridge_snapshot"
@@ -81,6 +84,7 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
     actions = [_catalog_item_to_payload(item) for item in action_catalog.actions]
     boundary_checks = _bridge_boundary_checks(action_catalog, selected_payload, has_selection)
     status = selected_payload["result_status"]
+    decision_engine_dry_run_audit_envelope = build_preview_decision_engine_dry_run_audit_envelope()
 
     return {
         "schema_version": BRIDGE_SNAPSHOT_SCHEMA_VERSION,
@@ -95,6 +99,12 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
         "actions": actions,
         "selected_result": selected_payload,
         "selection_preview_gate": build_paper_runtime_action_dispatch_selection_preview_gate(),
+        "decision_engine_dry_run_audit_envelope": decision_engine_dry_run_audit_envelope,
+        "decision_engine_dry_run_ui_surface_status": (
+            "read_only_surface_ready_no_engine_execution"
+        ),
+        "ready_for_block_f_5": True,
+        "next_step_after_ui_surface": "FUNCTIONAL-PREVIEW-8.5",
         "boundary_checks": boundary_checks,
         "operator_message": _operator_message(status),
         "status": status,
