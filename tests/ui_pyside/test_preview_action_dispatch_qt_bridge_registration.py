@@ -27,7 +27,7 @@ from ui.pyside_app.preview_action_dispatch_qt_bridge_registration import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 QML_ROOT = REPO_ROOT / "ui" / "pyside_app"
-SIMPLE_TYPES = (dict, list, str, bool, int, type(None))
+SIMPLE_TYPES = (dict, list, str, bool, int, float, type(None))
 
 
 class FakeContext:
