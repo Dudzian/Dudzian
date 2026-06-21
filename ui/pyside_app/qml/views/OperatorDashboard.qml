@@ -55,6 +55,14 @@ Components.StyledScrollView {
     readonly property string decisionEngineDryRunUiSurfaceStatus: snapshotValue(actionDispatchSnapshot, "decision_engine_dry_run_ui_surface_status", "read_only_surface_ready_no_engine_execution")
     readonly property string decisionEngineDryRunNextStepAfterUiSurface: snapshotValue(actionDispatchSnapshot, "next_step_after_ui_surface", "FUNCTIONAL-PREVIEW-8.5")
     readonly property bool decisionEngineDryRunReadyForBlockF5: snapshotValue(actionDispatchSnapshot, "ready_for_block_f_5", false) === true
+    readonly property var paperOrderAuditEnvelope: snapshotValue(actionDispatchSnapshot, "paper_order_audit_envelope", ({}))
+    readonly property var paperOrderAuditNoExecutionSummary: snapshotValue(actionDispatchSnapshot, "paper_order_audit_no_execution_summary", ({}))
+    readonly property string paperOrderAuditStatus: snapshotValue(actionDispatchSnapshot, "paper_order_audit_status", "unavailable")
+    readonly property string paperOrderAuditNextStep: snapshotValue(actionDispatchSnapshot, "paper_order_audit_next_step", "FUNCTIONAL-PREVIEW-9.4")
+    readonly property int paperOrderAuditEventCount: snapshotValue(actionDispatchSnapshot, "paper_order_audit_event_count", 0)
+    readonly property int paperOrderAuditUnknownInputKeyEvents: snapshotValue(actionDispatchSnapshot, "paper_order_audit_unknown_input_key_events", 0)
+    readonly property bool paperOrderAuditReadyForUiSurface: snapshotValue(actionDispatchSnapshot, "paper_order_audit_ready_for_ui_surface", false) === true
+    readonly property bool paperOrderAuditReadyForBlockG4: snapshotValue(actionDispatchSnapshot, "paper_order_audit_ready_for_block_g_4", false) === true
     contentWidth: availableWidth
     clip: true
     implicitWidth: 1040
@@ -225,6 +233,53 @@ Components.StyledScrollView {
                     Label {
                         objectName: "operatorDashboardDecisionEngineDryRunAuditEvents"
                         text: decisionEngineDryRunAuditEventSummary(decisionEngineDryRunAuditEvents)
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+            Components.PreviewCard {
+                objectName: "operatorDashboardPaperOrderAuditReadOnlyCard"
+                designSystem: root.designSystem
+                title: qsTr("Paper order audit — read-only")
+                description: qsTr("Audit/read-only/no-execution surface from 9.3 audit envelope • ready_for_ui_surface: %1 • ready_for_block_g_4: %2 • no order path and no order form").arg(paperOrderAuditReadyForUiSurface ? "true" : "false").arg(paperOrderAuditReadyForBlockG4 ? "true" : "false")
+                Layout.fillWidth: true
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Label {
+                        objectName: "operatorDashboardPaperOrderAuditStatusLabel"
+                        text: qsTr("status: %1 • audit/read-only/no-execution • Next: %2").arg(paperOrderAuditStatus).arg(paperOrderAuditNextStep)
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardPaperOrderAuditEventCountLabel"
+                        text: qsTr("event_count: %1 • unknown_input_key_events: %2 • safe summary only").arg(paperOrderAuditEventCount).arg(paperOrderAuditUnknownInputKeyEvents)
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardPaperOrderAuditNoExecutionLabel"
+                        text: qsTr("No order intent generated: %1 • No paper order generated: %2 • No submission: %3 • No fills: %4 • No runtime execution: %5 • Live/testnet blocked: %6 • account/secrets blocked: %7").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "all_events_no_intent_generated", false) ? "true" : "false").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "all_events_no_order_generated", false) ? "true" : "false").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "all_events_no_submission", false) ? "true" : "false").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "all_events_no_fills", false) ? "true" : "false").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "all_events_no_runtime_execution", false) ? "true" : "false").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "all_events_no_live_or_testnet", false) ? "true" : "false").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "all_events_no_account_or_secrets", false) ? "true" : "false")
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardPaperOrderAuditExportBlockedLabel"
+                        text: qsTr("Audit export blocked: %1 • export performed: %2 • account/secrets/export blocked • local paper preview only").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "audit_export_allowed", true) ? "false" : "true").arg(snapshotValue(paperOrderAuditNoExecutionSummary, "audit_export_performed", true) ? "true" : "false")
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardPaperOrderAuditNextStepLabel"
+                        text: qsTr("Next: %1 • 9.4 exposes read-only UI surface only; later controlled gates may be evaluated, but intent/order/submission/fills/export/runtime remain blocked now").arg(paperOrderAuditNextStep)
                         color: designSystem.color("textSecondary")
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
