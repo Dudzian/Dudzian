@@ -677,6 +677,8 @@ def test_operator_workflow_evidence_helper_contract() -> None:
     assert "operator_pair_before_select_selected_terminal_pair" in smoke_source
     assert "operator_pair_after_select_selected_terminal_pair" in smoke_source
     assert "operator_pair_after_terminal_open_selected_terminal_pair" in smoke_source
+    assert "operator_pair_after_select_selected_terminal_pair_last_writer" in smoke_source
+    assert "operator_pair_after_terminal_open_selected_terminal_pair_last_writer" in smoke_source
     assert "operator_selected_pairs_diagnostic" in smoke_source
     assert "operator_source_diagnostic" not in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS
     for key in FRONTEND_OPERATOR_WORKFLOW_REQUIRED_CHECKS:
@@ -689,8 +691,10 @@ def test_operator_workflow_qml_select_scanner_pair_propagates_to_terminal_source
     assert "function selectScannerPair(pair)" in main_window
     assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
     assert "whitelistPairs = selectedPairs.slice()" in main_window
+    assert "selectedTerminalPair = scannerSelectedPair" in main_window
+    assert 'selectedTerminalPairLastWriter = "selectScannerPair"' in main_window
     assert (
-        "selectedTerminalPair = scannerSelectedPair; explainScannerCandidate(scannerSelectedPair); selectedTerminalPair = scannerSelectedPair"
+        "explainScannerCandidate(scannerSelectedPair); selectedTerminalPair = scannerSelectedPair"
         in main_window
     )
 
@@ -717,6 +721,9 @@ def test_operator_workflow_terminal_panel_open_revalidates_shared_terminal_pair(
     assert "ensureSelectedTerminalPair()" in main_window
     assert "function showPanel(panelId)" in main_window
     assert "currentPanelId = panelId" in main_window
+    assert main_window.index('if (panelId === "terminalPanel")') < main_window.index(
+        "currentPanelId = panelId"
+    )
 
 
 def test_operator_workflow_paper_terminal_active_pair_uses_shared_state_before_default() -> None:

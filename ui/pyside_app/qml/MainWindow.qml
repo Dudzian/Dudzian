@@ -668,6 +668,7 @@ ApplicationWindow {
     // UI-PREVIEW-7.6 local-only Product Trading Terminal / Paper Trading Cockpit state.
     // Safe preview only: live trading disabled, exchange I/O disabled, order submission disabled, API keys not required, runtime loop not started, no real orders.
     property string selectedTerminalPair: selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT"
+    property string selectedTerminalPairLastWriter: "initial:selectedPairs-default"
     property string terminalSide: "BUY"
     property string terminalOrderType: "LIMIT"
     property string terminalPrice: "68240.50"
@@ -1099,7 +1100,7 @@ ApplicationWindow {
         appendPreviewAlert(rejected ? "Warning" : "Info", "Scanner", rejected ? "Scanner rejected setup" : "Scanner candidate found", bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, "Market Scanner", bestRow.pair, "Explain candidate")
     }
     function runMarketScannerBurst(count) { var ticks = Math.max(0, Number(count) || 0); for (var i = 0; i < ticks; ++i) runMarketScannerTick() }
-    function selectScannerPair(pair) { var requestedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; var row = scannerRowByPair(requestedPair); scannerSelectedPair = row ? row.pair : requestedPair; if (scannerSelectedPair && scannerSelectedPair.length > 0) { var selectedCopy = selectedPairs ? selectedPairs.slice() : []; var existingIndex = selectedCopy.indexOf(scannerSelectedPair); if (existingIndex >= 0) selectedCopy.splice(existingIndex, 1); selectedPairs = [scannerSelectedPair].concat(selectedCopy); whitelistPairs = selectedPairs.slice() } selectedTerminalPair = scannerSelectedPair; explainScannerCandidate(scannerSelectedPair); selectedTerminalPair = scannerSelectedPair }
+    function selectScannerPair(pair) { var requestedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; var row = scannerRowByPair(requestedPair); scannerSelectedPair = row ? row.pair : requestedPair; if (scannerSelectedPair && scannerSelectedPair.length > 0) { var selectedCopy = selectedPairs ? selectedPairs.slice() : []; var existingIndex = selectedCopy.indexOf(scannerSelectedPair); if (existingIndex >= 0) selectedCopy.splice(existingIndex, 1); selectedPairs = [scannerSelectedPair].concat(selectedCopy); whitelistPairs = selectedPairs.slice() } selectedTerminalPair = scannerSelectedPair; selectedTerminalPairLastWriter = "selectScannerPair"; explainScannerCandidate(scannerSelectedPair); selectedTerminalPair = scannerSelectedPair; selectedTerminalPairLastWriter = "selectScannerPair" }
     function addScannerPairToWatchlist(pair) { if (pair && !hasValue(scannerWatchlistPairs, pair)) scannerWatchlistPairs = scannerWatchlistPairs.concat([pair]); refreshScannerBuckets() }
     function removeScannerPairFromWatchlist(pair) { var copy = scannerWatchlistPairs ? scannerWatchlistPairs.slice() : []; var idx = copy.indexOf(pair); if (idx >= 0) copy.splice(idx, 1); scannerWatchlistPairs = copy; refreshScannerBuckets() }
     function blacklistScannerPair(pair) { if (pair && !hasValue(blacklistPairs, pair)) blacklistPairs = blacklistPairs.concat([pair]); rebuildMarketScannerRows() }
@@ -1238,7 +1239,7 @@ ApplicationWindow {
             return selectedPairs[0]
         return "BTC/USDT"
     }
-    function setTerminalPair(pair) { selectedTerminalPair = pair && pair.length > 0 ? pair : preferredTerminalPair() }
+    function setTerminalPair(pair) { selectedTerminalPair = pair && pair.length > 0 ? pair : preferredTerminalPair(); selectedTerminalPairLastWriter = "setTerminalPair" }
     function setTerminalSide(side) { terminalSide = side === "SELL" ? "SELL" : "BUY" }
     function setTerminalOrderType(type) { terminalOrderType = type === "MARKET" ? "MARKET" : "LIMIT" }
     function setTerminalTimeframe(timeframe) { terminalTimeframe = timeframe && timeframe.length > 0 ? timeframe : "15m" }
@@ -1553,8 +1554,10 @@ ApplicationWindow {
     function saveStrategyPreview(name) { lastStrategySaveStatus = "Zapisano lokalny preview strategii: " + name + " • runtime config write disabled • live execution disabled" }
     function ensureSelectedTerminalPair() {
         var preferredPair = preferredTerminalPair()
-        if (preferredPair && preferredPair.length > 0)
+        if (preferredPair && preferredPair.length > 0 && selectedTerminalPair !== preferredPair) {
             selectedTerminalPair = preferredPair
+            selectedTerminalPairLastWriter = "ensureSelectedTerminalPair"
+        }
     }
     function syncUniverseSelectionState(message) {
         ensureSelectedTerminalPair()
@@ -2144,11 +2147,11 @@ ApplicationWindow {
     function showPanel(panelId) {
         if (!panelId)
             return
+        if (panelId === "terminalPanel")
+            ensureSelectedTerminalPair()
         currentPanelId = panelId
         if (layoutController)
             layoutController.setPanelVisibility(panelId, true)
-        if (panelId === "terminalPanel")
-            ensureSelectedTerminalPair()
     }
 
     function showOperatorDashboard() {
