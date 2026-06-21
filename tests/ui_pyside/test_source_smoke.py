@@ -1766,6 +1766,43 @@ def test_exercise_preview_state_smoke_mutates_local_state_only() -> None:
     assert audit["typed_preview_bridge_qml_consumer_survives_panel_navigation"] is True
     assert audit["typed_preview_bridge_qml_consumer_restores_baseline_snapshot"] is True
     assert audit["typed_preview_bridge_qml_consumer_lifecycle_sequence_completed"] is True
+    assert payload["action_dispatch_preview_selection_button_present"] is True
+    assert payload["action_dispatch_preview_selection_button_clicked"] is True
+    assert payload["action_dispatch_preview_selection_status"] in {
+        "accepted_intent_not_executed",
+        "accepted-not-executed",
+    }
+    assert (
+        payload["action_dispatch_preview_selection_requested_action"]
+        == "paper_runtime_snapshot_refresh_requested"
+    )
+    assert (
+        payload["action_dispatch_preview_selection_normalized_action"]
+        == "paper_runtime_snapshot_refresh_requested"
+    )
+    assert payload["action_dispatch_preview_selection_execution_allowed"] is False
+    assert payload["action_dispatch_preview_selection_execution_performed"] is False
+    assert payload["action_dispatch_preview_selection_order_submission_allowed"] is False
+    assert payload["action_dispatch_preview_selection_lifecycle_execution_allowed"] is False
+    assert payload["action_dispatch_preview_selection_no_execution_contract_green"] is True
+    for key in (
+        "action_dispatch_preview_selection_button_present",
+        "action_dispatch_preview_selection_button_clicked",
+        "action_dispatch_preview_selection_no_execution_contract_green",
+    ):
+        assert audit[key] is True
+    assert (
+        audit["action_dispatch_preview_selection_requested_action"]
+        == "paper_runtime_snapshot_refresh_requested"
+    )
+    assert (
+        audit["action_dispatch_preview_selection_normalized_action"]
+        == "paper_runtime_snapshot_refresh_requested"
+    )
+    assert audit["action_dispatch_preview_selection_execution_allowed"] is False
+    assert audit["action_dispatch_preview_selection_execution_performed"] is False
+    assert audit["action_dispatch_preview_selection_order_submission_allowed"] is False
+    assert audit["action_dispatch_preview_selection_lifecycle_execution_allowed"] is False
     readiness_evidence = payload["preview_launch_readiness_evidence"]
     assert isinstance(readiness_evidence, dict)
     assert readiness_evidence["all_preview_launch_readiness_checks_passed"] is True
@@ -3658,3 +3695,35 @@ def test_direct_script_basic_smoke_does_not_fake_runtime_session_control_runtime
     assert payload["preview_launch_readiness_requires_exercise_preview_state"] is True
     assert payload["runtime_session_control_live_shape_parity_complete"] is False
     assert payload["runtime_session_control_live_shape_evidence"] == {}
+
+
+def test_operator_dashboard_keeps_single_allowed_preview_selection_bridge_call() -> None:
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
+    allowed_call = 'paperRuntimeActionDispatchBridge.previewSelectAction("paper_runtime_snapshot_refresh_requested")'
+
+    assert dashboard.count(allowed_call) == 1
+    assert dashboard.count("paperRuntimeActionDispatchBridge.previewSelectAction(") == 1
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert "property var paperRuntimeActionDispatchBridge" not in dashboard
+    assert "PaperRuntimeActionDispatchQtBridge" not in smoke_source
+    assert 'setProperty("paperRuntimeActionDispatchBridge"' not in smoke_source
+    assert 'objectName: "operatorDashboardPreviewSelectSnapshotRefreshOnlyButton"' in dashboard
+    assert "function previewSelectSnapshotRefreshOnly()" in dashboard
+    assert "previewSelectAction(action" not in dashboard
+    assert "paperRuntimeActionDispatchBridge.previewSelectSourceControl" not in dashboard
+    assert "paperRuntimeActionDispatchBridge.resetPreviewSelection" not in dashboard
+    assert ".previewSelectSourceControl(" not in dashboard
+    assert ".resetPreviewSelection(" not in dashboard
+    for forbidden in ("start_requested", "stop_requested", "pause_requested", "resume_requested"):
+        assert forbidden not in dashboard
+
+
+def test_no_dashboard_bridge_shadowing_or_smoke_injection() -> None:
+    dashboard = (QML_SOURCE_ROOT / "views" / "OperatorDashboard.qml").read_text(encoding="utf-8")
+    smoke_source = SMOKE_SOURCE.read_text(encoding="utf-8")
+
+    assert "property var paperRuntimeActionDispatchBridge" not in dashboard
+    assert "PaperRuntimeActionDispatchQtBridge" not in smoke_source
+    assert 'setProperty("paperRuntimeActionDispatchBridge"' not in smoke_source
+    assert 'dashboard.property("paperRuntimeActionDispatchBridge")' not in smoke_source

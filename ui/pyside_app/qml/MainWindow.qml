@@ -17,6 +17,7 @@ ApplicationWindow {
     property var contextGrpcBridge: (typeof grpcBridge !== "undefined" ? grpcBridge : null)
     property var runtimeService: contextGrpcBridge && contextGrpcBridge.runtimeService ? contextGrpcBridge.runtimeService : null
     property var contextRuntimeState: (typeof runtimeState !== "undefined" ? runtimeState : null)
+    property var actionDispatchContextBridge: (typeof paperRuntimeActionDispatchBridge !== "undefined" ? paperRuntimeActionDispatchBridge : null)
     property string defaultPanelId: "sidePanel"
     property string currentPanelId: defaultPanelId
     property string currentLanguage: "PL"
@@ -2577,6 +2578,7 @@ ApplicationWindow {
             objectName: "centralContentLoader"
             anchors.fill: parent
             anchors.margins: 0
+            property var actionDispatchContextBridge: root.actionDispatchContextBridge
             active: true
             sourceComponent: root.selectedPanelComponent()
         }
@@ -2595,6 +2597,7 @@ ApplicationWindow {
         id: sidePanelComponent
         Views.OperatorDashboard {
             previewState: root
+            actionDispatchContextBridge: centralContentLoader.actionDispatchContextBridge
             width: parent ? parent.width : implicitWidth
             height: parent ? parent.height : implicitHeight
             designSystem: rootDesignSystem

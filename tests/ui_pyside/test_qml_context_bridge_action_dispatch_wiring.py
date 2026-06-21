@@ -190,11 +190,24 @@ def test_registered_property_consumption_limited_to_operator_dashboard_read_only
         if PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY in _source(path)
     ]
 
-    assert qml_consumers == ["ui/pyside_app/qml/views/OperatorDashboard.qml"]
+    assert qml_consumers == [
+        "ui/pyside_app/qml/MainWindow.qml",
+        "ui/pyside_app/qml/views/OperatorDashboard.qml",
+    ]
+    main_window_source = _source(REPO_ROOT / "ui" / "pyside_app" / "qml" / "MainWindow.qml")
+    assert "property var actionDispatchContextBridge" in main_window_source
+    assert (
+        "property var actionDispatchContextBridge: root.actionDispatchContextBridge"
+        in main_window_source
+    )
+    assert (
+        "actionDispatchContextBridge: centralContentLoader.actionDispatchContextBridge"
+        in main_window_source
+    )
     operator_source = _source(
         REPO_ROOT / "ui" / "pyside_app" / "qml" / "views" / "OperatorDashboard.qml"
     )
-    assert f"{PAPER_RUNTIME_ACTION_DISPATCH_QT_BRIDGE_CONTEXT_PROPERTY}.snapshot" in operator_source
+    assert "actionDispatchContextBridge.snapshot" in operator_source
     allowed_call = (
         "paperRuntimeActionDispatchBridge.previewSelectAction("
         '"paper_runtime_snapshot_refresh_requested")'
