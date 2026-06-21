@@ -18,6 +18,14 @@ pytestmark = pytest.mark.skipif(
     reason="Środowisko testowe nie udostępnia PySide6; source-smoke UI wymaga Qt/PySide6.",
 )
 
+
+def _qml_function_body(source: str, function_name: str) -> str:
+    marker = f"function {function_name}"
+    start = source.index(marker)
+    next_function = source.find("\n    function ", start + len(marker))
+    return source[start:] if next_function == -1 else source[start:next_function]
+
+
 _PYSIDE_SOURCE_SMOKE_SYMBOLS_LOADED = False
 _PYSIDE_SOURCE_SMOKE_SYMBOL_NAMES = (
     "PREVIEW_LAUNCH_READINESS_CHECKS",
@@ -742,6 +750,9 @@ def test_operator_workflow_paper_terminal_active_pair_uses_shared_state_before_d
 
 def test_selected_terminal_pair_assignments_are_instrumented() -> None:
     main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    run_market_scanner_tick = _qml_function_body(main_window, "runMarketScannerTick")
+    select_scanner_pair = _qml_function_body(main_window, "selectScannerPair")
+    ensure_selected_terminal_pair = _qml_function_body(main_window, "ensureSelectedTerminalPair")
     direct_assignments = [
         line.strip()
         for line in main_window.splitlines()
@@ -758,8 +769,17 @@ def test_selected_terminal_pair_assignments_are_instrumented() -> None:
         any(fragment in line for fragment in allowed_fragments) for line in direct_assignments
     )
     assert 'setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair")' in main_window
+    assert (
+        'setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair")' in select_scanner_pair
+    )
+    assert "selectedTerminalPair = scannerSelectedPair" not in select_scanner_pair
+    assert (
+        'setTerminalPairFromSource(preferredPair, "ensureSelectedTerminalPair")'
+        in ensure_selected_terminal_pair
+    )
     assert 'setTerminalPairFromSource(pair, "runSimulationTick")' in main_window
     assert "selectedTerminalPair = bestRow.pair" not in main_window
+    assert "selectedTerminalPair" not in run_market_scanner_tick
 
 
 def test_operator_workflow_pair_state_matches_canonical_values() -> None:
