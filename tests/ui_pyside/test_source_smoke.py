@@ -691,12 +691,8 @@ def test_operator_workflow_qml_select_scanner_pair_propagates_to_terminal_source
     assert "function selectScannerPair(pair)" in main_window
     assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
     assert "whitelistPairs = selectedPairs.slice()" in main_window
-    assert "selectedTerminalPair = scannerSelectedPair" in main_window
-    assert 'selectedTerminalPairLastWriter = "selectScannerPair"' in main_window
-    assert (
-        "explainScannerCandidate(scannerSelectedPair); selectedTerminalPair = scannerSelectedPair"
-        in main_window
-    )
+    assert 'setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair")' in main_window
+    assert "selectedTerminalPair = scannerSelectedPair" not in main_window
 
 
 def test_operator_workflow_qml_scanner_pair_wins_over_terminal_default_fallback() -> None:
@@ -709,7 +705,7 @@ def test_operator_workflow_qml_scanner_pair_wins_over_terminal_default_fallback(
     assert "function preferredTerminalPair()" in main_window
     assert "function ensureSelectedTerminalPair()" in main_window
     assert "var preferredPair = preferredTerminalPair()" in main_window
-    assert "selectedTerminalPair = preferredPair" in main_window
+    assert 'setTerminalPairFromSource(preferredPair, "ensureSelectedTerminalPair")' in main_window
     assert "if (scannerSelectedPair && scannerSelectedPair.length > 0)" in main_window
     assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
 
@@ -742,6 +738,28 @@ def test_operator_workflow_paper_terminal_active_pair_uses_shared_state_before_d
     )
     assert terminal.index("previewState.selectedPairs[0]") < terminal.index('"BTC/USDT"')
     assert '"LINK/USDT"' not in terminal
+
+
+def test_selected_terminal_pair_assignments_are_instrumented() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    direct_assignments = [
+        line.strip()
+        for line in main_window.splitlines()
+        if re.search(r"selectedTerminalPair\s*=", line)
+    ]
+
+    allowed_fragments = (
+        "property string selectedTerminalPair:",
+        "function setTerminalPairFromSource",
+        "selectedTerminalPair = pair && pair.length > 0 ? pair : preferredTerminalPair()",
+    )
+    assert direct_assignments
+    assert all(
+        any(fragment in line for fragment in allowed_fragments) for line in direct_assignments
+    )
+    assert 'setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair")' in main_window
+    assert 'setTerminalPairFromSource(pair, "runSimulationTick")' in main_window
+    assert "selectedTerminalPair = bestRow.pair" not in main_window
 
 
 def test_operator_workflow_pair_state_matches_canonical_values() -> None:

@@ -23,7 +23,8 @@ def test_operator_workflow_qml_select_scanner_pair_source_contract() -> None:
     assert "function selectScannerPair(pair)" in main_window
     assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
     assert "whitelistPairs = selectedPairs.slice()" in main_window
-    assert "selectedTerminalPair = scannerSelectedPair" in main_window
+    assert 'setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair")' in main_window
+    assert "selectedTerminalPair = scannerSelectedPair" not in main_window
 
 
 def test_operator_workflow_selected_candidate_does_not_use_terminal_root_fallback() -> None:
