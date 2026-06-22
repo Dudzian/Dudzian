@@ -594,7 +594,10 @@ def test_preview_launch_readiness_ignores_unknown_false_diagnostics() -> None:
 def test_ui_smoke_does_not_dirty_tracked_artifacts() -> None:
     before = _tracked_artifact_snapshot()
 
-    result = _run_ui_smoke("--exercise-preview-state")
+    # The dirty-artifact guard only needs the minimal UI smoke path;
+    # --exercise-preview-state remains covered by
+    # test_exercise_preview_state_smoke_mutates_local_state_only below.
+    result = _run_ui_smoke()
     payload = _smoke_payload(result)
 
     if result.returncode != 0 and any("libGL.so.1" in issue for issue in payload["issues"]):
