@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -173,6 +174,14 @@ PANEL_AUDIT_IDS = (
 )
 
 
+def _ui_smoke_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QT_OPENGL"] = "software"
+    env["DUDZIAN_QML_FLUSH_DELETES"] = "0"
+    return env
+
+
 def _run_ui_smoke(*extra_args: str) -> subprocess.CompletedProcess[str]:
     run_process = getattr(subprocess, "run")
     return run_process(
@@ -189,6 +198,7 @@ def _run_ui_smoke(*extra_args: str) -> subprocess.CompletedProcess[str]:
         cwd=REPO_ROOT,
         text=True,
         capture_output=True,
+        env=_ui_smoke_env(),
         timeout=20,
         check=False,
     )
@@ -206,6 +216,7 @@ def _run_direct_script_smoke(*extra_args: str) -> subprocess.CompletedProcess[st
         cwd=REPO_ROOT,
         text=True,
         capture_output=True,
+        env=_ui_smoke_env(),
         timeout=20,
         check=False,
     )
