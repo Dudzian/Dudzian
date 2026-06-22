@@ -151,10 +151,13 @@ def test_metrics_service_cli_accepts_metrics(tmp_path, monkeypatch):
     ]
 
     server_holder: dict[str, object] = {}
+    server_ready = threading.Event()
+    thread_errors: list[BaseException] = []
 
     def fake_build_server(**kwargs):
         server = run_metrics_service.create_metrics_server(**kwargs)
         server_holder["server"] = server
+        server_ready.set()
         return server
 
     monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
@@ -162,22 +165,37 @@ def test_metrics_service_cli_accepts_metrics(tmp_path, monkeypatch):
     exit_code: list[int] = []
 
     def run_cli():
-        exit_code.append(run_metrics_service.main(args))
+        try:
+            exit_code.append(run_metrics_service.main(args))
+        except BaseException as exc:  # pragma: no cover - surfaced in the parent test thread
+            thread_errors.append(exc)
+            server_ready.set()
 
     thread = threading.Thread(target=run_cli)
     thread.start()
-    time.sleep(0.2)
 
-    server = server_holder.get("server")
-    assert server is not None, "CLI powinno zainicjalizować serwer"
-    channel = grpc.insecure_channel(server.address)  # type: ignore[attr-defined]
-    stub = trading_pb2_grpc.MetricsServiceStub(channel)
-    snapshot = trading_pb2.MetricsSnapshot()
-    snapshot.notes = "cli-test"
-    snapshot.fps = 61.2
-    stub.PushMetrics(snapshot)
+    try:
+        assert server_ready.wait(timeout=2.0), "CLI powinno zainicjalizować serwer"
+        if thread_errors:
+            raise thread_errors[0]
 
-    thread.join()
+        server = server_holder.get("server")
+        assert server is not None, "CLI powinno zainicjalizować serwer"
+        channel = grpc.insecure_channel(server.address)  # type: ignore[attr-defined]
+        stub = trading_pb2_grpc.MetricsServiceStub(channel)
+        snapshot = trading_pb2.MetricsSnapshot()
+        snapshot.notes = "cli-test"
+        snapshot.fps = 61.2
+        stub.PushMetrics(snapshot)
+    finally:
+        server = server_holder.get("server")
+        if server is not None:
+            server.stop(grace=0)  # type: ignore[attr-defined]
+        thread.join(timeout=2.0)
+
+    assert not thread.is_alive(), "Wątek CLI powinien zakończyć się po zatrzymaniu serwera"
+    if thread_errors:
+        raise thread_errors[0]
     assert exit_code and exit_code[0] == 0
 
     lines = [line for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
