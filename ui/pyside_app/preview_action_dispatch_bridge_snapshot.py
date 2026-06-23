@@ -32,6 +32,9 @@ from ui.pyside_app.preview_decision_engine_dry_run_audit_envelope import (
 from ui.pyside_app.preview_paper_order_audit_envelope import (
     build_preview_paper_order_audit_envelope,
 )
+from ui.pyside_app.preview_read_only_market_data_audit_envelope import (
+    build_preview_read_only_market_data_audit_envelope,
+)
 
 BRIDGE_SNAPSHOT_SCHEMA_VERSION: Final[str] = "paper_runtime_action_dispatch_bridge_snapshot.v1"
 BRIDGE_SNAPSHOT_KIND: Final[str] = "block_d_qml_safe_action_dispatch_bridge_snapshot"
@@ -47,6 +50,12 @@ _ACCEPTED_OPERATOR_MESSAGE: Final[str] = (
 _REJECTED_OPERATOR_MESSAGE: Final[str] = (
     "Paper runtime action selection rejected fail-closed; execution remains disabled "
     "and no action was executed."
+)
+READ_ONLY_MARKET_DATA_UI_SURFACE_STATUS: Final[str] = (
+    "read_only_market_data_ui_read_only_surface_ready_no_actions"
+)
+READ_ONLY_MARKET_DATA_UI_SURFACE_DECISION: Final[str] = (
+    "BUILD_UI_READ_ONLY_SURFACE_ONLY_NO_QML_ACTIONS_NO_NETWORK_IO"
 )
 
 
@@ -91,6 +100,52 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
     paper_order_audit_envelope = build_preview_paper_order_audit_envelope()
     paper_order_audit_summary = dict(paper_order_audit_envelope["audit_summary"])
     paper_order_audit_boundary_checks = dict(paper_order_audit_envelope["boundary_checks"])
+    read_only_market_data_audit_envelope = build_preview_read_only_market_data_audit_envelope()
+    market_data_fixture_summary = dict(
+        read_only_market_data_audit_envelope["fixture_row_audit_summary"]
+    )
+    market_data_quality_summary = dict(
+        read_only_market_data_audit_envelope["data_quality_audit_preview"]
+    )
+    market_data_no_fetch_evidence = dict(
+        read_only_market_data_audit_envelope["no_fetch_no_export_no_execution_evidence"]
+    )
+    market_data_boundary_checks = dict(read_only_market_data_audit_envelope["boundary_checks"])
+    read_only_market_data_no_network_summary = {
+        "network_io_allowed_now": bool(market_data_boundary_checks["network_io_allowed_now"]),
+        "network_io_performed": bool(market_data_no_fetch_evidence["network_io_performed"]),
+        "exchange_connection_opened": bool(
+            market_data_no_fetch_evidence["exchange_connection_opened"]
+        ),
+        "no_network_io": not bool(market_data_no_fetch_evidence["network_io_performed"]),
+    }
+    read_only_market_data_no_fetch_summary = {
+        "market_data_fetch_allowed_now": bool(
+            market_data_boundary_checks["market_data_fetch_allowed_now"]
+        ),
+        "market_data_fetch_performed": bool(
+            market_data_no_fetch_evidence["market_data_fetch_performed"]
+        ),
+        "no_market_fetch": not bool(market_data_no_fetch_evidence["market_data_fetch_performed"]),
+    }
+    read_only_market_data_no_export_summary = {
+        "audit_export_allowed_now": bool(market_data_boundary_checks["audit_export_allowed_now"]),
+        "audit_export_performed": bool(market_data_no_fetch_evidence["audit_export_performed"]),
+        "export_performed": bool(market_data_no_fetch_evidence["export_performed"]),
+        "no_audit_export": not bool(market_data_no_fetch_evidence["audit_export_performed"]),
+    }
+    read_only_market_data_ui_read_only_summary = {
+        "ui_surface_status": READ_ONLY_MARKET_DATA_UI_SURFACE_STATUS,
+        "ui_surface_decision": READ_ONLY_MARKET_DATA_UI_SURFACE_DECISION,
+        "read_only_surface_only": True,
+        "qml_method_calls_added": False,
+        "qml_actions_added": False,
+        "buttons_added": False,
+        "network_io_performed": False,
+        "market_data_fetch_performed": False,
+        "audit_export_performed": False,
+        "next_step_after_ui_surface": "FUNCTIONAL-PREVIEW-10.5",
+    }
     paper_order_audit_no_execution_summary = {
         "all_events_no_intent_generated": bool(
             paper_order_audit_summary["all_events_no_intent_generated"]
@@ -148,6 +203,39 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
             paper_order_audit_summary["unknown_input_key_events"]
         ),
         "paper_order_audit_no_execution_summary": paper_order_audit_no_execution_summary,
+        "read_only_market_data_audit_envelope": read_only_market_data_audit_envelope,
+        "read_only_market_data_audit_status": read_only_market_data_audit_envelope[
+            "market_data_audit_envelope_status"
+        ],
+        "read_only_market_data_audit_next_step": read_only_market_data_audit_envelope["next_step"],
+        "read_only_market_data_audit_ready_for_ui_surface": True,
+        "read_only_market_data_audit_ready_for_block_h_4": bool(
+            read_only_market_data_audit_envelope["ready_for_block_h_4"]
+        ),
+        "read_only_market_data_audit_event_count": int(market_data_fixture_summary["row_count"]),
+        "read_only_market_data_audited_symbols": list(
+            market_data_fixture_summary["audited_symbols"]
+        ),
+        "read_only_market_data_normal_preview_symbols": list(
+            market_data_fixture_summary["normal_preview_symbols"]
+        ),
+        "read_only_market_data_low_liquidity_preview_symbols": list(
+            market_data_fixture_summary["low_liquidity_preview_symbols"]
+        ),
+        "read_only_market_data_stale_preview_symbols": list(
+            market_data_fixture_summary["stale_preview_symbols"]
+        ),
+        "read_only_market_data_quality_summary": {
+            "normal_preview_count": int(market_data_quality_summary["normal_preview_count"]),
+            "low_liquidity_preview_count": int(
+                market_data_quality_summary["low_liquidity_preview_count"]
+            ),
+            "stale_preview_count": int(market_data_quality_summary["stale_preview_count"]),
+        },
+        "read_only_market_data_no_network_summary": read_only_market_data_no_network_summary,
+        "read_only_market_data_no_fetch_summary": read_only_market_data_no_fetch_summary,
+        "read_only_market_data_no_export_summary": read_only_market_data_no_export_summary,
+        "read_only_market_data_ui_read_only_summary": read_only_market_data_ui_read_only_summary,
         "boundary_checks": boundary_checks,
         "operator_message": _operator_message(status),
         "status": status,
