@@ -63,6 +63,21 @@ Components.StyledScrollView {
     readonly property int paperOrderAuditUnknownInputKeyEvents: snapshotValue(actionDispatchSnapshot, "paper_order_audit_unknown_input_key_events", 0)
     readonly property bool paperOrderAuditReadyForUiSurface: snapshotValue(actionDispatchSnapshot, "paper_order_audit_ready_for_ui_surface", false) === true
     readonly property bool paperOrderAuditReadyForBlockG4: snapshotValue(actionDispatchSnapshot, "paper_order_audit_ready_for_block_g_4", false) === true
+    readonly property var readOnlyMarketDataAuditEnvelope: snapshotValue(actionDispatchSnapshot, "read_only_market_data_audit_envelope", ({}))
+    readonly property var readOnlyMarketDataQualitySummary: snapshotValue(actionDispatchSnapshot, "read_only_market_data_quality_summary", ({}))
+    readonly property var readOnlyMarketDataNoNetworkSummary: snapshotValue(actionDispatchSnapshot, "read_only_market_data_no_network_summary", ({}))
+    readonly property var readOnlyMarketDataNoFetchSummary: snapshotValue(actionDispatchSnapshot, "read_only_market_data_no_fetch_summary", ({}))
+    readonly property var readOnlyMarketDataNoExportSummary: snapshotValue(actionDispatchSnapshot, "read_only_market_data_no_export_summary", ({}))
+    readonly property var readOnlyMarketDataUiReadOnlySummary: snapshotValue(actionDispatchSnapshot, "read_only_market_data_ui_read_only_summary", ({}))
+    readonly property string readOnlyMarketDataAuditStatus: snapshotValue(actionDispatchSnapshot, "read_only_market_data_audit_status", "unavailable")
+    readonly property string readOnlyMarketDataAuditNextStep: snapshotValue(actionDispatchSnapshot, "read_only_market_data_audit_next_step", "FUNCTIONAL-PREVIEW-10.4")
+    readonly property int readOnlyMarketDataAuditEventCount: snapshotValue(actionDispatchSnapshot, "read_only_market_data_audit_event_count", 0)
+    readonly property var readOnlyMarketDataAuditedSymbols: snapshotValue(actionDispatchSnapshot, "read_only_market_data_audited_symbols", [])
+    readonly property var readOnlyMarketDataNormalPreviewSymbols: snapshotValue(actionDispatchSnapshot, "read_only_market_data_normal_preview_symbols", [])
+    readonly property var readOnlyMarketDataLowLiquidityPreviewSymbols: snapshotValue(actionDispatchSnapshot, "read_only_market_data_low_liquidity_preview_symbols", [])
+    readonly property var readOnlyMarketDataStalePreviewSymbols: snapshotValue(actionDispatchSnapshot, "read_only_market_data_stale_preview_symbols", [])
+    readonly property bool readOnlyMarketDataAuditReadyForUiSurface: snapshotValue(actionDispatchSnapshot, "read_only_market_data_audit_ready_for_ui_surface", false) === true
+    readonly property bool readOnlyMarketDataAuditReadyForBlockH4: snapshotValue(actionDispatchSnapshot, "read_only_market_data_audit_ready_for_block_h_4", false) === true
     contentWidth: availableWidth
     clip: true
     implicitWidth: 1040
@@ -206,6 +221,74 @@ Components.StyledScrollView {
             Components.PreviewCard { objectName: "operatorDashboardActionDispatchDisabledIntentSelectionPreflight"; descriptionObjectName: "previewActionDispatchDisabledIntentSelectionPreflightLabel"; designSystem: root.designSystem; title: qsTr("BLOK E — disabled intent selection preflight"); description: qsTr("selection locked: %1 • status: %2 • disabled intent candidates: %3 • future interaction gate required • method calls disabled • bridge selection APIs not called • execution disabled • no runtime execution • no order submission • no lifecycle execution • read-only preflight only not executed").arg(actionDispatchSelectionPreflightLocked ? "true" : "false").arg(actionDispatchSelectionPreflightStatus).arg(actionDispatchDisabledIntentSummary(actionDispatchActions)); Layout.fillWidth: true }
             Components.PreviewCard { objectName: "operatorDashboardActionDispatchSelectionPreviewGate"; descriptionObjectName: "previewActionDispatchSelectionPreviewGateLabel"; designSystem: root.designSystem; title: qsTr("BLOK E — selection preview gate"); description: qsTr("selection preview gate: controlled preview-only • status: %1 • only snapshot refresh previewSelectAction literal is enabled • method calls allowed now: one controlled preview call • still blocked: previewSelectSourceControl, resetPreviewSelection, dynamic actions, start/stop/pause/resume • execution allowed: %2 • order submission allowed: %3 • lifecycle execution allowed: %4 • paper/local only: %5/%6 • accepted-not-executed/no runtime execution").arg(actionDispatchSelectionPreviewGateStatus).arg(actionDispatchSelectionPreviewGateExecutionAllowed ? "true" : "false").arg(actionDispatchSelectionPreviewGateOrderSubmissionAllowed ? "true" : "false").arg(actionDispatchSelectionPreviewGateLifecycleExecutionAllowed ? "true" : "false").arg(actionDispatchSelectionPreviewGatePaperOnly ? "true" : "false").arg(actionDispatchSelectionPreviewGateLocalOnly ? "true" : "false"); Layout.fillWidth: true; Components.IconButton { objectName: "operatorDashboardPreviewSelectSnapshotRefreshOnlyButton"; designSystem: root.designSystem; text: qsTr("Preview-only select snapshot refresh (no execution)"); helpText: qsTr("Calls only paperRuntimeActionDispatchBridge.previewSelectAction for paper_runtime_snapshot_refresh_requested; fail-closed if bridge unavailable; no runtime/order/lifecycle execution"); subtle: true; onClicked: root.previewSelectSnapshotRefreshOnly() } }
             Components.PreviewCard { objectName: "operatorDashboardActionDispatchPreviewSelectionResult"; descriptionObjectName: "previewActionDispatchPreviewSelectionResultLabel"; designSystem: root.designSystem; title: qsTr("BLOK E — preview selection result"); description: qsTr("preview-only selected result: %1 • requested_action: %2 • normalized_action: %3 • execution_allowed: %4 • execution_performed: %5 • order_submission_allowed: %6 • lifecycle_execution_allowed: %7 • accepted intent not executed • no runtime/order/lifecycle execution").arg(actionDispatchLastPreviewSelectionStatus).arg(actionDispatchLastPreviewSelectionRequestedAction).arg(actionDispatchLastPreviewSelectionNormalizedAction).arg(actionDispatchLastPreviewSelectionExecutionAllowed ? "true" : "false").arg(actionDispatchLastPreviewSelectionExecutionPerformed ? "true" : "false").arg(actionDispatchLastPreviewSelectionOrderSubmissionAllowed ? "true" : "false").arg(actionDispatchLastPreviewSelectionLifecycleExecutionAllowed ? "true" : "false"); Layout.fillWidth: true }
+            Components.PreviewCard {
+                objectName: "operatorDashboardReadOnlyMarketDataAuditReadOnlyCard"
+                designSystem: root.designSystem
+                title: qsTr("Read-only market data audit")
+                description: qsTr("Read-only UI surface from 10.3 audit envelope • ready_for_ui_surface: %1 • ready_for_block_h_4: %2 • no QML actions • no network • no fetch • no export").arg(readOnlyMarketDataAuditReadyForUiSurface ? "true" : "false").arg(readOnlyMarketDataAuditReadyForBlockH4 ? "true" : "false")
+                Layout.fillWidth: true
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Label {
+                        objectName: "operatorDashboardReadOnlyMarketDataAuditStatusLabel"
+                        text: qsTr("status: %1 • ui_surface_status: %2 • read-only • no actions").arg(readOnlyMarketDataAuditStatus).arg(snapshotValue(readOnlyMarketDataUiReadOnlySummary, "ui_surface_status", "read_only_market_data_ui_read_only_surface_ready_no_actions"))
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardReadOnlyMarketDataAuditEventCountLabel"
+                        text: qsTr("Audit events: %1").arg(readOnlyMarketDataAuditEventCount)
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardReadOnlyMarketDataAuditSymbolsLabel"
+                        text: qsTr("Symbols: %1").arg(readOnlyMarketDataAuditedSymbols.join(", "))
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardReadOnlyMarketDataAuditQualityLabel"
+                        text: qsTr("Quality: normal: %1, low-liquidity: %2, stale: %3").arg(snapshotValue(readOnlyMarketDataQualitySummary, "normal_preview_count", readOnlyMarketDataNormalPreviewSymbols.length)).arg(snapshotValue(readOnlyMarketDataQualitySummary, "low_liquidity_preview_count", readOnlyMarketDataLowLiquidityPreviewSymbols.length)).arg(snapshotValue(readOnlyMarketDataQualitySummary, "stale_preview_count", readOnlyMarketDataStalePreviewSymbols.length))
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardReadOnlyMarketDataAuditNoNetworkLabel"
+                        text: qsTr("No network I/O: %1").arg(snapshotValue(readOnlyMarketDataNoNetworkSummary, "no_network_io", false) ? "true" : "false")
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardReadOnlyMarketDataAuditNoFetchLabel"
+                        text: qsTr("No market fetch: %1").arg(snapshotValue(readOnlyMarketDataNoFetchSummary, "no_market_fetch", false) ? "true" : "false")
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardReadOnlyMarketDataAuditNoExportLabel"
+                        text: qsTr("No audit export: %1").arg(snapshotValue(readOnlyMarketDataNoExportSummary, "no_audit_export", false) ? "true" : "false")
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        objectName: "operatorDashboardReadOnlyMarketDataAuditNextStepLabel"
+                        text: qsTr("Next step: %1 • 10.4 displays the static audit summary only; 10.5 selection gate remains separate and not implemented here").arg(readOnlyMarketDataAuditNextStep)
+                        color: designSystem.color("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+            }
             Components.PreviewCard {
                 objectName: "operatorDashboardDecisionEngineDryRunAuditCard"
                 designSystem: root.designSystem
