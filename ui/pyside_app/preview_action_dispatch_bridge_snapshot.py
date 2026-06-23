@@ -35,6 +35,9 @@ from ui.pyside_app.preview_paper_order_audit_envelope import (
 from ui.pyside_app.preview_read_only_market_data_audit_envelope import (
     build_preview_read_only_market_data_audit_envelope,
 )
+from ui.pyside_app.preview_read_only_market_data_controlled_refresh_preview import (
+    build_preview_read_only_market_data_controlled_refresh_preview,
+)
 
 BRIDGE_SNAPSHOT_SCHEMA_VERSION: Final[str] = "paper_runtime_action_dispatch_bridge_snapshot.v1"
 BRIDGE_SNAPSHOT_KIND: Final[str] = "block_d_qml_safe_action_dispatch_bridge_snapshot"
@@ -56,6 +59,16 @@ READ_ONLY_MARKET_DATA_UI_SURFACE_STATUS: Final[str] = (
 )
 READ_ONLY_MARKET_DATA_UI_SURFACE_DECISION: Final[str] = (
     "BUILD_UI_READ_ONLY_SURFACE_ONLY_NO_QML_ACTIONS_NO_NETWORK_IO"
+)
+READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_STATUS: Final[str] = (
+    "read_only_market_data_bridge_snapshot_ready_no_qml_actions_no_refresh"
+)
+READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_DECISION: Final[str] = (
+    "BUILD_BRIDGE_SNAPSHOT_DATA_ONLY_NO_REFRESH_NO_BRIDGE_API_CHANGES"
+)
+READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_NEXT_STEP: Final[str] = "FUNCTIONAL-PREVIEW-10.8"
+READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_NEXT_STEP_TITLE: Final[str] = (
+    "READ-ONLY MARKET DATA CLOSURE AUDIT"
 )
 
 
@@ -145,6 +158,76 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
         "market_data_fetch_performed": False,
         "audit_export_performed": False,
         "next_step_after_ui_surface": "FUNCTIONAL-PREVIEW-10.5",
+    }
+    read_only_market_data_controlled_refresh_preview = (
+        build_preview_read_only_market_data_controlled_refresh_preview()
+    )
+    refresh_scope = dict(
+        read_only_market_data_controlled_refresh_preview["controlled_refresh_preview_scope"]
+    )
+    refresh_preview = dict(
+        read_only_market_data_controlled_refresh_preview["controlled_refresh_preview"]
+    )
+    refresh_boundary_summary = dict(
+        read_only_market_data_controlled_refresh_preview["refresh_preview_boundary_summary"]
+    )
+    refresh_no_execution_evidence = dict(
+        read_only_market_data_controlled_refresh_preview[
+            "no_refresh_no_fetch_no_execution_evidence"
+        ]
+    )
+    read_only_market_data_bridge_no_refresh_summary = {
+        "refresh_execution_allowed_now": bool(refresh_preview["refresh_execution_allowed_now"]),
+        "refresh_performed_now": bool(refresh_preview["refresh_performed_now"]),
+        "controlled_refresh_performed": bool(
+            refresh_no_execution_evidence["controlled_refresh_performed"]
+        ),
+        "refresh_performed": bool(refresh_no_execution_evidence["refresh_performed"]),
+        "no_real_refresh": not bool(refresh_no_execution_evidence["refresh_performed"]),
+    }
+    read_only_market_data_bridge_no_fetch_summary = {
+        "market_data_fetch_allowed_now": bool(refresh_scope["market_data_fetch_allowed_now"]),
+        "market_data_fetch_performed": bool(
+            refresh_no_execution_evidence["market_data_fetch_performed"]
+        ),
+        "no_market_fetch": not bool(refresh_no_execution_evidence["market_data_fetch_performed"]),
+    }
+    read_only_market_data_bridge_no_network_summary = {
+        "network_io_allowed_now": bool(refresh_preview["network_io_allowed_now"]),
+        "network_io_performed": bool(refresh_no_execution_evidence["network_io_performed"]),
+        "exchange_connection_opened": bool(
+            refresh_no_execution_evidence["exchange_connection_opened"]
+        ),
+        "no_network_io": not bool(refresh_no_execution_evidence["network_io_performed"]),
+    }
+    read_only_market_data_no_bridge_api_change_summary = {
+        "bridge_api_changes_allowed": False,
+        "bridge_api_changes_performed": bool(
+            refresh_no_execution_evidence["bridge_api_changes_performed"]
+        ),
+        "new_qml_method_calls_allowed": False,
+        "qml_changes_performed": bool(refresh_no_execution_evidence["qml_changes_performed"]),
+        "no_bridge_api_changes": not bool(
+            refresh_no_execution_evidence["bridge_api_changes_performed"]
+        ),
+        "no_new_qml_method_calls": True,
+    }
+    read_only_market_data_bridge_snapshot_summary = {
+        "snapshot_status": READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_STATUS,
+        "snapshot_decision": READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_DECISION,
+        "snapshot_data_only": True,
+        "controlled_refresh_preview_read": True,
+        "qml_safe": True,
+        "refresh_performed": bool(refresh_no_execution_evidence["refresh_performed"]),
+        "market_data_fetch_performed": bool(
+            refresh_no_execution_evidence["market_data_fetch_performed"]
+        ),
+        "network_io_performed": bool(refresh_no_execution_evidence["network_io_performed"]),
+        "bridge_api_changes_performed": bool(
+            refresh_no_execution_evidence["bridge_api_changes_performed"]
+        ),
+        "qml_changes_performed": bool(refresh_no_execution_evidence["qml_changes_performed"]),
+        "next_step": READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_NEXT_STEP,
     }
     paper_order_audit_no_execution_summary = {
         "all_events_no_intent_generated": bool(
@@ -236,6 +319,45 @@ def build_paper_runtime_action_dispatch_bridge_snapshot(
         "read_only_market_data_no_fetch_summary": read_only_market_data_no_fetch_summary,
         "read_only_market_data_no_export_summary": read_only_market_data_no_export_summary,
         "read_only_market_data_ui_read_only_summary": read_only_market_data_ui_read_only_summary,
+        "read_only_market_data_bridge_snapshot_status": READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_STATUS,
+        "read_only_market_data_bridge_snapshot_decision": READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_DECISION,
+        "read_only_market_data_bridge_snapshot_next_step": READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_NEXT_STEP,
+        "read_only_market_data_bridge_snapshot_next_step_title": READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_NEXT_STEP_TITLE,
+        "read_only_market_data_bridge_snapshot_ready_for_block_h_8": True,
+        "read_only_market_data_controlled_refresh_preview": read_only_market_data_controlled_refresh_preview,
+        "read_only_market_data_controlled_refresh_status": read_only_market_data_controlled_refresh_preview[
+            "market_data_controlled_refresh_preview_status"
+        ],
+        "read_only_market_data_controlled_refresh_next_step": (
+            read_only_market_data_controlled_refresh_preview["next_step"]
+        ),
+        "read_only_market_data_controlled_refresh_ready_for_block_h_7": bool(
+            read_only_market_data_controlled_refresh_preview["ready_for_block_h_7"]
+        ),
+        "read_only_market_data_allowed_refresh_preview_count": int(
+            refresh_preview["allowed_refresh_preview_count"]
+        ),
+        "read_only_market_data_default_refresh_selection_id": refresh_preview[
+            "default_selection_id"
+        ],
+        "read_only_market_data_allowed_refresh_symbols": list(
+            refresh_boundary_summary["allowed_symbols"]
+        ),
+        "read_only_market_data_normal_refresh_preview_symbols": list(
+            refresh_boundary_summary["normal_preview_symbols"]
+        ),
+        "read_only_market_data_low_liquidity_refresh_preview_symbols": list(
+            refresh_boundary_summary["low_liquidity_preview_symbols"]
+        ),
+        "read_only_market_data_stale_refresh_preview_symbols": list(
+            refresh_boundary_summary["stale_preview_symbols"]
+        ),
+        "read_only_market_data_refresh_preview_boundary_summary": refresh_boundary_summary,
+        "read_only_market_data_no_refresh_summary": read_only_market_data_bridge_no_refresh_summary,
+        "read_only_market_data_no_fetch_summary": read_only_market_data_bridge_no_fetch_summary,
+        "read_only_market_data_no_network_summary": read_only_market_data_bridge_no_network_summary,
+        "read_only_market_data_no_bridge_api_change_summary": read_only_market_data_no_bridge_api_change_summary,
+        "read_only_market_data_bridge_snapshot_summary": read_only_market_data_bridge_snapshot_summary,
         "boundary_checks": boundary_checks,
         "operator_message": _operator_message(status),
         "status": status,
@@ -372,5 +494,9 @@ __all__ = [
     "BRIDGE_SNAPSHOT_KIND",
     "BRIDGE_SNAPSHOT_SCHEMA_VERSION",
     "NO_SELECTION_STATUS",
+    "READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_DECISION",
+    "READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_NEXT_STEP",
+    "READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_NEXT_STEP_TITLE",
+    "READ_ONLY_MARKET_DATA_BRIDGE_SNAPSHOT_STATUS",
     "build_paper_runtime_action_dispatch_bridge_snapshot",
 ]
