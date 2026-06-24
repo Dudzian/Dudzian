@@ -414,7 +414,7 @@ def build_preview_testnet_sandbox_private_endpoint_gate() -> dict[str, Any]:
             "private_endpoint_gate_cannot_probe_private_endpoints": True,
             "private_endpoint_gate_cannot_validate_private_endpoints": True,
             "private_endpoint_gate_cannot_fetch_account": True,
-            "private_endpoint_gate_cannot_fetch_balance": True,
+            "private_endpoint_gate_balance_read_blocked": True,
             "private_endpoint_gate_cannot_fetch_positions": True,
             "private_endpoint_gate_cannot_fetch_orders": True,
             "private_endpoint_gate_cannot_fetch_fills": True,

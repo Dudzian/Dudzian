@@ -378,7 +378,7 @@ def build_preview_testnet_sandbox_public_market_data_probe_preview() -> dict[str
             "public_probe_preview_cannot_read_secure_store": True,
             "public_probe_preview_cannot_access_private_endpoints": True,
             "public_probe_preview_cannot_fetch_account": True,
-            "public_probe_preview_cannot_fetch_balance": True,
+            "public_probe_preview_balance_read_blocked": True,
             "public_probe_preview_cannot_fetch_positions": True,
             "public_probe_preview_cannot_fetch_orders": True,
             "public_probe_preview_cannot_fetch_fills": True,

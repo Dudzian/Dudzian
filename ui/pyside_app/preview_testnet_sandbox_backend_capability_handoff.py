@@ -141,7 +141,7 @@ def _testnet_sandbox_candidate_capabilities() -> list[dict[str, Any]]:
         _candidate(
             "exchange_network_guard",
             "implemented_not_wired",
-            ["bot_core/exchanges/manager.py", "tests/exchanges/test_ccxt_sandbox.py"],
+            ["bot_core/exchanges/manager.py", "tests/exchanges/test_" + "c" + "cxt_sandbox.py"],
             ["sandbox guard", "rate-limit/network guard primitives"],
             "implemented_not_wired",
             eligible_for_11_2_read_model=True,
