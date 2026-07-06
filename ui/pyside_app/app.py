@@ -31,6 +31,20 @@ def _configure_qt_quick_controls_style() -> None:
 _configure_qt_quick_controls_style()
 
 
+def _terminate_offscreen_smoke(exit_code: int) -> None:
+    """Finish Qt and bypass PySide teardown only for subprocess offscreen smoke."""
+
+    try:
+        from PySide6.QtGui import QGuiApplication
+
+        qt_app = QGuiApplication.instance()
+        if qt_app is not None:
+            qt_app.quit()
+            qt_app.processEvents()
+    finally:
+        os._exit(exit_code)
+
+
 @dataclass(slots=True)
 class AppOptions:
     """Centralna definicja opcji startowych oraz ich walidacji."""
@@ -274,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.flush()
         sys.stderr.flush()
         if options.offscreen:
-            os._exit(exit_code)
+            _terminate_offscreen_smoke(exit_code)
         return exit_code
     app = BotPysideApplication(options)
     return app.run()
