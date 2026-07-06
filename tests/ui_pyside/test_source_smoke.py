@@ -1407,6 +1407,21 @@ def test_smoke_flags_are_available_in_parser() -> None:
     assert exercise_options.exercise_preview_state is True
 
 
+def test_offscreen_smoke_uses_deterministic_qt_process_termination() -> None:
+    app_source = APP_SOURCE.read_text(encoding="utf-8")
+    main_body = app_source[
+        app_source.index("def main(") : app_source.index('if __name__ == "__main__"')
+    ]
+
+    assert "exit_code = run_smoke(" in main_body
+    assert "sys.stdout.flush()" in main_body
+    assert "sys.stderr.flush()" in main_body
+    assert "if options.offscreen:" in main_body
+    assert "_terminate_offscreen_smoke(exit_code)" in main_body
+    assert "os._exit(exit_code)" in app_source
+    assert "qt_app.quit()" in app_source
+
+
 def test_typed_preview_bridge_source_contract_is_registered() -> None:
     bridge_source = BRIDGE_SOURCE.read_text(encoding="utf-8")
     qml_bridge_source = QML_BRIDGE_SOURCE.read_text(encoding="utf-8")
