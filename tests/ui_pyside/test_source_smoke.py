@@ -18,6 +18,8 @@ pytestmark = pytest.mark.skipif(
     not PYSIDE6_AVAILABLE,
     reason="Środowisko testowe nie udostępnia PySide6; source-smoke UI wymaga Qt/PySide6.",
 )
+UI_SMOKE_TIMEOUT_SECONDS = 20
+WINDOWS_EXERCISE_PREVIEW_STATE_SMOKE_TIMEOUT_SECONDS = 60
 
 
 def _qml_function_body(source: str, function_name: str) -> str:
@@ -182,6 +184,14 @@ def _ui_smoke_env() -> dict[str, str]:
     return env
 
 
+def _ui_smoke_timeout(*extra_args: str) -> int:
+    if sys.platform == "win32" and "--exercise-preview-state" in extra_args:
+        # Windows offscreen QML shutdown can be slower after exercising the
+        # expanded preview state, but the smoke still has a hard timeout.
+        return WINDOWS_EXERCISE_PREVIEW_STATE_SMOKE_TIMEOUT_SECONDS
+    return UI_SMOKE_TIMEOUT_SECONDS
+
+
 def _run_ui_smoke(*extra_args: str) -> subprocess.CompletedProcess[str]:
     run_process = getattr(subprocess, "run")
     return run_process(
@@ -199,7 +209,7 @@ def _run_ui_smoke(*extra_args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         capture_output=True,
         env=_ui_smoke_env(),
-        timeout=20,
+        timeout=_ui_smoke_timeout(*extra_args),
         check=False,
     )
 
