@@ -19,6 +19,7 @@ pytestmark = pytest.mark.skipif(
     reason="Środowisko testowe nie udostępnia PySide6; source-smoke UI wymaga Qt/PySide6.",
 )
 UI_SMOKE_TIMEOUT_SECONDS = 20
+WINDOWS_UI_SMOKE_TIMEOUT_SECONDS = 60
 WINDOWS_EXERCISE_PREVIEW_STATE_SMOKE_TIMEOUT_SECONDS = 60
 
 
@@ -185,10 +186,12 @@ def _ui_smoke_env() -> dict[str, str]:
 
 
 def _ui_smoke_timeout(*extra_args: str) -> int:
-    if sys.platform == "win32" and "--exercise-preview-state" in extra_args:
-        # Windows offscreen QML shutdown can be slower after exercising the
-        # expanded preview state, but the smoke still has a hard timeout.
-        return WINDOWS_EXERCISE_PREVIEW_STATE_SMOKE_TIMEOUT_SECONDS
+    if sys.platform == "win32":
+        # Windows offscreen QML startup/shutdown can be slower in CI, but the
+        # smoke still has a hard timeout.
+        if "--exercise-preview-state" in extra_args:
+            return WINDOWS_EXERCISE_PREVIEW_STATE_SMOKE_TIMEOUT_SECONDS
+        return WINDOWS_UI_SMOKE_TIMEOUT_SECONDS
     return UI_SMOKE_TIMEOUT_SECONDS
 
 
@@ -599,6 +602,16 @@ def test_preview_launch_readiness_ignores_unknown_false_diagnostics() -> None:
 
     assert evidence["failed_checks"] == []
     assert evidence["all_preview_launch_readiness_checks_passed"] is True
+
+
+def test_ui_smoke_timeout_uses_windows_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert _ui_smoke_timeout() == WINDOWS_UI_SMOKE_TIMEOUT_SECONDS
+    assert (
+        _ui_smoke_timeout("--exercise-preview-state")
+        == WINDOWS_EXERCISE_PREVIEW_STATE_SMOKE_TIMEOUT_SECONDS
+    )
 
 
 def test_ui_smoke_does_not_dirty_tracked_artifacts() -> None:
