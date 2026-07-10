@@ -24,7 +24,7 @@ class _DummyGateway:
 def _make_basic_components(result: Any = "ok", raise_exc: Exception | None = None):
     gateway = _DummyGateway(result=result, raise_exc=raise_exc)
     metrics = _GatewayMetrics()
-    limiter = _TokenBucket(capacity=1, refill_rate_per_sec=100)
+    limiter = _TokenBucket(capacity=1, refill_rate_per_sec=0)
     return gateway, metrics, limiter
 
 
