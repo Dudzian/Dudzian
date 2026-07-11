@@ -670,6 +670,7 @@ ApplicationWindow {
     // Safe preview only: live trading disabled, exchange I/O disabled, order submission disabled, API keys not required, runtime loop not started, no real orders.
     property string selectedTerminalPair: selectedPairs && selectedPairs.length > 0 ? selectedPairs[0] : "BTC/USDT"
     property string selectedTerminalPairLastWriter: "initial:selectedPairs-default"
+    property string operatorSelectedTerminalPair: ""
     property string terminalSide: "BUY"
     property string terminalOrderType: "LIMIT"
     property string terminalPrice: "68240.50"
@@ -1100,7 +1101,7 @@ ApplicationWindow {
         appendPreviewAlert(rejected ? "Warning" : "Info", "Scanner", rejected ? "Scanner rejected setup" : "Scanner candidate found", bestRow.pair + " • " + bestRow.recommendation + " • " + bestRow.reason, "Market Scanner", bestRow.pair, "Explain candidate")
     }
     function runMarketScannerBurst(count) { var ticks = Math.max(0, Number(count) || 0); for (var i = 0; i < ticks; ++i) runMarketScannerTick() }
-    function selectScannerPair(pair) { var requestedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; var row = scannerRowByPair(requestedPair); scannerSelectedPair = row ? row.pair : requestedPair; if (scannerSelectedPair && scannerSelectedPair.length > 0) { var selectedCopy = selectedPairs ? selectedPairs.slice() : []; var existingIndex = selectedCopy.indexOf(scannerSelectedPair); if (existingIndex >= 0) selectedCopy.splice(existingIndex, 1); selectedPairs = [scannerSelectedPair].concat(selectedCopy); whitelistPairs = selectedPairs.slice() } explainScannerCandidate(scannerSelectedPair); setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair") }
+    function selectScannerPair(pair) { var requestedPair = pair && pair.length > 0 ? pair : scannerSelectedPair; var row = scannerRowByPair(requestedPair); scannerSelectedPair = row ? row.pair : requestedPair; if (scannerSelectedPair && scannerSelectedPair.length > 0) { var selectedCopy = selectedPairs ? selectedPairs.slice() : []; var existingIndex = selectedCopy.indexOf(scannerSelectedPair); if (existingIndex >= 0) selectedCopy.splice(existingIndex, 1); selectedPairs = [scannerSelectedPair].concat(selectedCopy); whitelistPairs = selectedPairs.slice(); operatorSelectedTerminalPair = scannerSelectedPair } explainScannerCandidate(scannerSelectedPair); setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair") }
     function addScannerPairToWatchlist(pair) { if (pair && !hasValue(scannerWatchlistPairs, pair)) scannerWatchlistPairs = scannerWatchlistPairs.concat([pair]); refreshScannerBuckets() }
     function removeScannerPairFromWatchlist(pair) { var copy = scannerWatchlistPairs ? scannerWatchlistPairs.slice() : []; var idx = copy.indexOf(pair); if (idx >= 0) copy.splice(idx, 1); scannerWatchlistPairs = copy; refreshScannerBuckets() }
     function blacklistScannerPair(pair) { if (pair && !hasValue(blacklistPairs, pair)) blacklistPairs = blacklistPairs.concat([pair]); rebuildMarketScannerRows() }
@@ -1244,6 +1245,13 @@ ApplicationWindow {
         selectedTerminalPairLastWriter = writer && writer.length > 0 ? writer : "setTerminalPairFromSource"
     }
     function setTerminalPair(pair) { setTerminalPairFromSource(pair, "setTerminalPair") }
+    function hasOperatorSelectedTerminalPair() {
+        return operatorSelectedTerminalPair
+            && operatorSelectedTerminalPair.length > 0
+            && selectedTerminalPair === operatorSelectedTerminalPair
+            && hasValue(selectedPairs, operatorSelectedTerminalPair)
+            && selectedTerminalPairLastWriter === "selectScannerPair"
+    }
     function setTerminalSide(side) { terminalSide = side === "SELL" ? "SELL" : "BUY" }
     function setTerminalOrderType(type) { terminalOrderType = type === "MARKET" ? "MARKET" : "LIMIT" }
     function setTerminalTimeframe(timeframe) { terminalTimeframe = timeframe && timeframe.length > 0 ? timeframe : "15m" }
@@ -1989,8 +1997,10 @@ ApplicationWindow {
         simulationRunning = true
         simulationPaused = false
         simulationMarketMode = scenarioMode(simulationScenario)
-        var pair = selectedPairs.length > 0 ? selectedPairs[(simulationTickCount - 1) % selectedPairs.length] : "BTC/USDT"
-        setTerminalPairFromSource(pair, "runSimulationTick")
+        var operatorPairActive = hasOperatorSelectedTerminalPair()
+        var pair = operatorPairActive ? operatorSelectedTerminalPair : (selectedPairs.length > 0 ? selectedPairs[(simulationTickCount - 1) % selectedPairs.length] : "BTC/USDT")
+        if (!operatorPairActive)
+            setTerminalPairFromSource(pair, "runSimulationTick")
         var prices = simulationPrices
         var currentPrice = Number(prices[pair] || (pair.indexOf("BTC") >= 0 ? 68240.50 : (pair.indexOf("ETH") >= 0 ? 3560.10 : 154.20)))
         var nextPrice = Number((currentPrice * (1 + scenarioDrift(simulationMarketMode, simulationTickCount))).toFixed(2))

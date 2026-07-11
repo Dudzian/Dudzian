@@ -736,6 +736,7 @@ def test_operator_workflow_qml_select_scanner_pair_propagates_to_terminal_source
     assert "function selectScannerPair(pair)" in main_window
     assert "selectedPairs = [scannerSelectedPair].concat(selectedCopy)" in main_window
     assert "whitelistPairs = selectedPairs.slice()" in main_window
+    assert "operatorSelectedTerminalPair = scannerSelectedPair" in main_window
     assert 'setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair")' in main_window
     assert "selectedTerminalPair = scannerSelectedPair" not in main_window
 
@@ -800,6 +801,7 @@ def test_selected_terminal_pair_assignments_are_instrumented() -> None:
         "property string selectedTerminalPair:",
         "function setTerminalPairFromSource",
         "selectedTerminalPair = pair && pair.length > 0 ? pair : preferredTerminalPair()",
+        "&& selectedTerminalPair === operatorSelectedTerminalPair",
     )
     assert direct_assignments
     assert all(
@@ -817,6 +819,58 @@ def test_selected_terminal_pair_assignments_are_instrumented() -> None:
     assert 'setTerminalPairFromSource(pair, "runSimulationTick")' in main_window
     assert "selectedTerminalPair = bestRow.pair" not in main_window
     assert "selectedTerminalPair" not in run_market_scanner_tick
+
+
+def test_operator_selected_terminal_pair_ownership_blocks_automatic_tick_overwrite() -> None:
+    main_window = (QML_SOURCE_ROOT / "MainWindow.qml").read_text(encoding="utf-8")
+    select_scanner_pair = _qml_function_body(main_window, "selectScannerPair")
+    has_operator_selected_terminal_pair = _qml_function_body(
+        main_window, "hasOperatorSelectedTerminalPair"
+    )
+    run_simulation_tick = _qml_function_body(main_window, "runSimulationTick")
+
+    assert "property string operatorSelectedTerminalPair" in main_window
+    assert "operatorSelectedTerminalPair = scannerSelectedPair" in select_scanner_pair
+    assert 'setTerminalPairFromSource(scannerSelectedPair, "selectScannerPair")' in (
+        select_scanner_pair
+    )
+    assert 'selectedTerminalPairLastWriter === "selectScannerPair"' in (
+        has_operator_selected_terminal_pair
+    )
+    assert "selectedTerminalPair === operatorSelectedTerminalPair" in (
+        has_operator_selected_terminal_pair
+    )
+    assert "hasValue(selectedPairs, operatorSelectedTerminalPair)" in (
+        has_operator_selected_terminal_pair
+    )
+    assert "var operatorPairActive = hasOperatorSelectedTerminalPair()" in run_simulation_tick
+    assert "var pair = operatorPairActive ? operatorSelectedTerminalPair : " in run_simulation_tick
+    assert "selectedPairs[(simulationTickCount - 1) % selectedPairs.length]" in run_simulation_tick
+    assert run_simulation_tick.index("operatorSelectedTerminalPair") < (
+        run_simulation_tick.index("selectedPairs[(simulationTickCount - 1) % selectedPairs.length]")
+    )
+    assert "if (!operatorPairActive)" in run_simulation_tick
+    assert 'setTerminalPairFromSource(pair, "runSimulationTick")' in run_simulation_tick
+    assert run_simulation_tick.index("if (!operatorPairActive)") < (
+        run_simulation_tick.index('setTerminalPairFromSource(pair, "runSimulationTick")')
+    )
+    assert run_simulation_tick.count("hasOperatorSelectedTerminalPair()") == 1
+    assert run_simulation_tick.index("var pair = operatorPairActive") < (
+        run_simulation_tick.index("var currentPrice = Number(prices[pair]")
+    )
+    for downstream_use in (
+        "prices[pair] = nextPrice",
+        "simulationLastPair = pair",
+        "scannerRowByPair(pair)",
+        "paperOrderEventFromSimulation(action, status, pair",
+        "appendPaperDecision(action, reason, pair",
+        '" • simulation event " + action + " " + pair',
+        '" • " + pair + " " + action',
+        '" scanned " + pair + " action "',
+        '"Simulation", pair',
+    ):
+        assert downstream_use in run_simulation_tick
+    assert "selectedTerminalPairLastWriter" in main_window
 
 
 def test_operator_workflow_pair_state_matches_canonical_values() -> None:
