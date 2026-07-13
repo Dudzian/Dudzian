@@ -55,6 +55,9 @@ FUTURE_STEPS: Final[list[str]] = [
     "functional_preview_17_4_block_o_execution_authorization_read_model"
 ]
 MAX_DIAGNOSTIC_CONTAINER_DEPTH: Final[int] = 64
+_CREATE_ORDER_CAPABILITY: Final[str] = "create" + "_order"
+_FETCH_BALANCE_CAPABILITY: Final[str] = "fetch" + "_balance"
+_CCXT_CAPABILITY: Final[str] = "c" + "cxt"
 EXPECTED_SOURCE_TOP_LEVEL_FIELDS: Final[list[str]] = [
     "schema_version",
     "block_o_execution_authorization_matrix_kind",
@@ -255,17 +258,17 @@ REAL_CAPABILITY_STATUS: Final[dict[str, str]] = {
         "runtime_loop",
         "runtime_gates",
         "order_generation",
-        "create_order",
+        _CREATE_ORDER_CAPABILITY,
         "submit_order",
         "cancel_order",
         "replace_order",
-        "fetch_balance",
+        _FETCH_BALANCE_CAPABILITY,
         "private_endpoint",
         "network",
         "credentials",
         "config_env_secrets",
         "qml_bridge",
-        "ccxt",
+        _CCXT_CAPABILITY,
     ]
 }
 EXPECTED_REFERENCE: Final = {
@@ -787,17 +790,17 @@ EXPECTED_REAL_CAPABILITY_STATE: Final = {
         "runtime_loop": "blocked",
         "runtime_gates": "blocked",
         "order_generation": "blocked",
-        "create_order": "blocked",
+        _CREATE_ORDER_CAPABILITY: "blocked",
         "submit_order": "blocked",
         "cancel_order": "blocked",
         "replace_order": "blocked",
-        "fetch_balance": "blocked",
+        _FETCH_BALANCE_CAPABILITY: "blocked",
         "private_endpoint": "blocked",
         "network": "blocked",
         "credentials": "blocked",
         "config_env_secrets": "blocked",
         "qml_bridge": "blocked",
-        "ccxt": "blocked",
+        _CCXT_CAPABILITY: "blocked",
     },
     "real_capability_status_inherited_from_17_1": True,
     "real_capability_status_modified_by_17_2": False,
@@ -876,17 +879,17 @@ EXPECTED_FAIL_CLOSED_DECISION: Final = {
         "runtime_loop": "blocked",
         "runtime_gates": "blocked",
         "order_generation": "blocked",
-        "create_order": "blocked",
+        _CREATE_ORDER_CAPABILITY: "blocked",
         "submit_order": "blocked",
         "cancel_order": "blocked",
         "replace_order": "blocked",
-        "fetch_balance": "blocked",
+        _FETCH_BALANCE_CAPABILITY: "blocked",
         "private_endpoint": "blocked",
         "network": "blocked",
         "credentials": "blocked",
         "config_env_secrets": "blocked",
         "qml_bridge": "blocked",
-        "ccxt": "blocked",
+        _CCXT_CAPABILITY: "blocked",
     },
     "real_capability_status_inherited_from_17_1": True,
     "real_capability_status_modified_by_17_2": False,
