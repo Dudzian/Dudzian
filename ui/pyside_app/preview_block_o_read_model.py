@@ -1544,7 +1544,7 @@ def _build_fail_closed(source: dict[str, Any], accepted: bool) -> dict[str, Any]
         source_decision.get("real_capability_status") if type(source_decision) is dict else None
     )
     status_copy = _copy_plain(status) if type(status) is dict else {}
-    result = {key: "fail_closed" for key in _FAIL_CLOSED_READ_DECISION_FIELDS[:14]}
+    result: dict[str, Any] = {key: "fail_closed" for key in _FAIL_CLOSED_READ_DECISION_FIELDS[:14]}
     result.update(
         {
             "block_o_entry_contract_in_17_0": "preserved" if accepted else "not_preserved",
