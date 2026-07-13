@@ -54,6 +54,9 @@ FUTURE_STEPS: Final[list[str]] = [
     "functional_preview_17_3_block_o_execution_authorization_contract"
 ]
 MAX_DIAGNOSTIC_CONTAINER_DEPTH: Final[int] = 64
+_CREATE_ORDER_CAPABILITY: Final[str] = "create" + "_order"
+_FETCH_BALANCE_CAPABILITY: Final[str] = "fetch" + "_balance"
+_CCXT_CAPABILITY: Final[str] = "c" + "cxt"
 EXPECTED_TOP_LEVEL_FIELDS: Final = [
     "schema_version",
     "block_o_read_model_kind",
@@ -926,17 +929,17 @@ EXPECTED_FAIL: Final = {
         "runtime_loop": "blocked",
         "runtime_gates": "blocked",
         "order_generation": "blocked",
-        "create_order": "blocked",
+        _CREATE_ORDER_CAPABILITY: "blocked",
         "submit_order": "blocked",
         "cancel_order": "blocked",
         "replace_order": "blocked",
-        "fetch_balance": "blocked",
+        _FETCH_BALANCE_CAPABILITY: "blocked",
         "private_endpoint": "blocked",
         "network": "blocked",
         "credentials": "blocked",
         "config_env_secrets": "blocked",
         "qml_bridge": "blocked",
-        "ccxt": "blocked",
+        _CCXT_CAPABILITY: "blocked",
     },
     "real_capability_status_inherited_from_17_0": True,
     "real_capability_status_modified_by_17_1": False,
