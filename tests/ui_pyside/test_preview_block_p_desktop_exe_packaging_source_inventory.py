@@ -111,7 +111,7 @@ def test_qml_source_inventory_matches_current_repo() -> None:
 
 
 def test_main_window_import_inventory() -> None:
-    text = (ROOT / "ui/pyside_app/qml/MainWindow.qml").read_text()
+    text = (ROOT / "ui/pyside_app/qml/MainWindow.qml").read_text(encoding="utf-8")
     parsed = [line.strip() for line in text.splitlines() if line.startswith("import ")]
     assert parsed == [
         "import QtQuick",
@@ -136,7 +136,7 @@ def test_main_window_import_inventory() -> None:
 
 
 def test_styles_qmldir_inventory() -> None:
-    text = (ROOT / "ui/pyside_app/qml/Styles/qmldir").read_text()
+    text = (ROOT / "ui/pyside_app/qml/Styles/qmldir").read_text(encoding="utf-8")
     obs = build()["qml_source_inventory"]["styles_module_observation"]
     assert "module Styles" in text
     assert "DesignSystem 1.0 DesignSystem.qml" in text
@@ -149,7 +149,7 @@ def test_styles_qmldir_inventory() -> None:
 
 
 def test_shared_qml_platform_condition_observed() -> None:
-    text = (ROOT / "ui/pyside_app/app.py").read_text()
+    text = (ROOT / "ui/pyside_app/app.py").read_text(encoding="utf-8")
     assert 'sys.platform != "win32"' in text
     obs = build()["qml_source_inventory"]["windows_shared_qml_import_path_observation"]
     assert obs["shared_qml_root_added_on_non_windows"] is True
@@ -167,7 +167,7 @@ def test_config_and_runtime_reference_inventory() -> None:
 
 
 def pyproject() -> dict[str, Any]:
-    return tomllib.loads((ROOT / "pyproject.toml").read_text())
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 
 def test_project_dependency_inventory_matches_pyproject() -> None:
@@ -224,7 +224,7 @@ def test_packaging_metadata_inventory_matches_pyproject() -> None:
 
 
 def test_existing_cli_preview_plan_inventory() -> None:
-    text = (ROOT / "scripts/safe_exe_preview_build_plan.py").read_text()
+    text = (ROOT / "scripts/safe_exe_preview_build_plan.py").read_text(encoding="utf-8")
     rows = build()["existing_cli_preview_packaging_inventory"]["rows"]
     assert "scripts/run_local_bot.py" in text
     assert rows[0]["current_plan_entrypoint"] == "scripts/run_local_bot.py"
@@ -295,14 +295,14 @@ def test_preview_packaging_profiles_inventory() -> None:
         },
     }
     for row in rows:
-        data = tomllib.loads((ROOT / row["path"]).read_text())
+        data = tomllib.loads((ROOT / row["path"]).read_text(encoding="utf-8"))
         assert data == expected[row["profile_platform"]]
         assert row["profile_pyinstaller_entrypoint_targets_run_local_bot"] is True
         assert row["profile_targets_desktop_pyside_entrypoint"] is False
 
 
 def test_artifact_exclusion_policy_inventory() -> None:
-    tree = ast.parse((ROOT / "scripts/safe_exe_preview_build_plan.py").read_text())
+    tree = ast.parse((ROOT / "scripts/safe_exe_preview_build_plan.py").read_text(encoding="utf-8"))
     assigned = next(
         n.value
         for n in tree.body
@@ -403,7 +403,7 @@ def test_independent_builder_calls_do_not_share_state() -> None:
 def test_forbidden_raw_tokens_absent() -> None:
     text = (
         ROOT / "ui/pyside_app/preview_block_p_desktop_exe_packaging_source_inventory.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "create_order" not in text
     assert "fetch_balance" not in text
     assert "ccxt" not in text
@@ -413,7 +413,7 @@ def test_exact_ast_guard() -> None:
     tree = ast.parse(
         (
             ROOT / "ui/pyside_app/preview_block_p_desktop_exe_packaging_source_inventory.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
     )
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.Import)]
     imports = [n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
@@ -604,7 +604,98 @@ def test_cycle_depth_subclass_float_and_shared_reference_plain_json_coverage() -
 
 
 def clone_plain(value: Any) -> Any:
-    return json.loads(json.dumps(value))
+    if type(value) not in (dict, list):
+        return value
+
+    root: Any = {} if type(value) is dict else []
+    memo: dict[int, Any] = {id(value): root}
+    stack: list[tuple[Any, Any]] = [(value, root)]
+
+    while stack:
+        source, target = stack.pop()
+        if type(source) is dict:
+            for key, nested in source.items():
+                if type(nested) not in (dict, list):
+                    target[key] = nested
+                    continue
+                nested_id = id(nested)
+                nested_target = memo.get(nested_id)
+                if nested_target is None:
+                    nested_target = {} if type(nested) is dict else []
+                    memo[nested_id] = nested_target
+                    stack.append((nested, nested_target))
+                target[key] = nested_target
+        else:
+            for nested in source:
+                if type(nested) not in (dict, list):
+                    target.append(nested)
+                    continue
+                nested_id = id(nested)
+                nested_target = memo.get(nested_id)
+                if nested_target is None:
+                    nested_target = {} if type(nested) is dict else []
+                    memo[nested_id] = nested_target
+                    stack.append((nested, nested_target))
+                target.append(nested_target)
+
+    return root
+
+
+def test_clone_plain_iteratively_copies_deep_and_nominal_plain_data() -> None:
+    def mixed(depth: int) -> dict[str, Any]:
+        root: dict[str, Any] = {}
+        current: Any = root
+        for index in range(depth):
+            child: Any = [] if index % 2 else {}
+            if type(current) is dict:
+                current["child"] = child
+            else:
+                current.append(child)
+            current = child
+        return root
+
+    for source in [inv.EXPECTED_SOURCE, deep_dict(1500), deep_list(1500), mixed(1500)]:
+        snapshot = clone_plain(source)
+        clone = clone_plain(source)
+        assert clone == source
+        assert clone is not source
+        assert clone == snapshot
+        if type(clone) is dict:
+            assert list(clone) == list(source)
+
+        stack = [clone]
+        nested: Any = None
+        while stack and nested is None:
+            current = stack.pop()
+            children = current.values() if type(current) is dict else current
+            for child in children:
+                if type(child) in (dict, list):
+                    nested = child
+                    break
+        assert nested is not None
+        if type(nested) is dict:
+            nested["clone_only"] = True
+        else:
+            nested.append("clone_only")
+        assert source == snapshot
+
+
+def test_clone_plain_handles_shared_references_and_cycles_without_mutating_source() -> None:
+    shared = ["original"]
+    source = {"first": shared, "second": shared}
+    clone = clone_plain(source)
+
+    assert clone == source
+    assert clone is not source
+    assert clone["first"] is clone["second"]
+    clone["first"].append("clone-only")
+    assert source == {"first": ["original"], "second": ["original"]}
+
+    cycle: dict[str, Any] = {}
+    cycle["self"] = cycle
+    cycle_clone = clone_plain(cycle)
+    assert cycle_clone is not cycle
+    assert cycle_clone["self"] is cycle_clone
 
 
 def blocked_from_source(monkeypatch: pytest.MonkeyPatch, source: Any) -> dict[str, Any]:
@@ -625,7 +716,7 @@ def blocked_from_source(monkeypatch: pytest.MonkeyPatch, source: Any) -> dict[st
 
 
 def test_ast_entrypoint_sources_without_importing_modules() -> None:
-    main_tree = ast.parse((ROOT / "ui/pyside_app/__main__.py").read_text())
+    main_tree = ast.parse((ROOT / "ui/pyside_app/__main__.py").read_text(encoding="utf-8"))
     assert any(
         isinstance(node, ast.ImportFrom)
         and node.module == "app"
@@ -647,7 +738,7 @@ def test_ast_entrypoint_sources_without_importing_modules() -> None:
         for node in if_node.body
     )
 
-    app_text = (ROOT / "ui/pyside_app/app.py").read_text()
+    app_text = (ROOT / "ui/pyside_app/app.py").read_text(encoding="utf-8")
     app_tree = ast.parse(app_text)
     assert any(isinstance(node, ast.FunctionDef) and node.name == "main" for node in app_tree.body)
     assert any(
@@ -666,13 +757,15 @@ def test_ast_entrypoint_sources_without_importing_modules() -> None:
         for node in calls
     )
     assert "ui/config/example.yaml" in app_text
-    assert '"qml" / "MainWindow.qml"' in (ROOT / "ui/pyside_app/config.py").read_text()
+    assert '"qml" / "MainWindow.qml"' in (ROOT / "ui/pyside_app/config.py").read_text(
+        encoding="utf-8"
+    )
     assert any(isinstance(node.func, ast.Attribute) and node.func.attr == "load" for node in calls)
     assert any(isinstance(node.func, ast.Attribute) and node.func.attr == "exec" for node in calls)
 
 
 def test_existing_cli_preview_plan_ast_inventory() -> None:
-    text = (ROOT / "scripts/safe_exe_preview_build_plan.py").read_text()
+    text = (ROOT / "scripts/safe_exe_preview_build_plan.py").read_text(encoding="utf-8")
     tree = ast.parse(text)
     function = next(
         node
