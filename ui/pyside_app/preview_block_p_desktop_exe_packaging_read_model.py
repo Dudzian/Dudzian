@@ -378,6 +378,156 @@ TOP_LEVEL_FIELDS: Final[list[str]] = [
     "future_steps",
     "status",
 ]
+DOMAIN_ROW_FIELDS: Final[list[str]] = [
+    "domain_id",
+    "source_contract_section",
+    "source_contract_preserved",
+    "contract_defined",
+    "contract_satisfied",
+    "selection_required",
+    "selection_performed",
+    "validation_required",
+    "validation_performed",
+    "unresolved_condition_count",
+    "build_ready",
+    "packaging_authorized",
+    "build_authorized",
+    "read_model_state",
+    "read_model_result",
+    "next_resolution_stage",
+]
+SCOPE_ROW_FIELDS: Final[list[str]] = [
+    "scope_id",
+    "source_scope_preserved",
+    "source_supporting_matrix_row_ids",
+    "source_unresolved_blocker_ids",
+    "contract_clause_ids",
+    "required_evidence_ids",
+    "contract_definition_complete",
+    "contract_satisfied",
+    "resolved_blocker_count",
+    "unresolved_blocker_count",
+    "ready_for_read_model",
+    "ready_for_build_readiness_matrix",
+    "scope_ready",
+    "scope_authorized",
+    "build_ready",
+    "read_model_state",
+    "read_model_result",
+    "failure_policy",
+]
+REQUIREMENT_ROW_FIELDS: Final[list[str]] = [
+    "requirement_id",
+    "contract_requirement_id",
+    "source_requirement_preserved",
+    "source_inventory_observed",
+    "source_inventory_requirement_satisfied",
+    "source_unresolved_condition_ids",
+    "contract_clause_ids",
+    "required_evidence_ids",
+    "contract_defined",
+    "contract_satisfied",
+    "build_requirement_satisfied",
+    "requires_future_explicit_step",
+    "ready_for_read_model",
+    "ready_for_build_readiness_matrix",
+    "build_ready",
+    "packaging_authorized",
+    "build_authorized",
+    "read_model_state",
+    "read_model_result",
+    "failure_policy",
+]
+BLOCKER_ROW_FIELDS: Final[list[str]] = [
+    "blocker_id",
+    "source_blocker_preserved",
+    "source_finding_ids",
+    "source_affected_scope_ids",
+    "contract_clause_id",
+    "contract_requirement_ids",
+    "required_evidence_ids",
+    "resolution_criteria",
+    "contract_clause_defined",
+    "resolved",
+    "evidence_collected",
+    "evidence_validated",
+    "blocks_build_readiness",
+    "blocks_packaging_authorization",
+    "blocks_build_authorization",
+    "read_model_severity",
+    "read_model_state",
+    "read_model_result",
+    "failure_policy",
+]
+EVIDENCE_ROW_FIELDS: Final[list[str]] = [
+    "evidence_id",
+    "blocker_id",
+    "evidence_type",
+    "required_artifacts",
+    "collection_stage",
+    "source_only_definition",
+    "collected",
+    "validated",
+    "required_for_build_readiness",
+    "required_for_packaging_authorization",
+    "required_for_build_authorization",
+    "read_model_state",
+    "read_model_result",
+    "failure_policy",
+]
+ACCEPTANCE_ROW_FIELDS: Final[list[str]] = [
+    "acceptance_rule_id",
+    "required_blocker_ids",
+    "required_evidence_ids",
+    "all_inputs_required",
+    "rule_defined",
+    "rule_satisfied",
+    "grants_build_readiness",
+    "grants_packaging_authorization",
+    "grants_build_authorization",
+    "read_model_state",
+    "read_model_result",
+    "failure_policy",
+]
+DOMAIN_RELATIONS_EXPECTED: Final[dict[str, Any]] = {
+    "desktop_application_entrypoint": {
+        "source_contract_section": "desktop_entrypoint_contract",
+        "selection_required": True,
+        "validation_required": True,
+        "unresolved_condition_count": 2,
+    },
+    "qt_qml_runtime_bundle": {
+        "source_contract_section": "qml_bundle_contract",
+        "selection_required": False,
+        "validation_required": True,
+        "unresolved_condition_count": 5,
+    },
+    "python_dependency_bundle": {
+        "source_contract_section": "python_dependency_contract",
+        "selection_required": False,
+        "validation_required": True,
+        "unresolved_condition_count": 2,
+    },
+    "packaging_metadata": {
+        "source_contract_section": "packaging_metadata_contract",
+        "selection_required": False,
+        "validation_required": True,
+        "unresolved_condition_count": 2,
+    },
+    "preview_packaging_separation": {
+        "source_contract_section": "preview_packaging_separation_contract",
+        "selection_required": True,
+        "validation_required": True,
+        "unresolved_condition_count": 1,
+    },
+    "artifact_exclusion_policy": {
+        "source_contract_section": "artifact_exclusion_contract",
+        "selection_required": False,
+        "validation_required": True,
+        "unresolved_condition_count": 1,
+    },
+}
+
 TOP_LEVEL_FIELDS_18_3: Final[list[str]] = [
     "schema_version",
     "block_p_desktop_exe_packaging_contract_kind",
@@ -2340,67 +2490,319 @@ def _output_graph_semantics_valid(
 
 
 def _output_integrity(payload: dict[str, Any]) -> bool:
+    """Validate the public projection as an exact, fail-closed schema."""
     if type(payload) is not dict:
         return False
-    families = (
-        ("domain_contract_read_model_rows", "domain_id"),
-        ("scope_contract_read_model_rows", "scope_id"),
-        ("requirement_contract_read_model_rows", "requirement_id"),
-        ("blocker_read_model_rows", "blocker_id"),
-        ("evidence_read_model_rows", "evidence_id"),
-        ("acceptance_rule_read_model_rows", "acceptance_rule_id"),
+    specs = (
+        ("domain_contract_read_model_rows", "domain_id", DOMAIN_ROW_FIELDS),
+        ("scope_contract_read_model_rows", "scope_id", SCOPE_ROW_FIELDS),
+        ("requirement_contract_read_model_rows", "requirement_id", REQUIREMENT_ROW_FIELDS),
+        ("blocker_read_model_rows", "blocker_id", BLOCKER_ROW_FIELDS),
+        ("evidence_read_model_rows", "evidence_id", EVIDENCE_ROW_FIELDS),
+        ("acceptance_rule_read_model_rows", "acceptance_rule_id", ACCEPTANCE_ROW_FIELDS),
     )
     rows: dict[str, list[dict[str, Any]]] = {}
-    for name, key in families:
-        family = payload.get(name)
-        if type(family) is not list:
+    for family, identifier, fields in specs:
+        value = payload.get(family)
+        if type(value) is not list:
             return False
-        checked = []
-        for candidate in family:
-            row = _exact_row_dict(candidate)
-            if row is None or type(row.get(key)) is not str or not row[key]:
+        checked: list[dict[str, Any]] = []
+        for row in value:
+            if (
+                type(row) is not dict
+                or list(row) != fields
+                or type(row.get(identifier)) is not str
+                or not row[identifier]
+            ):
                 return False
+            for key, item in row.items():
+                if key.endswith("_ids") or key in {
+                    "source_supporting_matrix_row_ids",
+                    "required_artifacts",
+                }:
+                    if _exact_string_list(item) is None:
+                        return False
             checked.append(row)
-        if len([row[key] for row in checked]) != len({row[key] for row in checked}):
+        for row in checked:
+            for key, value in row.items():
+                if key.endswith("_ids") or key in {
+                    "source_supporting_matrix_row_ids",
+                    "required_artifacts",
+                }:
+                    continue
+                if key in {
+                    "unresolved_condition_count",
+                    "resolved_blocker_count",
+                    "unresolved_blocker_count",
+                }:
+                    if type(value) is not int:
+                        return False
+                elif key in {
+                    "domain_id",
+                    "scope_id",
+                    "requirement_id",
+                    "blocker_id",
+                    "evidence_id",
+                    "acceptance_rule_id",
+                    "source_contract_section",
+                    "contract_requirement_id",
+                    "contract_clause_id",
+                    "resolution_criteria",
+                    "read_model_severity",
+                    "read_model_state",
+                    "read_model_result",
+                    "next_resolution_stage",
+                    "failure_policy",
+                    "evidence_type",
+                    "collection_stage",
+                }:
+                    if type(value) is not str:
+                        return False
+                elif key not in {"source_finding_ids"} and type(value) is not bool:
+                    return False
+        identifiers = [row[identifier] for row in checked]
+        if len(identifiers) != len(set(identifiers)):
             return False
-        rows[name] = checked
-    scopes = rows["scope_contract_read_model_rows"]
-    requirements = rows["requirement_contract_read_model_rows"]
-    blockers = rows["blocker_read_model_rows"]
-    evidence = rows["evidence_read_model_rows"]
-    acceptance = rows["acceptance_rule_read_model_rows"]
-    required = (
-        (scopes, ("source_unresolved_blocker_ids", "contract_clause_ids", "required_evidence_ids")),
-        (
-            requirements,
-            ("source_unresolved_condition_ids", "contract_clause_ids", "required_evidence_ids"),
-        ),
-        (
-            blockers,
-            ("source_affected_scope_ids", "contract_requirement_ids", "required_evidence_ids"),
-        ),
-        (acceptance, ("required_blocker_ids", "required_evidence_ids")),
-    )
-    if any(
-        _exact_string_list(row.get(field)) is None
-        for family, fields in required
-        for row in family
-        for field in fields
-    ):
+        rows[family] = checked
+    domains, scopes, requirements, blockers, evidence, acceptance = (rows[x] for x, _, _ in specs)
+    if [row["domain_id"] for row in domains] != list(DOMAIN_RELATIONS_EXPECTED):
         return False
-    if any(
-        type(row.get("contract_requirement_id")) is not str or not row["contract_requirement_id"]
-        for row in requirements
-    ):
+    for row in domains:
+        expected = DOMAIN_RELATIONS_EXPECTED[row["domain_id"]]
+        complete = row["source_contract_preserved"] is True
+        if (
+            any(row[k] != v for k, v in expected.items())
+            or type(row["unresolved_condition_count"]) is not int
+        ):
+            return False
+        if not all(
+            type(row[k]) is bool and row[k] is False
+            for k in (
+                "contract_satisfied",
+                "selection_performed",
+                "validation_performed",
+                "build_ready",
+                "packaging_authorized",
+                "build_authorized",
+            )
+        ):
+            return False
+        state = (
+            ("defined_unresolved", "future_explicit_resolution_required", NEXT_STEP)
+            if complete
+            else ("blocked_source_contract_not_preserved", "read_model_projection_blocked", "")
+        )
+        if (
+            row["contract_defined"] is not complete
+            or (row["read_model_state"], row["read_model_result"], row["next_resolution_stage"])
+            != state
+        ):
+            return False
+    if not _output_graph_semantics_valid(scopes, requirements, blockers, evidence, acceptance):
         return False
-    if any(
-        type(row.get("contract_clause_id")) is not str or not row["contract_clause_id"]
-        for row in blockers
-    ):
-        return False
-    if any(type(row.get("blocker_id")) is not str for row in evidence):
-        return False
-    return _output_graph_semantics_valid(scopes, requirements, blockers, evidence, acceptance)
+    for row in scopes:
+        expected = SCOPE_RELATIONS_EXPECTED[row["scope_id"]]
+        complete = all(
+            row[field] == expected[field]
+            for field in (
+                "source_unresolved_blocker_ids",
+                "contract_clause_ids",
+                "required_evidence_ids",
+            )
+        )
+        if (
+            row["source_supporting_matrix_row_ids"]
+            != EXPECTED_SOURCE["packaging_scope_contract_rows"][
+                list(SCOPE_RELATIONS_EXPECTED).index(row["scope_id"])
+            ]["source_supporting_matrix_row_ids"]
+        ):
+            return False
+        if (
+            row["source_scope_preserved"] is not complete
+            or row["contract_definition_complete"] is not complete
+            or row["ready_for_read_model"] is not complete
+            or row["ready_for_build_readiness_matrix"] is not complete
+            or row["unresolved_blocker_count"] != len(row["source_unresolved_blocker_ids"])
+        ):
+            return False
+        if not all(
+            type(row[k]) is bool and row[k] is False
+            for k in ("contract_satisfied", "scope_ready", "scope_authorized", "build_ready")
+        ):
+            return False
+        expected_state = (
+            (
+                "contract_defined_unresolved",
+                "build_readiness_evaluation_required_in_future_source_only_step",
+            )
+            if complete
+            else ("blocked_source_contract_not_preserved", "read_model_projection_blocked")
+        )
+        if (row["read_model_state"], row["read_model_result"], row["failure_policy"]) != (
+            *expected_state,
+            "fail_closed",
+        ):
+            return False
+    for row in requirements:
+        expected = REQUIREMENT_RELATIONS_EXPECTED[row["requirement_id"]]
+        source_row = EXPECTED_SOURCE["packaging_requirement_contract_rows"][
+            list(REQUIREMENT_RELATIONS_EXPECTED).index(row["requirement_id"])
+        ]
+        complete = all(
+            row[field] == expected[field]
+            for field in (
+                "contract_requirement_id",
+                "source_unresolved_condition_ids",
+                "contract_clause_ids",
+                "required_evidence_ids",
+            )
+        ) and all(
+            type(row[field]) is bool and row[field] == source_row[field]
+            for field in (
+                "source_inventory_observed",
+                "source_inventory_requirement_satisfied",
+                "requires_future_explicit_step",
+            )
+        )
+        if (
+            row["source_requirement_preserved"] is not complete
+            or row["contract_defined"] is not complete
+            or row["ready_for_read_model"] is not complete
+            or row["ready_for_build_readiness_matrix"] is not complete
+        ):
+            return False
+        if not all(
+            type(row[k]) is bool and row[k] is False
+            for k in (
+                "contract_satisfied",
+                "build_requirement_satisfied",
+                "build_ready",
+                "packaging_authorized",
+                "build_authorized",
+            )
+        ):
+            return False
+        expected_state = (
+            ("defined_unresolved", "future_explicit_resolution_required")
+            if complete
+            else ("blocked_source_contract_not_preserved", "read_model_projection_blocked")
+        )
+        if (row["read_model_state"], row["read_model_result"], row["failure_policy"]) != (
+            *expected_state,
+            "fail_closed",
+        ):
+            return False
+    for row in blockers:
+        expected = BLOCKER_RELATIONS_EXPECTED[row["blocker_id"]]
+        source_row = EXPECTED_SOURCE["unresolved_blocker_contract_rows"][
+            list(BLOCKER_RELATIONS_EXPECTED).index(row["blocker_id"])
+        ]
+        complete = all(
+            row[field] == expected[field]
+            for field in (
+                "source_affected_scope_ids",
+                "contract_clause_id",
+                "contract_requirement_ids",
+                "required_evidence_ids",
+            )
+        ) and all(
+            row[field] == source_row[field]
+            for field in ("source_finding_ids", "resolution_criteria")
+        )
+        if (
+            row["source_blocker_preserved"] is not complete
+            or row["contract_clause_defined"] is not complete
+        ):
+            return False
+        if not all(
+            type(row[k]) is bool and row[k] is False
+            for k in ("resolved", "evidence_collected", "evidence_validated")
+        ) or not all(
+            type(row[k]) is bool and row[k] is True
+            for k in (
+                "blocks_build_readiness",
+                "blocks_packaging_authorization",
+                "blocks_build_authorization",
+            )
+        ):
+            return False
+        expected_state = (
+            ("unresolved", "future_evidence_and_resolution_required")
+            if complete
+            else ("blocked_source_contract_not_preserved", "read_model_projection_blocked")
+        )
+        if row["read_model_severity"] != "blocking" or (
+            row["read_model_state"],
+            row["read_model_result"],
+            row["failure_policy"],
+        ) != (*expected_state, "fail_closed"):
+            return False
+    for row in evidence:
+        expected = EVIDENCE_RELATIONS_EXPECTED[row["evidence_id"]]
+        source_row = EXPECTED_SOURCE["contract_evidence_requirement_rows"][
+            list(EVIDENCE_RELATIONS_EXPECTED).index(row["evidence_id"])
+        ]
+        if not (
+            row["blocker_id"] == expected["blocker_id"]
+            and all(
+                row[field] == source_row[field]
+                for field in ("evidence_type", "required_artifacts", "collection_stage")
+            )
+            and row["source_only_definition"] is True
+            and all(type(row[k]) is bool and row[k] is False for k in ("collected", "validated"))
+            and all(
+                type(row[k]) is bool and row[k] is True
+                for k in (
+                    "required_for_build_readiness",
+                    "required_for_packaging_authorization",
+                    "required_for_build_authorization",
+                )
+            )
+        ):
+            return False
+        if (row["read_model_state"], row["read_model_result"], row["failure_policy"]) != (
+            "required_not_collected",
+            "future_explicit_evidence_collection_required",
+            "fail_closed",
+        ):
+            return False
+    complete_blockers = {
+        row["blocker_id"] for row in blockers if row["source_blocker_preserved"] is True
+    }
+    evidence_by_id = {row["evidence_id"]: row for row in evidence}
+    for row in acceptance:
+        expected = ACCEPTANCE_RELATIONS_EXPECTED[row["acceptance_rule_id"]]
+        complete = (
+            row["required_blocker_ids"] == expected["required_blocker_ids"]
+            and row["required_evidence_ids"] == expected["required_evidence_ids"]
+            and all(item in complete_blockers for item in expected["required_blocker_ids"])
+            and all(
+                item in evidence_by_id and evidence_by_id[item]["blocker_id"] in complete_blockers
+                for item in expected["required_evidence_ids"]
+            )
+        )
+        expected_state = (
+            ("defined_unsatisfied", "required_inputs_unresolved")
+            if complete
+            else ("blocked_source_contract_not_preserved", "read_model_projection_blocked")
+        )
+        if (
+            row["all_inputs_required"] is not True
+            or row["rule_defined"] is not complete
+            or (row["read_model_state"], row["read_model_result"], row["failure_policy"])
+            != (*expected_state, "fail_closed")
+            or not all(
+                type(row[k]) is bool and row[k] is False
+                for k in (
+                    "rule_satisfied",
+                    "grants_build_readiness",
+                    "grants_packaging_authorization",
+                    "grants_build_authorization",
+                )
+            )
+        ):
+            return False
+    return True
 
 
 def _source_referential_integrity_valid(
@@ -2847,7 +3249,7 @@ def build_preview_block_p_desktop_exe_packaging_read_model() -> dict[str, Any]:
             "read_model_result": "future_explicit_resolution_required"
             if valid[section]
             else "read_model_projection_blocked",
-            "next_resolution_stage": "FUNCTIONAL-PREVIEW-18.5",
+            "next_resolution_stage": "FUNCTIONAL-PREVIEW-18.5" if valid[section] else "",
         }
         for d, section, select, validate, count in domains
     ]
@@ -3479,3 +3881,112 @@ def build_preview_block_p_desktop_exe_packaging_read_model() -> dict[str, Any]:
         output_graph_integrity_valid
     )
     return payload
+
+
+# Final handoff validator: kept separate from row-graph integrity to avoid recursion.
+def _handoff_integrity(payload: Any) -> bool:
+    if (
+        type(payload) is not dict
+        or list(payload) != TOP_LEVEL_FIELDS
+        or not _output_integrity(payload)
+    ):
+        return False
+    strings = {
+        "schema_version": SCHEMA_VERSION,
+        "block": BLOCK_ID,
+        "step": STEP_ID,
+        "status": STATUS,
+        "next_step": NEXT_STEP,
+        "next_step_title": NEXT_STEP_TITLE,
+        "block_p_desktop_exe_packaging_read_model_status": PACKAGING_READ_MODEL_STATUS,
+        "block_p_desktop_exe_packaging_read_model_decision": PACKAGING_READ_MODEL_STATUS.upper(),
+    }
+    if any(type(payload[k]) is not str or payload[k] != v for k, v in strings.items()):
+        return False
+    if (
+        payload["packaging_read_model_artifact_complete"] is not True
+        or payload["ready_for_block_p_5"] is not True
+    ):
+        return False
+    summary = payload["packaging_read_model_summary"]
+    overview = payload["packaging_contract_overview"]
+    if type(summary) is not dict or type(overview) is not dict:
+        return False
+    true_summary = (
+        "source_18_3_accepted",
+        "source_packaging_contract_preserved",
+        "source_only",
+        "plain_data",
+        "static_read_model",
+        "packaging_read_model_artifact_complete",
+        "ready_for_block_p_5",
+        "only_source_only_18_5_handoff_allowed",
+    )
+    false_summary = (
+        "contract_satisfied",
+        "build_ready",
+        "packaging_authorized",
+        "build_authorized",
+        "artifact_creation_authorized",
+        "release_authorized",
+        "runtime_authorized",
+        "orders_authorized",
+    )
+    if any(summary.get(k) is not True for k in true_summary) or any(
+        summary.get(k) is not False for k in false_summary
+    ):
+        return False
+    if any(
+        type(summary.get(k)) is not int or summary[k] != 0
+        for k in (
+            "resolved_blocker_count",
+            "collected_evidence_count",
+            "validated_evidence_count",
+            "satisfied_acceptance_rule_count",
+        )
+    ):
+        return False
+    if (
+        overview.get("contract_artifact_complete") is not True
+        or overview.get("next_required_source_only_step") != NEXT_STEP
+        or any(
+            overview.get(k) is not False
+            for k in (
+                "contract_satisfied",
+                "all_blockers_resolved",
+                "all_evidence_collected",
+                "all_evidence_validated",
+                "all_acceptance_rules_satisfied",
+                "build_ready",
+                "packaging_authorized",
+                "build_authorized",
+            )
+        )
+    ):
+        return False
+    caps = payload["capability_read_model_state"]
+    if type(caps) is not dict or caps.get("all_real_capabilities_blocked_at_18_4") is not True:
+        return False
+    for k, v in caps.items():
+        if k.endswith("_capabilities") and (
+            type(v) is not dict
+            or not v
+            or any(type(x) is not str or type(y) is not str or y != "blocked" for x, y in v.items())
+            or caps.get(k + "_known_blocked") is not True
+        ):
+            return False
+    for section in (
+        "fail_closed_read_model_decision",
+        "read_model_boundaries",
+        "source_boundaries",
+        "non_execution_read_model_evidence",
+    ):
+        if type(payload[section]) is not dict:
+            return False
+    if (
+        payload["source_boundaries"].get("can_feed_18_5") is not True
+        or payload["non_execution_read_model_evidence"].get("output_graph_integrity_valid")
+        is not True
+    ):
+        return False
+    return True
