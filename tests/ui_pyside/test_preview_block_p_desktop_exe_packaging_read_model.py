@@ -336,3 +336,115 @@ def test_output_integrity_rejects_clause_swap_and_family_reorder() -> None:
         payload = _payload()
         payload[family][0], payload[family][1] = payload[family][1], payload[family][0]
         assert read_model._output_integrity(payload) is False
+
+
+@pytest.mark.parametrize(
+    ("family", "field", "value"),
+    [
+        ("domain_contract_read_model_rows", "build_ready", True),
+        ("scope_contract_read_model_rows", "scope_ready", True),
+        ("requirement_contract_read_model_rows", "build_authorized", True),
+        ("blocker_read_model_rows", "resolved", True),
+        ("blocker_read_model_rows", "evidence_validated", True),
+        ("evidence_read_model_rows", "collected", True),
+        ("evidence_read_model_rows", "validated", True),
+        ("acceptance_rule_read_model_rows", "rule_satisfied", True),
+        ("acceptance_rule_read_model_rows", "grants_build_authorization", True),
+    ],
+)
+def test_output_integrity_rejects_operational_grants(
+    family: str, field: str, value: object
+) -> None:
+    payload = _payload()
+    payload[family][0][field] = value
+    assert read_model._output_integrity(payload) is False
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        "domain_contract_read_model_rows",
+        "scope_contract_read_model_rows",
+        "requirement_contract_read_model_rows",
+        "blocker_read_model_rows",
+        "evidence_read_model_rows",
+        "acceptance_rule_read_model_rows",
+    ],
+)
+def test_output_integrity_requires_exact_row_schema(family: str) -> None:
+    payload = _payload()
+    row = payload[family][0]
+    value = row.pop(next(reversed(row)))
+    row["unexpected"] = value
+    assert read_model._output_integrity(payload) is False
+
+
+@pytest.mark.parametrize(
+    ("family", "field", "value"),
+    [
+        ("scope_contract_read_model_rows", "read_model_state", "wrong"),
+        ("scope_contract_read_model_rows", "read_model_result", "wrong"),
+        ("scope_contract_read_model_rows", "failure_policy", "open"),
+        ("requirement_contract_read_model_rows", "read_model_state", "wrong"),
+        ("requirement_contract_read_model_rows", "read_model_result", "wrong"),
+        ("requirement_contract_read_model_rows", "failure_policy", "open"),
+        ("blocker_read_model_rows", "read_model_severity", "low"),
+        ("blocker_read_model_rows", "read_model_state", "wrong"),
+        ("blocker_read_model_rows", "read_model_result", "wrong"),
+        ("blocker_read_model_rows", "failure_policy", "open"),
+        ("evidence_read_model_rows", "read_model_state", "wrong"),
+        ("evidence_read_model_rows", "read_model_result", "wrong"),
+        ("evidence_read_model_rows", "failure_policy", "open"),
+        ("acceptance_rule_read_model_rows", "failure_policy", "open"),
+    ],
+)
+def test_output_integrity_rejects_state_tampering(family: str, field: str, value: object) -> None:
+    payload = _payload()
+    payload[family][0][field] = value
+    assert read_model._output_integrity(payload) is False
+
+
+class _Text(str):
+    pass
+
+
+class _Links(list[str]):
+    pass
+
+
+class _Row(dict[str, object]):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("family", "field", "value"),
+    [
+        ("domain_contract_read_model_rows", "domain_id", _Text("desktop_application_entrypoint")),
+        (
+            "scope_contract_read_model_rows",
+            "source_unresolved_blocker_ids",
+            _Links(
+                [
+                    "final_desktop_entrypoint_not_selected",
+                    "desktop_entrypoint_validation_not_performed",
+                ]
+            ),
+        ),
+        ("domain_contract_read_model_rows", "unresolved_condition_count", True),
+        ("domain_contract_read_model_rows", "source_contract_preserved", 1),
+    ],
+)
+def test_output_integrity_rejects_exact_type_confusion(
+    family: str, field: str, value: object
+) -> None:
+    payload = _payload()
+    payload[family][0][field] = value
+    assert read_model._output_integrity(payload) is False
+
+
+def test_output_integrity_rejects_dict_subclass_row() -> None:
+    payload = _payload()
+    payload["domain_contract_read_model_rows"][0] = _Row(
+        payload["domain_contract_read_model_rows"][0]
+    )
+    assert read_model._output_integrity(payload) is False
