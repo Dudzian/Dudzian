@@ -1,14 +1,16 @@
 """FUNCTIONAL-PREVIEW-18.6 static fail-closed build-readiness contract."""
 
 from __future__ import annotations
+
 import json
 from copy import deepcopy
 from typing import Any, Final
+
 from ui.pyside_app.preview_block_p_desktop_exe_build_readiness_matrix import (
+    CAPABILITY_FIELDS,
+    READINESS_ROWS,
     SCHEMA_VERSION as MATRIX_SCHEMA_VERSION,
     STATUS as MATRIX_STATUS,
-    READINESS_ROWS,
-    CAPABILITY_FIELDS,
     _integrity as _matrix_integrity,
     build_preview_block_p_desktop_exe_build_readiness_matrix,
 )
@@ -398,12 +400,11 @@ def _nominal() -> dict[str, Any]:
         "fail_closed_build_readiness_contract_decision": {
             "source_matrix_exists_and_accepted": True,
             "contract_definitions_complete": True,
+            "contract_satisfied": False,
             "no_readiness_row_satisfied": True,
             "no_blocker_resolved": True,
             "no_evidence_collected": True,
             "no_evidence_validated": True,
-            "only_source_only_18_7_handoff_allowed": True,
-            "contract_satisfied": False,
             "build_ready": False,
             "packaging_authorized": False,
             "build_authorized": False,
@@ -411,6 +412,14 @@ def _nominal() -> dict[str, Any]:
             "release_authorized": False,
             "runtime_enabled": False,
             "orders_enabled": False,
+            "only_source_only_18_7_handoff_allowed": True,
+            "build_performed_by_18_6": False,
+            "packaging_authorized_by_18_6": False,
+            "build_authorized_by_18_6": False,
+            "artifact_creation_authorized_by_18_6": False,
+            "release_performed_by_18_6": False,
+            "runtime_enabled_by_18_6": False,
+            "orders_enabled_by_18_6": False,
         },
         "non_execution_contract_evidence": {
             "source_read": True,
@@ -433,7 +442,6 @@ def _nominal() -> dict[str, Any]:
             "plain_data": True,
             "static_contract": True,
             "can_feed_only_18_7_build_readiness_read_model": True,
-            "network_opened": False,
             "repo_rescan": False,
             "filesystem_scan": False,
             "environment_scan": False,
@@ -464,6 +472,7 @@ def _nominal() -> dict[str, Any]:
             "release_performed": False,
             "runtime_started": False,
             "orders_enabled": False,
+            "network_opened": False,
             "credentials_read": False,
             "qml_bridge_gateway_controller_changed": False,
         },
