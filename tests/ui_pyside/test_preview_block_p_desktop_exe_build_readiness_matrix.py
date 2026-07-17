@@ -115,13 +115,45 @@ class DictSubclass(dict[str, object]):
     pass
 
 
-import pytest
-
-
 @pytest.mark.parametrize(
     "field", ["readiness_id", "readiness_state", "readiness_result", "failure_policy"]
 )
 def test_integrity_rejects_readiness_string_subclasses(field: str) -> None:
     payload = matrix.build_preview_block_p_desktop_exe_build_readiness_matrix()
     payload["readiness_rows"][0][field] = TextSubclass(payload["readiness_rows"][0][field])
+    assert matrix._integrity(payload) is False
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    __import__(
+        "tests.ui_pyside.test_preview_block_p_desktop_exe_packaging_read_model",
+        fromlist=["HANDOFF_MUTATORS"],
+    ).HANDOFF_MUTATORS,
+)
+def test_builder_rejects_forged_handoff(monkeypatch: pytest.MonkeyPatch, mutate: Any) -> None:
+    source = build_preview_block_p_desktop_exe_packaging_read_model()
+    mutate(source)
+    monkeypatch.setattr(
+        matrix, "build_preview_block_p_desktop_exe_packaging_read_model", lambda: source
+    )
+    _blocked(_payload())
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda p: p.__setitem__("readiness_rows", ListSubclass(p["readiness_rows"])),
+        lambda p: p.__setitem__(
+            "capability_build_readiness_state", DictSubclass(p["capability_build_readiness_state"])
+        ),
+        lambda p: p["readiness_rows"].__setitem__(0, DictSubclass(p["readiness_rows"][0])),
+        lambda p: p["readiness_rows"][0]["source_requirement_ids"].__setitem__(
+            0, TextSubclass(p["readiness_rows"][0]["source_requirement_ids"][0])
+        ),
+    ],
+)
+def test_integrity_rejects_container_subclasses(mutate: Any) -> None:
+    payload = _payload()
+    mutate(payload)
     assert matrix._integrity(payload) is False

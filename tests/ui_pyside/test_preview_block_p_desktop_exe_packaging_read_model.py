@@ -448,3 +448,106 @@ def test_output_integrity_rejects_dict_subclass_row() -> None:
         payload["domain_contract_read_model_rows"][0]
     )
     assert read_model._output_integrity(payload) is False
+
+
+HANDOFF_MUTATORS = [
+    pytest.param(
+        lambda p: p["block_p_desktop_exe_packaging_contract_reference"].__setitem__(
+            "source_block_p_desktop_exe_packaging_contract_step", "WRONG"
+        ),
+        id="contract-source-step-value",
+    ),
+    pytest.param(
+        lambda p: p["block_p_desktop_exe_packaging_contract_reference"].__setitem__(
+            "source_block_p_desktop_exe_packaging_contract_step", 123
+        ),
+        id="contract-source-step-type",
+    ),
+    pytest.param(
+        lambda p: p.__setitem__("block_p_desktop_exe_packaging_read_model_kind", "wrong"),
+        id="wrong-kind",
+    ),
+    pytest.param(
+        lambda p: p["block_p_desktop_exe_packaging_contract_reference"].__setitem__(
+            "build_command_execution", True
+        ),
+        id="contract-build-command",
+    ),
+    pytest.param(
+        lambda p: p["source_contract_preservation"].__setitem__("source_contract_modified", True),
+        id="source-modified",
+    ),
+    pytest.param(
+        lambda p: p["packaging_read_model_summary"].__setitem__("extra", True), id="summary-extra"
+    ),
+    pytest.param(
+        lambda p: p["packaging_contract_overview"].__setitem__("extra", True), id="overview-extra"
+    ),
+    pytest.param(
+        lambda p: p["capability_read_model_state"].pop("packaging_read_model_capabilities"),
+        id="capability-remove",
+    ),
+    pytest.param(
+        lambda p: p["capability_read_model_state"]["packaging_read_model_capabilities"].__setitem__(
+            "build", "allowed"
+        ),
+        id="capability-allowed",
+    ),
+    pytest.param(
+        lambda p: p["capability_read_model_state"].__setitem__(
+            "packaging_read_model_capabilities_known_blocked", False
+        ),
+        id="capability-claim",
+    ),
+    pytest.param(
+        lambda p: p["capability_read_model_state"].__setitem__(
+            "all_real_capabilities_blocked_at_18_4", False
+        ),
+        id="all-capabilities",
+    ),
+    pytest.param(
+        lambda p: p["fail_closed_read_model_decision"].__setitem__("build_executed_by_18_4", True),
+        id="decision-build",
+    ),
+    pytest.param(
+        lambda p: p["read_model_boundaries"].__setitem__("build_command_execution", True),
+        id="boundary-build",
+    ),
+    pytest.param(
+        lambda p: p["read_model_boundaries"].__setitem__("network_opened", True),
+        id="boundary-network",
+    ),
+    pytest.param(
+        lambda p: p["source_boundaries"].__setitem__(
+            "can_build_desktop_exe_build_readiness_matrix", False
+        ),
+        id="source-boundary-build",
+    ),
+    pytest.param(
+        lambda p: p["source_boundaries"].__setitem__("can_feed_18_5", False),
+        id="source-boundary-feed",
+    ),
+    pytest.param(
+        lambda p: p["non_execution_read_model_evidence"].__setitem__(
+            "output_graph_integrity_valid", False
+        ),
+        id="evidence-graph",
+    ),
+    pytest.param(
+        lambda p: p["non_execution_read_model_evidence"].__setitem__(
+            "build_execution_by_18_4", True
+        ),
+        id="evidence-build",
+    ),
+    pytest.param(
+        lambda p: p["future_steps"][0].__setitem__("build_performed", True), id="future-build"
+    ),
+    pytest.param(lambda p: p["future_steps"].reverse(), id="future-reverse"),
+]
+
+
+@pytest.mark.parametrize("mutate", HANDOFF_MUTATORS)
+def test_handoff_integrity_rejects_nested_tampering(mutate: Any) -> None:
+    payload = _payload()
+    mutate(payload)
+    assert read_model._handoff_integrity(payload) is False
