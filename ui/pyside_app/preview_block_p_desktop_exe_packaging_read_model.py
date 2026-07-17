@@ -3883,6 +3883,312 @@ def build_preview_block_p_desktop_exe_packaging_read_model() -> dict[str, Any]:
     return payload
 
 
+# Literal ordered schemas used by the strict 18.4 -> 18.5 handoff contract.
+CONTRACT_REFERENCE_FIELDS: Final[list[str]] = [
+    "schema_version",
+    "block_p_desktop_exe_packaging_contract_kind",
+    "block",
+    "step",
+    "block_p_desktop_exe_packaging_contract_status",
+    "block_p_desktop_exe_packaging_contract_decision",
+    "packaging_contract_artifact_complete",
+    "ready_for_block_p_4",
+    "next_step",
+    "next_step_title",
+    "status",
+    "source_identity_valid",
+    "source_block_p_desktop_exe_packaging_contract_step",
+    "source_packaging_contract_read_by_18_4",
+    "source_packaging_contract_available_before_read_model",
+    "static_packaging_read_model_only",
+    "packaging_read_model_built_by_18_4",
+    "packaging_read_model_artifact_complete_by_18_4",
+    "ready_for_functional_preview_18_5",
+    "repo_rescan",
+    "filesystem_scan",
+    "environment_scan",
+    "secret_file_read",
+    "dependency_import",
+    "dependency_resolution",
+    "pyside_import",
+    "qml_load",
+    "qt_plugin_discovery",
+    "entrypoint_selection",
+    "entrypoint_validation",
+    "packaging_metadata_mutation",
+    "packaging_profile_selection",
+    "packaging_profile_validation",
+    "build_tool_selection",
+    "toolchain_validation",
+    "policy_application",
+    "bundle_scan",
+    "build_gate_approval",
+    "spec_file_creation",
+    "build_command_creation",
+    "build_command_execution",
+    "packaging",
+    "artifact_creation",
+    "artifact_scan",
+    "artifact_signing",
+    "installer_creation",
+    "release",
+    "runtime",
+    "orders",
+    "network",
+    "credentials_read",
+]
+SOURCE_PRESERVATION_FIELDS: Final[list[str]] = [
+    "source_identity_preserved",
+    "contract_reference_preserved",
+    "contract_summary_preserved",
+    "principles_preserved",
+    "domain_contracts_preserved",
+    "scope_contracts_preserved",
+    "requirement_contracts_preserved",
+    "blocker_contracts_preserved",
+    "evidence_contracts_preserved",
+    "acceptance_rules_preserved",
+    "capability_state_preserved",
+    "fail_closed_state_preserved",
+    "contract_boundaries_preserved",
+    "source_boundaries_preserved",
+    "future_steps_preserved",
+    "referential_integrity_preserved",
+    "source_contract_modified",
+    "source_contract_recalculated",
+    "source_relations_modified",
+    "repo_rescanned",
+]
+SUMMARY_FIELDS: Final[list[str]] = [
+    "source_18_3_accepted",
+    "source_packaging_contract_preserved",
+    "source_only",
+    "plain_data",
+    "static_read_model",
+    "packaging_read_model_artifact_complete",
+    "ready_for_block_p_5",
+    "domain_contract_count",
+    "scope_contract_count",
+    "requirement_contract_count",
+    "blocker_count",
+    "resolved_blocker_count",
+    "unresolved_blocker_count",
+    "evidence_requirement_count",
+    "collected_evidence_count",
+    "validated_evidence_count",
+    "acceptance_rule_count",
+    "satisfied_acceptance_rule_count",
+    "contract_definitions_complete",
+    "contract_satisfied",
+    "build_ready",
+    "packaging_authorized",
+    "build_authorized",
+    "artifact_creation_authorized",
+    "release_authorized",
+    "runtime_authorized",
+    "orders_authorized",
+    "only_source_only_18_5_handoff_allowed",
+]
+OVERVIEW_FIELDS: Final[list[str]] = [
+    "contract_source_step",
+    "contract_artifact_complete",
+    "contract_definitions_complete",
+    "contract_satisfied",
+    "all_blockers_resolved",
+    "all_evidence_collected",
+    "all_evidence_validated",
+    "all_acceptance_rules_satisfied",
+    "desktop_entrypoint_selected",
+    "desktop_entrypoint_validated",
+    "qml_bundle_validated",
+    "qt_plugin_inventory_complete",
+    "dependency_resolution_complete",
+    "packaging_metadata_complete",
+    "packaging_profile_aligned",
+    "artifact_exclusion_policy_validated",
+    "windows_toolchain_confirmed",
+    "future_explicit_build_gate_present",
+    "build_ready",
+    "packaging_authorized",
+    "build_authorized",
+    "read_model_state",
+    "next_required_source_only_step",
+]
+CAPABILITY_STATE_FIELDS: Final[list[str]] = [
+    "inherited_block_o_capabilities",
+    "inherited_block_p_capabilities",
+    "source_inventory_capabilities",
+    "inventory_matrix_capabilities",
+    "packaging_contract_capabilities",
+    "packaging_read_model_capabilities",
+    "inherited_block_o_capabilities_known_blocked",
+    "inherited_block_p_capabilities_known_blocked",
+    "source_inventory_capabilities_known_blocked",
+    "inventory_matrix_capabilities_known_blocked",
+    "packaging_contract_capabilities_known_blocked",
+    "packaging_read_model_capabilities_known_blocked",
+    "all_real_capabilities_blocked_at_18_4",
+]
+FAIL_CLOSED_DECISION_FIELDS: Final[list[str]] = [
+    "block_p_packaging_contract_in_18_3",
+    "block_p_packaging_read_model_in_18_4",
+    "block_p_build_readiness_matrix_in_18_5",
+    "only_source_only_18_5_handoff_allowed",
+    "source_contract_modified_by_18_4",
+    "contract_conditions_reinterpreted_by_18_4",
+    "blocker_resolved_by_18_4",
+    "evidence_collected_by_18_4",
+    "evidence_validated_by_18_4",
+    "acceptance_rule_satisfied_by_18_4",
+    "desktop_entrypoint_selected_by_18_4",
+    "desktop_entrypoint_validated_by_18_4",
+    "qml_bundle_validated_by_18_4",
+    "qt_plugins_discovered_by_18_4",
+    "dependency_resolution_performed_by_18_4",
+    "packaging_metadata_modified_by_18_4",
+    "packaging_profile_selected_by_18_4",
+    "build_tool_selected_by_18_4",
+    "windows_toolchain_confirmed_by_18_4",
+    "artifact_exclusion_policy_applied_by_18_4",
+    "bundle_scan_performed_by_18_4",
+    "build_gate_approved_by_18_4",
+    "build_ready_by_18_4",
+    "packaging_authorized_by_18_4",
+    "build_authorized_by_18_4",
+    "build_executed_by_18_4",
+    "artifact_created_by_18_4",
+    "release_authorized_by_18_4",
+    "runtime_enabled_by_18_4",
+    "orders_enabled_by_18_4",
+]
+NON_EXECUTION_EVIDENCE_FIELDS: Final[list[str]] = [
+    "source_builder_called",
+    "source_builder_call_count",
+    "source_plain_bounded",
+    "all_top_level_keys_exact_str",
+    "source_accepted",
+    "identity_valid",
+    "contract_reference_valid",
+    "contract_summary_valid",
+    "source_preservation_valid",
+    "principles_valid",
+    "desktop_entrypoint_contract_valid",
+    "qml_bundle_contract_valid",
+    "python_dependency_contract_valid",
+    "packaging_metadata_contract_valid",
+    "preview_packaging_contract_valid",
+    "artifact_exclusion_contract_valid",
+    "scope_contract_rows_valid",
+    "requirement_contract_rows_valid",
+    "blocker_contract_rows_valid",
+    "evidence_rows_valid",
+    "acceptance_rows_valid",
+    "capability_state_valid",
+    "fail_closed_valid",
+    "non_execution_evidence_valid",
+    "contract_boundaries_valid",
+    "source_boundaries_valid",
+    "future_steps_valid",
+    "source_graph_integrity_valid",
+    "source_referential_integrity_valid",
+    "contract_definition_graph_complete",
+    "output_graph_integrity_valid",
+    "output_referential_integrity_valid",
+    "domain_contract_read_model_row_count",
+    "scope_contract_read_model_row_count",
+    "requirement_contract_read_model_row_count",
+    "blocker_read_model_row_count",
+    "evidence_read_model_row_count",
+    "acceptance_rule_read_model_row_count",
+    "read_model_artifact_complete",
+    "repo_rescan_by_18_4",
+    "filesystem_scan_by_18_4",
+    "dependency_resolution_by_18_4",
+    "qml_load_by_18_4",
+    "qt_plugin_discovery_by_18_4",
+    "entrypoint_selection_by_18_4",
+    "entrypoint_validation_by_18_4",
+    "metadata_mutation_by_18_4",
+    "profile_selection_by_18_4",
+    "tool_selection_by_18_4",
+    "policy_application_by_18_4",
+    "bundle_scan_by_18_4",
+    "build_gate_approval_by_18_4",
+    "build_ready_by_18_4",
+    "packaging_authorized_by_18_4",
+    "build_authorized_by_18_4",
+    "build_execution_by_18_4",
+    "artifact_creation_by_18_4",
+    "release_by_18_4",
+    "runtime_by_18_4",
+    "orders_by_18_4",
+    "network_by_18_4",
+    "credentials_read_by_18_4",
+]
+READ_MODEL_BOUNDARY_FIELDS: Final[list[str]] = [
+    "reads_18_3_only",
+    "source_only",
+    "plain_data",
+    "static_read_model",
+    "repo_rescan",
+    "filesystem_scan",
+    "environment_scan",
+    "secret_file_read",
+    "dependency_import",
+    "dependency_resolution",
+    "pyside_import",
+    "qml_load",
+    "qt_plugin_discovery",
+    "entrypoint_selection",
+    "entrypoint_validation",
+    "packaging_metadata_mutation",
+    "packaging_profile_selection",
+    "packaging_profile_validation",
+    "build_tool_selection",
+    "toolchain_validation",
+    "artifact_exclusion_policy_application",
+    "bundle_scan",
+    "build_gate_approval",
+    "build_readiness_grant",
+    "packaging_authorization",
+    "build_authorization",
+    "spec_file_creation",
+    "build_command_creation",
+    "build_command_execution",
+    "packaging_performed",
+    "artifact_created",
+    "artifact_scanned",
+    "artifact_signed",
+    "installer_created",
+    "release_performed",
+    "runtime_started",
+    "orders_enabled",
+    "network_opened",
+    "credentials_read",
+    "qml_bridge_gateway_controller_changed",
+    "can_feed_only_18_5_build_readiness_matrix",
+]
+SOURCE_BOUNDARY_FIELDS: Final[list[str]] = [
+    "source_block_p_desktop_exe_packaging_contract",
+    "packaging_contract_preserved",
+    "can_build_desktop_exe_packaging_read_model",
+    "packaging_read_model_artifact_complete",
+    "can_build_desktop_exe_build_readiness_matrix",
+    "can_feed_18_5",
+]
+FUTURE_STEP_FIELDS: Final[list[str]] = ["step", "title", "source_only", "build_performed"]
+
+
+def _exact_dict(value: Any, fields: list[str]) -> dict[str, Any] | None:
+    return value if type(value) is dict and list(value) == fields else None
+
+
+def _exact_values(row: dict[str, Any], expected: dict[str, Any]) -> bool:
+    return all(
+        type(row.get(key)) is type(value) and row[key] == value for key, value in expected.items()
+    )
+
+
 # Final handoff validator: kept separate from row-graph integrity to avoid recursion.
 def _handoff_integrity(payload: Any) -> bool:
     if (
@@ -3891,102 +4197,253 @@ def _handoff_integrity(payload: Any) -> bool:
         or not _output_integrity(payload)
     ):
         return False
-    strings = {
-        "schema_version": SCHEMA_VERSION,
-        "block": BLOCK_ID,
-        "step": STEP_ID,
-        "status": STATUS,
-        "next_step": NEXT_STEP,
-        "next_step_title": NEXT_STEP_TITLE,
-        "block_p_desktop_exe_packaging_read_model_status": PACKAGING_READ_MODEL_STATUS,
-        "block_p_desktop_exe_packaging_read_model_decision": PACKAGING_READ_MODEL_STATUS.upper(),
-    }
-    if any(type(payload[k]) is not str or payload[k] != v for k, v in strings.items()):
-        return False
-    if (
-        payload["packaging_read_model_artifact_complete"] is not True
-        or payload["ready_for_block_p_5"] is not True
+    if not _exact_values(
+        payload,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "block_p_desktop_exe_packaging_read_model_kind": KIND,
+            "block": BLOCK_ID,
+            "step": STEP_ID,
+            "status": STATUS,
+            "block_p_desktop_exe_packaging_read_model_status": PACKAGING_READ_MODEL_STATUS,
+            "block_p_desktop_exe_packaging_read_model_decision": PACKAGING_READ_MODEL_STATUS.upper(),
+            "packaging_read_model_artifact_complete": True,
+            "ready_for_block_p_5": True,
+            "next_step": NEXT_STEP,
+            "next_step_title": NEXT_STEP_TITLE,
+        },
     ):
         return False
-    summary = payload["packaging_read_model_summary"]
-    overview = payload["packaging_contract_overview"]
-    if type(summary) is not dict or type(overview) is not dict:
+    contract = _exact_dict(
+        payload["block_p_desktop_exe_packaging_contract_reference"], CONTRACT_REFERENCE_FIELDS
+    )
+    preservation = _exact_dict(payload["source_contract_preservation"], SOURCE_PRESERVATION_FIELDS)
+    summary = _exact_dict(payload["packaging_read_model_summary"], SUMMARY_FIELDS)
+    overview = _exact_dict(payload["packaging_contract_overview"], OVERVIEW_FIELDS)
+    caps = _exact_dict(payload["capability_read_model_state"], CAPABILITY_STATE_FIELDS)
+    decision = _exact_dict(payload["fail_closed_read_model_decision"], FAIL_CLOSED_DECISION_FIELDS)
+    evidence = _exact_dict(
+        payload["non_execution_read_model_evidence"], NON_EXECUTION_EVIDENCE_FIELDS
+    )
+    boundaries = _exact_dict(payload["read_model_boundaries"], READ_MODEL_BOUNDARY_FIELDS)
+    source_boundaries = _exact_dict(payload["source_boundaries"], SOURCE_BOUNDARY_FIELDS)
+    if any(
+        x is None
+        for x in (
+            contract,
+            preservation,
+            summary,
+            overview,
+            caps,
+            decision,
+            evidence,
+            boundaries,
+            source_boundaries,
+        )
+    ):
         return False
-    true_summary = (
-        "source_18_3_accepted",
-        "source_packaging_contract_preserved",
-        "source_only",
-        "plain_data",
-        "static_read_model",
-        "packaging_read_model_artifact_complete",
-        "ready_for_block_p_5",
-        "only_source_only_18_5_handoff_allowed",
+    assert (
+        contract
+        and preservation
+        and summary
+        and overview
+        and caps
+        and decision
+        and evidence
+        and boundaries
+        and source_boundaries
     )
-    false_summary = (
-        "contract_satisfied",
-        "build_ready",
-        "packaging_authorized",
-        "build_authorized",
-        "artifact_creation_authorized",
-        "release_authorized",
-        "runtime_authorized",
-        "orders_authorized",
-    )
-    if any(summary.get(k) is not True for k in true_summary) or any(
-        summary.get(k) is not False for k in false_summary
+    contract_true = {
+        "packaging_contract_artifact_complete",
+        "ready_for_block_p_4",
+        "source_identity_valid",
+        "source_packaging_contract_read_by_18_4",
+        "source_packaging_contract_available_before_read_model",
+        "static_packaging_read_model_only",
+        "packaging_read_model_built_by_18_4",
+        "packaging_read_model_artifact_complete_by_18_4",
+        "ready_for_functional_preview_18_5",
+    }
+    if not _exact_values(
+        contract,
+        {
+            "schema_version": "preview_block_p_desktop_exe_packaging_contract.v1",
+            "block_p_desktop_exe_packaging_contract_kind": "functional_preview_block_p_desktop_exe_packaging_contract",
+            "block": "P",
+            "step": "18.3",
+            "source_block_p_desktop_exe_packaging_contract_step": "FUNCTIONAL-PREVIEW-18.3",
+            "block_p_desktop_exe_packaging_contract_status": "source_18_2_consumed_inventory_matrix_preserved_static_plain_data_contract_complete_3_scopes_8_requirements_12_blockers_12_evidence_6_acceptance_rules_defined_zero_resolution_approval_readiness_authorization_build_runtime_orders_only_source_only_handoff_to_18_4_allowed",
+            "block_p_desktop_exe_packaging_contract_decision": "SOURCE_18_2_CONSUMED_INVENTORY_MATRIX_PRESERVED_STATIC_PLAIN_DATA_CONTRACT_COMPLETE_3_SCOPES_8_REQUIREMENTS_12_BLOCKERS_12_EVIDENCE_6_ACCEPTANCE_RULES_DEFINED_ZERO_RESOLUTION_APPROVAL_READINESS_AUTHORIZATION_BUILD_RUNTIME_ORDERS_ONLY_SOURCE_ONLY_HANDOFF_TO_18_4_ALLOWED",
+            "next_step": "FUNCTIONAL-PREVIEW-18.4",
+            "next_step_title": "BLOCK P DESKTOP EXE PACKAGING READ MODEL",
+            "status": "ready_for_functional_preview_18_4_block_p_desktop_exe_packaging_read_model",
+        },
+    ) or any(
+        type(contract[k]) is not bool or contract[k] is not (k in contract_true)
+        for k in CONTRACT_REFERENCE_FIELDS
+        if k
+        not in {
+            "schema_version",
+            "block_p_desktop_exe_packaging_contract_kind",
+            "block",
+            "step",
+            "block_p_desktop_exe_packaging_contract_status",
+            "block_p_desktop_exe_packaging_contract_decision",
+            "next_step",
+            "next_step_title",
+            "status",
+            "source_block_p_desktop_exe_packaging_contract_step",
+        }
     ):
         return False
     if any(
-        type(summary.get(k)) is not int or summary[k] != 0
-        for k in (
+        type(preservation[k]) is not bool
+        or preservation[k]
+        is not (k.endswith("_preserved") or k == "referential_integrity_preserved")
+        for k in SOURCE_PRESERVATION_FIELDS
+    ):
+        return False
+    if not _exact_values(
+        summary,
+        {
+            "domain_contract_count": 6,
+            "scope_contract_count": 3,
+            "requirement_contract_count": 8,
+            "blocker_count": 12,
+            "resolved_blocker_count": 0,
+            "unresolved_blocker_count": 12,
+            "evidence_requirement_count": 12,
+            "collected_evidence_count": 0,
+            "validated_evidence_count": 0,
+            "acceptance_rule_count": 6,
+            "satisfied_acceptance_rule_count": 0,
+        },
+    ) or any(
+        type(summary[k]) is not bool
+        or summary[k]
+        is not (
+            k
+            in {
+                "source_18_3_accepted",
+                "source_packaging_contract_preserved",
+                "source_only",
+                "plain_data",
+                "static_read_model",
+                "packaging_read_model_artifact_complete",
+                "ready_for_block_p_5",
+                "contract_definitions_complete",
+                "only_source_only_18_5_handoff_allowed",
+            }
+        )
+        for k in SUMMARY_FIELDS
+        if k
+        not in {
+            "domain_contract_count",
+            "scope_contract_count",
+            "requirement_contract_count",
+            "blocker_count",
             "resolved_blocker_count",
+            "unresolved_blocker_count",
+            "evidence_requirement_count",
             "collected_evidence_count",
             "validated_evidence_count",
+            "acceptance_rule_count",
             "satisfied_acceptance_rule_count",
-        )
+        }
     ):
         return False
-    if (
-        overview.get("contract_artifact_complete") is not True
-        or overview.get("next_required_source_only_step") != NEXT_STEP
+    if not _exact_values(
+        overview,
+        {
+            "contract_source_step": "FUNCTIONAL-PREVIEW-18.3",
+            "read_model_state": "contract_defined_all_operational_conditions_unresolved",
+            "next_required_source_only_step": NEXT_STEP,
+        },
+    ) or any(
+        type(overview[k]) is not bool
+        or overview[k] is not (k in {"contract_artifact_complete", "contract_definitions_complete"})
+        for k in OVERVIEW_FIELDS
+        if k not in {"contract_source_step", "read_model_state", "next_required_source_only_step"}
+    ):
+        return False
+    cap_maps = CAPABILITY_STATE_FIELDS[:6]
+    if caps["all_real_capabilities_blocked_at_18_4"] is not True or any(
+        type(caps[k]) is not dict
+        or not caps[k]
         or any(
-            overview.get(k) is not False
-            for k in (
-                "contract_satisfied",
-                "all_blockers_resolved",
-                "all_evidence_collected",
-                "all_evidence_validated",
-                "all_acceptance_rules_satisfied",
-                "build_ready",
-                "packaging_authorized",
-                "build_authorized",
-            )
+            type(a) is not str or type(b) is not str or b != "blocked" for a, b in caps[k].items()
         )
+        or caps[f"{k}_known_blocked"] is not True
+        for k in cap_maps
     ):
         return False
-    caps = payload["capability_read_model_state"]
-    if type(caps) is not dict or caps.get("all_real_capabilities_blocked_at_18_4") is not True:
-        return False
-    for k, v in caps.items():
-        if k.endswith("_capabilities") and (
-            type(v) is not dict
-            or not v
-            or any(type(x) is not str or type(y) is not str or y != "blocked" for x, y in v.items())
-            or caps.get(k + "_known_blocked") is not True
-        ):
-            return False
-    for section in (
-        "fail_closed_read_model_decision",
-        "read_model_boundaries",
-        "source_boundaries",
-        "non_execution_read_model_evidence",
-    ):
-        if type(payload[section]) is not dict:
-            return False
-    if (
-        payload["source_boundaries"].get("can_feed_18_5") is not True
-        or payload["non_execution_read_model_evidence"].get("output_graph_integrity_valid")
-        is not True
+    decision_expected = {
+        "block_p_packaging_contract_in_18_3": "preserved",
+        "block_p_packaging_read_model_in_18_4": "complete",
+        "block_p_build_readiness_matrix_in_18_5": "allowed",
+        "only_source_only_18_5_handoff_allowed": True,
+    }
+    if not _exact_values(decision, decision_expected) or any(
+        type(decision[k]) is not bool or decision[k] is not False
+        for k in FAIL_CLOSED_DECISION_FIELDS
+        if k not in decision_expected
     ):
         return False
-    return True
+    boundary_true = {
+        "reads_18_3_only",
+        "source_only",
+        "plain_data",
+        "static_read_model",
+        "can_feed_only_18_5_build_readiness_matrix",
+    }
+    if any(
+        type(boundaries[k]) is not bool or boundaries[k] is not (k in boundary_true)
+        for k in READ_MODEL_BOUNDARY_FIELDS
+    ):
+        return False
+    if not _exact_values(
+        source_boundaries,
+        {
+            "source_block_p_desktop_exe_packaging_contract": "FUNCTIONAL-PREVIEW-18.3",
+            "packaging_contract_preserved": True,
+            "can_build_desktop_exe_packaging_read_model": True,
+            "packaging_read_model_artifact_complete": True,
+            "can_build_desktop_exe_build_readiness_matrix": True,
+            "can_feed_18_5": True,
+        },
+    ):
+        return False
+    evidence_true = set(NON_EXECUTION_EVIDENCE_FIELDS[:32]) | {"read_model_artifact_complete"}
+    evidence_counts = {
+        "source_builder_call_count": 1,
+        "domain_contract_read_model_row_count": 6,
+        "scope_contract_read_model_row_count": 3,
+        "requirement_contract_read_model_row_count": 8,
+        "blocker_read_model_row_count": 12,
+        "evidence_read_model_row_count": 12,
+        "acceptance_rule_read_model_row_count": 6,
+    }
+    if not _exact_values(evidence, evidence_counts) or any(
+        type(evidence[k]) is not bool or evidence[k] is not (k in evidence_true)
+        for k in NON_EXECUTION_EVIDENCE_FIELDS
+        if k not in evidence_counts
+    ):
+        return False
+    future = payload["future_steps"]
+    expected_future = [
+        ("18.5", "BLOCK P DESKTOP EXE BUILD READINESS MATRIX"),
+        ("18.6", "BLOCK P DESKTOP EXE BUILD READINESS CONTRACT"),
+        ("18.7", "BLOCK P DESKTOP EXE BUILD READINESS READ MODEL"),
+        ("18.8", "BLOCK P CLOSURE AUDIT"),
+    ]
+    return (
+        type(future) is list
+        and len(future) == 4
+        and all(
+            _exact_dict(row, FUTURE_STEP_FIELDS) is not None
+            and _exact_values(
+                row, {"step": step, "title": title, "source_only": True, "build_performed": False}
+            )
+            for row, (step, title) in zip(future, expected_future)
+        )
+    )
