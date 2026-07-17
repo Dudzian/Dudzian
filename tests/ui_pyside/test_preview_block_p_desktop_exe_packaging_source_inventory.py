@@ -641,6 +641,46 @@ def clone_plain(value: Any) -> Any:
     return root
 
 
+def assert_plain_graph_equal(left: Any, right: Any) -> None:
+    stack: list[tuple[Any, Any]] = [(left, right)]
+    left_to_right: dict[int, int] = {}
+    right_to_left: dict[int, int] = {}
+
+    while stack:
+        left_value, right_value = stack.pop()
+        assert type(left_value) is type(right_value)
+
+        if type(left_value) not in (dict, list):
+            assert left_value == right_value
+            continue
+
+        left_id = id(left_value)
+        right_id = id(right_value)
+        if left_id in left_to_right:
+            assert left_to_right[left_id] == right_id
+            assert right_to_left[right_id] == left_id
+            continue
+
+        assert right_id not in right_to_left
+        left_to_right[left_id] = right_id
+        right_to_left[right_id] = left_id
+
+        if type(left_value) is dict:
+            left_keys = list(left_value)
+            right_keys = list(right_value)
+            assert len(left_keys) == len(right_keys)
+            for index in range(len(left_keys) - 1, -1, -1):
+                left_key = left_keys[index]
+                right_key = right_keys[index]
+                assert type(left_key) is type(right_key)
+                assert left_key == right_key
+                stack.append((left_value[left_key], right_value[right_key]))
+        else:
+            assert len(left_value) == len(right_value)
+            for index in range(len(left_value) - 1, -1, -1):
+                stack.append((left_value[index], right_value[index]))
+
+
 def test_clone_plain_iteratively_copies_deep_and_nominal_plain_data() -> None:
     def mixed(depth: int) -> dict[str, Any]:
         root: dict[str, Any] = {}
@@ -657,9 +697,9 @@ def test_clone_plain_iteratively_copies_deep_and_nominal_plain_data() -> None:
     for source in [inv.EXPECTED_SOURCE, deep_dict(1500), deep_list(1500), mixed(1500)]:
         snapshot = clone_plain(source)
         clone = clone_plain(source)
-        assert clone == source
+        assert_plain_graph_equal(clone, source)
         assert clone is not source
-        assert clone == snapshot
+        assert_plain_graph_equal(clone, snapshot)
         if type(clone) is dict:
             assert list(clone) == list(source)
 
@@ -677,7 +717,7 @@ def test_clone_plain_iteratively_copies_deep_and_nominal_plain_data() -> None:
             nested["clone_only"] = True
         else:
             nested.append("clone_only")
-        assert source == snapshot
+        assert_plain_graph_equal(source, snapshot)
 
 
 def test_clone_plain_handles_shared_references_and_cycles_without_mutating_source() -> None:
@@ -698,6 +738,64 @@ def test_clone_plain_handles_shared_references_and_cycles_without_mutating_sourc
     assert cycle_clone["self"] is cycle_clone
 
 
+def test_assert_plain_graph_equal_handles_deep_graphs_and_mismatches() -> None:
+    def mixed(depth: int) -> dict[str, Any]:
+        root: dict[str, Any] = {}
+        current: Any = root
+        for index in range(depth):
+            child: Any = [] if index % 2 else {}
+            if type(current) is dict:
+                current["child"] = child
+            else:
+                current.append(child)
+            current = child
+        return root
+
+    for source in (deep_dict(1500), deep_list(1500), mixed(1500)):
+        assert_plain_graph_equal(source, clone_plain(source))
+
+    shared = ["value"]
+    matching_shared = ["value"]
+    assert_plain_graph_equal(
+        {"first": shared, "second": shared},
+        {"first": matching_shared, "second": matching_shared},
+    )
+
+    left_cycle: dict[str, Any] = {}
+    right_cycle: dict[str, Any] = {}
+    left_cycle["self"] = left_cycle
+    right_cycle["self"] = right_cycle
+    assert_plain_graph_equal(left_cycle, right_cycle)
+
+    scalar_left = deep_dict(1500)
+    scalar_right = clone_plain(scalar_left)
+    left_leaf = scalar_left
+    right_leaf = scalar_right
+    for _ in range(1500):
+        left_leaf = left_leaf["x"]
+        right_leaf = right_leaf["x"]
+    left_leaf["value"] = "left"
+    right_leaf["value"] = "right"
+    with pytest.raises(AssertionError):
+        assert_plain_graph_equal(scalar_left, scalar_right)
+
+    mismatches = [
+        (["one"], ["one", "two"]),
+        ({"first": 1}, {"second": 1}),
+        ({"first": 1, "second": 2}, {"second": 2, "first": 1}),
+        (True, 1),
+    ]
+    for left, right in mismatches:
+        with pytest.raises(AssertionError):
+            assert_plain_graph_equal(left, right)
+
+    shared_left = ["value"]
+    topology_left = {"first": shared_left, "second": shared_left}
+    topology_right = {"first": ["value"], "second": ["value"]}
+    with pytest.raises(AssertionError):
+        assert_plain_graph_equal(topology_left, topology_right)
+
+
 def blocked_from_source(monkeypatch: pytest.MonkeyPatch, source: Any) -> dict[str, Any]:
     snapshot = (
         clone_plain(source) if type(source) is dict and inv._all_plain_json(source, 2000) else None
@@ -711,7 +809,7 @@ def blocked_from_source(monkeypatch: pytest.MonkeyPatch, source: Any) -> dict[st
     assert payload["status"] == inv.BLOCKED_STATUS
     json.dumps(payload)
     if snapshot is not None:
-        assert source == snapshot
+        assert_plain_graph_equal(source, snapshot)
     return payload
 
 
