@@ -15,6 +15,186 @@ from ui.pyside_app.preview_block_p_desktop_exe_build_readiness_contract import (
 )
 
 
+PathPart = str | int
+Path = tuple[PathPart, ...]
+
+
+class HashBomb:
+    hash_calls = 0
+
+    def __hash__(self) -> int:
+        type(self).hash_calls += 1
+        raise RuntimeError("HashBomb hashing must not be called")
+
+
+class EqualityBomb:
+    equality_calls = 0
+
+    def __eq__(self, other: object) -> bool:
+        type(self).equality_calls += 1
+        raise RuntimeError("EqualityBomb equality must not be called")
+
+
+class UnhashableEqual:
+    __hash__ = None  # type: ignore[assignment]
+
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("UnhashableEqual equality must not be called")
+
+
+class BombKey(str):
+    equality_calls = 0
+    armed: bool
+
+    def __new__(cls, value: str) -> "BombKey":
+        instance = super().__new__(cls, value)
+        instance.armed = False
+        return instance
+
+    def __eq__(self, other: object) -> bool:
+        if self.armed:
+            type(self).equality_calls += 1
+            raise RuntimeError("BombKey equality must not be called")
+        return super().__eq__(other)
+
+    __hash__ = str.__hash__
+
+
+class StrSubclass(str):
+    pass
+
+
+class ListSubclass(list[object]):
+    pass
+
+
+class DictSubclass(dict[str, object]):
+    pass
+
+
+def _reset_bomb_counters() -> None:
+    BombKey.equality_calls = 0
+    EqualityBomb.equality_calls = 0
+    HashBomb.hash_calls = 0
+
+
+def _get_path(root: object, path: Path) -> object:
+    current = root
+    for part in path:
+        if type(part) is str:
+            assert type(current) is dict
+            current = current[part]
+        else:
+            assert type(part) is int
+            assert type(current) is list
+            current = current[part]
+    return current
+
+
+def _set_path(root: object, path: Path, value: object) -> None:
+    assert path
+    parent = _get_path(root, path[:-1])
+    final = path[-1]
+    if type(final) is str:
+        assert type(parent) is dict
+        parent[final] = value
+    else:
+        assert type(final) is int
+        assert type(parent) is list
+        parent[final] = value
+
+
+def _replace_path(root: object, path: Path, replacement: object) -> object:
+    if not path:
+        return replacement
+    _set_path(root, path, replacement)
+    return root
+
+
+def _leaf_paths(root: object) -> list[Path]:
+    paths: list[Path] = []
+    pending: list[tuple[object, Path]] = [(root, ())]
+    while pending:
+        value, path = pending.pop()
+        if type(value) is dict:
+            items = list(value.items())
+            for key, child in reversed(items):
+                assert type(key) is str
+                pending.append((child, path + (key,)))
+        elif type(value) is list:
+            for index in range(len(value) - 1, -1, -1):
+                pending.append((value[index], path + (index,)))
+        else:
+            assert type(value) in (str, bool, int, type(None))
+            paths.append(path)
+    return paths
+
+
+def _container_paths(root: object) -> tuple[list[Path], list[Path]]:
+    dict_paths: list[Path] = []
+    list_paths: list[Path] = []
+    pending: list[tuple[object, Path]] = [(root, ())]
+    while pending:
+        value, path = pending.pop()
+        if type(value) is dict:
+            dict_paths.append(path)
+            items = list(value.items())
+            for key, child in reversed(items):
+                assert type(key) is str
+                pending.append((child, path + (key,)))
+        elif type(value) is list:
+            list_paths.append(path)
+            for index in range(len(value) - 1, -1, -1):
+                pending.append((value[index], path + (index,)))
+    return dict_paths, list_paths
+
+
+def _replace_key(mapping: dict[str, Any], key: str) -> BombKey:
+    bomb_key = BombKey(key)
+    items = list(mapping.items())
+    mapping.clear()
+    for item_key, value in items:
+        mapping[bomb_key if item_key == key else item_key] = value
+    bomb_key.armed = True
+    return bomb_key
+
+
+def _wrong_scalar(value: object) -> object:
+    if type(value) is bool:
+        result: object = not value
+    elif type(value) is int:
+        result = value + 1
+    elif type(value) is str:
+        result = value + "_tampered"
+    else:
+        raise AssertionError("None requires dedicated handling")
+    assert type(result) is type(value)
+    assert result != value
+    return result
+
+
+def _wrong_type_scalar(value: object) -> object:
+    if type(value) is bool:
+        result: object = 0
+    elif type(value) is int:
+        result = True
+    elif type(value) is str:
+        result = StrSubclass(value)
+    else:
+        result = EqualityBomb()
+    assert type(result) is not type(value)
+    return result
+
+
+SOURCE_LEAF_PATHS = _leaf_paths(read_model._trusted_source_template())
+NOMINAL_LEAF_PATHS = _leaf_paths(read_model._nominal())
+BLOCKED_LEAF_PATHS = _leaf_paths(read_model._blocked())
+
+SOURCE_DICT_PATHS, SOURCE_LIST_PATHS = _container_paths(read_model._trusted_source_template())
+NOMINAL_DICT_PATHS, NOMINAL_LIST_PATHS = _container_paths(read_model._nominal())
+BLOCKED_DICT_PATHS, BLOCKED_LIST_PATHS = _container_paths(read_model._blocked())
+
+
 def test_does_not_call_upstream_private_nominal(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
 
@@ -266,3 +446,247 @@ def test_comparator_cycles_and_deep_graphs() -> None:
     for _ in range(1500):
         mismatch = {"next": mismatch}
     assert read_model._exact_plain(left, mismatch) is False
+
+
+def _assert_zero_bomb_counters() -> None:
+    assert BombKey.equality_calls == 0
+    assert EqualityBomb.equality_calls == 0
+    assert HashBomb.hash_calls == 0
+
+
+def test_path_helpers_replace_without_mutating_canonical_factory_result() -> None:
+    canonical = read_model._blocked()
+    assert _replace_path(canonical, (), {"root": True}) == {"root": True}
+    fresh = read_model._blocked()
+    assert fresh == read_model._blocked()
+    nested = read_model._nominal()
+    path = ("readiness_clause_read_rows", 0, "read_model_row_id")
+    original = _get_path(nested, path)
+    assert type(original) is str
+    assert _replace_path(nested, path, "changed") is nested
+    assert _get_path(nested, path) == "changed"
+    assert _get_path(read_model._nominal(), path) == original
+    with pytest.raises(AssertionError):
+        _set_path(nested, (), False)
+
+
+def _assert_unique_paths(paths: list[Path]) -> None:
+    assert len(paths) == len(set(paths))
+
+
+def _assert_path_inventory(
+    root: dict[str, Any],
+    leaf_paths: list[Path],
+    dict_paths: list[Path],
+    list_paths: list[Path],
+) -> None:
+    _assert_unique_paths(leaf_paths)
+    _assert_unique_paths(dict_paths)
+    _assert_unique_paths(list_paths)
+    assert () in dict_paths
+    for path in leaf_paths:
+        assert type(_get_path(root, path)) in (str, bool, int, type(None))
+    for path in dict_paths:
+        assert type(_get_path(root, path)) is dict
+    for path in list_paths:
+        assert type(_get_path(root, path)) is list
+
+
+def test_path_enumeration_counts_and_round_trip() -> None:
+    source = read_model._trusted_source_template()
+    nominal = read_model._nominal()
+    blocked = read_model._blocked()
+    assert len(SOURCE_LEAF_PATHS) == 739
+    assert len(SOURCE_DICT_PATHS) == 37
+    assert len(SOURCE_LIST_PATHS) == 57
+    assert len(NOMINAL_LEAF_PATHS) == 742
+    assert len(NOMINAL_DICT_PATHS) == 36
+    assert len(NOMINAL_LIST_PATHS) == 58
+    assert len(BLOCKED_LEAF_PATHS) == 14
+    assert len(BLOCKED_DICT_PATHS) == 1
+    assert len(BLOCKED_LIST_PATHS) == 2
+    _assert_path_inventory(source, SOURCE_LEAF_PATHS, SOURCE_DICT_PATHS, SOURCE_LIST_PATHS)
+    _assert_path_inventory(nominal, NOMINAL_LEAF_PATHS, NOMINAL_DICT_PATHS, NOMINAL_LIST_PATHS)
+    _assert_path_inventory(blocked, BLOCKED_LEAF_PATHS, BLOCKED_DICT_PATHS, BLOCKED_LIST_PATHS)
+
+
+def test_row_rule_and_link_list_path_completeness() -> None:
+    source = read_model._trusted_source_template()
+    nominal = read_model._nominal()
+    assert len(_get_path(source, ("build_readiness_contract_rows",))) == 17
+    assert len(_get_path(source, ("build_readiness_acceptance_rules",))) == 6
+    assert len(_get_path(nominal, ("readiness_clause_read_rows",))) == 17
+    assert len(_get_path(nominal, ("acceptance_rule_read_rows",))) == 6
+    for path in (
+        ("build_readiness_contract_rows",),
+        ("build_readiness_acceptance_rules",),
+        ("readiness_clause_read_rows",),
+        ("acceptance_rule_read_rows",),
+        ("future_steps",),
+    ):
+        root = source if path[0].startswith("build_") else nominal
+        assert path in _container_paths(root)[1]
+    source_link_paths = [
+        path
+        for path in SOURCE_LIST_PATHS
+        if path[-1:]
+        in (("source_requirement_ids",), ("source_blocker_ids",), ("required_evidence_ids",))
+    ]
+    nominal_link_paths = [
+        path
+        for path in NOMINAL_LIST_PATHS
+        if path[-1:]
+        in (("source_requirement_ids",), ("source_blocker_ids",), ("required_evidence_ids",))
+    ]
+    assert len(source_link_paths) == 52
+    assert len(nominal_link_paths) == 52
+    for row_index in range(17):
+        for key in ("source_requirement_ids", "source_blocker_ids", "required_evidence_ids"):
+            assert ("build_readiness_contract_rows", row_index, key) in source_link_paths
+            assert ("readiness_clause_read_rows", row_index, key) in nominal_link_paths
+
+
+@pytest.mark.parametrize(
+    ("path", "key"),
+    [
+        ((), "schema_version"),
+        (("build_readiness_contract_rows", 0), "readiness_id"),
+    ],
+)
+def test_bomb_key_source_fails_closed_without_equality_or_hashing(
+    path: Path, key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_bomb_counters()
+    source = copy.deepcopy(read_model._trusted_source_template())
+    mapping = cast(dict[str, Any], _get_path(source, path))
+    _replace_key(mapping, key)
+    assert read_model._source_accepted(source) is False
+    calls = 0
+
+    def builder() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return source
+
+    monkeypatch.setattr(
+        read_model, "build_preview_block_p_desktop_exe_build_readiness_contract", builder
+    )
+    assert (
+        read_model.build_preview_block_p_desktop_exe_build_readiness_read_model()
+        == read_model._blocked()
+    )
+    assert calls == 1
+    assert read_model._integrity(read_model._blocked()) is True
+    _assert_zero_bomb_counters()
+
+
+@pytest.mark.parametrize(
+    ("factory", "path", "key"),
+    [
+        (read_model._nominal, (), "schema_version"),
+        (read_model._nominal, ("build_readiness_read_model_summary",), "source_18_6_accepted"),
+        (read_model._blocked, (), "schema_version"),
+    ],
+)
+def test_bomb_key_integrity_rejects_without_equality_or_hashing(
+    factory: Any, path: Path, key: str
+) -> None:
+    _reset_bomb_counters()
+    payload = copy.deepcopy(factory())
+    mapping = cast(dict[str, Any], _get_path(payload, path))
+    _replace_key(mapping, key)
+    assert read_model._integrity(payload) is False
+    _assert_zero_bomb_counters()
+
+
+@pytest.mark.parametrize("bomb", [EqualityBomb(), UnhashableEqual(), HashBomb()])
+def test_custom_source_values_fail_closed_without_custom_equality_or_hashing(
+    bomb: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_bomb_counters()
+    source = copy.deepcopy(read_model._trusted_source_template())
+    _set_path(source, ("build_readiness_contract_rows", 0, "source_requirement_ids", 0), bomb)
+    assert read_model._source_accepted(source) is False
+    calls = 0
+
+    def builder() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return source
+
+    monkeypatch.setattr(
+        read_model, "build_preview_block_p_desktop_exe_build_readiness_contract", builder
+    )
+    assert (
+        read_model.build_preview_block_p_desktop_exe_build_readiness_read_model()
+        == read_model._blocked()
+    )
+    assert calls == 1
+    _assert_zero_bomb_counters()
+
+
+@pytest.mark.parametrize("bomb", [EqualityBomb(), UnhashableEqual(), HashBomb()])
+def test_custom_nominal_values_fail_integrity_without_custom_equality_or_hashing(
+    bomb: object,
+) -> None:
+    _reset_bomb_counters()
+    payload = read_model._nominal()
+    _set_path(payload, ("readiness_clause_read_rows", 0, "source_requirement_ids", 0), bomb)
+    assert read_model._integrity(payload) is False
+    _assert_zero_bomb_counters()
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement"),
+    [
+        (("schema_version",), StrSubclass(read_model.SOURCE_SCHEMA_VERSION)),
+        (("build_readiness_contract_rows",), ListSubclass()),
+        ((), DictSubclass()),
+    ],
+)
+def test_exact_subclass_source_rejection(
+    path: Path, replacement: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = copy.deepcopy(read_model._trusted_source_template())
+    replacement = DictSubclass(source) if path == () else replacement
+    source = cast(dict[str, Any], _replace_path(source, path, replacement))
+    assert read_model._source_accepted(source) is False
+    monkeypatch.setattr(
+        read_model, "build_preview_block_p_desktop_exe_build_readiness_contract", lambda: source
+    )
+    assert (
+        read_model.build_preview_block_p_desktop_exe_build_readiness_read_model()
+        == read_model._blocked()
+    )
+
+
+@pytest.mark.parametrize(
+    ("factory", "path", "replacement"),
+    [
+        (read_model._nominal, ("schema_version",), StrSubclass(read_model.SCHEMA_VERSION)),
+        (read_model._nominal, ("readiness_clause_read_rows",), ListSubclass()),
+        (read_model._nominal, (), DictSubclass()),
+        (read_model._blocked, ("schema_version",), StrSubclass(read_model.SCHEMA_VERSION)),
+        (read_model._blocked, ("readiness_clause_read_rows",), ListSubclass()),
+        (read_model._blocked, (), DictSubclass()),
+    ],
+)
+def test_exact_subclass_integrity_rejection(factory: Any, path: Path, replacement: object) -> None:
+    payload = copy.deepcopy(factory())
+    replacement = DictSubclass(payload) if path == () else replacement
+    payload = cast(dict[str, Any], _replace_path(payload, path, replacement))
+    assert read_model._integrity(payload) is False
+
+
+def test_wrong_scalar_helpers_for_future_scalar_matrix() -> None:
+    _reset_bomb_counters()
+    assert _wrong_scalar(True) is False
+    assert _wrong_scalar(1) == 2
+    assert _wrong_scalar("x") == "x_tampered"
+    with pytest.raises(AssertionError):
+        _wrong_scalar(None)
+    assert type(_wrong_type_scalar(True)) is int
+    assert type(_wrong_type_scalar(1)) is bool
+    assert type(_wrong_type_scalar("x")) is StrSubclass
+    assert type(_wrong_type_scalar(None)) is EqualityBomb
+    _assert_zero_bomb_counters()
