@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Final
 
 from ui.pyside_app.preview_block_p_desktop_exe_packaging_read_model import (
@@ -300,7 +301,7 @@ def build_preview_block_p_desktop_exe_build_readiness_matrix() -> dict[str, Any]
     rows = (
         [
             {
-                **row,
+                **deepcopy(row),
                 "observed": False,
                 "validated": False,
                 "satisfied": False,
