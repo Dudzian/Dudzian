@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import Counter
+from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
@@ -209,6 +211,157 @@ BLOCKED_EXACT_TYPE_PATHS = BLOCKED_LEAF_PATHS
 SOURCE_DICT_PATHS, SOURCE_LIST_PATHS = _container_paths(read_model._trusted_source_template())
 NOMINAL_DICT_PATHS, NOMINAL_LIST_PATHS = _container_paths(read_model._nominal())
 BLOCKED_DICT_PATHS, BLOCKED_LIST_PATHS = _container_paths(read_model._blocked())
+
+
+def _path_key_id(case: tuple[Path, str]) -> str:
+    path, key = case
+    return f"{_path_id(path)}::{key}"
+
+
+def _path_index_id(case: tuple[Path, int]) -> str:
+    path, index = case
+    return f"{_path_id(path)}::{index}"
+
+
+def _path_pair_id(case: tuple[Path, int, int]) -> str:
+    path, left, right = case
+    return f"{_path_id(path)}::{left}<->{right}"
+
+
+def _dict_missing_cases(
+    factory: Callable[[], dict[str, Any]], paths: list[Path]
+) -> list[tuple[Path, str]]:
+    payload = factory()
+    cases: list[tuple[Path, str]] = []
+    for path in paths:
+        mapping = _get_path(payload, path)
+        assert type(mapping) is dict
+        for key in mapping:
+            assert type(key) is str
+            cases.append((path, key))
+    return cases
+
+
+def _list_missing_cases(
+    factory: Callable[[], dict[str, Any]], paths: list[Path]
+) -> list[tuple[Path, int]]:
+    payload = factory()
+    cases: list[tuple[Path, int]] = []
+    for path in paths:
+        values = _get_path(payload, path)
+        assert type(values) is list
+        cases.extend((path, index) for index in range(len(values)))
+    return cases
+
+
+def _reorderable_dict_paths(factory: Callable[[], dict[str, Any]], paths: list[Path]) -> list[Path]:
+    payload = factory()
+    result: list[Path] = []
+    for path in paths:
+        mapping = _get_path(payload, path)
+        assert type(mapping) is dict
+        if len(mapping) > 1:
+            result.append(path)
+    return result
+
+
+def _first_distinct_pair(values: list[object]) -> tuple[int, int] | None:
+    for left in range(len(values)):
+        for right in range(left + 1, len(values)):
+            if read_model._exact_plain(values[left], values[right]) is False:
+                return left, right
+    return None
+
+
+def _reorderable_list_cases(
+    factory: Callable[[], dict[str, Any]], paths: list[Path]
+) -> list[tuple[Path, int, int]]:
+    payload = factory()
+    cases: list[tuple[Path, int, int]] = []
+    for path in paths:
+        values = _get_path(payload, path)
+        assert type(values) is list
+        pair = _first_distinct_pair(values)
+        if pair is not None:
+            cases.append((path, pair[0], pair[1]))
+    return cases
+
+
+def _nonempty_dict_paths(factory: Callable[[], dict[str, Any]], paths: list[Path]) -> list[Path]:
+    payload = factory()
+    result: list[Path] = []
+    for path in paths:
+        mapping = _get_path(payload, path)
+        assert type(mapping) is dict
+        if mapping:
+            result.append(path)
+    return result
+
+
+def _empty_dict_count(factory: Callable[[], dict[str, Any]], paths: list[Path]) -> int:
+    payload = factory()
+    return sum(1 for path in paths if _get_path(payload, path) == {})
+
+
+def _empty_list_count(factory: Callable[[], dict[str, Any]], paths: list[Path]) -> int:
+    payload = factory()
+    return sum(1 for path in paths if _get_path(payload, path) == [])
+
+
+SOURCE_DICT_MISSING_CASES = _dict_missing_cases(
+    read_model._trusted_source_template, SOURCE_DICT_PATHS
+)
+NOMINAL_DICT_MISSING_CASES = _dict_missing_cases(read_model._nominal, NOMINAL_DICT_PATHS)
+BLOCKED_DICT_MISSING_CASES = _dict_missing_cases(read_model._blocked, BLOCKED_DICT_PATHS)
+SOURCE_LIST_MISSING_CASES = _list_missing_cases(
+    read_model._trusted_source_template, SOURCE_LIST_PATHS
+)
+NOMINAL_LIST_MISSING_CASES = _list_missing_cases(read_model._nominal, NOMINAL_LIST_PATHS)
+BLOCKED_LIST_MISSING_CASES = _list_missing_cases(read_model._blocked, BLOCKED_LIST_PATHS)
+SOURCE_REORDERABLE_DICT_PATHS = _reorderable_dict_paths(
+    read_model._trusted_source_template, SOURCE_DICT_PATHS
+)
+NOMINAL_REORDERABLE_DICT_PATHS = _reorderable_dict_paths(read_model._nominal, NOMINAL_DICT_PATHS)
+BLOCKED_REORDERABLE_DICT_PATHS = _reorderable_dict_paths(read_model._blocked, BLOCKED_DICT_PATHS)
+SOURCE_REORDERABLE_LIST_CASES = _reorderable_list_cases(
+    read_model._trusted_source_template, SOURCE_LIST_PATHS
+)
+NOMINAL_REORDERABLE_LIST_CASES = _reorderable_list_cases(read_model._nominal, NOMINAL_LIST_PATHS)
+BLOCKED_REORDERABLE_LIST_CASES = _reorderable_list_cases(read_model._blocked, BLOCKED_LIST_PATHS)
+SOURCE_BOMB_KEY_PATHS = _nonempty_dict_paths(read_model._trusted_source_template, SOURCE_DICT_PATHS)
+NOMINAL_BOMB_KEY_PATHS = _nonempty_dict_paths(read_model._nominal, NOMINAL_DICT_PATHS)
+BLOCKED_BOMB_KEY_PATHS = _nonempty_dict_paths(read_model._blocked, BLOCKED_DICT_PATHS)
+EXHAUSTIVE_CONTAINER_MUTATION_CASE_COUNTS = {
+    "source dict missing": len(SOURCE_DICT_MISSING_CASES),
+    "source dict extra": len(SOURCE_DICT_PATHS),
+    "source dict reorder": len(SOURCE_REORDERABLE_DICT_PATHS),
+    "source DictSubclass": len(SOURCE_DICT_PATHS),
+    "source BombKey": len(SOURCE_BOMB_KEY_PATHS),
+    "nominal dict missing": len(NOMINAL_DICT_MISSING_CASES),
+    "nominal dict extra": len(NOMINAL_DICT_PATHS),
+    "nominal dict reorder": len(NOMINAL_REORDERABLE_DICT_PATHS),
+    "nominal DictSubclass": len(NOMINAL_DICT_PATHS),
+    "nominal BombKey": len(NOMINAL_BOMB_KEY_PATHS),
+    "blocked dict missing": len(BLOCKED_DICT_MISSING_CASES),
+    "blocked dict extra": len(BLOCKED_DICT_PATHS),
+    "blocked dict reorder": len(BLOCKED_REORDERABLE_DICT_PATHS),
+    "blocked DictSubclass": len(BLOCKED_DICT_PATHS),
+    "blocked BombKey": len(BLOCKED_BOMB_KEY_PATHS),
+    "source list missing": len(SOURCE_LIST_MISSING_CASES),
+    "source list extra": len(SOURCE_LIST_PATHS),
+    "source list reorder": len(SOURCE_REORDERABLE_LIST_CASES),
+    "source ListSubclass": len(SOURCE_LIST_PATHS),
+    "nominal list missing": len(NOMINAL_LIST_MISSING_CASES),
+    "nominal list extra": len(NOMINAL_LIST_PATHS),
+    "nominal list reorder": len(NOMINAL_REORDERABLE_LIST_CASES),
+    "nominal ListSubclass": len(NOMINAL_LIST_PATHS),
+    "blocked list missing": len(BLOCKED_LIST_MISSING_CASES),
+    "blocked list extra": len(BLOCKED_LIST_PATHS),
+    "blocked list reorder": len(BLOCKED_REORDERABLE_LIST_CASES),
+    "blocked ListSubclass": len(BLOCKED_LIST_PATHS),
+}
+EXHAUSTIVE_CONTAINER_MUTATION_CASE_TOTAL = sum(EXHAUSTIVE_CONTAINER_MUTATION_CASE_COUNTS.values())
+EXTRA_LIST_ITEM = "__unexpected_test_item__"
 
 
 def test_does_not_call_upstream_private_nominal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -933,3 +1086,479 @@ def test_wrong_scalar_helpers_for_future_scalar_matrix() -> None:
     assert type(_wrong_type_scalar("x")) is StrSubclass
     assert type(_wrong_type_scalar(None)) is EqualityBomb
     _assert_zero_bomb_counters()
+
+
+def _assert_source_payload_blocks_once(
+    monkeypatch: pytest.MonkeyPatch,
+    source: object,
+) -> None:
+    assert read_model._source_accepted(source) is False
+    calls = 0
+
+    def builder() -> object:
+        nonlocal calls
+        calls += 1
+        return source
+
+    monkeypatch.setattr(
+        read_model,
+        "build_preview_block_p_desktop_exe_build_readiness_contract",
+        builder,
+    )
+    payload = read_model.build_preview_block_p_desktop_exe_build_readiness_read_model()
+    assert calls == 1
+    assert payload == read_model._blocked()
+    assert read_model._integrity(payload) is True
+    assert json.dumps(payload)
+
+
+def _extra_key(mapping: dict[str, object]) -> str:
+    candidate = "unexpected_test_field"
+    while candidate in mapping:
+        candidate += "_x"
+    assert type(candidate) is str
+    return candidate
+
+
+def _extra_list_item(values: list[object]) -> str:
+    candidate = EXTRA_LIST_ITEM
+    while any(read_model._exact_plain(candidate, value) for value in values):
+        candidate += "_x"
+    return candidate
+
+
+def _fresh_mutable(factory: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    return copy.deepcopy(factory())
+
+
+def _mutate_dict_missing(
+    factory: Callable[[], dict[str, Any]], path: Path, key: str
+) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    mapping = _get_path(payload, path)
+    assert type(mapping) is dict
+    assert key in mapping
+    original_length = len(mapping)
+    del mapping[key]
+    assert key not in mapping
+    assert len(mapping) == original_length - 1
+    return payload
+
+
+def _mutate_dict_extra(factory: Callable[[], dict[str, Any]], path: Path) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    mapping = _get_path(payload, path)
+    assert type(mapping) is dict
+    key = _extra_key(mapping)
+    original_length = len(mapping)
+    mapping[key] = False
+    assert key in mapping
+    assert len(mapping) == original_length + 1
+    return payload
+
+
+def _mutate_dict_reorder(factory: Callable[[], dict[str, Any]], path: Path) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    mapping = _get_path(payload, path)
+    assert type(mapping) is dict
+    reordered = dict(reversed(list(mapping.items())))
+    assert list(reordered) != list(mapping)
+    payload = cast(dict[str, Any], _replace_path(payload, path, reordered))
+    assert list(cast(dict[str, Any], _get_path(payload, path))) == list(reordered)
+    return payload
+
+
+def _mutate_dict_subclass(factory: Callable[[], dict[str, Any]], path: Path) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    mapping = _get_path(payload, path)
+    assert type(mapping) is dict
+    replacement = DictSubclass(mapping)
+    assert type(replacement) is DictSubclass
+    assert dict(replacement) == mapping
+    payload = cast(dict[str, Any], _replace_path(payload, path, replacement))
+    assert type(_get_path(payload, path)) is DictSubclass
+    return payload
+
+
+def _mutate_bomb_key(factory: Callable[[], dict[str, Any]], path: Path) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    mapping = _get_path(payload, path)
+    assert type(mapping) is dict
+    key = next(iter(mapping))
+    assert type(key) is str
+    _reset_bomb_counters()
+    bomb_key = _replace_key(mapping, key)
+    assert type(bomb_key) is BombKey
+    return payload
+
+
+def _mutate_list_missing(
+    factory: Callable[[], dict[str, Any]], path: Path, index: int
+) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    values = _get_path(payload, path)
+    assert type(values) is list
+    original_length = len(values)
+    del values[index]
+    assert len(values) == original_length - 1
+    return payload
+
+
+def _mutate_list_extra(factory: Callable[[], dict[str, Any]], path: Path) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    values = _get_path(payload, path)
+    assert type(values) is list
+    item = _extra_list_item(values)
+    original_length = len(values)
+    values.append(item)
+    assert len(values) == original_length + 1
+    assert read_model._exact_plain(values[-1], item) is True
+    return payload
+
+
+def _mutate_list_reorder(
+    factory: Callable[[], dict[str, Any]], path: Path, left: int, right: int
+) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    canonical = factory()
+    values = _get_path(payload, path)
+    canonical_values = _get_path(canonical, path)
+    assert type(values) is list
+    assert type(canonical_values) is list
+    assert read_model._exact_plain(values[left], values[right]) is False
+    values[left], values[right] = values[right], values[left]
+    assert read_model._exact_plain(values, canonical_values) is False
+    return payload
+
+
+def _mutate_list_subclass(factory: Callable[[], dict[str, Any]], path: Path) -> dict[str, Any]:
+    payload = _fresh_mutable(factory)
+    values = _get_path(payload, path)
+    assert type(values) is list
+    replacement = ListSubclass(values)
+    assert type(replacement) is ListSubclass
+    assert list(replacement) == values
+    payload = cast(dict[str, Any], _replace_path(payload, path, replacement))
+    assert type(_get_path(payload, path)) is ListSubclass
+    return payload
+
+
+@pytest.mark.parametrize("case", SOURCE_DICT_MISSING_CASES, ids=_path_key_id)
+def test_exhaustive_container_source_dict_missing_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, case: tuple[Path, str]
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_dict_missing(read_model._trusted_source_template, *case)
+    )
+
+
+@pytest.mark.parametrize("case", NOMINAL_DICT_MISSING_CASES, ids=_path_key_id)
+def test_exhaustive_container_nominal_dict_missing_schema_matrix(case: tuple[Path, str]) -> None:
+    assert read_model._integrity(_mutate_dict_missing(read_model._nominal, *case)) is False
+
+
+@pytest.mark.parametrize("case", BLOCKED_DICT_MISSING_CASES, ids=_path_key_id)
+def test_exhaustive_container_blocked_dict_missing_schema_matrix(case: tuple[Path, str]) -> None:
+    assert read_model._integrity(_mutate_dict_missing(read_model._blocked, *case)) is False
+
+
+@pytest.mark.parametrize("path", SOURCE_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_source_dict_extra_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_dict_extra(read_model._trusted_source_template, path)
+    )
+
+
+@pytest.mark.parametrize("path", NOMINAL_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_nominal_dict_extra_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_dict_extra(read_model._nominal, path)) is False
+
+
+@pytest.mark.parametrize("path", BLOCKED_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_blocked_dict_extra_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_dict_extra(read_model._blocked, path)) is False
+
+
+@pytest.mark.parametrize("path", SOURCE_REORDERABLE_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_source_dict_reorder_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_dict_reorder(read_model._trusted_source_template, path)
+    )
+
+
+@pytest.mark.parametrize("path", NOMINAL_REORDERABLE_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_nominal_dict_reorder_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_dict_reorder(read_model._nominal, path)) is False
+
+
+@pytest.mark.parametrize("path", BLOCKED_REORDERABLE_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_blocked_dict_reorder_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_dict_reorder(read_model._blocked, path)) is False
+
+
+@pytest.mark.parametrize("path", SOURCE_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_source_dict_subclass_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_dict_subclass(read_model._trusted_source_template, path)
+    )
+
+
+@pytest.mark.parametrize("path", NOMINAL_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_nominal_dict_subclass_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_dict_subclass(read_model._nominal, path)) is False
+
+
+@pytest.mark.parametrize("path", BLOCKED_DICT_PATHS, ids=_path_id)
+def test_exhaustive_container_blocked_dict_subclass_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_dict_subclass(read_model._blocked, path)) is False
+
+
+@pytest.mark.parametrize("path", SOURCE_BOMB_KEY_PATHS, ids=_path_id)
+def test_exhaustive_container_source_bomb_key_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_bomb_key(read_model._trusted_source_template, path)
+    )
+    _assert_zero_bomb_counters()
+
+
+@pytest.mark.parametrize("path", NOMINAL_BOMB_KEY_PATHS, ids=_path_id)
+def test_exhaustive_container_nominal_bomb_key_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_bomb_key(read_model._nominal, path)) is False
+    _assert_zero_bomb_counters()
+
+
+@pytest.mark.parametrize("path", BLOCKED_BOMB_KEY_PATHS, ids=_path_id)
+def test_exhaustive_container_blocked_bomb_key_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_bomb_key(read_model._blocked, path)) is False
+    _assert_zero_bomb_counters()
+
+
+@pytest.mark.parametrize("case", SOURCE_LIST_MISSING_CASES, ids=_path_index_id)
+def test_exhaustive_container_source_list_missing_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, case: tuple[Path, int]
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_list_missing(read_model._trusted_source_template, *case)
+    )
+
+
+@pytest.mark.parametrize("case", NOMINAL_LIST_MISSING_CASES, ids=_path_index_id)
+def test_exhaustive_container_nominal_list_missing_schema_matrix(case: tuple[Path, int]) -> None:
+    assert read_model._integrity(_mutate_list_missing(read_model._nominal, *case)) is False
+
+
+@pytest.mark.parametrize("case", BLOCKED_LIST_MISSING_CASES, ids=_path_index_id)
+def test_exhaustive_container_blocked_list_missing_schema_matrix(case: tuple[Path, int]) -> None:
+    assert read_model._integrity(_mutate_list_missing(read_model._blocked, *case)) is False
+
+
+@pytest.mark.parametrize("path", SOURCE_LIST_PATHS, ids=_path_id)
+def test_exhaustive_container_source_list_extra_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_list_extra(read_model._trusted_source_template, path)
+    )
+
+
+@pytest.mark.parametrize("path", NOMINAL_LIST_PATHS, ids=_path_id)
+def test_exhaustive_container_nominal_list_extra_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_list_extra(read_model._nominal, path)) is False
+
+
+@pytest.mark.parametrize("path", BLOCKED_LIST_PATHS, ids=_path_id)
+def test_exhaustive_container_blocked_list_extra_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_list_extra(read_model._blocked, path)) is False
+
+
+@pytest.mark.parametrize("case", SOURCE_REORDERABLE_LIST_CASES, ids=_path_pair_id)
+def test_exhaustive_container_source_list_reorder_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, case: tuple[Path, int, int]
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_list_reorder(read_model._trusted_source_template, *case)
+    )
+
+
+@pytest.mark.parametrize("case", NOMINAL_REORDERABLE_LIST_CASES, ids=_path_pair_id)
+def test_exhaustive_container_nominal_list_reorder_schema_matrix(
+    case: tuple[Path, int, int],
+) -> None:
+    assert read_model._integrity(_mutate_list_reorder(read_model._nominal, *case)) is False
+
+
+@pytest.mark.parametrize("case", BLOCKED_REORDERABLE_LIST_CASES, ids=_path_pair_id)
+def test_exhaustive_container_blocked_list_reorder_schema_matrix(
+    case: tuple[Path, int, int],
+) -> None:
+    assert read_model._integrity(_mutate_list_reorder(read_model._blocked, *case)) is False
+
+
+@pytest.mark.parametrize("path", SOURCE_LIST_PATHS, ids=_path_id)
+def test_exhaustive_container_source_list_subclass_schema_matrix(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    _assert_source_payload_blocks_once(
+        monkeypatch, _mutate_list_subclass(read_model._trusted_source_template, path)
+    )
+
+
+@pytest.mark.parametrize("path", NOMINAL_LIST_PATHS, ids=_path_id)
+def test_exhaustive_container_nominal_list_subclass_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_list_subclass(read_model._nominal, path)) is False
+
+
+@pytest.mark.parametrize("path", BLOCKED_LIST_PATHS, ids=_path_id)
+def test_exhaustive_container_blocked_list_subclass_schema_matrix(path: Path) -> None:
+    assert read_model._integrity(_mutate_list_subclass(read_model._blocked, path)) is False
+
+
+def _field_counter(
+    factory: Callable[[], dict[str, Any]], paths: list[Path]
+) -> Counter[tuple[Path, str]]:
+    payload = factory()
+    result: Counter[tuple[Path, str]] = Counter()
+    for path in paths:
+        mapping = _get_path(payload, path)
+        assert type(mapping) is dict
+        for key in mapping:
+            assert type(key) is str
+            result[(path, key)] += 1
+    return result
+
+
+def _item_counter(
+    factory: Callable[[], dict[str, Any]], paths: list[Path]
+) -> Counter[tuple[Path, int]]:
+    payload = factory()
+    result: Counter[tuple[Path, int]] = Counter()
+    for path in paths:
+        values = _get_path(payload, path)
+        assert type(values) is list
+        for index in range(len(values)):
+            result[(path, index)] += 1
+    return result
+
+
+def test_exhaustive_container_path_coverage_is_complete() -> None:
+    assert Counter(SOURCE_DICT_PATHS) == Counter(
+        _container_paths(read_model._trusted_source_template())[0]
+    )
+    assert Counter(NOMINAL_DICT_PATHS) == Counter(_container_paths(read_model._nominal())[0])
+    assert Counter(BLOCKED_DICT_PATHS) == Counter(_container_paths(read_model._blocked())[0])
+    assert Counter(SOURCE_LIST_PATHS) == Counter(
+        _container_paths(read_model._trusted_source_template())[1]
+    )
+    assert Counter(NOMINAL_LIST_PATHS) == Counter(_container_paths(read_model._nominal())[1])
+    assert Counter(BLOCKED_LIST_PATHS) == Counter(_container_paths(read_model._blocked())[1])
+    assert Counter(SOURCE_BOMB_KEY_PATHS) == Counter(
+        _nonempty_dict_paths(read_model._trusted_source_template, SOURCE_DICT_PATHS)
+    )
+    assert Counter(NOMINAL_BOMB_KEY_PATHS) == Counter(
+        _nonempty_dict_paths(read_model._nominal, NOMINAL_DICT_PATHS)
+    )
+    assert Counter(BLOCKED_BOMB_KEY_PATHS) == Counter(
+        _nonempty_dict_paths(read_model._blocked, BLOCKED_DICT_PATHS)
+    )
+    assert Counter(SOURCE_REORDERABLE_DICT_PATHS) == Counter(
+        _reorderable_dict_paths(read_model._trusted_source_template, SOURCE_DICT_PATHS)
+    )
+    assert Counter(NOMINAL_REORDERABLE_DICT_PATHS) == Counter(
+        _reorderable_dict_paths(read_model._nominal, NOMINAL_DICT_PATHS)
+    )
+    assert Counter(BLOCKED_REORDERABLE_DICT_PATHS) == Counter(
+        _reorderable_dict_paths(read_model._blocked, BLOCKED_DICT_PATHS)
+    )
+    assert Counter(SOURCE_DICT_MISSING_CASES) == _field_counter(
+        read_model._trusted_source_template, SOURCE_DICT_PATHS
+    )
+    assert Counter(NOMINAL_DICT_MISSING_CASES) == _field_counter(
+        read_model._nominal, NOMINAL_DICT_PATHS
+    )
+    assert Counter(BLOCKED_DICT_MISSING_CASES) == _field_counter(
+        read_model._blocked, BLOCKED_DICT_PATHS
+    )
+    assert Counter(SOURCE_REORDERABLE_LIST_CASES) == Counter(
+        _reorderable_list_cases(read_model._trusted_source_template, SOURCE_LIST_PATHS)
+    )
+    assert Counter(NOMINAL_REORDERABLE_LIST_CASES) == Counter(
+        _reorderable_list_cases(read_model._nominal, NOMINAL_LIST_PATHS)
+    )
+    assert Counter(BLOCKED_REORDERABLE_LIST_CASES) == Counter(
+        _reorderable_list_cases(read_model._blocked, BLOCKED_LIST_PATHS)
+    )
+    assert Counter(SOURCE_LIST_MISSING_CASES) == _item_counter(
+        read_model._trusted_source_template, SOURCE_LIST_PATHS
+    )
+    assert Counter(NOMINAL_LIST_MISSING_CASES) == _item_counter(
+        read_model._nominal, NOMINAL_LIST_PATHS
+    )
+    assert Counter(BLOCKED_LIST_MISSING_CASES) == _item_counter(
+        read_model._blocked, BLOCKED_LIST_PATHS
+    )
+
+
+def test_exhaustive_container_path_counts_and_case_report() -> None:
+    assert len(SOURCE_DICT_PATHS) == 37
+    assert len(SOURCE_LIST_PATHS) == 57
+    assert len(NOMINAL_DICT_PATHS) == 36
+    assert len(NOMINAL_LIST_PATHS) == 58
+    assert len(BLOCKED_DICT_PATHS) == 1
+    assert len(BLOCKED_LIST_PATHS) == 2
+    assert _empty_dict_count(read_model._trusted_source_template, SOURCE_DICT_PATHS) == 0
+    assert _empty_dict_count(read_model._nominal, NOMINAL_DICT_PATHS) == 0
+    assert _empty_dict_count(read_model._blocked, BLOCKED_DICT_PATHS) == 0
+    assert _empty_list_count(read_model._trusted_source_template, SOURCE_LIST_PATHS) == 0
+    assert _empty_list_count(read_model._nominal, NOMINAL_LIST_PATHS) == 0
+    assert _empty_list_count(read_model._blocked, BLOCKED_LIST_PATHS) == 2
+    assert len(SOURCE_REORDERABLE_DICT_PATHS) == 37
+    assert len(SOURCE_DICT_PATHS) - len(SOURCE_REORDERABLE_DICT_PATHS) == 0
+    assert len(NOMINAL_REORDERABLE_DICT_PATHS) == 36
+    assert len(NOMINAL_DICT_PATHS) - len(NOMINAL_REORDERABLE_DICT_PATHS) == 0
+    assert len(BLOCKED_REORDERABLE_DICT_PATHS) == 1
+    assert len(BLOCKED_DICT_PATHS) - len(BLOCKED_REORDERABLE_DICT_PATHS) == 0
+    assert len(SOURCE_REORDERABLE_LIST_CASES) == 6
+    assert len(SOURCE_LIST_PATHS) - len(SOURCE_REORDERABLE_LIST_CASES) == 51
+    assert len(NOMINAL_REORDERABLE_LIST_CASES) == 6
+    assert len(NOMINAL_LIST_PATHS) - len(NOMINAL_REORDERABLE_LIST_CASES) == 52
+    assert len(BLOCKED_REORDERABLE_LIST_CASES) == 0
+    assert len(BLOCKED_LIST_PATHS) - len(BLOCKED_REORDERABLE_LIST_CASES) == 2
+    expected = {
+        "source dict missing": 715,
+        "source dict extra": 37,
+        "source dict reorder": 37,
+        "source DictSubclass": 37,
+        "source BombKey": 37,
+        "nominal dict missing": 694,
+        "nominal dict extra": 36,
+        "nominal dict reorder": 36,
+        "nominal DictSubclass": 36,
+        "nominal BombKey": 36,
+        "blocked dict missing": 16,
+        "blocked dict extra": 1,
+        "blocked dict reorder": 1,
+        "blocked DictSubclass": 1,
+        "blocked BombKey": 1,
+        "source list missing": 117,
+        "source list extra": 57,
+        "source list reorder": 6,
+        "source ListSubclass": 57,
+        "nominal list missing": 141,
+        "nominal list extra": 58,
+        "nominal list reorder": 6,
+        "nominal ListSubclass": 58,
+        "blocked list missing": 0,
+        "blocked list extra": 2,
+        "blocked list reorder": 0,
+        "blocked ListSubclass": 2,
+    }
+    assert EXHAUSTIVE_CONTAINER_MUTATION_CASE_COUNTS == expected
+    assert EXHAUSTIVE_CONTAINER_MUTATION_CASE_TOTAL == sum(expected.values()) == 2225
