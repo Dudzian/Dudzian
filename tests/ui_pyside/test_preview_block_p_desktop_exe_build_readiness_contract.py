@@ -450,11 +450,60 @@ def _wrong_type_scalar(value: object) -> object:
     elif type(value) is int:
         result = True
     elif type(value) is str:
-        result = StrSubclass(value)
+        result = StrSubclass(value + "_tampered")
     else:
         result = EqualityBomb()
     assert type(result) is not type(value)
     return result
+
+
+SOURCE_LEAF_PATHS = _leaf_paths(contract._source_template())
+NOMINAL_LEAF_PATHS = _leaf_paths(contract._nominal())
+BLOCKED_LEAF_PATHS = _leaf_paths(contract._blocked())
+SOURCE_EXACT_VALUE_PATHS = SOURCE_LEAF_PATHS
+SOURCE_EXACT_TYPE_PATHS = SOURCE_LEAF_PATHS
+NOMINAL_EXACT_VALUE_PATHS = NOMINAL_LEAF_PATHS
+NOMINAL_EXACT_TYPE_PATHS = NOMINAL_LEAF_PATHS
+BLOCKED_EXACT_VALUE_PATHS = BLOCKED_LEAF_PATHS
+BLOCKED_EXACT_TYPE_PATHS = BLOCKED_LEAF_PATHS
+
+
+def _path_id(path: Path) -> str:
+    if not path:
+        return "<root>"
+    return ".".join(str(part) for part in path)
+
+
+def _assert_source_scalar_mutation_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+    replacement: object,
+) -> None:
+    source = copy.deepcopy(contract._source_template())
+    snapshot = copy.deepcopy(source)
+    _set_path(source, path, replacement)
+
+    assert source != snapshot or contract._exact_plain(source, snapshot) is False
+    assert contract._source_accepted(source) is False
+
+    calls = 0
+
+    def builder() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return source
+
+    monkeypatch.setattr(
+        contract,
+        "build_preview_block_p_desktop_exe_build_readiness_matrix",
+        builder,
+    )
+    payload = contract.build_preview_block_p_desktop_exe_build_readiness_contract()
+
+    assert calls == 1
+    assert payload == contract._blocked()
+    assert contract._integrity(payload) is True
+    assert json.dumps(payload)
 
 
 def _replace_key(mapping: dict[str, Any], key: str) -> BombKey:
@@ -644,3 +693,113 @@ def test_enumeration_completeness_for_source_and_nominal_payloads() -> None:
         for field in ("source_requirement_ids", "source_blocker_ids", "required_evidence_ids"):
             assert ("build_readiness_contract_rows", index, field) in nominal_list_paths
     assert source_dict_paths and nominal_dict_paths
+
+
+def test_scalar_path_counts_are_canonical() -> None:
+    source = contract._source_template()
+    nominal = contract._nominal()
+    blocked = contract._blocked()
+
+    assert len(SOURCE_LEAF_PATHS) == 257
+    assert len(NOMINAL_LEAF_PATHS) == 739
+    assert len(BLOCKED_LEAF_PATHS) == 14
+    assert len(SOURCE_LEAF_PATHS) == len(set(SOURCE_LEAF_PATHS))
+    assert len(NOMINAL_LEAF_PATHS) == len(set(NOMINAL_LEAF_PATHS))
+    assert len(BLOCKED_LEAF_PATHS) == len(set(BLOCKED_LEAF_PATHS))
+    for payload, paths in (
+        (source, SOURCE_LEAF_PATHS),
+        (nominal, NOMINAL_LEAF_PATHS),
+        (blocked, BLOCKED_LEAF_PATHS),
+    ):
+        assert all(type(_get_path(payload, path)) in (str, bool, int, type(None)) for path in paths)
+        assert all(_get_path(payload, path) is not None for path in paths)
+
+
+def test_exhaustive_scalar_path_coverage_is_complete() -> None:
+    assert set(SOURCE_EXACT_VALUE_PATHS) == set(SOURCE_LEAF_PATHS)
+    assert set(SOURCE_EXACT_TYPE_PATHS) == set(SOURCE_LEAF_PATHS)
+    assert set(NOMINAL_EXACT_VALUE_PATHS) == set(NOMINAL_LEAF_PATHS)
+    assert set(NOMINAL_EXACT_TYPE_PATHS) == set(NOMINAL_LEAF_PATHS)
+    assert set(BLOCKED_EXACT_VALUE_PATHS) == set(BLOCKED_LEAF_PATHS)
+    assert set(BLOCKED_EXACT_TYPE_PATHS) == set(BLOCKED_LEAF_PATHS)
+    assert (
+        len(SOURCE_EXACT_VALUE_PATHS)
+        + len(SOURCE_EXACT_TYPE_PATHS)
+        + len(NOMINAL_EXACT_VALUE_PATHS)
+        + len(NOMINAL_EXACT_TYPE_PATHS)
+        + len(BLOCKED_EXACT_VALUE_PATHS)
+        + len(BLOCKED_EXACT_TYPE_PATHS)
+        == 2020
+    )
+
+
+@pytest.mark.parametrize("path", SOURCE_EXACT_VALUE_PATHS, ids=_path_id)
+def test_source_exact_value_scalar_matrix_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    original = _get_path(contract._source_template(), path)
+    assert type(original) in (str, bool, int)
+    replacement = _wrong_scalar(original)
+    assert type(replacement) is type(original)
+    assert replacement != original
+    _assert_source_scalar_mutation_blocks(monkeypatch, path, replacement)
+
+
+@pytest.mark.parametrize("path", NOMINAL_EXACT_VALUE_PATHS, ids=_path_id)
+def test_nominal_exact_value_scalar_matrix_is_rejected(path: Path) -> None:
+    payload = copy.deepcopy(contract._nominal())
+    original = _get_path(payload, path)
+    assert type(original) in (str, bool, int)
+    _set_path(payload, path, _wrong_scalar(original))
+    assert contract._integrity(payload) is False
+
+
+@pytest.mark.parametrize("path", BLOCKED_EXACT_VALUE_PATHS, ids=_path_id)
+def test_blocked_exact_value_scalar_matrix_is_rejected(path: Path) -> None:
+    payload = copy.deepcopy(contract._blocked())
+    original = _get_path(payload, path)
+    assert type(original) in (str, bool, int)
+    _set_path(payload, path, _wrong_scalar(original))
+    assert contract._integrity(payload) is False
+
+
+@pytest.mark.parametrize("path", SOURCE_EXACT_TYPE_PATHS, ids=_path_id)
+def test_source_exact_type_scalar_matrix_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    _reset_bomb_counters()
+    original = _get_path(contract._source_template(), path)
+    replacement = _wrong_type_scalar(original)
+    assert type(replacement) is not type(original)
+    _assert_source_scalar_mutation_blocks(monkeypatch, path, replacement)
+    assert BombKey.equality_calls == 0
+    assert EqualityBomb.equality_calls == 0
+    assert HashBomb.hash_calls == 0
+
+
+@pytest.mark.parametrize("path", NOMINAL_EXACT_TYPE_PATHS, ids=_path_id)
+def test_nominal_exact_type_scalar_matrix_is_rejected(path: Path) -> None:
+    _reset_bomb_counters()
+    payload = copy.deepcopy(contract._nominal())
+    original = _get_path(payload, path)
+    replacement = _wrong_type_scalar(original)
+    assert type(replacement) is not type(original)
+    _set_path(payload, path, replacement)
+    assert contract._integrity(payload) is False
+    assert BombKey.equality_calls == 0
+    assert EqualityBomb.equality_calls == 0
+    assert HashBomb.hash_calls == 0
+
+
+@pytest.mark.parametrize("path", BLOCKED_EXACT_TYPE_PATHS, ids=_path_id)
+def test_blocked_exact_type_scalar_matrix_is_rejected(path: Path) -> None:
+    _reset_bomb_counters()
+    payload = copy.deepcopy(contract._blocked())
+    original = _get_path(payload, path)
+    replacement = _wrong_type_scalar(original)
+    assert type(replacement) is not type(original)
+    _set_path(payload, path, replacement)
+    assert contract._integrity(payload) is False
+    assert BombKey.equality_calls == 0
+    assert EqualityBomb.equality_calls == 0
+    assert HashBomb.hash_calls == 0
