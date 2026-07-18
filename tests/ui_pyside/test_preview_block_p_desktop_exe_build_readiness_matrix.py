@@ -1,8 +1,15 @@
 from __future__ import annotations
+import copy
 import json
 from typing import Any
 import pytest
 from ui.pyside_app import preview_block_p_desktop_exe_build_readiness_matrix as matrix
+from ui.pyside_app import (
+    preview_block_p_desktop_exe_build_readiness_contract as contract,
+)
+from ui.pyside_app import (
+    preview_block_p_desktop_exe_build_readiness_read_model as read_model,
+)
 from ui.pyside_app.preview_block_p_desktop_exe_packaging_read_model import (
     build_preview_block_p_desktop_exe_packaging_read_model,
 )
@@ -113,6 +120,25 @@ class ListSubclass(list[str]):
 
 class DictSubclass(dict[str, object]):
     pass
+
+
+def test_payload_nested_mutation_does_not_contaminate_18_6_or_18_7() -> None:
+    rows_before = copy.deepcopy(matrix.READINESS_ROWS)
+    payload = matrix.build_preview_block_p_desktop_exe_build_readiness_matrix()
+
+    payload["readiness_rows"][0]["source_requirement_ids"][0] = TextSubclass(
+        payload["readiness_rows"][0]["source_requirement_ids"][0]
+    )
+
+    assert matrix.READINESS_ROWS == rows_before
+    source = contract.build_preview_block_p_desktop_exe_build_readiness_contract()
+    assert source["status"] == contract.STATUS
+    assert "capability_contract_state" in source
+    assert read_model._source_integrity(source) is True
+    output = read_model.build_preview_block_p_desktop_exe_build_readiness_read_model()
+    assert output["status"] == read_model.STATUS
+    assert output["source_18_6_accepted"] is True
+    assert read_model._integrity(output) is True
 
 
 @pytest.mark.parametrize(
