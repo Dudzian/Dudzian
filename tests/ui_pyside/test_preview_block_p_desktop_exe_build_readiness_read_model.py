@@ -186,9 +186,25 @@ def _wrong_type_scalar(value: object) -> object:
     return result
 
 
+def _path_id(path: Path) -> str:
+    if not path:
+        return "<root>"
+
+    return ".".join(str(part) for part in path)
+
+
 SOURCE_LEAF_PATHS = _leaf_paths(read_model._trusted_source_template())
 NOMINAL_LEAF_PATHS = _leaf_paths(read_model._nominal())
 BLOCKED_LEAF_PATHS = _leaf_paths(read_model._blocked())
+
+SOURCE_EXACT_VALUE_PATHS = SOURCE_LEAF_PATHS
+SOURCE_EXACT_TYPE_PATHS = SOURCE_LEAF_PATHS
+
+NOMINAL_EXACT_VALUE_PATHS = NOMINAL_LEAF_PATHS
+NOMINAL_EXACT_TYPE_PATHS = NOMINAL_LEAF_PATHS
+
+BLOCKED_EXACT_VALUE_PATHS = BLOCKED_LEAF_PATHS
+BLOCKED_EXACT_TYPE_PATHS = BLOCKED_LEAF_PATHS
 
 SOURCE_DICT_PATHS, SOURCE_LIST_PATHS = _container_paths(read_model._trusted_source_template())
 NOMINAL_DICT_PATHS, NOMINAL_LIST_PATHS = _container_paths(read_model._nominal())
@@ -508,6 +524,233 @@ def test_path_enumeration_counts_and_round_trip() -> None:
     _assert_path_inventory(source, SOURCE_LEAF_PATHS, SOURCE_DICT_PATHS, SOURCE_LIST_PATHS)
     _assert_path_inventory(nominal, NOMINAL_LEAF_PATHS, NOMINAL_DICT_PATHS, NOMINAL_LIST_PATHS)
     _assert_path_inventory(blocked, BLOCKED_LEAF_PATHS, BLOCKED_DICT_PATHS, BLOCKED_LIST_PATHS)
+
+
+def _assert_scalar_paths_resolve_to_exact_builtins(
+    root: dict[str, Any],
+    leaf_paths: list[Path],
+) -> int:
+    _assert_unique_paths(leaf_paths)
+    none_count = 0
+    for path in leaf_paths:
+        leaf = _get_path(root, path)
+        assert type(leaf) in (str, bool, int, type(None))
+        if leaf is None:
+            none_count += 1
+    return none_count
+
+
+def test_scalar_path_counts_are_canonical() -> None:
+    assert len(SOURCE_LEAF_PATHS) == 739
+    assert len(NOMINAL_LEAF_PATHS) == 742
+    assert len(BLOCKED_LEAF_PATHS) == 14
+
+    assert (
+        _assert_scalar_paths_resolve_to_exact_builtins(
+            read_model._trusted_source_template(), SOURCE_LEAF_PATHS
+        )
+        == 0
+    )
+    assert (
+        _assert_scalar_paths_resolve_to_exact_builtins(read_model._nominal(), NOMINAL_LEAF_PATHS)
+        == 0
+    )
+    assert (
+        _assert_scalar_paths_resolve_to_exact_builtins(read_model._blocked(), BLOCKED_LEAF_PATHS)
+        == 0
+    )
+
+    assert all(
+        _get_path(read_model._trusted_source_template(), path) is not None
+        for path in SOURCE_LEAF_PATHS
+    )
+    assert all(_get_path(read_model._nominal(), path) is not None for path in NOMINAL_LEAF_PATHS)
+    assert all(_get_path(read_model._blocked(), path) is not None for path in BLOCKED_LEAF_PATHS)
+
+
+def _assert_source_scalar_mutation_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+    replacement: object,
+) -> None:
+    source = copy.deepcopy(read_model._trusted_source_template())
+    snapshot = copy.deepcopy(source)
+
+    original = _get_path(source, path)
+    _set_path(source, path, replacement)
+
+    assert type(replacement) is not type(original) or replacement != original
+    assert read_model._exact_plain(source, snapshot) is False
+    assert read_model._source_accepted(source) is False
+
+    calls = 0
+
+    def builder() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return source
+
+    monkeypatch.setattr(
+        read_model,
+        "build_preview_block_p_desktop_exe_build_readiness_contract",
+        builder,
+    )
+
+    payload = read_model.build_preview_block_p_desktop_exe_build_readiness_read_model()
+
+    assert calls == 1
+    assert payload == read_model._blocked()
+    assert read_model._integrity(payload) is True
+    assert json.dumps(payload)
+
+
+@pytest.mark.parametrize(
+    "path",
+    SOURCE_EXACT_VALUE_PATHS,
+    ids=_path_id,
+)
+def test_source_exact_value_scalar_matrix_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+) -> None:
+    original = _get_path(read_model._trusted_source_template(), path)
+
+    assert type(original) in (str, bool, int)
+
+    replacement = _wrong_scalar(original)
+
+    assert type(replacement) is type(original)
+    assert replacement != original
+
+    _assert_source_scalar_mutation_blocks(
+        monkeypatch,
+        path,
+        replacement,
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    NOMINAL_EXACT_VALUE_PATHS,
+    ids=_path_id,
+)
+def test_nominal_exact_value_scalar_matrix_is_rejected(path: Path) -> None:
+    payload = copy.deepcopy(read_model._nominal())
+    original = _get_path(payload, path)
+
+    assert type(original) in (str, bool, int)
+
+    replacement = _wrong_scalar(original)
+    _set_path(payload, path, replacement)
+
+    assert read_model._integrity(payload) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    BLOCKED_EXACT_VALUE_PATHS,
+    ids=_path_id,
+)
+def test_blocked_exact_value_scalar_matrix_is_rejected(path: Path) -> None:
+    payload = copy.deepcopy(read_model._blocked())
+    original = _get_path(payload, path)
+
+    assert type(original) in (str, bool, int)
+
+    replacement = _wrong_scalar(original)
+    _set_path(payload, path, replacement)
+
+    assert read_model._integrity(payload) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    SOURCE_EXACT_TYPE_PATHS,
+    ids=_path_id,
+)
+def test_source_exact_type_scalar_matrix_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+) -> None:
+    _reset_bomb_counters()
+
+    original = _get_path(read_model._trusted_source_template(), path)
+    replacement = _wrong_type_scalar(original)
+
+    assert type(replacement) is not type(original)
+
+    _assert_source_scalar_mutation_blocks(
+        monkeypatch,
+        path,
+        replacement,
+    )
+
+    assert BombKey.equality_calls == 0
+    assert EqualityBomb.equality_calls == 0
+    assert HashBomb.hash_calls == 0
+
+
+@pytest.mark.parametrize(
+    "path",
+    NOMINAL_EXACT_TYPE_PATHS,
+    ids=_path_id,
+)
+def test_nominal_exact_type_scalar_matrix_is_rejected(path: Path) -> None:
+    _reset_bomb_counters()
+    payload = copy.deepcopy(read_model._nominal())
+    original = _get_path(payload, path)
+    replacement = _wrong_type_scalar(original)
+
+    assert type(replacement) is not type(original)
+
+    _set_path(payload, path, replacement)
+
+    assert read_model._integrity(payload) is False
+    assert BombKey.equality_calls == 0
+    assert EqualityBomb.equality_calls == 0
+    assert HashBomb.hash_calls == 0
+
+
+@pytest.mark.parametrize(
+    "path",
+    BLOCKED_EXACT_TYPE_PATHS,
+    ids=_path_id,
+)
+def test_blocked_exact_type_scalar_matrix_is_rejected(path: Path) -> None:
+    _reset_bomb_counters()
+    payload = copy.deepcopy(read_model._blocked())
+    original = _get_path(payload, path)
+    replacement = _wrong_type_scalar(original)
+
+    assert type(replacement) is not type(original)
+
+    _set_path(payload, path, replacement)
+
+    assert read_model._integrity(payload) is False
+    assert BombKey.equality_calls == 0
+    assert EqualityBomb.equality_calls == 0
+    assert HashBomb.hash_calls == 0
+
+
+def test_exhaustive_scalar_path_coverage_is_complete() -> None:
+    assert set(SOURCE_EXACT_VALUE_PATHS) == set(SOURCE_LEAF_PATHS)
+    assert set(SOURCE_EXACT_TYPE_PATHS) == set(SOURCE_LEAF_PATHS)
+
+    assert set(NOMINAL_EXACT_VALUE_PATHS) == set(NOMINAL_LEAF_PATHS)
+    assert set(NOMINAL_EXACT_TYPE_PATHS) == set(NOMINAL_LEAF_PATHS)
+
+    assert set(BLOCKED_EXACT_VALUE_PATHS) == set(BLOCKED_LEAF_PATHS)
+    assert set(BLOCKED_EXACT_TYPE_PATHS) == set(BLOCKED_LEAF_PATHS)
+
+    assert (
+        len(SOURCE_EXACT_VALUE_PATHS)
+        + len(SOURCE_EXACT_TYPE_PATHS)
+        + len(NOMINAL_EXACT_VALUE_PATHS)
+        + len(NOMINAL_EXACT_TYPE_PATHS)
+        + len(BLOCKED_EXACT_VALUE_PATHS)
+        + len(BLOCKED_EXACT_TYPE_PATHS)
+        == 2990
+    )
 
 
 def test_row_rule_and_link_list_path_completeness() -> None:
