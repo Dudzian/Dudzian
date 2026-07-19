@@ -1,0 +1,289 @@
+schema_version: preview_block_q_windows_build_environment_observation_execution_contract.v1
+kind: functional_preview_block_q_windows_build_environment_observation_execution_contract
+block: Q
+step: "19.6"
+title: WINDOWS BUILD ENVIRONMENT OBSERVATION EXECUTION CONTRACT
+goal: Authorize an exact future read-only observation contract for the 11 Block Q Windows build environment observation plan rows without performing observation in this stage.
+source_step: "19.5"
+source_kind: functional_preview_block_q_windows_build_environment_observation_plan
+source_builder: build_preview_block_q_windows_build_environment_observation_plan
+source_only: true
+contract_artifact_complete: true
+actual_environment_observation_performed: false
+current_stage_execution_authorized: false
+future_read_only_observation_authorized: true
+environment_build_ready: false
+next_step: ""
+next_step_title: ""
+next_step_contract_missing: true
+next_step_authorized: false
+source_acceptance:
+  requires_nominal_19_5: true
+  requires_11_observation_plan_rows: true
+  requires_source_only_19_5: true
+  requires_zero_performed_observations: true
+  requires_zero_collected_evidence: true
+  requires_environment_build_not_ready: true
+  requires_next_step_contract_missing: true
+  source_rejected_blocked_payload_required: true
+global_authorization:
+  current_stage_execution_authorized: false
+  future_read_only_observation_authorized: true
+  subprocess_authorized: false
+  shell_authorized: false
+  powershell_authorized: false
+  dependency_resolution_authorized: false
+  pyside_import_authorized: false
+  qml_load_authorized: false
+  qt_plugin_runtime_discovery_authorized: false
+  build_command_creation_authorized: false
+  build_command_execution_authorized: false
+  packaging_authorized: false
+  artifact_creation_authorized: false
+  artifact_scan_authorized: false
+  artifact_signing_authorized: false
+  installer_creation_authorized: false
+  release_authorized: false
+  application_runtime_authorized: false
+  network_open_authorized: false
+  credentials_read_authorized: false
+  secret_values_read_authorized: false
+  source_mutation_authorized: false
+  environment_mutation_authorized: false
+  orders_authorized: false
+observation_execution_contract_rows:
+  - execution_contract_id: execution_contract_windows_host
+    observation_plan_id: observation_plan_windows_host
+    read_model_id: read_model_windows_host
+    observation_target: windows_host_identity
+    collector_kind: python_standard_library
+    collector_source: platform.system_platform.machine_platform.release
+    result_type: object
+    evidence_type: structured_platform_metadata
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_supported_windows_version
+    observation_plan_id: observation_plan_supported_windows_version
+    read_model_id: read_model_supported_windows_version
+    observation_target: windows_version
+    collector_kind: python_standard_library
+    collector_source: platform.release_platform.version
+    result_type: object
+    evidence_type: structured_windows_version_metadata
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_python_version
+    observation_plan_id: observation_plan_python_version
+    read_model_id: read_model_python_version
+    observation_target: python_interpreter_version
+    collector_kind: python_standard_library
+    collector_source: sys.version_info
+    result_type: object
+    evidence_type: structured_python_version_metadata
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_pyside_version
+    observation_plan_id: observation_plan_pyside_version
+    read_model_id: read_model_pyside_version
+    observation_target: pyside_package_version
+    collector_kind: installed_package_metadata
+    collector_source: importlib.metadata.version_PySide6
+    result_type: string
+    evidence_type: package_version_metadata
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_packaging_tool_and_version
+    observation_plan_id: observation_plan_packaging_tool_and_version
+    read_model_id: read_model_packaging_tool_and_version
+    observation_target: packaging_tool_and_version
+    collector_kind: bounded_repository_configuration
+    collector_source: pyproject_packaging_configuration_and_installed_package_metadata
+    result_type: object
+    evidence_type: packaging_configuration_metadata
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_desktop_entrypoint
+    observation_plan_id: observation_plan_desktop_entrypoint
+    read_model_id: read_model_desktop_entrypoint
+    observation_target: desktop_entrypoint
+    collector_kind: bounded_repository_configuration
+    collector_source: pyproject_and_declared_desktop_entrypoint_configuration
+    result_type: string
+    evidence_type: entrypoint_configuration_metadata
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_qml_assets
+    observation_plan_id: observation_plan_qml_assets
+    read_model_id: read_model_qml_assets
+    observation_target: qml_asset_manifest
+    collector_kind: bounded_repository_file_listing
+    collector_source: ui_pyside_declared_qml_paths
+    result_type: list
+    evidence_type: qml_asset_path_manifest
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_qt_plugins
+    observation_plan_id: observation_plan_qt_plugins
+    read_model_id: read_model_qt_plugins
+    observation_target: qt_plugin_requirements
+    collector_kind: bounded_repository_configuration
+    collector_source: declared_qt_plugin_requirements_only
+    result_type: list
+    evidence_type: qt_plugin_requirement_manifest
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_dependency_lock
+    observation_plan_id: observation_plan_dependency_lock
+    read_model_id: read_model_dependency_lock
+    observation_target: dependency_lock_state
+    collector_kind: bounded_repository_file_metadata
+    collector_source: declared_dependency_and_lock_files
+    result_type: object
+    evidence_type: dependency_lock_file_metadata_and_hash
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_secret_and_local_data_exclusion
+    observation_plan_id: observation_plan_secret_and_local_data_exclusion
+    read_model_id: read_model_secret_and_local_data_exclusion
+    observation_target: secret_and_local_data_exclusion_policy
+    collector_kind: bounded_repository_policy_read
+    collector_source: gitignore_and_declared_exclusion_policy_files
+    result_type: object
+    evidence_type: exclusion_policy_metadata
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+  - execution_contract_id: execution_contract_output_name_and_version_policy
+    observation_plan_id: observation_plan_output_name_and_version_policy
+    read_model_id: read_model_output_name_and_version_policy
+    observation_target: output_name_and_version_policy
+    collector_kind: bounded_repository_configuration
+    collector_source: pyproject_and_declared_release_configuration
+    result_type: object
+    evidence_type: output_policy_metadata
+    future_read_authorized: true
+    current_stage_execution_authorized: false
+    mutation_authorized: false
+    subprocess_authorized: false
+    network_authorized: false
+    credentials_authorized: false
+    observation_performed: false
+    evidence_collected: false
+    contract_state: authorized_for_future_read_only_observation
+    source_only_definition: true
+summary:
+  execution_contract_row_count: 11
+  future_read_authorized_count: 11
+  current_stage_execution_authorized_count: 0
+  mutation_authorized_count: 0
+  subprocess_authorized_count: 0
+  network_authorized_count: 0
+  credentials_authorized_count: 0
+  performed_observation_count: 0
+  evidence_collected_count: 0
+  contract_definition_complete: true
+  actual_environment_observation_complete: false
+  environment_build_ready: false
+boundaries:
+  reads_19_5_only: true
+  one_to_one_observation_plan_mapping_required: true
+  plain_data: true
+  source_only: true
+  no_current_stage_execution: true
+  future_execution_requires_separate_contract: true
+  bounded_read_only_collectors_only: true
+  no_subprocess: true
+  no_shell: true
+  no_dependency_resolution: true
+  no_pyside_import: true
+  no_qml_load: true
+  no_qt_plugin_runtime_discovery: true
+  no_build: true
+  no_packaging: true
+  no_artifact_creation: true
+  no_runtime: true
+  no_network: true
+  no_credentials: true
+  no_secret_value_reads: true
+  no_source_mutation: true
+  no_environment_mutation: true
+  no_orders: true
