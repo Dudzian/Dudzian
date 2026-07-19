@@ -325,3 +325,59 @@ def test_block_q_19_5_manifest_remains_plain_data_without_commands_credentials_o
     assert "19.6" not in contract_text
     for fragment in FORBIDDEN_VALUE_FRAGMENTS:
         assert fragment not in contract_text
+
+
+TOP_LEVEL_FIELDS = [
+    "schema_version",
+    "kind",
+    "block",
+    "step",
+    "title",
+    "source_step",
+    "source_kind",
+    "source_builder",
+    "source_only",
+    "actual_environment_observation_performed",
+    "environment_build_ready",
+    "execution_authorized",
+    "next_step",
+    "next_step_title",
+    "next_step_contract_missing",
+    "next_step_authorized",
+    "forbidden_authorizations",
+    "observation_plan_rows",
+    "summary",
+    "boundaries",
+]
+
+FORBIDDEN_AUTHORIZATION_FIELDS = [
+    "repo_runtime_scan_authorized",
+    "filesystem_runtime_scan_authorized",
+    "environment_scan_authorized",
+    "windows_host_inspection_authorized",
+    "windows_version_read_authorized",
+    "interpreter_observation_authorized",
+    "dependency_resolution_authorized",
+    "pyside_import_authorized",
+    "qml_load_authorized",
+    "qt_plugin_discovery_authorized",
+    "build_command_creation_authorized",
+    "build_command_execution_authorized",
+    "packaging_authorized",
+    "artifact_creation_authorized",
+    "artifact_scan_authorized",
+    "artifact_signing_authorized",
+    "installer_creation_authorized",
+    "release_authorized",
+    "application_runtime_authorized",
+    "network_open_authorized",
+    "credentials_read_authorized",
+    "orders_authorized",
+]
+
+
+def test_manifest_top_level_and_forbidden_authorization_order() -> None:
+    data = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    assert list(data) == TOP_LEVEL_FIELDS
+    assert list(data["forbidden_authorizations"]) == FORBIDDEN_AUTHORIZATION_FIELDS
+    assert all(value is False for value in data["forbidden_authorizations"].values())
