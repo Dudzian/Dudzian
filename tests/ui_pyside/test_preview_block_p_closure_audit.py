@@ -4,6 +4,8 @@ import copy
 import json
 from typing import Any
 
+import pytest
+
 from ui.pyside_app import preview_block_p_closure_audit as closure
 from ui.pyside_app import preview_block_p_desktop_exe_build_readiness_read_model as read_model
 
@@ -434,6 +436,16 @@ def _path_id(path: Path) -> str:
 SOURCE_LEAF_PATHS = _leaf_paths(closure._trusted_source_template())
 NOMINAL_LEAF_PATHS = _leaf_paths(closure._nominal())
 BLOCKED_LEAF_PATHS = _leaf_paths(closure._blocked())
+
+SOURCE_EXACT_VALUE_PATHS = tuple(SOURCE_LEAF_PATHS)
+SOURCE_EXACT_TYPE_PATHS = tuple(SOURCE_LEAF_PATHS)
+
+NOMINAL_EXACT_VALUE_PATHS = tuple(NOMINAL_LEAF_PATHS)
+NOMINAL_EXACT_TYPE_PATHS = tuple(NOMINAL_LEAF_PATHS)
+
+BLOCKED_EXACT_VALUE_PATHS = tuple(BLOCKED_LEAF_PATHS)
+BLOCKED_EXACT_TYPE_PATHS = tuple(BLOCKED_LEAF_PATHS)
+
 SOURCE_DICT_PATHS, SOURCE_LIST_PATHS = _container_paths(closure._trusted_source_template())
 NOMINAL_DICT_PATHS, NOMINAL_LIST_PATHS = _container_paths(closure._nominal())
 BLOCKED_DICT_PATHS, BLOCKED_LIST_PATHS = _container_paths(closure._blocked())
@@ -474,6 +486,192 @@ def _wrong_type_scalar(value: object) -> object:
         result = EqualityBomb()
     assert type(result) is not type(value)
     return result
+
+
+def _assert_scalar_paths(
+    name: str,
+    factory: Any,
+    paths: list[Path],
+    expected_count: int,
+) -> None:
+    payload = factory()
+    assert len(paths) == expected_count
+    assert len(paths) == len(set(paths)), name
+    for path in paths:
+        leaf = _get_path(payload, path)
+        assert leaf is not None, _path_id(path)
+        assert type(leaf) in (str, bool, int), _path_id(path)
+        assert _get_path(factory(), path) == leaf, _path_id(path)
+
+
+def test_scalar_path_counts_are_canonical() -> None:
+    _assert_scalar_paths("source", closure._trusted_source_template, SOURCE_LEAF_PATHS, 742)
+    _assert_scalar_paths("nominal", closure._nominal, NOMINAL_LEAF_PATHS, 289)
+    _assert_scalar_paths("blocked", closure._blocked, BLOCKED_LEAF_PATHS, 16)
+
+    assert all(
+        _get_path(closure._trusted_source_template(), path) is not None
+        for path in SOURCE_LEAF_PATHS
+    )
+    assert all(_get_path(closure._nominal(), path) is not None for path in NOMINAL_LEAF_PATHS)
+    assert all(_get_path(closure._blocked(), path) is not None for path in BLOCKED_LEAF_PATHS)
+
+
+def _assert_source_scalar_mutation_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+    replacement: object,
+) -> None:
+    source = closure._trusted_source_template()
+    canonical = closure._trusted_source_template()
+
+    original = _get_path(source, path)
+    _set_path(source, path, replacement)
+
+    assert type(replacement) is not type(original) or replacement != original
+    assert closure._exact_plain(source, canonical) is False
+    assert closure._source_accepted(source) is False
+
+    calls = 0
+
+    def builder() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return source
+
+    monkeypatch.setattr(
+        closure,
+        "build_preview_block_p_desktop_exe_build_readiness_read_model",
+        builder,
+    )
+
+    payload = closure.build_preview_block_p_closure_audit()
+
+    assert calls == 1
+    assert payload == closure._blocked()
+    assert closure._integrity(payload) is True
+    assert json.dumps(payload)
+
+
+@pytest.mark.parametrize("path", SOURCE_EXACT_VALUE_PATHS, ids=_path_id)
+def test_source_exact_value_scalar_matrix_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+) -> None:
+    original = _get_path(closure._trusted_source_template(), path)
+
+    assert type(original) in (str, bool, int)
+
+    replacement = _wrong_scalar(original)
+
+    assert type(replacement) is type(original)
+    assert replacement != original
+
+    _assert_source_scalar_mutation_blocks(monkeypatch, path, replacement)
+
+
+@pytest.mark.parametrize("path", NOMINAL_EXACT_VALUE_PATHS, ids=_path_id)
+def test_nominal_exact_value_scalar_matrix_is_rejected(path: Path) -> None:
+    payload = closure._nominal()
+    original = _get_path(payload, path)
+
+    assert type(original) in (str, bool, int)
+
+    replacement = _wrong_scalar(original)
+
+    assert type(replacement) is type(original)
+    assert replacement != original
+
+    _set_path(payload, path, replacement)
+
+    assert closure._integrity(payload) is False
+
+
+@pytest.mark.parametrize("path", BLOCKED_EXACT_VALUE_PATHS, ids=_path_id)
+def test_blocked_exact_value_scalar_matrix_is_rejected(path: Path) -> None:
+    payload = closure._blocked()
+    original = _get_path(payload, path)
+
+    assert type(original) in (str, bool, int)
+
+    replacement = _wrong_scalar(original)
+
+    assert type(replacement) is type(original)
+    assert replacement != original
+
+    _set_path(payload, path, replacement)
+
+    assert closure._integrity(payload) is False
+
+
+@pytest.mark.parametrize("path", SOURCE_EXACT_TYPE_PATHS, ids=_path_id)
+def test_source_exact_type_scalar_matrix_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+) -> None:
+    _reset_sentinel_counters()
+
+    original = _get_path(closure._trusted_source_template(), path)
+    replacement = _wrong_type_scalar(original)
+
+    assert type(replacement) is not type(original)
+
+    _assert_source_scalar_mutation_blocks(monkeypatch, path, replacement)
+
+    _assert_sentinel_counters_zero()
+
+
+@pytest.mark.parametrize("path", NOMINAL_EXACT_TYPE_PATHS, ids=_path_id)
+def test_nominal_exact_type_scalar_matrix_is_rejected(path: Path) -> None:
+    _reset_sentinel_counters()
+
+    payload = closure._nominal()
+    original = _get_path(payload, path)
+    replacement = _wrong_type_scalar(original)
+
+    assert type(replacement) is not type(original)
+
+    _set_path(payload, path, replacement)
+
+    assert closure._integrity(payload) is False
+    _assert_sentinel_counters_zero()
+
+
+@pytest.mark.parametrize("path", BLOCKED_EXACT_TYPE_PATHS, ids=_path_id)
+def test_blocked_exact_type_scalar_matrix_is_rejected(path: Path) -> None:
+    _reset_sentinel_counters()
+
+    payload = closure._blocked()
+    original = _get_path(payload, path)
+    replacement = _wrong_type_scalar(original)
+
+    assert type(replacement) is not type(original)
+
+    _set_path(payload, path, replacement)
+
+    assert closure._integrity(payload) is False
+    _assert_sentinel_counters_zero()
+
+
+def test_exhaustive_scalar_path_coverage_is_complete() -> None:
+    assert set(SOURCE_EXACT_VALUE_PATHS) == set(SOURCE_LEAF_PATHS)
+    assert set(SOURCE_EXACT_TYPE_PATHS) == set(SOURCE_LEAF_PATHS)
+
+    assert set(NOMINAL_EXACT_VALUE_PATHS) == set(NOMINAL_LEAF_PATHS)
+    assert set(NOMINAL_EXACT_TYPE_PATHS) == set(NOMINAL_LEAF_PATHS)
+
+    assert set(BLOCKED_EXACT_VALUE_PATHS) == set(BLOCKED_LEAF_PATHS)
+    assert set(BLOCKED_EXACT_TYPE_PATHS) == set(BLOCKED_LEAF_PATHS)
+
+    assert (
+        len(SOURCE_EXACT_VALUE_PATHS)
+        + len(SOURCE_EXACT_TYPE_PATHS)
+        + len(NOMINAL_EXACT_VALUE_PATHS)
+        + len(NOMINAL_EXACT_TYPE_PATHS)
+        + len(BLOCKED_EXACT_VALUE_PATHS)
+        + len(BLOCKED_EXACT_TYPE_PATHS)
+        == 2094
+    )
 
 
 def test_trusted_source_template_matches_real_18_7_builder_once(monkeypatch: Any) -> None:
