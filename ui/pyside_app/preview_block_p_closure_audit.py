@@ -9,8 +9,12 @@ from typing import Any, Final
 from ui.pyside_app.preview_block_p_desktop_exe_build_readiness_read_model import (
     BLOCKED_STATUS as SOURCE_BLOCKED_STATUS,
     KIND as SOURCE_KIND,
+    BUILD_READINESS_CONTRACT_STATUS as SOURCE_BUILD_READINESS_CONTRACT_STATUS,
     READ_MODEL_STATUS as SOURCE_READ_MODEL_STATUS,
     SCHEMA_VERSION as SOURCE_SCHEMA_VERSION,
+    SOURCE_KIND as SOURCE_CONTRACT_KIND,
+    SOURCE_SCHEMA_VERSION as SOURCE_CONTRACT_SCHEMA_VERSION,
+    SOURCE_STATUS as SOURCE_CONTRACT_STATUS,
     STATUS as SOURCE_STATUS,
     _integrity as _integrity_18_7,
     build_preview_block_p_desktop_exe_build_readiness_read_model,
@@ -183,6 +187,239 @@ SOURCE_18_7_CAPABILITY_SECTION_FIELDS: Final[tuple[str, ...]] = (
     "read_model_capability_view",
 )
 
+SourceRowSpec = tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+
+SOURCE_18_7_ROW_ID_INDEX: Final[int] = 0
+SOURCE_18_7_REQUIREMENT_IDS_INDEX: Final[int] = 1
+SOURCE_18_7_BLOCKER_IDS_INDEX: Final[int] = 2
+SOURCE_18_7_EVIDENCE_IDS_INDEX: Final[int] = 3
+
+SOURCE_18_7_ROW_SPECS: Final[tuple[SourceRowSpec, ...]] = (
+    (
+        "final_desktop_entrypoint",
+        ("desktop_application_entrypoint_inventory",),
+        ("final_desktop_entrypoint_not_selected",),
+        ("evidence_final_desktop_entrypoint_selection",),
+    ),
+    (
+        "entrypoint_source_validation",
+        ("desktop_application_entrypoint_inventory",),
+        ("desktop_entrypoint_validation_not_performed",),
+        ("evidence_desktop_entrypoint_validation",),
+    ),
+    (
+        "windows_launch_smoke_prerequisite",
+        ("desktop_application_entrypoint_inventory",),
+        ("desktop_entrypoint_validation_not_performed",),
+        ("evidence_desktop_entrypoint_validation",),
+    ),
+    (
+        "qml_roots_assets",
+        ("qml_asset_inventory",),
+        ("qml_bundle_validation_not_performed",),
+        ("evidence_qml_bundle_validation",),
+    ),
+    (
+        "windows_shared_qml_import_path",
+        ("qml_asset_inventory",),
+        ("windows_shared_qml_import_path_unresolved",),
+        ("evidence_windows_shared_qml_import_path",),
+    ),
+    (
+        "qt_plugin_inventory",
+        ("qt_plugin_inventory",),
+        ("qt_plugin_inventory_missing",),
+        ("evidence_qt_plugin_inventory",),
+    ),
+    (
+        "ui_package_discovery",
+        ("qml_asset_inventory",),
+        ("ui_package_discovery_missing",),
+        ("evidence_ui_package_discovery",),
+    ),
+    (
+        "qml_package_data",
+        ("qml_asset_inventory",),
+        ("qml_package_data_missing",),
+        ("evidence_qml_package_data",),
+    ),
+    (
+        "windows_dependency_lock_resolution",
+        ("python_dependency_inventory",),
+        ("dependency_resolution_not_performed",),
+        ("evidence_windows_dependency_resolution",),
+    ),
+    (
+        "final_packaging_profile_alignment",
+        ("packaging_profile_alignment",),
+        ("final_desktop_packaging_profile_not_aligned",),
+        ("evidence_final_windows_profile_alignment",),
+    ),
+    (
+        "windows_python_qt_toolchain_versions",
+        ("windows_target_toolchain_confirmation",),
+        ("windows_toolchain_not_confirmed",),
+        ("evidence_windows_toolchain_confirmation",),
+    ),
+    (
+        "secret_local_data_exclusion_application",
+        ("secret_and_local_data_exclusion_policy",),
+        ("secret_and_local_data_exclusion_policy_not_validated",),
+        ("evidence_artifact_exclusion_validation",),
+    ),
+    (
+        "final_bundle_denied_scan",
+        ("secret_and_local_data_exclusion_policy",),
+        ("secret_and_local_data_exclusion_policy_not_validated",),
+        ("evidence_artifact_exclusion_validation",),
+    ),
+    (
+        "explicit_build_gate",
+        ("future_explicit_build_execution_gate",),
+        ("future_explicit_build_execution_gate_missing",),
+        ("evidence_future_explicit_build_execution_gate",),
+    ),
+    (
+        "exact_build_command",
+        ("future_explicit_build_execution_gate",),
+        ("future_explicit_build_execution_gate_missing",),
+        ("evidence_future_explicit_build_execution_gate",),
+    ),
+    (
+        "artifact_output_name_version_policy",
+        ("packaging_profile_alignment",),
+        ("final_desktop_packaging_profile_not_aligned",),
+        ("evidence_final_windows_profile_alignment",),
+    ),
+    (
+        "post_build_launch_smoke",
+        ("desktop_application_entrypoint_inventory",),
+        ("desktop_entrypoint_validation_not_performed",),
+        ("evidence_desktop_entrypoint_validation",),
+    ),
+)
+
+SOURCE_18_7_CAPABILITY_FIELDS: Final[tuple[str, ...]] = (
+    "build",
+    "packaging",
+    "artifact_creation",
+    "runtime",
+    "orders",
+)
+
+SOURCE_18_6_TOP_LEVEL_FIELDS: Final[tuple[str, ...]] = (
+    "schema_version",
+    "block_p_desktop_exe_build_readiness_contract_kind",
+    "block",
+    "step",
+    "block_p_desktop_exe_build_readiness_contract_status",
+    "source_18_5_accepted",
+    "block_p_desktop_exe_build_readiness_contract_decision",
+    "build_readiness_contract_artifact_complete",
+    "ready_for_block_p_7",
+    "next_step",
+    "next_step_title",
+    "block_p_desktop_exe_build_readiness_matrix_reference",
+    "source_matrix_preservation",
+    "build_readiness_contract_summary",
+    "build_readiness_contract_principles",
+    "build_readiness_contract_rows",
+    "build_readiness_acceptance_rules",
+    "capability_contract_state",
+    "fail_closed_build_readiness_contract_decision",
+    "non_execution_contract_evidence",
+    "contract_boundaries",
+    "source_boundaries",
+    "future_steps",
+    "status",
+    "integrity_valid",
+)
+
+SOURCE_18_7_SOURCE_BOUNDARY_VALUES: Final[tuple[tuple[str, bool], ...]] = (
+    ("reads_18_5_only", True),
+    ("source_only", True),
+    ("plain_data", True),
+    ("static_contract", True),
+    ("can_feed_only_18_7_build_readiness_read_model", True),
+    ("repo_rescan", False),
+    ("filesystem_scan", False),
+    ("environment_scan", False),
+    ("secret_file_read", False),
+    ("dependency_import", False),
+    ("dependency_resolution", False),
+    ("pyside_import", False),
+    ("qml_load", False),
+    ("qt_plugin_discovery", False),
+    ("entrypoint_selection", False),
+    ("entrypoint_validation", False),
+    ("evidence_collection", False),
+    ("evidence_validation", False),
+    ("blocker_resolution", False),
+    ("readiness_approval", False),
+    ("build_gate_approval", False),
+    ("build_readiness_grant", False),
+    ("packaging_authorization", False),
+    ("build_authorization", False),
+    ("spec_file_creation", False),
+    ("build_command_creation", False),
+    ("build_command_execution", False),
+    ("packaging_performed", False),
+    ("artifact_created", False),
+    ("artifact_scanned", False),
+    ("artifact_signed", False),
+    ("installer_created", False),
+    ("release_performed", False),
+    ("runtime_started", False),
+    ("orders_enabled", False),
+    ("network_opened", False),
+    ("credentials_read", False),
+    ("qml_bridge_gateway_controller_changed", False),
+)
+
+SOURCE_18_7_READ_MODEL_BOUNDARY_VALUES: Final[tuple[tuple[str, bool], ...]] = (
+    ("reads_18_6_only", True),
+    ("source_only", True),
+    ("plain_data", True),
+    ("static_read_model", True),
+    ("can_feed_only_18_8_closure_audit", True),
+    ("reads_18_5_only", False),
+    ("static_contract", False),
+    ("can_feed_only_18_7_build_readiness_read_model", False),
+    ("repo_rescan", False),
+    ("filesystem_scan", False),
+    ("environment_scan", False),
+    ("secret_file_read", False),
+    ("dependency_import", False),
+    ("dependency_resolution", False),
+    ("pyside_import", False),
+    ("qml_load", False),
+    ("qt_plugin_discovery", False),
+    ("entrypoint_selection", False),
+    ("entrypoint_validation", False),
+    ("evidence_collection", False),
+    ("evidence_validation", False),
+    ("blocker_resolution", False),
+    ("readiness_approval", False),
+    ("build_gate_approval", False),
+    ("build_readiness_grant", False),
+    ("packaging_authorization", False),
+    ("build_authorization", False),
+    ("spec_file_creation", False),
+    ("build_command_creation", False),
+    ("build_command_execution", False),
+    ("packaging_performed", False),
+    ("artifact_created", False),
+    ("artifact_scanned", False),
+    ("artifact_signed", False),
+    ("installer_created", False),
+    ("release_performed", False),
+    ("runtime_started", False),
+    ("orders_enabled", False),
+    ("network_opened", False),
+    ("credentials_read", False),
+    ("qml_bridge_gateway_controller_changed", False),
+)
+
 _COUNT_KEYS: Final[dict[str, int]] = {
     "readiness_clause_count": 17,
     "acceptance_rule_count": 6,
@@ -228,6 +465,282 @@ def _exact_plain(value: Any, expected: Any) -> bool:
         return True
     except Exception:
         return False
+
+
+def _source_ids_at(index: int) -> list[str]:
+    result: list[str] = []
+    for row in SOURCE_18_7_ROW_SPECS:
+        for item in row[index]:
+            if item not in result:
+                result.append(item)
+    return result
+
+
+def _source_requirement_ids() -> list[str]:
+    return _source_ids_at(SOURCE_18_7_REQUIREMENT_IDS_INDEX)
+
+
+def _source_blocker_ids() -> list[str]:
+    return _source_ids_at(SOURCE_18_7_BLOCKER_IDS_INDEX)
+
+
+def _source_evidence_ids() -> list[str]:
+    return _source_ids_at(SOURCE_18_7_EVIDENCE_IDS_INDEX)
+
+
+def _source_reference_template() -> dict[str, Any]:
+    return {
+        "schema_version": SOURCE_CONTRACT_SCHEMA_VERSION,
+        "kind": SOURCE_CONTRACT_KIND,
+        "block": "P",
+        "step": "18.6",
+        "status": SOURCE_CONTRACT_STATUS,
+        "contract_status": SOURCE_BUILD_READINESS_CONTRACT_STATUS,
+        "integrity_valid": True,
+        "source_18_5_accepted": True,
+        "build_readiness_contract_artifact_complete": True,
+        "ready_for_block_p_7": True,
+        "source_top_level_fields": list(SOURCE_18_6_TOP_LEVEL_FIELDS),
+    }
+
+
+def _source_preservation_template() -> dict[str, Any]:
+    return {
+        "preserves_18_6_payload": True,
+        "preserves_all_17_readiness_clauses": True,
+        "preserves_all_6_acceptance_rules": True,
+        "preserves_row_order": True,
+        "preserves_rule_order": True,
+        "preserves_requirement_blocker_evidence_links": True,
+        "source_contract_modified": False,
+        "source_contract_reinterpreted": False,
+    }
+
+
+def _source_summary_template() -> dict[str, Any]:
+    return {
+        "source_18_6_accepted": True,
+        "source_contract_preserved": True,
+        "read_model_complete": True,
+        "ready_for_block_p_8": True,
+        "readiness_clause_count": 17,
+        "defined_readiness_clause_count": 17,
+        "satisfied_readiness_clause_count": 0,
+        "unique_requirement_count": len(_source_requirement_ids()),
+        "unique_blocker_count": len(_source_blocker_ids()),
+        "unique_evidence_count": len(_source_evidence_ids()),
+        "observed_readiness_count": 0,
+        "validated_readiness_count": 0,
+        "satisfied_readiness_count": 0,
+        "ready_readiness_count": 0,
+        "acceptance_rule_count": 6,
+        "satisfied_acceptance_rule_count": 0,
+        "build_readiness_contract_satisfied": False,
+        "build_ready": False,
+        "packaging_authorized": False,
+        "build_authorized": False,
+        "artifact_creation_authorized": False,
+        "release_authorized": False,
+        "runtime_authorized": False,
+        "orders_authorized": False,
+    }
+
+
+def _source_readiness_rows_template() -> list[dict[str, Any]]:
+    return [
+        {
+            "read_model_row_id": f"read_model_contract_{readiness_id}",
+            "read_by_18_7": True,
+            "visible_in_read_model": True,
+            "readiness_id": readiness_id,
+            "source_requirement_ids": list(requirement_ids),
+            "source_blocker_ids": list(blocker_ids),
+            "required_evidence_ids": list(evidence_ids),
+            "contract_clause_id": "contract_" + readiness_id,
+            "source_observed": False,
+            "source_validated": False,
+            "source_satisfied": False,
+            "source_ready": False,
+            "source_blocks_build": True,
+            "source_blocks_packaging": True,
+            "source_blocks_artifact_creation": True,
+            "source_readiness_state": "required_not_observed",
+            "source_readiness_result": "future_explicit_evidence_required",
+            "source_failure_policy": "fail_closed",
+            "contract_clause_defined": True,
+            "contract_clause_satisfied": False,
+            "build_readiness_granted": False,
+            "packaging_authorization_granted": False,
+            "build_authorization_granted": False,
+            "artifact_creation_authorization_granted": False,
+            "failure_policy": "fail_closed",
+            "source_order": index,
+        }
+        for index, (readiness_id, requirement_ids, blocker_ids, evidence_ids) in enumerate(
+            SOURCE_18_7_ROW_SPECS, start=1
+        )
+    ]
+
+
+def _source_acceptance_rules_template() -> list[dict[str, Any]]:
+    clauses = ["contract_" + readiness_id for readiness_id, _, _, _ in SOURCE_18_7_ROW_SPECS]
+    return [
+        {
+            "read_by_18_7": True,
+            "visible_in_read_model": True,
+            "rule_id": "all_readiness_clauses_satisfied",
+            "required_contract_clause_ids": clauses,
+            "rule_defined": True,
+            "rule_satisfied": False,
+            "grants_build_readiness": False,
+        },
+        {
+            "read_by_18_7": True,
+            "visible_in_read_model": True,
+            "rule_id": "all_required_evidence_collected_and_validated",
+            "required_evidence_ids": _source_evidence_ids(),
+            "evidence_collected": False,
+            "evidence_validated": False,
+            "rule_defined": True,
+            "rule_satisfied": False,
+        },
+        {
+            "read_by_18_7": True,
+            "visible_in_read_model": True,
+            "rule_id": "all_source_blockers_resolved",
+            "required_blocker_ids": _source_blocker_ids(),
+            "blockers_resolved": False,
+            "rule_defined": True,
+            "rule_satisfied": False,
+        },
+        {
+            "read_by_18_7": True,
+            "visible_in_read_model": True,
+            "rule_id": "all_readiness_rows_observed_validated_satisfied_ready",
+            "rule_defined": True,
+            "observed": False,
+            "validated": False,
+            "satisfied": False,
+            "ready": False,
+            "rule_satisfied": False,
+        },
+        {
+            "read_by_18_7": True,
+            "visible_in_read_model": True,
+            "rule_id": "explicit_future_build_execution_gate",
+            "rule_defined": True,
+            "gate_present": False,
+            "gate_approved": False,
+            "rule_satisfied": False,
+        },
+        {
+            "read_by_18_7": True,
+            "visible_in_read_model": True,
+            "rule_id": "build_authorization_requires_all_previous_rules",
+            "rule_defined": True,
+            "rule_satisfied": False,
+            "grants_packaging_authorization": False,
+            "grants_build_authorization": False,
+            "grants_artifact_creation_authorization": False,
+        },
+    ]
+
+
+def _source_capability_state_template() -> dict[str, Any]:
+    caps = {key: "blocked" for key in SOURCE_18_7_CAPABILITY_FIELDS}
+    return {
+        "source_capability_build_readiness_state": deepcopy(caps),
+        "contract_capability_state": deepcopy(caps),
+        "read_model_capability_view": deepcopy(caps),
+    }
+
+
+def _source_decision_template() -> dict[str, Any]:
+    return {
+        "source_matrix_exists_and_accepted": True,
+        "contract_definitions_complete": True,
+        "contract_satisfied": False,
+        "no_readiness_row_satisfied": True,
+        "no_blocker_resolved": True,
+        "no_evidence_collected": True,
+        "no_evidence_validated": True,
+        "build_ready": False,
+        "packaging_authorized": False,
+        "build_authorized": False,
+        "artifact_creation_authorized": False,
+        "release_authorized": False,
+        "runtime_enabled": False,
+        "orders_enabled": False,
+        "only_source_only_18_7_handoff_allowed": True,
+        "build_performed_by_18_6": False,
+        "packaging_authorized_by_18_6": False,
+        "build_authorized_by_18_6": False,
+        "artifact_creation_authorized_by_18_6": False,
+        "release_performed_by_18_6": False,
+        "runtime_enabled_by_18_6": False,
+        "orders_enabled_by_18_6": False,
+        "read_model_built_by_18_7": True,
+        "source_read_by_18_7": True,
+        "nothing_executed_by_18_7": True,
+        "nothing_authorized_by_18_7": True,
+        "only_source_only_18_8_handoff_allowed": True,
+    }
+
+
+def _source_non_execution_template() -> dict[str, Any]:
+    return {
+        "source_read": True,
+        "read_model_built": True,
+        "source_builder_call_count": 1,
+        "build_performed": False,
+        "packaging_performed": False,
+        "artifact_created": False,
+        "release_performed": False,
+        "runtime_started": False,
+        "network_opened": False,
+        "credentials_read": False,
+        "orders_enabled": False,
+    }
+
+
+def _source_boundaries_template() -> dict[str, Any]:
+    return dict(SOURCE_18_7_READ_MODEL_BOUNDARY_VALUES)
+
+
+def _trusted_source_template() -> dict[str, Any]:
+    return {
+        "schema_version": SOURCE_SCHEMA_VERSION,
+        "block_p_desktop_exe_build_readiness_read_model_kind": SOURCE_KIND,
+        "block": "P",
+        "step": "18.7",
+        "block_p_desktop_exe_build_readiness_read_model_status": SOURCE_READ_MODEL_STATUS,
+        "source_18_6_accepted": True,
+        "block_p_desktop_exe_build_readiness_read_model_decision": SOURCE_READ_MODEL_STATUS.upper(),
+        "read_model_artifact_complete": True,
+        "ready_for_block_p_8": True,
+        "next_step": "FUNCTIONAL-PREVIEW-18.8",
+        "next_step_title": "BLOCK P CLOSURE AUDIT",
+        "block_p_desktop_exe_build_readiness_contract_reference": _source_reference_template(),
+        "source_contract_preservation": _source_preservation_template(),
+        "build_readiness_read_model_summary": _source_summary_template(),
+        "readiness_clause_read_rows": _source_readiness_rows_template(),
+        "acceptance_rule_read_rows": _source_acceptance_rules_template(),
+        "capability_read_model_state": _source_capability_state_template(),
+        "fail_closed_readiness_decision_view": _source_decision_template(),
+        "non_execution_read_model_evidence": _source_non_execution_template(),
+        "read_model_boundaries": _source_boundaries_template(),
+        "source_boundaries": dict(SOURCE_18_7_SOURCE_BOUNDARY_VALUES),
+        "future_steps": [
+            {
+                "step": "18.8",
+                "title": "BLOCK P CLOSURE AUDIT",
+                "source_only": True,
+                "build_performed": False,
+            }
+        ],
+        "status": SOURCE_STATUS,
+        "integrity_valid": True,
+    }
 
 
 def _stage_rows() -> list[dict[str, Any]]:
@@ -290,7 +803,8 @@ def _source_accepted(source: Any) -> bool:
         root_keys = tuple(source)
         if not all(type(key) is str for key in root_keys):
             return False
-        if root_keys != SOURCE_18_7_TOP_LEVEL_FIELDS:
+        trusted = _trusted_source_template()
+        if not _exact_plain(source, trusted):
             return False
         if not (
             _exact_scalar(source["schema_version"], SOURCE_SCHEMA_VERSION)
