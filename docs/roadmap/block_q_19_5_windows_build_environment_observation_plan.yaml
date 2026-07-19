@@ -1,0 +1,248 @@
+schema_version: preview_block_q_windows_build_environment_observation_plan_contract.v1
+kind: functional_preview_block_q_windows_build_environment_observation_plan_contract
+block: Q
+step: "19.5"
+title: WINDOWS BUILD ENVIRONMENT OBSERVATION PLAN
+source_step: "19.4"
+source_kind: functional_preview_block_q_windows_build_environment_read_model
+source_builder: build_preview_block_q_windows_build_environment_read_model
+source_only: true
+actual_environment_observation_performed: false
+environment_build_ready: false
+execution_authorized: false
+next_step: ""
+next_step_title: ""
+next_step_contract_missing: true
+next_step_authorized: false
+forbidden_authorizations:
+  repo_runtime_scan_authorized: false
+  filesystem_runtime_scan_authorized: false
+  environment_scan_authorized: false
+  windows_host_inspection_authorized: false
+  windows_version_read_authorized: false
+  interpreter_observation_authorized: false
+  dependency_resolution_authorized: false
+  pyside_import_authorized: false
+  qml_load_authorized: false
+  qt_plugin_discovery_authorized: false
+  build_command_creation_authorized: false
+  build_command_execution_authorized: false
+  packaging_authorized: false
+  artifact_creation_authorized: false
+  artifact_scan_authorized: false
+  artifact_signing_authorized: false
+  installer_creation_authorized: false
+  release_authorized: false
+  application_runtime_authorized: false
+  network_open_authorized: false
+  credentials_read_authorized: false
+  orders_authorized: false
+observation_plan_rows:
+  - observation_plan_id: observation_plan_windows_host
+    read_model_id: read_model_windows_host
+    contract_id: contract_windows_host
+    matrix_id: matrix_windows_host
+    inventory_id: windows_host
+    requirement_field: windows_host_required
+    category: platform
+    required: true
+    observation_target: windows_host_identity
+    observation_method: windows_platform_identity_query
+    expected_value_type: string
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_supported_windows_version
+    read_model_id: read_model_supported_windows_version
+    contract_id: contract_supported_windows_version
+    matrix_id: matrix_supported_windows_version
+    inventory_id: supported_windows_version
+    requirement_field: supported_windows_version_must_be_confirmed
+    category: platform
+    required: true
+    observation_target: windows_version
+    observation_method: windows_version_query
+    expected_value_type: string
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_python_version
+    read_model_id: read_model_python_version
+    contract_id: contract_python_version
+    matrix_id: matrix_python_version
+    inventory_id: python_version
+    requirement_field: exact_python_version_must_be_confirmed
+    category: runtime
+    required: true
+    observation_target: python_interpreter_version
+    observation_method: python_version_query
+    expected_value_type: string
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_pyside_version
+    read_model_id: read_model_pyside_version
+    contract_id: contract_pyside_version
+    matrix_id: matrix_pyside_version
+    inventory_id: pyside_version
+    requirement_field: exact_pyside_version_must_be_confirmed
+    category: framework
+    required: true
+    observation_target: pyside_package_version
+    observation_method: python_package_metadata_query
+    expected_value_type: string
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_packaging_tool_and_version
+    read_model_id: read_model_packaging_tool_and_version
+    contract_id: contract_packaging_tool_and_version
+    matrix_id: matrix_packaging_tool_and_version
+    inventory_id: packaging_tool_and_version
+    requirement_field: exact_packaging_tool_and_version_must_be_selected
+    category: packaging
+    required: true
+    observation_target: packaging_tool_and_version
+    observation_method: packaging_configuration_query
+    expected_value_type: string
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_desktop_entrypoint
+    read_model_id: read_model_desktop_entrypoint
+    contract_id: contract_desktop_entrypoint
+    matrix_id: matrix_desktop_entrypoint
+    inventory_id: desktop_entrypoint
+    requirement_field: desktop_entrypoint_must_be_confirmed
+    category: application
+    required: true
+    observation_target: desktop_entrypoint
+    observation_method: repository_configuration_read
+    expected_value_type: string
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_qml_assets
+    read_model_id: read_model_qml_assets
+    contract_id: contract_qml_assets
+    matrix_id: matrix_qml_assets
+    inventory_id: qml_assets
+    requirement_field: qml_assets_must_be_confirmed
+    category: assets
+    required: true
+    observation_target: qml_asset_manifest
+    observation_method: repository_manifest_read
+    expected_value_type: list
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_qt_plugins
+    read_model_id: read_model_qt_plugins
+    contract_id: contract_qt_plugins
+    matrix_id: matrix_qt_plugins
+    inventory_id: qt_plugins
+    requirement_field: qt_plugins_must_be_confirmed
+    category: plugins
+    required: true
+    observation_target: qt_plugin_requirements
+    observation_method: repository_manifest_read
+    expected_value_type: list
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_dependency_lock
+    read_model_id: read_model_dependency_lock
+    contract_id: contract_dependency_lock
+    matrix_id: matrix_dependency_lock
+    inventory_id: dependency_lock
+    requirement_field: dependency_lock_must_be_resolved
+    category: dependencies
+    required: true
+    observation_target: dependency_lock_state
+    observation_method: dependency_lock_read
+    expected_value_type: object
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_secret_and_local_data_exclusion
+    read_model_id: read_model_secret_and_local_data_exclusion
+    contract_id: contract_secret_and_local_data_exclusion
+    matrix_id: matrix_secret_and_local_data_exclusion
+    inventory_id: secret_and_local_data_exclusion
+    requirement_field: secret_and_local_data_exclusion_must_be_confirmed
+    category: security
+    required: true
+    observation_target: secret_and_local_data_exclusion_policy
+    observation_method: repository_policy_read
+    expected_value_type: object
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+  - observation_plan_id: observation_plan_output_name_and_version_policy
+    read_model_id: read_model_output_name_and_version_policy
+    contract_id: contract_output_name_and_version_policy
+    matrix_id: matrix_output_name_and_version_policy
+    inventory_id: output_name_and_version_policy
+    requirement_field: output_name_and_version_policy_must_be_confirmed
+    category: output
+    required: true
+    observation_target: output_name_and_version_policy
+    observation_method: repository_policy_read
+    expected_value_type: object
+    evidence_required: true
+    observation_authorized: false
+    observation_status: not_performed
+    evidence_status: not_collected
+    plan_state: defined_but_not_authorized
+    source_only_definition: true
+summary:
+  observation_plan_row_count: 11
+  required_count: 11
+  authorized_observation_count: 0
+  performed_observation_count: 0
+  evidence_required_count: 11
+  evidence_collected_count: 0
+  plan_definition_complete: true
+  actual_environment_observation_complete: false
+  environment_build_ready: false
+boundaries:
+  reads_19_4_only: true
+  one_to_one_read_model_mapping_required: true
+  plain_data: true
+  source_only: true
+  no_runtime_execution: true
+  no_environment_mutation: true
+  no_source_mutation: true
+  no_network: true
+  no_credentials: true
+  no_orders: true
