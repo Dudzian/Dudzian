@@ -24,6 +24,7 @@ from ui.pyside_app.preview_block_q_windows_desktop_build_execution_entry_contrac
     _canonical_blocked,
     _canonical_nominal,
     _exact_plain,
+    _exact_str_keyed_dict,
     _integrity,
     _nominal,
     _source_accepted,
@@ -88,6 +89,51 @@ class BombKey(str):
     def __eq__(self, other: object) -> bool:
         type(self).calls += 1
         raise AssertionError("eq called")
+
+
+class ArmedBombKey(str):
+    hash_calls = 0
+    equality_calls = 0
+
+    def __new__(cls, value: str) -> ArmedBombKey:
+        instance = super().__new__(cls, value)
+        instance.armed = False
+        return instance
+
+    def __hash__(self) -> int:
+        if self.armed:
+            type(self).hash_calls += 1
+            raise AssertionError("custom hash must not be called")
+        return str.__hash__(self)
+
+    def __eq__(self, other: object) -> bool:
+        if self.armed:
+            type(self).equality_calls += 1
+            raise AssertionError("custom equality must not be called")
+        return str.__eq__(self, other)
+
+
+def _replace_with_armed_bomb_key(
+    mapping: dict[str, Any],
+    key: str,
+) -> ArmedBombKey:
+    items = list(mapping.items())
+    mapping.clear()
+
+    bomb_key = ArmedBombKey(key)
+
+    for item_key, value in items:
+        mapping[bomb_key if item_key == key else item_key] = value
+
+    bomb_key.armed = True
+    return bomb_key
+
+
+def _replace_with_str_subclass_key(mapping: dict[str, Any], key: str) -> None:
+    items = list(mapping.items())
+    mapping.clear()
+    for item_key, value in items:
+        mapping[StrSubclass(key) if item_key == key else item_key] = value
 
 
 def _via_builder(monkeypatch: pytest.MonkeyPatch, source: Any) -> dict[str, Any]:
@@ -321,6 +367,139 @@ def test_capability_audit_exact_type_first_adversarial_containers(
         source["capability_audit"]["capability_state"]
     )
     assert _via_builder(monkeypatch, source) == _blocked()
+
+
+def test_exact_str_keyed_dict_rejects_non_exact_keys_without_hash_or_equality() -> None:
+    ArmedBombKey.hash_calls = 0
+    ArmedBombKey.equality_calls = 0
+    mapping = {"x": 1}
+    _replace_with_armed_bomb_key(mapping, "x")
+    assert _exact_str_keyed_dict(mapping) is False
+    assert ArmedBombKey.hash_calls == 0
+    assert ArmedBombKey.equality_calls == 0
+    assert _exact_str_keyed_dict({"x": 1}) is True
+    assert _exact_str_keyed_dict(DictSubclass({"x": 1})) is False
+
+
+@pytest.mark.parametrize(
+    ("nested_path", "mutate"),
+    (
+        (
+            "closure_summary.source_18_7_accepted",
+            lambda source: _replace_with_armed_bomb_key(
+                source["closure_summary"], "source_18_7_accepted"
+            ),
+        ),
+        (
+            "closure_decision.physical_build_completed",
+            lambda source: _replace_with_armed_bomb_key(
+                source["closure_decision"], "physical_build_completed"
+            ),
+        ),
+        (
+            "authorization_audit.build_authorized",
+            lambda source: _replace_with_armed_bomb_key(
+                source["authorization_audit"], "build_authorized"
+            ),
+        ),
+        (
+            "capability_audit.capability_state",
+            lambda source: _replace_with_armed_bomb_key(
+                source["capability_audit"], "capability_state"
+            ),
+        ),
+        (
+            "stage_audit_rows[0].step",
+            lambda source: _replace_with_armed_bomb_key(source["stage_audit_rows"][0], "step"),
+        ),
+    ),
+)
+def test_nested_bomb_key_public_fail_closed_without_hash_or_equality(
+    monkeypatch: pytest.MonkeyPatch,
+    nested_path: str,
+    mutate: Any,
+) -> None:
+    del nested_path
+    ArmedBombKey.hash_calls = 0
+    ArmedBombKey.equality_calls = 0
+    source = build_preview_block_p_closure_audit()
+    mutate(source)
+    calls = 0
+
+    def fake_builder() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return source
+
+    monkeypatch.setattr(q19, "build_preview_block_p_closure_audit", fake_builder)
+    payload = build_preview_block_q_windows_desktop_build_execution_entry_contract()
+    assert calls == 1
+    assert payload == _blocked()
+    assert _integrity(payload) is True
+    assert json.loads(json.dumps(payload)) == payload
+    assert ArmedBombKey.hash_calls == 0
+    assert ArmedBombKey.equality_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("nested_path", "mutate"),
+    (
+        (
+            "closure_summary.source_18_7_accepted",
+            lambda source: _replace_with_str_subclass_key(
+                source["closure_summary"], "source_18_7_accepted"
+            ),
+        ),
+        (
+            "closure_decision.physical_build_completed",
+            lambda source: _replace_with_str_subclass_key(
+                source["closure_decision"], "physical_build_completed"
+            ),
+        ),
+        (
+            "authorization_audit.build_authorized",
+            lambda source: _replace_with_str_subclass_key(
+                source["authorization_audit"], "build_authorized"
+            ),
+        ),
+        (
+            "capability_audit.capability_state",
+            lambda source: _replace_with_str_subclass_key(
+                source["capability_audit"], "capability_state"
+            ),
+        ),
+        (
+            "stage_audit_rows[0].step",
+            lambda source: _replace_with_str_subclass_key(source["stage_audit_rows"][0], "step"),
+        ),
+    ),
+)
+def test_nested_key_str_subclass_public_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    nested_path: str,
+    mutate: Any,
+) -> None:
+    del nested_path
+    source = build_preview_block_p_closure_audit()
+    mutate(source)
+    payload = _via_builder(monkeypatch, source)
+    assert payload == _blocked()
+    assert _integrity(payload) is True
+
+
+def test_capability_state_bomb_key_public_fail_closed_without_hash_or_equality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ArmedBombKey.hash_calls = 0
+    ArmedBombKey.equality_calls = 0
+    source = build_preview_block_p_closure_audit()
+    _replace_with_armed_bomb_key(source["capability_audit"]["capability_state"], "runtime")
+    payload = _via_builder(monkeypatch, source)
+    assert payload == _blocked()
+    assert _integrity(payload) is True
+    assert json.loads(json.dumps(payload)) == payload
+    assert ArmedBombKey.hash_calls == 0
+    assert ArmedBombKey.equality_calls == 0
 
 
 def test_stage_steps_exact_type_first_adversarial_values(
