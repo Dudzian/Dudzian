@@ -200,6 +200,13 @@ def _exact_plain(value: Any, expected: Any) -> bool:
         return False
 
 
+def _exact_str_keyed_dict(value: Any) -> bool:
+    try:
+        return type(value) is dict and all(type(key) is str for key in value)
+    except Exception:
+        return False
+
+
 def _source_accepted(source: Any) -> bool:
     try:
         if type(source) is not dict or not all(type(k) is str for k in source):
@@ -227,15 +234,15 @@ def _source_accepted(source: Any) -> bool:
         closure_decision = source["closure_decision"]
         auth = source["authorization_audit"]
         capability_audit = source["capability_audit"]
-        if (
-            type(closure_summary) is not dict
-            or type(closure_decision) is not dict
-            or type(auth) is not dict
-            or type(capability_audit) is not dict
+        if not (
+            _exact_str_keyed_dict(closure_summary)
+            and _exact_str_keyed_dict(closure_decision)
+            and _exact_str_keyed_dict(auth)
+            and _exact_str_keyed_dict(capability_audit)
         ):
             return False
         caps = capability_audit.get("capability_state")
-        if type(caps) is not dict:
+        if not _exact_str_keyed_dict(caps):
             return False
         for key in (
             "source_18_7_accepted",
@@ -256,7 +263,7 @@ def _source_accepted(source: Any) -> bool:
             return False
         stage_steps: list[str] = []
         for row in stage_rows:
-            if type(row) is not dict:
+            if not _exact_str_keyed_dict(row):
                 return False
             step = row.get("step")
             if type(step) is not str:
@@ -280,8 +287,6 @@ def _source_accepted(source: Any) -> bool:
         for key in AUTHORIZATION_FALSE_FIELDS:
             if type(auth.get(key)) is not bool or auth[key] is not False:
                 return False
-        if type(caps) is not dict:
-            return False
         for value in caps.values():
             if type(value) is not str or value != "blocked":
                 return False
