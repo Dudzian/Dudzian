@@ -6,16 +6,17 @@ import argparse
 import logging
 import os
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable, Iterator, TextIO
 
 if TYPE_CHECKING:
-    from PySide6.QtGui import QGuiApplication
-    from PySide6.QtQml import QQmlApplicationEngine
-
     from .config import UiAppConfig
     from .qml_bridge import QmlContextBridge
+
+    QGuiApplication = Any
+    QQmlApplicationEngine = Any
 
 from .config import load_ui_app_config
 from .runtime_paths import (
@@ -62,11 +63,16 @@ class AppOptions:
     smoke: bool = False
     offscreen: bool = False
     exercise_preview_state: bool = False
+    smoke_report_path: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "config_path", Path(self.config_path).expanduser().resolve())
         qml_path = Path(self.qml_path).expanduser().resolve() if self.qml_path else None
+        smoke_report_path = (
+            Path(self.smoke_report_path).expanduser().resolve() if self.smoke_report_path else None
+        )
         object.__setattr__(self, "qml_path", qml_path)
+        object.__setattr__(self, "smoke_report_path", smoke_report_path)
         object.__setattr__(self, "log_level", str(self.log_level).upper())
         self.validate()
 
@@ -113,6 +119,10 @@ class AppOptions:
             action="store_true",
             help="Smoke-only: mutuje lokalny PreviewState/PaperState i zwraca audyt JSON bez runtime loop",
         )
+        parser.add_argument(
+            "--smoke-report",
+            help="Smoke-only: zapisuje JSON raportu do wskazanego pliku UTF-8",
+        )
         return parser
 
     @classmethod
@@ -137,6 +147,7 @@ class AppOptions:
             smoke=args.smoke,
             offscreen=args.offscreen,
             exercise_preview_state=args.exercise_preview_state,
+            smoke_report_path=Path(args.smoke_report) if args.smoke_report else None,
         )
 
     def validate(self) -> None:
@@ -148,12 +159,41 @@ class AppOptions:
             raise FileNotFoundError(f"Nie znaleziono pliku QML: {self.qml_path}")
         if not hasattr(logging, self.log_level):
             raise ValueError(f"Nieprawidłowy poziom logowania: {self.log_level}")
+        if self.smoke_report_path is not None and not self.smoke:
+            raise ValueError("--smoke-report może być użyty tylko z --smoke lub --smoke-test")
 
     @property
     def logging_level(self) -> int:
         """Przekłada nazwę poziomu na wartość liczbową używaną w logging."""
 
         return getattr(logging, self.log_level, logging.INFO)
+
+
+@contextmanager
+def smoke_output_stream(report_path: Path | None) -> Iterator[TextIO]:
+    """Yield a writable smoke report stream that is safe for windowed PyInstaller EXEs."""
+
+    if report_path is not None:
+        resolved = Path(report_path).expanduser().resolve()
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        with resolved.open("w", encoding="utf-8") as handle:
+            yield handle
+        return
+
+    stdout = sys.stdout
+    if stdout is not None:
+        yield stdout
+        return
+
+    with open(os.devnull, "w", encoding="utf-8") as handle:
+        yield handle
+
+
+def _flush_if_available(stream: TextIO | None) -> None:
+    """Flush a stream only when the windowed process still exposes it."""
+
+    if stream is not None:
+        stream.flush()
 
 
 class BotPysideApplication:
@@ -279,12 +319,14 @@ def main(argv: list[str] | None = None) -> int:
     if options.smoke:
         from .smoke import run_smoke
 
-        exit_code = run_smoke(options, output=sys.stdout, force_offscreen=options.offscreen)
+        with smoke_output_stream(options.smoke_report_path) as output:
+            exit_code = run_smoke(options, output=output, force_offscreen=options.offscreen)
+            output.flush()
         # Offscreen smoke has already printed JSON and completed its own artifact cleanup;
         # bypass slow Qt/PySide interpreter teardown so subprocess-based smoke guards exit
         # deterministically before their fixed timeout without changing product runtime mode.
-        sys.stdout.flush()
-        sys.stderr.flush()
+        _flush_if_available(sys.stdout)
+        _flush_if_available(sys.stderr)
         if options.offscreen:
             _terminate_offscreen_smoke(exit_code)
         return exit_code
