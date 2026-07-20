@@ -3,10 +3,24 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+
 import pytest
 import yaml
 
-from scripts.verify_windows_artifact import artifact_data_root, validate_artifact
+from scripts.verify_windows_artifact import (
+    REQUIRED_ROOT_FILES,
+    artifact_data_root,
+    validate_artifact,
+)
+from scripts.windows_build_names import (
+    EXE_NAME,
+    ONEDIR_NAME,
+    PRODUCT_NAME,
+    PYTHON_PACKAGE_NAME,
+    SPEC_FILE_NAME,
+    WINDOWS_ARTIFACT_PREFIX,
+    WINDOWS_REPORTS_ARTIFACT_PREFIX,
+)
 from scripts.windows_build_probe import build_report, main
 from ui.pyside_app.app import AppOptions
 from ui.pyside_app.runtime_paths import default_config_path, default_qml_path, qml_import_roots
@@ -28,8 +42,8 @@ def _create_valid_artifact(root: Path, *, internal: bool = True) -> Path:
     (data_root / "ui/qml/Icon.qml").write_text("import QtQuick\nItem {}\n", encoding="utf-8")
     (data_root / "PySide6/Qt/plugins/platforms").mkdir(parents=True)
     (data_root / "PySide6/Qt/plugins/platforms/qwindows.dll").write_bytes(b"dll")
-    (root / "GymOS.exe").write_bytes(b"exe")
-    (root / "BUILD_INFO.txt").write_text("application=GymOS\n", encoding="utf-8")
+    (root / EXE_NAME).write_bytes(b"exe")
+    (root / "BUILD_INFO.txt").write_text(f"application={PRODUCT_NAME}\n", encoding="utf-8")
     return data_root
 
 
@@ -39,7 +53,8 @@ def test_probe_reports_required_build_contract(tmp_path, monkeypatch):
     report_path = ROOT / "build" / "reports" / "windows_environment_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["desktop_entrypoint"] == "ui.pyside_app"
-    assert report["output_name"] == "GymOS.exe"
+    assert report["output_name"] == EXE_NAME
+    assert report["application_name"] == PRODUCT_NAME
     assert report["application_version"] == "0.1.0"
     assert "ui/pyside_app/qml/MainWindow.qml" in report["qml_assets"]["ui/pyside_app/qml"]
     assert "platforms" in report["required_qt_plugins"]
@@ -106,13 +121,17 @@ def test_workflow_uses_isolated_artifact_smoke_and_lockfile():
     assert "python -m pip check" in text
     assert "$env:RUNNER_TEMP" in text
     assert "Set-Location $isolated" in text
-    assert ".\\GymOS.exe --smoke-test --offscreen" in text
-    assert "GymOS.exe --config ui/config/preview_local.yaml" not in text
-    assert "Compress-Archive -Path build/output/GymOS/*" in text
+    assert f".\\{EXE_NAME} `" in text
+    assert "--smoke-report $smokeReport" in text
+    assert "*>" not in text[text.index("Smoke test isolated artifact") : text.index("Package ZIP")]
+    assert "verify_windows_smoke_report.py" in text
+    assert f"{EXE_NAME} --config ui/config/preview_local.yaml" not in text
+    assert f"Compress-Archive -Path build/output/{ONEDIR_NAME}/*" in text
     assert "Get-FileHash -Algorithm SHA256 -Path $zipPath" in text
     assert "build/reports/ZIP_SHA256.txt" in text
     assert "actions/create-release" not in text
     assert "softprops/action-gh-release" not in text
+    assert "console=False" in (ROOT / SPEC_FILE_NAME).read_text(encoding="utf-8")
 
 
 def test_artifact_scanner_accepts_pyinstaller6_internal_layout(tmp_path):
@@ -181,3 +200,126 @@ def test_artifact_scanner_rejects_forbidden_paths_in_root_and_internal(tmp_path,
     result = validate_artifact(tmp_path)
     assert not result.ok
     assert relative in result.forbidden
+
+
+def test_windows_pipeline_files_do_not_reference_legacy_product_names():
+    checked = [
+        ROOT / ".github/workflows/windows-build.yml",
+        ROOT / SPEC_FILE_NAME,
+        ROOT / "scripts/build_windows.ps1",
+        ROOT / "scripts/windows_build_probe.py",
+        ROOT / "scripts/verify_windows_artifact.py",
+    ]
+    for path in checked:
+        text = path.read_text(encoding="utf-8")
+        for legacy_name in ("GymOS", "dudzian-bot-preview"):
+            assert legacy_name not in text, path
+
+
+def test_authoritative_windows_product_name_is_consistent():
+    workflow_text = (ROOT / ".github/workflows/windows-build.yml").read_text(encoding="utf-8")
+    spec_text = (ROOT / SPEC_FILE_NAME).read_text(encoding="utf-8")
+    build_script_text = (ROOT / "scripts/build_windows.ps1").read_text(encoding="utf-8")
+    report = build_report()
+
+    assert PYTHON_PACKAGE_NAME == "dudzian-bot"
+    assert PRODUCT_NAME == "CryptoHunter"
+    assert EXE_NAME == "CryptoHunter.exe"
+    assert ONEDIR_NAME == "CryptoHunter"
+    assert SPEC_FILE_NAME == "CryptoHunter.spec"
+    assert WINDOWS_ARTIFACT_PREFIX == "CryptoHunter-windows"
+    assert WINDOWS_REPORTS_ARTIFACT_PREFIX == "CryptoHunter-windows-reports"
+    assert PRODUCT_NAME == ONEDIR_NAME
+    assert EXE_NAME == f"{PRODUCT_NAME}.exe"
+    assert SPEC_FILE_NAME == f"{PRODUCT_NAME}.spec"
+    assert report["application_name"] == PRODUCT_NAME
+    assert report["output_name"] == EXE_NAME
+    assert REQUIRED_ROOT_FILES[0] == EXE_NAME
+    assert f"application={PRODUCT_NAME}" in workflow_text
+    assert f'artifactName = "{WINDOWS_ARTIFACT_PREFIX}-' in workflow_text
+    assert f'zipName = "{WINDOWS_ARTIFACT_PREFIX}-' in workflow_text
+    assert f"name: {WINDOWS_ARTIFACT_PREFIX}-" in workflow_text
+    assert f"name: {WINDOWS_REPORTS_ARTIFACT_PREFIX}-" in workflow_text
+    assert f"build/output/{ONEDIR_NAME}/{EXE_NAME}" in workflow_text
+    assert f'name="{PRODUCT_NAME}"' in spec_text
+    assert SPEC_FILE_NAME in build_script_text
+
+
+def test_smoke_report_option_is_parsed_as_absolute_path(tmp_path):
+    report_path = tmp_path / "nested" / "smoke.json"
+    options = AppOptions.parse(["--smoke-test", "--smoke-report", str(report_path)])
+    assert options.smoke is True
+    assert options.smoke_report_path == report_path.resolve()
+    assert options.smoke_report_path.is_absolute()
+
+
+def test_smoke_report_without_smoke_mode_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="--smoke-report"):
+        AppOptions.parse(["--smoke-report", str(tmp_path / "smoke.json")])
+
+
+def test_smoke_report_file_is_created_and_stdout_none_is_safe(monkeypatch, tmp_path):
+    from ui.pyside_app import app as app_module
+    import ui.pyside_app.smoke as smoke_module
+
+    report_path = tmp_path / "reports" / "smoke-test.log"
+    calls: dict[str, object] = {}
+    captured_output = []
+
+    def fake_run_smoke(options, *, output, force_offscreen):
+        captured_output.append(output)
+        calls["output_closed_during_run"] = output.closed
+        calls["force_offscreen"] = force_offscreen
+        output.write('{"status":"ok"}\n')
+        return 0
+
+    def fake_terminate(exit_code: int) -> None:
+        calls["terminated"] = exit_code
+        calls["report_closed_before_terminate"] = captured_output[0].closed
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(smoke_module, "run_smoke", fake_run_smoke)
+    monkeypatch.setattr(app_module, "_terminate_offscreen_smoke", fake_terminate)
+
+    assert app_module.main(["--smoke-test", "--offscreen", "--smoke-report", str(report_path)]) == 0
+    assert report_path.parent.is_dir()
+    assert json.loads(report_path.read_text(encoding="utf-8"))["status"] == "ok"
+    assert calls == {
+        "output_closed_during_run": False,
+        "force_offscreen": True,
+        "terminated": 0,
+        "report_closed_before_terminate": True,
+    }
+
+
+def test_smoke_without_report_uses_devnull_when_stdout_is_none(monkeypatch):
+    from ui.pyside_app import app as app_module
+    import ui.pyside_app.smoke as smoke_module
+
+    calls: dict[str, object] = {}
+
+    def fake_run_smoke(options, *, output, force_offscreen):
+        calls["output_is_none"] = output is None
+        output.write('{"status":"ok"}\n')
+        return 0
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(smoke_module, "run_smoke", fake_run_smoke)
+    monkeypatch.setattr(app_module, "_terminate_offscreen_smoke", lambda exit_code: None)
+
+    assert app_module.main(["--smoke-test", "--offscreen"]) == 0
+    assert calls == {"output_is_none": False}
+
+
+def test_verify_windows_smoke_report_requires_ok_status(tmp_path):
+    from scripts.verify_windows_smoke_report import load_smoke_report
+
+    report = tmp_path / "smoke.json"
+    report.write_text('{"status":"ok"}\n', encoding="utf-8")
+    assert load_smoke_report(report)["status"] == "ok"
+
+    report.write_text('{"status":"blocked"}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="not ok"):
+        load_smoke_report(report)

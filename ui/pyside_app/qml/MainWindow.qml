@@ -12,7 +12,7 @@ ApplicationWindow {
     width: 1280
     height: 720
     visible: true
-    title: qsTr("Dudzian Product Preview — safe dry-run")
+    title: qsTr("CryptoHunter Preview")
     color: designSystem.color("background")
     property var contextGrpcBridge: (typeof grpcBridge !== "undefined" ? grpcBridge : null)
     property var runtimeService: contextGrpcBridge && contextGrpcBridge.runtimeService ? contextGrpcBridge.runtimeService : null
@@ -27,7 +27,7 @@ ApplicationWindow {
     ]
     property var translationDictionary: ({
         "PL": ({
-            "app.title": "Dudzian Bot Preview",
+            "app.title": "CryptoHunter Preview",
             "safety.summary": "Live trading wyłączony • Połączenie z giełdą wyłączone • Składanie zleceń wyłączone",
             "nav.dashboard": "Dashboard",
             "nav.aiCenter": "AI Center",
@@ -62,7 +62,7 @@ ApplicationWindow {
             "category.diagnostics": "Diagnostyka"
         }),
         "EN": ({
-            "app.title": "Dudzian Bot Preview",
+            "app.title": "CryptoHunter Preview",
             "safety.summary": "Live trading disabled • Exchange I/O disabled • Order submission disabled",
             "nav.dashboard": "Dashboard",
             "nav.aiCenter": "AI Center",

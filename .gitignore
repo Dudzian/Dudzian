@@ -44,5 +44,4 @@ bot_core/logs/
 # Generated preview EXE artifacts
 /dist/preview/
 /var/build/preview/
-/dudzian-bot-preview.spec
 var/artifacts/

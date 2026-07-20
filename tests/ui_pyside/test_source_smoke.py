@@ -1491,8 +1491,9 @@ def test_offscreen_smoke_uses_deterministic_qt_process_termination() -> None:
     ]
 
     assert "exit_code = run_smoke(" in main_body
-    assert "sys.stdout.flush()" in main_body
-    assert "sys.stderr.flush()" in main_body
+    assert "_flush_if_available(sys.stdout)" in main_body
+    assert "_flush_if_available(sys.stderr)" in main_body
+    assert "smoke_output_stream(options.smoke_report_path)" in main_body
     assert "if options.offscreen:" in main_body
     assert "_terminate_offscreen_smoke(exit_code)" in main_body
     assert "os._exit(exit_code)" in app_source

@@ -1,4 +1,4 @@
-"""Generate a safe Windows desktop build environment report for GymOS."""
+"""Generate a safe Windows desktop build environment report for CryptoHunter."""
 
 from __future__ import annotations
 
@@ -12,9 +12,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from scripts.windows_build_names import EXE_NAME, PRODUCT_NAME, PYTHON_PACKAGE_NAME
+
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_PATH = ROOT / "build" / "reports" / "windows_environment_report.json"
-APP_NAME = "GymOS"
+
 DESKTOP_ENTRYPOINT = "ui.pyside_app"
 QML_ASSETS = ("ui/pyside_app/qml", "ui/qml")
 QT_PLUGINS = ("platforms", "imageformats", "iconengines", "styles", "qml")
@@ -35,7 +37,7 @@ def _sha256(path: Path) -> str:
 
 
 def _project_version() -> str:
-    return _package_version("dudzian-bot") or "0+unknown"
+    return _package_version(PYTHON_PACKAGE_NAME) or "0+unknown"
 
 
 def _package_version(name: str) -> str | None:
@@ -90,8 +92,8 @@ def build_report() -> dict[str, Any]:
         "qml_assets": {asset: _list_files(ROOT / asset) for asset in QML_ASSETS},
         "required_qt_plugins": list(QT_PLUGINS),
         "dependency_and_lock_files": dependency_files,
-        "output_name": f"{APP_NAME}.exe",
-        "application_name": APP_NAME,
+        "output_name": EXE_NAME,
+        "application_name": PRODUCT_NAME,
         "application_version": _project_version(),
         "commit_sha": _git_sha(),
         "notes": [

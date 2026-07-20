@@ -1,4 +1,4 @@
-"""Validate a built GymOS Windows onedir artifact by path names only."""
+"""Validate a built CryptoHunter Windows onedir artifact by path names only."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import argparse
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from scripts.windows_build_names import EXE_NAME, ONEDIR_NAME
 
 FORBIDDEN_PARTS = (
     ".env",
@@ -20,7 +22,7 @@ FORBIDDEN_PARTS = (
 )
 FORBIDDEN_SUFFIXES = (".db", ".sqlite", ".sqlite3")
 FORBIDDEN_PROJECT_DIRS = {"logs", "log", "cache", ".cache", "__pycache__"}
-REQUIRED_ROOT_FILES = ("GymOS.exe", "BUILD_INFO.txt")
+REQUIRED_ROOT_FILES = (EXE_NAME, "BUILD_INFO.txt")
 REQUIRED_DATA_FILES = (
     "ui/config/preview_local.yaml",
     "ui/pyside_app/qml/MainWindow.qml",
@@ -111,8 +113,10 @@ def validate_artifact(artifact_dir: str | Path) -> ArtifactValidationResult:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Validate GymOS Windows onedir artifact contents.")
-    parser.add_argument("artifact_dir", nargs="?", default="build/output/GymOS")
+    parser = argparse.ArgumentParser(
+        description=f"Validate {ONEDIR_NAME} Windows onedir artifact contents."
+    )
+    parser.add_argument("artifact_dir", nargs="?", default=f"build/output/{ONEDIR_NAME}")
     args = parser.parse_args(argv)
     result = validate_artifact(args.artifact_dir)
     print(result.to_json())

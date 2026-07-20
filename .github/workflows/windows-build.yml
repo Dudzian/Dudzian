@@ -8,7 +8,7 @@ name: Windows Build
 
 jobs:
   build-windows:
-    name: Build GymOS Windows x64
+    name: Build CryptoHunter Windows x64
     runs-on: windows-latest
     env:
       PYTHONUTF8: '1'
@@ -57,17 +57,17 @@ jobs:
       - name: Verify EXE exists
         shell: pwsh
         run: |
-          if (-not (Test-Path build/output/GymOS/GymOS.exe)) { throw 'Missing build/output/GymOS/GymOS.exe' }
+          if (-not (Test-Path build/output/CryptoHunter/CryptoHunter.exe)) { throw 'Missing build/output/CryptoHunter/CryptoHunter.exe' }
 
       - name: Create BUILD_INFO and checksums
         shell: pwsh
         run: |
-          $artifactName = "GymOS-windows-${{ github.run_number }}-${{ github.sha }}"
+          $artifactName = "CryptoHunter-windows-${{ github.run_number }}-${{ github.sha }}"
           $version = python -c "import importlib.metadata as m; print(m.version('dudzian-bot'))"
           $pySideVersion = python -c "import importlib.metadata as m; print(m.version('PySide6'))"
           $pyInstallerVersion = python -c "import importlib.metadata as m; print(m.version('pyinstaller'))"
           @(
-            "application=GymOS",
+            "application=CryptoHunter",
             "version=$version",
             "commit=${{ github.sha }}",
             "branch_ref=${{ github.ref }}",
@@ -80,40 +80,45 @@ jobs:
             "architecture=$env:PROCESSOR_ARCHITECTURE",
             "artifact=$artifactName",
             "build_timestamp_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
-          ) | Out-File -FilePath build/output/GymOS/BUILD_INFO.txt -Encoding utf8
-          Copy-Item build/output/GymOS/BUILD_INFO.txt build/reports/BUILD_INFO.txt -Force
-          Get-ChildItem build/output/GymOS -Recurse -File | ForEach-Object {
+          ) | Out-File -FilePath build/output/CryptoHunter/BUILD_INFO.txt -Encoding utf8
+          Copy-Item build/output/CryptoHunter/BUILD_INFO.txt build/reports/BUILD_INFO.txt -Force
+          Get-ChildItem build/output/CryptoHunter -Recurse -File | ForEach-Object {
             $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
-            "$($hash.Hash.ToLower())  $($_.FullName.Substring((Resolve-Path build/output/GymOS).Path.Length + 1).Replace('\\','/'))"
-          } | Out-File -FilePath build/output/GymOS/SHA256SUMS.txt -Encoding utf8
-          Copy-Item build/output/GymOS/SHA256SUMS.txt build/reports/SHA256SUMS.txt -Force
+            "$($hash.Hash.ToLower())  $($_.FullName.Substring((Resolve-Path build/output/CryptoHunter).Path.Length + 1).Replace('\\','/'))"
+          } | Out-File -FilePath build/output/CryptoHunter/SHA256SUMS.txt -Encoding utf8
+          Copy-Item build/output/CryptoHunter/SHA256SUMS.txt build/reports/SHA256SUMS.txt -Force
 
       - name: Verify artifact contents
         shell: pwsh
-        run: python scripts/verify_windows_artifact.py build/output/GymOS *> build/reports/artifact-verify.log
+        run: python scripts/verify_windows_artifact.py build/output/CryptoHunter *> build/reports/artifact-verify.log
 
       - name: Smoke test isolated artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build/reports | Out-Null
-          $isolated = Join-Path $env:RUNNER_TEMP "GymOS-isolated-smoke"
+          $isolated = Join-Path $env:RUNNER_TEMP "CryptoHunter-isolated-smoke"
           if (Test-Path $isolated) { Remove-Item -Recurse -Force $isolated }
           New-Item -ItemType Directory -Force -Path $isolated | Out-Null
-          Copy-Item -Recurse -Path build/output/GymOS/* -Destination $isolated
+          Copy-Item -Recurse -Path build/output/CryptoHunter/* -Destination $isolated
           Set-Location $isolated
           if (Test-Path .git) { throw "Checkout metadata leaked into isolated artifact" }
           if (Test-Path .venv) { throw "Development virtualenv leaked into isolated artifact" }
-          & .\GymOS.exe --smoke-test --offscreen *> "$env:GITHUB_WORKSPACE\build\reports\smoke-test.log"
+          $smokeReport = "$env:GITHUB_WORKSPACE\build\reports\smoke-test.log"
+          & .\CryptoHunter.exe `
+            --smoke-test `
+            --offscreen `
+            --smoke-report $smokeReport
           $code = $LASTEXITCODE
           "exit_code=$code" | Out-File -FilePath "$env:GITHUB_WORKSPACE\build\reports\smoke-test-exit-code.txt" -Encoding utf8
           if ($code -ne 0) { exit $code }
+          python "$env:GITHUB_WORKSPACE\scripts\verify_windows_smoke_report.py" $smokeReport
 
       - name: Package ZIP
         shell: pwsh
         run: |
-          $zipName = "GymOS-windows-${{ github.run_number }}-${{ github.sha }}.zip"
+          $zipName = "CryptoHunter-windows-${{ github.run_number }}-${{ github.sha }}.zip"
           $zipPath = "build/output/$zipName"
-          Compress-Archive -Path build/output/GymOS/* -DestinationPath $zipPath -Force
+          Compress-Archive -Path build/output/CryptoHunter/* -DestinationPath $zipPath -Force
           $zipHash = Get-FileHash -Algorithm SHA256 -Path $zipPath
           "$($zipHash.Hash.ToLower())  $zipName" | Out-File -FilePath build/reports/ZIP_SHA256.txt -Encoding utf8
 
@@ -121,15 +126,15 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: GymOS-windows-${{ github.run_number }}-${{ github.sha }}
-          path: build/output/GymOS-windows-${{ github.run_number }}-${{ github.sha }}.zip
+          name: CryptoHunter-windows-${{ github.run_number }}-${{ github.sha }}
+          path: build/output/CryptoHunter-windows-${{ github.run_number }}-${{ github.sha }}.zip
           if-no-files-found: error
 
       - name: Upload build reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: GymOS-windows-reports-${{ github.run_number }}-${{ github.sha }}
+          name: CryptoHunter-windows-reports-${{ github.run_number }}-${{ github.sha }}
           path: |
             build/reports/windows_environment_report.json
             build/reports/build.log
