@@ -18,6 +18,11 @@ if TYPE_CHECKING:
     from .qml_bridge import QmlContextBridge
 
 from .config import load_ui_app_config
+from .runtime_paths import (
+    default_qml_path,
+    qml_import_roots,
+    resolve_resource_path,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,8 +75,8 @@ class AppOptions:
         parser = argparse.ArgumentParser(description="Uruchamia PySide6 UI dla Stage6")
         parser.add_argument(
             "--config",
-            default="ui/config/example.yaml",
-            help="Ścieżka do profilu UI (domyślnie ui/config/example.yaml)",
+            default=None,
+            help="Ścieżka do profilu UI (domyślnie bundled ui/config/preview_local.yaml)",
         )
         parser.add_argument(
             "--profile",
@@ -93,6 +98,8 @@ class AppOptions:
         )
         parser.add_argument(
             "--smoke",
+            "--smoke-test",
+            dest="smoke",
             action="store_true",
             help="Bezpiecznie ładuje QML raz i kończy bez pętli runtime",
         )
@@ -120,10 +127,12 @@ class AppOptions:
         """Tworzy opcje na bazie przestrzeni nazw argparse."""
 
         return cls(
-            config_path=Path(args.config),
+            config_path=resolve_resource_path(args.config, "ui/config/preview_local.yaml"),
             profile=args.profile,
             enable_cloud_runtime=args.enable_cloud_runtime,
-            qml_path=Path(args.qml) if args.qml else None,
+            qml_path=resolve_resource_path(args.qml, "ui/pyside_app/qml/MainWindow.qml")
+            if args.qml
+            else None,
             log_level=args.log_level,
             smoke=args.smoke,
             offscreen=args.offscreen,
@@ -183,24 +192,13 @@ class BotPysideApplication:
         self._config = load_ui_app_config(
             self._options.config_path,
             profile=self._options.profile,
-            default_qml=self._options.qml_path,
+            default_qml=self._options.qml_path or default_qml_path(),
         )
-        qml_file = (self._options.qml_path or self._config.qml_entrypoint).resolve()
-        qml_root = Path(__file__).resolve().parent / "qml"
+        qml_file = (
+            self._options.qml_path or self._config.qml_entrypoint or default_qml_path()
+        ).resolve()
         engine = QQmlApplicationEngine()
-        shared_qml = Path(__file__).resolve().parent.parent / "qml"
-        desired_import_paths = [qml_root.resolve().as_posix(), qml_file.parent.resolve().as_posix()]
-        if sys.platform != "win32":
-            desired_import_paths.insert(1, shared_qml.resolve().as_posix())
-
-        import_paths: list[str] = []
-        for import_path in desired_import_paths:
-            if import_path in import_paths:
-                continue
-            if not Path(import_path).exists():
-                _LOGGER.debug("Pomijam nieistniejący importPath %s", import_path)
-                continue
-            import_paths.append(import_path)
+        import_paths = [path.as_posix() for path in qml_import_roots(qml_file)]
 
         if hasattr(engine, "setImportPathList") and hasattr(engine, "importPathList"):
             merged_import_paths: list[str] = []
