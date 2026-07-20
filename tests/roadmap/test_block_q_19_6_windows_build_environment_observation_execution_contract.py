@@ -341,7 +341,9 @@ def test_block_q_19_6_schema_identity_authorization_and_boundaries_are_exact() -
         if key != "future_read_only_observation_authorized"
     ]
     assert all(value is False for value in forbidden_values)
+    assert list(contract["summary"]) == list(SUMMARY)
     assert contract["summary"] == SUMMARY
+    assert list(contract["boundaries"]) == list(BOUNDARIES)
     assert contract["boundaries"] == BOUNDARIES
 
 
