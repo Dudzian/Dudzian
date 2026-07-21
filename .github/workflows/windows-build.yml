@@ -122,13 +122,32 @@ jobs:
           if (Test-Path .git) { throw "Checkout metadata leaked into isolated artifact" }
           if (Test-Path .venv) { throw "Development virtualenv leaked into isolated artifact" }
           $smokeReport = "$env:GITHUB_WORKSPACE\build\reports\smoke-test.log"
-          & .\CryptoHunter.exe `
-            --smoke-test `
-            --offscreen `
-            --smoke-report $smokeReport
-          $code = $LASTEXITCODE
-          "exit_code=$code" | Out-File -FilePath "$env:GITHUB_WORKSPACE\build\reports\smoke-test-exit-code.txt" -Encoding utf8
-          if ($code -ne 0) { exit $code }
+          if (Test-Path $smokeReport) {
+            Remove-Item $smokeReport -Force
+          }
+          $smokeArguments = @(
+            "--smoke-test"
+            "--offscreen"
+            "--smoke-report"
+            $smokeReport
+          )
+          $process = Start-Process `
+            -FilePath ".\CryptoHunter.exe" `
+            -ArgumentList $smokeArguments `
+            -WorkingDirectory $isolated `
+            -Wait `
+            -PassThru
+          $code = $process.ExitCode
+          "exit_code=$code" |
+            Out-File `
+              -FilePath "$env:GITHUB_WORKSPACE\build\reports\smoke-test-exit-code.txt" `
+              -Encoding utf8
+          if ($code -ne 0) {
+            throw "CryptoHunter.exe smoke test failed with exit code $code"
+          }
+          if (-not (Test-Path $smokeReport -PathType Leaf)) {
+            throw "CryptoHunter.exe did not create the smoke report: $smokeReport"
+          }
           python "$env:GITHUB_WORKSPACE\scripts\verify_windows_smoke_report.py" $smokeReport
 
       - name: Package ZIP
