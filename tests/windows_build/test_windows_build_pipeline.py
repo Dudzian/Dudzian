@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+import runpy
 import sys
 from pathlib import Path
 
@@ -46,6 +48,31 @@ def _create_valid_artifact(root: Path, *, internal: bool = True) -> Path:
     (root / EXE_NAME).write_bytes(b"exe")
     (root / "BUILD_INFO.txt").write_text(f"application={PRODUCT_NAME}\n", encoding="utf-8")
     return data_root
+
+
+def test_pyside_entrypoint_can_load_without_package_execution_context():
+    entrypoint = ROOT / "ui/pyside_app/__main__.py"
+
+    namespace = runpy.run_path(
+        str(entrypoint),
+        run_name="cryptohunter_packaged_entrypoint_probe",
+    )
+
+    assert callable(namespace["main"])
+
+
+def test_pyside_entrypoint_imports_app_with_absolute_package_name():
+    entrypoint = ROOT / "ui/pyside_app/__main__.py"
+    tree = ast.parse(entrypoint.read_text(encoding="utf-8"), filename=str(entrypoint))
+
+    imports = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "ui.pyside_app.app"
+    ]
+
+    assert any(alias.name == "main" for node in imports for alias in node.names)
+    assert not any(isinstance(node, ast.ImportFrom) and node.level > 0 for node in ast.walk(tree))
 
 
 def test_probe_reports_required_build_contract(tmp_path, monkeypatch):
@@ -120,11 +147,22 @@ def test_workflow_uses_isolated_artifact_smoke_and_lockfile():
     assert "python -m pip install -e .[dev,desktop]" in text
     assert "python -m pip install -e .[dev,desktop] --no-deps" not in text
     assert "python -m pip check" in text
-    assert "$env:RUNNER_TEMP" in text
-    assert "Set-Location $isolated" in text
-    assert f".\\{EXE_NAME} `" in text
-    assert "--smoke-report $smokeReport" in text
-    assert "*>" not in text[text.index("Smoke test isolated artifact") : text.index("Package ZIP")]
+    isolated_smoke_section = text[
+        text.index("Smoke test isolated artifact") : text.index("Package ZIP")
+    ]
+    assert "$env:RUNNER_TEMP" in isolated_smoke_section
+    assert "Set-Location $isolated" in isolated_smoke_section
+    assert "Start-Process" in isolated_smoke_section
+    assert f'-FilePath ".\\{EXE_NAME}"' in isolated_smoke_section
+    assert "-Wait" in isolated_smoke_section
+    assert "-PassThru" in isolated_smoke_section
+    assert "$process.ExitCode" in isolated_smoke_section
+    assert "Remove-Item $smokeReport -Force" in isolated_smoke_section
+    assert "Test-Path $smokeReport -PathType Leaf" in isolated_smoke_section
+    assert "verify_windows_smoke_report.py" in isolated_smoke_section
+    assert "$code = $LASTEXITCODE" not in isolated_smoke_section
+    assert "--smoke-report" in isolated_smoke_section
+    assert "*>" not in isolated_smoke_section
     assert "verify_windows_smoke_report.py" in text
     assert f"{EXE_NAME} --config ui/config/preview_local.yaml" not in text
     assert f"Compress-Archive -Path build/output/{ONEDIR_NAME}/*" in text
