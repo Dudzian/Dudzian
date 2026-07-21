@@ -22,6 +22,7 @@ FORBIDDEN_PARTS = (
 )
 FORBIDDEN_SUFFIXES = (".db", ".sqlite", ".sqlite3")
 FORBIDDEN_PROJECT_DIRS = {"logs", "log", "cache", ".cache", "__pycache__"}
+ALLOWED_DEPENDENCY_PATH_PREFIXES = ("_internal/grpc/_cython/_credentials",)
 REQUIRED_ROOT_FILES = (EXE_NAME, "BUILD_INFO.txt")
 REQUIRED_DATA_FILES = (
     "ui/config/preview_local.yaml",
@@ -29,6 +30,7 @@ REQUIRED_DATA_FILES = (
 )
 REQUIRED_QML_ROOTS = ("ui/pyside_app/qml", "ui/qml")
 QT_PLATFORM_CANDIDATES = (
+    "PySide6/plugins/platforms/qwindows.dll",
     "PySide6/Qt/plugins/platforms/qwindows.dll",
     "PySide6/Qt6/plugins/platforms/qwindows.dll",
     "platforms/qwindows.dll",
@@ -68,7 +70,17 @@ def _as_posix_relative(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
+def _is_allowed_dependency_path(relative: str) -> bool:
+    lowered = relative.lower()
+    return any(
+        lowered == prefix or lowered.startswith(f"{prefix}/")
+        for prefix in ALLOWED_DEPENDENCY_PATH_PREFIXES
+    )
+
+
 def _is_forbidden(relative: str) -> bool:
+    if _is_allowed_dependency_path(relative):
+        return False
     lowered = relative.lower()
     parts = [part.lower() for part in Path(relative).parts]
     if any(part in FORBIDDEN_PROJECT_DIRS for part in parts):

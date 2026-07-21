@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from scripts.verify_windows_artifact import (
+    QT_PLATFORM_CANDIDATES,
     REQUIRED_ROOT_FILES,
     artifact_data_root,
     validate_artifact,
@@ -40,8 +41,8 @@ def _create_valid_artifact(root: Path, *, internal: bool = True) -> Path:
     )
     (data_root / "ui/qml").mkdir(parents=True)
     (data_root / "ui/qml/Icon.qml").write_text("import QtQuick\nItem {}\n", encoding="utf-8")
-    (data_root / "PySide6/Qt/plugins/platforms").mkdir(parents=True)
-    (data_root / "PySide6/Qt/plugins/platforms/qwindows.dll").write_bytes(b"dll")
+    (data_root / "PySide6/plugins/platforms").mkdir(parents=True)
+    (data_root / "PySide6/plugins/platforms/qwindows.dll").write_bytes(b"dll")
     (root / EXE_NAME).write_bytes(b"exe")
     (root / "BUILD_INFO.txt").write_text(f"application={PRODUCT_NAME}\n", encoding="utf-8")
     return data_root
@@ -180,6 +181,53 @@ def test_artifact_scanner_accepts_pyinstaller6_internal_layout(tmp_path):
     assert result.ok, result.to_json()
 
 
+def test_artifact_scanner_accepts_actual_pyside6_platform_layout(tmp_path):
+    data_root = _create_valid_artifact(tmp_path)
+    plugin = data_root / "PySide6/plugins/platforms/qwindows.dll"
+    assert plugin.is_file()
+
+    result = validate_artifact(tmp_path)
+
+    assert result.ok, result.to_json()
+    assert "Qt qwindows.dll platform plugin" not in result.missing
+
+
+def test_artifact_scanner_allows_grpc_root_certificate_bundle(tmp_path):
+    data_root = _create_valid_artifact(tmp_path)
+    roots = data_root / "grpc/_cython/_credentials/roots.pem"
+    roots.parent.mkdir(parents=True, exist_ok=True)
+    roots.write_text("public root certificate bundle", encoding="utf-8")
+
+    result = validate_artifact(tmp_path)
+
+    assert result.ok, result.to_json()
+    assert "_internal/grpc/_cython/_credentials" not in result.forbidden
+    assert "_internal/grpc/_cython/_credentials/roots.pem" not in result.forbidden
+
+
+@pytest.mark.parametrize(
+    "platform_plugin",
+    [
+        "PySide6/plugins/platforms/qwindows.dll",
+        "PySide6/Qt/plugins/platforms/qwindows.dll",
+    ],
+)
+def test_artifact_scanner_accepts_supported_qt_platform_layouts(tmp_path, platform_plugin):
+    data_root = _create_valid_artifact(tmp_path)
+    for candidate in QT_PLATFORM_CANDIDATES:
+        path = data_root / candidate
+        if path.is_file():
+            path.unlink()
+    plugin = data_root / platform_plugin
+    plugin.parent.mkdir(parents=True, exist_ok=True)
+    plugin.write_bytes(b"dll")
+
+    result = validate_artifact(tmp_path)
+
+    assert result.ok, result.to_json()
+    assert "Qt qwindows.dll platform plugin" not in result.missing
+
+
 def test_artifact_scanner_accepts_flat_fallback_layout(tmp_path):
     data_root = _create_valid_artifact(tmp_path, internal=False)
     result = validate_artifact(tmp_path)
@@ -194,7 +242,7 @@ def test_artifact_scanner_accepts_flat_fallback_layout(tmp_path):
         ("ui/config/preview_local.yaml", "ui/config/preview_local.yaml"),
         ("ui/pyside_app/qml/MainWindow.qml", "ui/pyside_app/qml/MainWindow.qml"),
         ("ui/qml", "ui/qml"),
-        ("PySide6/Qt/plugins/platforms/qwindows.dll", "Qt qwindows.dll platform plugin"),
+        ("PySide6/plugins/platforms/qwindows.dll", "Qt qwindows.dll platform plugin"),
     ],
 )
 def test_artifact_scanner_requires_internal_data_files(tmp_path, relative, expected):
@@ -228,7 +276,14 @@ def test_root_level_source_ui_does_not_mask_missing_internal_resources(tmp_path)
 
 @pytest.mark.parametrize(
     "relative",
-    [".env", "credentials.json", "_internal/.env", "_internal/secrets/token.txt"],
+    [
+        ".env",
+        "credentials.json",
+        "_internal/.env",
+        "_internal/credentials.json",
+        "_internal/secrets/token.txt",
+        "_internal/private_credentials/secret.pem",
+    ],
 )
 def test_artifact_scanner_rejects_forbidden_paths_in_root_and_internal(tmp_path, relative):
     _create_valid_artifact(tmp_path)
