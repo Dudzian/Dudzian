@@ -82,11 +82,29 @@ jobs:
             "build_timestamp_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
           ) | Out-File -FilePath build/output/CryptoHunter/BUILD_INFO.txt -Encoding utf8
           Copy-Item build/output/CryptoHunter/BUILD_INFO.txt build/reports/BUILD_INFO.txt -Force
-          Get-ChildItem build/output/CryptoHunter -Recurse -File | ForEach-Object {
-            $hash = Get-FileHash -Algorithm SHA256 -Path $_.FullName
-            "$($hash.Hash.ToLower())  $($_.FullName.Substring((Resolve-Path build/output/CryptoHunter).Path.Length + 1).Replace('\\','/'))"
-          } | Out-File -FilePath build/output/CryptoHunter/SHA256SUMS.txt -Encoding utf8
-          Copy-Item build/output/CryptoHunter/SHA256SUMS.txt build/reports/SHA256SUMS.txt -Force
+          $artifactRoot = (Resolve-Path "build/output/CryptoHunter").Path
+          $checksumPath = Join-Path $artifactRoot "SHA256SUMS.txt"
+
+          if (Test-Path $checksumPath) {
+            Remove-Item $checksumPath -Force
+          }
+
+          $filesToHash = @(
+            Get-ChildItem $artifactRoot -Recurse -File |
+              Where-Object { $_.FullName -ne $checksumPath } |
+              Sort-Object FullName
+          )
+
+          $checksumLines = @(
+            foreach ($file in $filesToHash) {
+              $hash = Get-FileHash -Algorithm SHA256 -Path $file.FullName
+              $relativePath = $file.FullName.Substring($artifactRoot.Length + 1).Replace('\', '/')
+              "$($hash.Hash.ToLower())  $relativePath"
+            }
+          )
+
+          $checksumLines | Out-File -FilePath $checksumPath -Encoding utf8
+          Copy-Item $checksumPath build/reports/SHA256SUMS.txt -Force
 
       - name: Verify artifact contents
         shell: pwsh

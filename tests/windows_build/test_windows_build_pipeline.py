@@ -134,6 +134,44 @@ def test_workflow_uses_isolated_artifact_smoke_and_lockfile():
     assert "console=False" in (ROOT / SPEC_FILE_NAME).read_text(encoding="utf-8")
 
 
+def test_workflow_materializes_checksums_before_writing_output():
+    workflow_text = (ROOT / ".github/workflows/windows-build.yml").read_text(encoding="utf-8")
+    checksum_section = workflow_text[
+        workflow_text.index("$artifactRoot = (Resolve-Path") : workflow_text.index(
+            "      - name: Verify artifact contents"
+        )
+    ]
+
+    assert '$artifactRoot = (Resolve-Path "build/output/CryptoHunter").Path' in checksum_section
+    assert '$checksumPath = Join-Path $artifactRoot "SHA256SUMS.txt"' in checksum_section
+    assert "if (Test-Path $checksumPath)" in checksum_section
+    assert "Remove-Item $checksumPath -Force" in checksum_section
+    assert "$filesToHash = @(" in checksum_section
+    assert "Get-ChildItem $artifactRoot -Recurse -File |" in checksum_section
+    assert "Where-Object { $_.FullName -ne $checksumPath } |" in checksum_section
+    assert "Sort-Object FullName" in checksum_section
+    assert "$checksumLines = @(" in checksum_section
+    assert "foreach ($file in $filesToHash)" in checksum_section
+    assert "Get-FileHash -Algorithm SHA256 -Path $file.FullName" in checksum_section
+    assert ".Replace('\\', '/')" in checksum_section
+    assert '"$($hash.Hash.ToLower())  $relativePath"' in checksum_section
+    assert "$checksumLines | Out-File -FilePath $checksumPath -Encoding utf8" in checksum_section
+    assert "Copy-Item $checksumPath build/reports/SHA256SUMS.txt -Force" in checksum_section
+    assert "-ErrorAction SilentlyContinue" not in checksum_section
+    assert "Start-Sleep" not in checksum_section
+    assert (
+        "Get-ChildItem build/output/CryptoHunter -Recurse -File | ForEach-Object"
+        not in workflow_text
+    )
+    assert "} | Out-File -FilePath build/output/CryptoHunter/SHA256SUMS.txt" not in workflow_text
+    assert workflow_text.index("$filesToHash = @(") < workflow_text.index(
+        "$checksumLines | Out-File"
+    )
+    assert workflow_text.index("$checksumLines = @(") < workflow_text.index(
+        "$checksumLines | Out-File"
+    )
+
+
 def test_artifact_scanner_accepts_pyinstaller6_internal_layout(tmp_path):
     data_root = _create_valid_artifact(tmp_path)
     result = validate_artifact(tmp_path)
