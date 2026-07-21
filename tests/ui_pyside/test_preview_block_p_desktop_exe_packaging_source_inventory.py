@@ -3,9 +3,11 @@ from __future__ import annotations
 import ast
 import copy
 import json
+import os
+import sys
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -32,7 +34,7 @@ QML_EXT = {
 
 
 def build() -> dict[str, Any]:
-    return inv.build_preview_block_p_desktop_exe_packaging_source_inventory()
+    return cast(dict[str, Any], inv.build_preview_block_p_desktop_exe_packaging_source_inventory())
 
 
 def qml_files(root: str) -> list[str]:
@@ -69,7 +71,7 @@ def test_source_builder_called_exactly_once(monkeypatch: pytest.MonkeyPatch) -> 
     def fake() -> dict[str, Any]:
         nonlocal calls
         calls += 1
-        return real
+        return cast(dict[str, Any], real)
 
     monkeypatch.setattr(inv, "build_preview_block_p_desktop_exe_packaging_entry_contract", fake)
     assert build()["source_inventory_artifact_complete"] is True
@@ -148,12 +150,45 @@ def test_styles_qmldir_inventory() -> None:
     }
 
 
-def test_shared_qml_platform_condition_observed() -> None:
-    text = (ROOT / "ui/pyside_app/app.py").read_text(encoding="utf-8")
-    assert 'sys.platform != "win32"' in text
+def test_historical_18_1_shared_qml_platform_observation_is_self_consistent() -> None:
     obs = build()["qml_source_inventory"]["windows_shared_qml_import_path_observation"]
     assert obs["shared_qml_root_added_on_non_windows"] is True
     assert obs["shared_qml_root_added_on_windows"] is False
+    assert obs["observation_requires_18_2_evaluation"] is True
+    assert obs["observation_is_validation_failure_in_18_1"] is False
+
+
+def test_runtime_qml_import_roots_resolve_source_and_frozen_windows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from ui.pyside_app.runtime_paths import default_qml_path, qml_import_roots
+
+    source_main_qml = default_qml_path()
+    source_roots = qml_import_roots(source_main_qml)
+
+    assert source_main_qml == (ROOT / "ui/pyside_app/qml/MainWindow.qml").resolve()
+    assert (ROOT / "ui/pyside_app/qml").resolve() in source_roots
+    assert (ROOT / "ui/qml").resolve() in source_roots
+
+    internal_root = tmp_path / "bundle"
+    pyside_qml_root = internal_root / "ui/pyside_app/qml"
+    shared_qml_root = internal_root / "ui/qml"
+    pyside_qml_root.mkdir(parents=True)
+    shared_qml_root.mkdir(parents=True)
+    (pyside_qml_root / "MainWindow.qml").write_text("import QtQuick\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(internal_root), raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    frozen_main_qml = default_qml_path()
+    frozen_roots = qml_import_roots(frozen_main_qml)
+
+    assert frozen_main_qml == (internal_root / "ui/pyside_app/qml/MainWindow.qml").resolve()
+    assert (internal_root / "ui/pyside_app/qml").resolve() in frozen_roots
+    assert (internal_root / "ui/qml").resolve() in frozen_roots
+    for root in frozen_roots:
+        assert os.path.commonpath([root, ROOT]) != str(ROOT)
 
 
 def test_config_and_runtime_reference_inventory() -> None:
@@ -383,13 +418,16 @@ def test_no_build_packaging_release_runtime_orders() -> None:
 
 def test_nominal_payload_has_no_shared_mutable_containers() -> None:
     seen: set[int] = set()
-    stack = [build()]
+    stack: list[Any] = [build()]
     while stack:
         item = stack.pop()
         if type(item) in (dict, list):
             assert id(item) not in seen
             seen.add(id(item))
-            stack.extend(item.values() if type(item) is dict else item)
+            if isinstance(item, dict):
+                stack.extend(item.values())
+            else:
+                stack.extend(item)
 
 
 def test_independent_builder_calls_do_not_share_state() -> None:
@@ -854,12 +892,50 @@ def test_ast_entrypoint_sources_without_importing_modules() -> None:
         isinstance(node.func, ast.Name) and node.func.id == "QQmlApplicationEngine"
         for node in calls
     )
-    assert "ui/config/example.yaml" in app_text
+    assert any(
+        isinstance(node.func, ast.Name)
+        and node.func.id == "resolve_resource_path"
+        and len(node.args) == 2
+        and isinstance(node.args[0], ast.Attribute)
+        and node.args[0].attr == "config"
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "ui/config/preview_local.yaml"
+        for node in calls
+    )
     assert '"qml" / "MainWindow.qml"' in (ROOT / "ui/pyside_app/config.py").read_text(
         encoding="utf-8"
     )
     assert any(isinstance(node.func, ast.Attribute) and node.func.attr == "load" for node in calls)
     assert any(isinstance(node.func, ast.Attribute) and node.func.attr == "exec" for node in calls)
+
+
+def test_default_config_resolves_preview_local_source_and_frozen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from ui.pyside_app.app import AppOptions
+
+    monkeypatch.chdir(tmp_path)
+    source_options = AppOptions.parse([])
+    source_config = source_options.config_path
+
+    assert source_config == (ROOT / "ui/config/preview_local.yaml").resolve()
+    assert source_config.is_absolute()
+    assert source_config.exists()
+    assert source_config.name == "preview_local.yaml"
+    assert source_config != (ROOT / "ui/config/example.yaml").resolve()
+
+    internal_root = tmp_path / "bundle"
+    frozen_config = internal_root / "ui/config/preview_local.yaml"
+    frozen_config.parent.mkdir(parents=True)
+    frozen_config.write_text("app: {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(internal_root), raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    frozen_options = AppOptions.parse([])
+    assert frozen_options.config_path == frozen_config.resolve()
+    assert os.path.commonpath([frozen_options.config_path, ROOT]) != str(ROOT)
 
 
 def test_existing_cli_preview_plan_ast_inventory() -> None:
