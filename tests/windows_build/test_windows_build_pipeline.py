@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pytest
 import yaml
+from PyInstaller.utils.hooks import collect_submodules
+
+import ui.backend as ui_backend
 
 from scripts.verify_windows_artifact import (
     QT_PLATFORM_CANDIDATES,
@@ -29,6 +32,52 @@ from ui.pyside_app.app import AppOptions
 from ui.pyside_app.runtime_paths import default_config_path, default_qml_path, qml_import_roots
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _is_collect_ui_backend_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "collect_submodules"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "ui.backend"
+    )
+
+
+def _contains_collect_ui_backend_call(node: ast.AST) -> bool:
+    return any(_is_collect_ui_backend_call(child) for child in ast.walk(node))
+
+
+def test_spec_collects_dynamic_ui_backend_submodules():
+    spec_path = ROOT / SPEC_FILE_NAME
+    tree = ast.parse(spec_path.read_text(encoding="utf-8"), filename=str(spec_path))
+
+    assert any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "PyInstaller.utils.hooks"
+        and any(alias.name == "collect_submodules" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    assert any(_is_collect_ui_backend_call(node) for node in ast.walk(tree))
+    assert any(
+        isinstance(node, ast.AugAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "hiddenimports"
+        and isinstance(node.op, ast.Add)
+        and _contains_collect_ui_backend_call(node.value)
+        for node in ast.walk(tree)
+    )
+
+
+def test_pyinstaller_collects_every_dynamic_ui_backend_export():
+    collected = set(collect_submodules("ui.backend"))
+    required = {
+        f"ui.backend.{module_path.removeprefix('.')}"
+        for module_path in ui_backend._MODULE_BY_EXPORT.values()
+    }
+
+    assert required <= collected
 
 
 def _create_valid_artifact(root: Path, *, internal: bool = True) -> Path:

@@ -3,7 +3,9 @@
 
 from pathlib import Path
 
-ROOT = Path(SPECPATH)
+from PyInstaller.utils.hooks import collect_submodules
+
+ROOT = Path(SPECPATH)  # noqa: F821
 
 app_datas = [
     (str(ROOT / "ui" / "pyside_app" / "qml"), "ui/pyside_app/qml"),
@@ -22,10 +24,11 @@ hiddenimports = [
     "ui.pyside_app.runtime_paths",
     "ui.pyside_app.smoke",
 ]
+hiddenimports += collect_submodules("ui.backend")
 
 block_cipher = None
 
-a = Analysis(
+a = Analysis(  # noqa: F821
     [str(ROOT / "ui" / "pyside_app" / "__main__.py")],
     pathex=[str(ROOT)],
     binaries=[],
@@ -38,8 +41,8 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-exe = EXE(
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)  # noqa: F821
+exe = EXE(  # noqa: F821
     pyz,
     a.scripts,
     [],
@@ -56,7 +59,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
-coll = COLLECT(
+coll = COLLECT(  # noqa: F821
     exe,
     a.binaries,
     a.datas,
