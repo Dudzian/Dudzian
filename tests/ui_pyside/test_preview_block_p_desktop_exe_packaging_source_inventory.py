@@ -185,10 +185,17 @@ def test_runtime_qml_import_roots_resolve_source_and_frozen_windows(
     frozen_roots = qml_import_roots(frozen_main_qml)
 
     assert frozen_main_qml == (internal_root / "ui/pyside_app/qml/MainWindow.qml").resolve()
-    assert (internal_root / "ui/pyside_app/qml").resolve() in frozen_roots
-    assert (internal_root / "ui/qml").resolve() in frozen_roots
-    for root in frozen_roots:
-        assert os.path.commonpath([root, ROOT]) != str(ROOT)
+    assert pyside_qml_root.resolve() in frozen_roots
+    assert shared_qml_root.resolve() in frozen_roots
+
+    resolved_internal_root = internal_root.resolve()
+    expected_frozen_roots = {
+        pyside_qml_root.resolve(),
+        shared_qml_root.resolve(),
+    }
+
+    assert set(frozen_roots) == expected_frozen_roots
+    assert all(resolved_internal_root in root.parents for root in frozen_roots)
 
 
 def test_config_and_runtime_reference_inventory() -> None:
