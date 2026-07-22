@@ -29,6 +29,7 @@ REQUIRED_DATA_FILES = (
     "ui/pyside_app/qml/MainWindow.qml",
 )
 REQUIRED_QML_ROOTS = ("ui/pyside_app/qml", "ui/qml")
+NUMPY_OPENBLAS_PATTERN = "numpy.libs/libopenblas*.dll"
 QT_PLATFORM_CANDIDATES = (
     "PySide6/plugins/platforms/qwindows.dll",
     "PySide6/Qt/plugins/platforms/qwindows.dll",
@@ -118,6 +119,9 @@ def validate_artifact(artifact_dir: str | Path) -> ArtifactValidationResult:
             missing.append(relative)
     if not any((data_root / relative).is_file() for relative in QT_PLATFORM_CANDIDATES):
         missing.append("Qt qwindows.dll platform plugin")
+    numpy_openblas_matches = list(data_root.glob(NUMPY_OPENBLAS_PATTERN))
+    if not numpy_openblas_matches:
+        missing.append("NumPy OpenBLAS runtime DLL")
 
     return ArtifactValidationResult(
         root.as_posix(), data_root.as_posix(), not missing and not forbidden, missing, forbidden

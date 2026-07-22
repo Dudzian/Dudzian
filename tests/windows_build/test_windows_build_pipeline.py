@@ -13,6 +13,7 @@ from PyInstaller.utils.hooks import collect_submodules
 import ui.backend as ui_backend
 
 from scripts.verify_windows_artifact import (
+    NUMPY_OPENBLAS_PATTERN,
     QT_PLATFORM_CANDIDATES,
     REQUIRED_ROOT_FILES,
     artifact_data_root,
@@ -49,6 +50,43 @@ def _contains_collect_ui_backend_call(node: ast.AST) -> bool:
     return any(_is_collect_ui_backend_call(child) for child in ast.walk(node))
 
 
+def _is_collect_delvewheel_numpy_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "collect_delvewheel_libs_directory"
+        and len(node.args) >= 1
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "numpy"
+    )
+
+
+def _keyword_name(call: ast.Call, name: str) -> str | None:
+    for keyword in call.keywords:
+        if keyword.arg == name and isinstance(keyword.value, ast.Name):
+            return keyword.value.id
+    return None
+
+
+def _is_name_tuple(node: ast.AST, names: tuple[str, ...]) -> bool:
+    return (
+        isinstance(node, ast.Tuple)
+        and len(node.elts) == len(names)
+        and all(isinstance(elt, ast.Name) and elt.id == name for elt, name in zip(node.elts, names))
+    )
+
+
+def _analysis_call(tree: ast.AST) -> ast.Call:
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Analysis"
+        ):
+            return node
+    raise AssertionError("Analysis(...) call not found")
+
+
 def test_spec_collects_dynamic_ui_backend_submodules():
     spec_path = ROOT / SPEC_FILE_NAME
     tree = ast.parse(spec_path.read_text(encoding="utf-8"), filename=str(spec_path))
@@ -68,6 +106,37 @@ def test_spec_collects_dynamic_ui_backend_submodules():
         and _contains_collect_ui_backend_call(node.value)
         for node in ast.walk(tree)
     )
+
+
+def test_spec_collects_numpy_delvewheel_runtime_libs_for_pyinstaller():
+    spec_path = ROOT / SPEC_FILE_NAME
+    tree = ast.parse(spec_path.read_text(encoding="utf-8"), filename=str(spec_path))
+
+    assert any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "PyInstaller.utils.hooks"
+        and any(alias.name == "collect_delvewheel_libs_directory" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+
+    collect_assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and _is_name_tuple(node.targets[0], ("app_datas", "app_binaries"))
+        and _is_collect_delvewheel_numpy_call(node.value)
+    ]
+    assert collect_assignments
+
+    collect_call = collect_assignments[0].value
+    assert isinstance(collect_call, ast.Call)
+    assert _keyword_name(collect_call, "datas") == "app_datas"
+    assert _keyword_name(collect_call, "binaries") == "app_binaries"
+
+    analysis = _analysis_call(tree)
+    assert _keyword_name(analysis, "binaries") == "app_binaries"
+    assert _keyword_name(analysis, "datas") == "app_datas"
 
 
 def test_pyinstaller_collects_every_dynamic_ui_backend_export():
@@ -94,6 +163,9 @@ def _create_valid_artifact(root: Path, *, internal: bool = True) -> Path:
     (data_root / "ui/qml/Icon.qml").write_text("import QtQuick\nItem {}\n", encoding="utf-8")
     (data_root / "PySide6/plugins/platforms").mkdir(parents=True)
     (data_root / "PySide6/plugins/platforms/qwindows.dll").write_bytes(b"dll")
+    numpy_libs = data_root / "numpy.libs"
+    numpy_libs.mkdir(parents=True)
+    (numpy_libs / "libopenblas-test.dll").write_bytes(b"dll")
     (root / EXE_NAME).write_bytes(b"exe")
     (root / "BUILD_INFO.txt").write_text(f"application={PRODUCT_NAME}\n", encoding="utf-8")
     return data_root
@@ -313,6 +385,34 @@ def test_artifact_scanner_accepts_supported_qt_platform_layouts(tmp_path, platfo
 
     assert result.ok, result.to_json()
     assert "Qt qwindows.dll platform plugin" not in result.missing
+
+
+def test_artifact_scanner_reports_missing_numpy_openblas_runtime(tmp_path):
+    data_root = _create_valid_artifact(tmp_path)
+
+    for candidate in (data_root / "numpy.libs").glob("libopenblas*.dll"):
+        candidate.unlink()
+
+    result = validate_artifact(tmp_path)
+
+    assert not result.ok
+    assert "NumPy OpenBLAS runtime DLL" in result.missing
+
+
+def test_artifact_scanner_rejects_scipy_openblas_as_numpy_runtime(tmp_path):
+    data_root = _create_valid_artifact(tmp_path)
+
+    for candidate in (data_root / "numpy.libs").glob("libopenblas*.dll"):
+        candidate.unlink()
+    scipy_libs = data_root / "scipy.libs"
+    scipy_libs.mkdir(parents=True)
+    (scipy_libs / "libscipy_openblas-example.dll").write_bytes(b"dll")
+
+    result = validate_artifact(tmp_path)
+
+    assert not result.ok
+    assert "NumPy OpenBLAS runtime DLL" in result.missing
+    assert NUMPY_OPENBLAS_PATTERN == "numpy.libs/libopenblas*.dll"
 
 
 def test_artifact_scanner_accepts_flat_fallback_layout(tmp_path):
