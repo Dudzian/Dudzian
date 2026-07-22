@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import copy
 import json
-import os
 import sys
 import tomllib
 from pathlib import Path
@@ -185,10 +184,17 @@ def test_runtime_qml_import_roots_resolve_source_and_frozen_windows(
     frozen_roots = qml_import_roots(frozen_main_qml)
 
     assert frozen_main_qml == (internal_root / "ui/pyside_app/qml/MainWindow.qml").resolve()
-    assert (internal_root / "ui/pyside_app/qml").resolve() in frozen_roots
-    assert (internal_root / "ui/qml").resolve() in frozen_roots
-    for root in frozen_roots:
-        assert os.path.commonpath([root, ROOT]) != str(ROOT)
+    assert pyside_qml_root.resolve() in frozen_roots
+    assert shared_qml_root.resolve() in frozen_roots
+
+    resolved_internal_root = internal_root.resolve()
+    expected_frozen_roots = {
+        pyside_qml_root.resolve(),
+        shared_qml_root.resolve(),
+    }
+
+    assert set(frozen_roots) == expected_frozen_roots
+    assert all(resolved_internal_root in root.parents for root in frozen_roots)
 
 
 def test_config_and_runtime_reference_inventory() -> None:
@@ -938,8 +944,16 @@ def test_default_config_resolves_preview_local_source_and_frozen(
     monkeypatch.setattr(sys, "platform", "win32")
 
     frozen_options = AppOptions.parse([])
-    assert frozen_options.config_path == frozen_config.resolve()
-    assert os.path.commonpath([frozen_options.config_path, ROOT]) != str(ROOT)
+
+    resolved_internal_root = internal_root.resolve()
+    resolved_frozen_config = frozen_config.resolve()
+
+    assert frozen_options.config_path == resolved_frozen_config
+    assert resolved_internal_root in resolved_frozen_config.parents
+    assert resolved_frozen_config.relative_to(resolved_internal_root) == Path(
+        "ui/config/preview_local.yaml"
+    )
+    assert ROOT.resolve() not in resolved_frozen_config.parents
 
 
 def test_existing_cli_preview_plan_ast_inventory() -> None:
