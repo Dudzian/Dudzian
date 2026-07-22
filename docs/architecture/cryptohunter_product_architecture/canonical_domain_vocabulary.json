@@ -1,0 +1,1296 @@
+{
+  "schema_version": "cryptohunter.canonical_domain_vocabulary.v1",
+  "m0_element": "M0.2",
+  "baseline_commit": "7d68ff5c6647509de1c97759114919858075f062",
+  "public_trading_environments": [
+    {
+      "name": "paper"
+    },
+    {
+      "name": "testnet"
+    },
+    {
+      "name": "live"
+    }
+  ],
+  "internal_test_modes": [
+    "smoke",
+    "fixture"
+  ],
+  "deprecated_environment_aliases": [
+    {
+      "term": "demo",
+      "current_meanings": [
+        "frontend maps demo to TESTNET",
+        "docs use demo→paper→live pipeline"
+      ],
+      "canonical_target": "deprecated alias requiring context-specific migration",
+      "migration_rule": "Do not rewrite blindly; classify old Demo as fixture, PAPER simulation, or exchange TESTNET before migration",
+      "evidence_paths": [
+        "bot_core/runtime/frontend.py",
+        "docs/architecture/desktop_shell_plan.md"
+      ]
+    },
+    {
+      "term": "sandbox",
+      "current_meanings": [
+        "adapter endpoint classification through testnet/sandbox helpers",
+        "not a product-wide environment"
+      ],
+      "canonical_target": "adapter endpoint classification; public target TESTNET",
+      "migration_rule": "Keep sandbox only in adapter endpoint metadata/migration; expose TESTNET publicly",
+      "evidence_paths": [
+        "bot_core/exchanges/manager.py",
+        "config/environments/exchange_modes.yaml"
+      ]
+    },
+    {
+      "term": "production/prod",
+      "current_meanings": [
+        "frontend accepts prod/production as LIVE aliases"
+      ],
+      "canonical_target": "legacy alias LIVE only in migration layer",
+      "migration_rule": "Reject outside migration/import normalization after future change",
+      "evidence_paths": [
+        "bot_core/runtime/frontend.py"
+      ]
+    },
+    {
+      "term": "primary",
+      "current_meanings": [
+        "frontend bootstrap adapter name",
+        "live default_route fallback and journal fields primary_exchange"
+      ],
+      "canonical_target": "legacy route/account alias; not durable ID",
+      "migration_rule": "Replace with ExchangeAccount/ExecutionRoute IDs in future migration",
+      "evidence_paths": [
+        "bot_core/runtime/frontend.py",
+        "bot_core/execution/execution_service.py",
+        "bot_core/runtime/journal.py"
+      ]
+    }
+  ],
+  "state_axes": [
+    {
+      "name": "product_capability",
+      "values": [
+        "LIVE_CAPABLE",
+        "LIVE_NOT_CAPABLE"
+      ]
+    },
+    {
+      "name": "live_access_grant",
+      "values": [
+        "ABSENT",
+        "GRANTED",
+        "REVOKED",
+        "SUSPENDED"
+      ]
+    },
+    {
+      "name": "active_trading_environment",
+      "values": [
+        "PAPER",
+        "TESTNET",
+        "LIVE"
+      ]
+    },
+    {
+      "name": "runtime_state",
+      "values": [
+        "STOPPED",
+        "CONNECTING",
+        "SYNCHRONIZING",
+        "READY",
+        "RUNNING",
+        "PAUSED",
+        "DEGRADED",
+        "EMERGENCY_STOPPED"
+      ]
+    },
+    {
+      "name": "kill_switch_state",
+      "values": [
+        "ARMED",
+        "TRIGGERED",
+        "RESET_PENDING"
+      ]
+    },
+    {
+      "name": "operator_interface_authentication",
+      "values": [
+        "LOCKED",
+        "AUTHENTICATED"
+      ]
+    },
+    {
+      "name": "exchange_account_connection_state",
+      "values": [
+        "DISCONNECTED",
+        "CONNECTING",
+        "SYNCHRONIZING",
+        "ONLINE",
+        "DEGRADED",
+        "BLOCKED"
+      ]
+    },
+    {
+      "name": "execution_authorization",
+      "values": [
+        "READ_ONLY",
+        "ORDER_ENTRY_ALLOWED",
+        "BLOCKED_BY_POLICY",
+        "BLOCKED_BY_KILL_SWITCH",
+        "BLOCKED_BY_LEASE",
+        "BLOCKED_BY_RECONCILIATION"
+      ]
+    }
+  ],
+  "entity_kinds": [
+    {
+      "canonical_name": "CryptoHunterAccount",
+      "id_field": "account_id",
+      "id_prefix": "acct",
+      "purpose": "root SaaS/customer account",
+      "parent": "none",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "CryptoHunterAccount",
+          "DeviceInstallation",
+          "one_to_many"
+        ],
+        [
+          "CryptoHunterAccount",
+          "OperatorIdentity",
+          "one_to_many"
+        ],
+        [
+          "CryptoHunterAccount",
+          "Workspace",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "DeviceInstallation",
+      "id_field": "device_installation_id",
+      "id_prefix": "dev",
+      "purpose": "installed device record",
+      "parent": "CryptoHunterAccount",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "CryptoHunterAccount",
+          "DeviceInstallation",
+          "one_to_many"
+        ],
+        [
+          "DeviceInstallation",
+          "LiveAccessGrant",
+          "one_to_many_history"
+        ],
+        [
+          "DeviceInstallation",
+          "RuntimeSession",
+          "one_to_many"
+        ],
+        [
+          "DeviceInstallation",
+          "AuditEvent",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "OperatorIdentity",
+      "id_field": "operator_id",
+      "id_prefix": "op",
+      "purpose": "human/operator identity",
+      "parent": "CryptoHunterAccount",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "CryptoHunterAccount",
+          "OperatorIdentity",
+          "one_to_many"
+        ],
+        [
+          "OperatorIdentity",
+          "LiveAccessGrant",
+          "authorization_reference"
+        ],
+        [
+          "OperatorIdentity",
+          "Decision",
+          "one_to_many_possible_source"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "LiveAccessGrant",
+      "id_field": "live_access_grant_id",
+      "id_prefix": "lgrant",
+      "purpose": "durable protected installation authorization for Live; independent from active environment and kill switch state",
+      "parent": "DeviceInstallation",
+      "lifecycle_scope": "persistent protected authorization history",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "does not contain plaintext exchange secrets; contains or references signature/integrity proof and must be protected from manual editing",
+      "relationships": [
+        [
+          "DeviceInstallation",
+          "LiveAccessGrant",
+          "one_to_many_history"
+        ],
+        [
+          "OperatorIdentity",
+          "LiveAccessGrant",
+          "authorization_reference"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "Workspace",
+      "id_field": "workspace_id",
+      "id_prefix": "ws",
+      "purpose": "product workspace boundary",
+      "parent": "CryptoHunterAccount",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "CryptoHunterAccount",
+          "Workspace",
+          "one_to_many"
+        ],
+        [
+          "Workspace",
+          "Portfolio",
+          "one_to_many"
+        ],
+        [
+          "Workspace",
+          "Instrument",
+          "one_to_many_catalog"
+        ],
+        [
+          "Workspace",
+          "StrategyInstance",
+          "one_to_many"
+        ],
+        [
+          "Workspace",
+          "MarketDataRoute",
+          "one_to_many"
+        ],
+        [
+          "Workspace",
+          "ExecutionRoute",
+          "one_to_many"
+        ],
+        [
+          "Workspace",
+          "RiskPolicy",
+          "one_to_many"
+        ],
+        [
+          "Workspace",
+          "StrategyDefinition",
+          "one_to_many"
+        ],
+        [
+          "Workspace",
+          "Decision",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "Portfolio",
+      "id_field": "portfolio_id",
+      "id_prefix": "port",
+      "purpose": "portfolio aggregation boundary",
+      "parent": "Workspace",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "Workspace",
+          "Portfolio",
+          "one_to_many"
+        ],
+        [
+          "Portfolio",
+          "ExchangeAccount",
+          "one_to_many"
+        ],
+        [
+          "Portfolio",
+          "LedgerEntry",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "ExchangeAccount",
+      "id_field": "exchange_account_id",
+      "id_prefix": "xacc",
+      "purpose": "logical venue account for one exchange/environment/market type",
+      "parent": "Portfolio",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "ExchangeAccount",
+          "TradingUniverse",
+          "one_to_many_versioned"
+        ],
+        [
+          "StrategyInstance",
+          "ExchangeAccount",
+          "many_to_many_assignments"
+        ],
+        [
+          "ExchangeAccount",
+          "Order",
+          "one_to_many"
+        ],
+        [
+          "ExchangeAccount",
+          "ExecutionLease",
+          "one_to_many_per_scope"
+        ],
+        [
+          "Portfolio",
+          "ExchangeAccount",
+          "one_to_many"
+        ],
+        [
+          "ExchangeAccount",
+          "CredentialProfile",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": [
+        "primary"
+      ]
+    },
+    {
+      "canonical_name": "CredentialProfile",
+      "id_field": "credential_profile_id",
+      "id_prefix": "cred",
+      "purpose": "secure store reference profile",
+      "parent": "ExchangeAccount",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": false,
+      "secret_policy": "may store only secure-store references; never plaintext secrets",
+      "relationships": [
+        [
+          "ExchangeAccount",
+          "CredentialProfile",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "TradingUniverse",
+      "id_field": "trading_universe_id",
+      "id_prefix": "univ",
+      "purpose": "versioned set of tradable instruments",
+      "parent": "ExchangeAccount",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "ExchangeAccount",
+          "TradingUniverse",
+          "one_to_many_versioned"
+        ],
+        [
+          "TradingUniverse",
+          "Instrument",
+          "many_to_many_membership"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "Instrument",
+      "id_field": "instrument_id",
+      "id_prefix": "instr",
+      "purpose": "venue/market specific instrument identity",
+      "parent": "Workspace",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "StrategyInstance",
+          "Instrument",
+          "many_to_many_assignments"
+        ],
+        [
+          "Workspace",
+          "Instrument",
+          "one_to_many_catalog"
+        ],
+        [
+          "TradingUniverse",
+          "Instrument",
+          "many_to_many_membership"
+        ]
+      ],
+      "legacy_names": [
+        "symbol string"
+      ],
+      "identity_dimensions": [
+        "exchange_id",
+        "environment",
+        "market_type",
+        "venue_symbol"
+      ]
+    },
+    {
+      "canonical_name": "StrategyDefinition",
+      "id_field": "strategy_definition_id",
+      "id_prefix": "sdef",
+      "purpose": "strategy type and version definition",
+      "parent": "Workspace",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "StrategyDefinition",
+          "StrategyInstance",
+          "one_to_many_reference"
+        ],
+        [
+          "Workspace",
+          "StrategyDefinition",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "StrategyInstance",
+      "id_field": "strategy_instance_id",
+      "id_prefix": "sinst",
+      "purpose": "configured/running strategy instance",
+      "parent": "Workspace",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "StrategyInstance",
+          "ExchangeAccount",
+          "many_to_many_assignments"
+        ],
+        [
+          "StrategyInstance",
+          "Instrument",
+          "many_to_many_assignments"
+        ],
+        [
+          "StrategyInstance",
+          "MarketDataRoute",
+          "many_to_many"
+        ],
+        [
+          "Workspace",
+          "StrategyInstance",
+          "one_to_many"
+        ],
+        [
+          "StrategyDefinition",
+          "StrategyInstance",
+          "one_to_many_reference"
+        ],
+        [
+          "StrategyInstance",
+          "Signal",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "MarketDataRoute",
+      "id_field": "market_data_route_id",
+      "id_prefix": "mdr",
+      "purpose": "market data routing policy",
+      "parent": "Workspace",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "StrategyInstance",
+          "MarketDataRoute",
+          "many_to_many"
+        ],
+        [
+          "Workspace",
+          "MarketDataRoute",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "ExecutionRoute",
+      "id_field": "execution_route_id",
+      "id_prefix": "xroute",
+      "purpose": "execution venue/account routing policy",
+      "parent": "Workspace",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "OrderIntent",
+          "ExecutionRoute",
+          "optional_policy_reference"
+        ],
+        [
+          "Workspace",
+          "ExecutionRoute",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": [
+        "primary"
+      ]
+    },
+    {
+      "canonical_name": "RiskPolicy",
+      "id_field": "risk_policy_id",
+      "id_prefix": "rpol",
+      "purpose": "risk rule set",
+      "parent": "Workspace",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "Workspace",
+          "RiskPolicy",
+          "one_to_many"
+        ],
+        [
+          "RiskPolicy",
+          "RiskBudget",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "RiskBudget",
+      "id_field": "risk_budget_id",
+      "id_prefix": "rbud",
+      "purpose": "allocated risk budget",
+      "parent": "RiskPolicy",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "RiskPolicy",
+          "RiskBudget",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "ExecutionLease",
+      "id_field": "execution_lease_id",
+      "id_prefix": "lease",
+      "purpose": "exclusive/authorized execution lease",
+      "parent": "ExchangeAccount",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "ExchangeAccount",
+          "ExecutionLease",
+          "one_to_many_per_scope"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "Signal",
+      "id_field": "signal_id",
+      "id_prefix": "sig",
+      "purpose": "strategy-produced signal event",
+      "parent": "StrategyInstance",
+      "lifecycle_scope": "event/runtime scope with durable audit value",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "StrategyInstance",
+          "Signal",
+          "one_to_many"
+        ],
+        [
+          "Signal",
+          "Decision",
+          "one_to_many_possible_source"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "Decision",
+      "id_field": "decision_id",
+      "id_prefix": "dec",
+      "purpose": "risk/execution decision record",
+      "parent": "Workspace",
+      "lifecycle_scope": "event/runtime scope with durable audit value",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "Decision",
+          "OrderIntent",
+          "one_to_many"
+        ],
+        [
+          "Workspace",
+          "Decision",
+          "one_to_many"
+        ],
+        [
+          "Signal",
+          "Decision",
+          "one_to_many_possible_source"
+        ],
+        [
+          "OperatorIdentity",
+          "Decision",
+          "one_to_many_possible_source"
+        ],
+        [
+          "RuntimeSession",
+          "Decision",
+          "one_to_many_possible_source"
+        ]
+      ],
+      "legacy_names": [],
+      "decision_source_types": [
+        "strategy_signal",
+        "operator_action",
+        "risk_system",
+        "recovery_policy",
+        "reconciliation_import"
+      ],
+      "optional_source_references": [
+        "signal_id",
+        "operator_id",
+        "runtime_session_id",
+        "source_event_id"
+      ]
+    },
+    {
+      "canonical_name": "OrderIntent",
+      "id_field": "order_intent_id",
+      "id_prefix": "oint",
+      "purpose": "internal desired order before venue placement",
+      "parent": "Decision",
+      "lifecycle_scope": "event/runtime scope with durable audit value",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "OrderIntent",
+          "ExecutionRoute",
+          "optional_policy_reference"
+        ],
+        [
+          "Decision",
+          "OrderIntent",
+          "one_to_many"
+        ],
+        [
+          "OrderIntent",
+          "Order",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "Order",
+      "id_field": "order_id",
+      "id_prefix": "ord",
+      "purpose": "internal order lifecycle record",
+      "parent": "ExchangeAccount",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "ExchangeAccount",
+          "Order",
+          "one_to_many"
+        ],
+        [
+          "Order",
+          "Fill",
+          "one_to_many"
+        ],
+        [
+          "OrderIntent",
+          "Order",
+          "one_to_many"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "Fill",
+      "id_field": "fill_id",
+      "id_prefix": "fill",
+      "purpose": "execution fill event",
+      "parent": "Order",
+      "lifecycle_scope": "event/runtime scope with durable audit value",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "Order",
+          "Fill",
+          "one_to_many"
+        ],
+        [
+          "Fill",
+          "LedgerEntry",
+          "one_to_many_possible_source"
+        ]
+      ],
+      "legacy_names": [
+        "OrderResult"
+      ]
+    },
+    {
+      "canonical_name": "LedgerEntry",
+      "id_field": "ledger_entry_id",
+      "id_prefix": "led",
+      "purpose": "immutable accounting entry",
+      "parent": "Portfolio",
+      "lifecycle_scope": "persistent product entity",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "Portfolio",
+          "LedgerEntry",
+          "one_to_many"
+        ],
+        [
+          "Fill",
+          "LedgerEntry",
+          "one_to_many_possible_source"
+        ],
+        [
+          "AuditEvent",
+          "LedgerEntry",
+          "optional_reference"
+        ]
+      ],
+      "legacy_names": [],
+      "optional_references": [
+        "exchange_account_id",
+        "strategy_instance_id",
+        "order_id",
+        "fill_id"
+      ],
+      "allowed_source_event_types": [
+        "fill",
+        "fee",
+        "funding",
+        "interest",
+        "deposit",
+        "withdrawal",
+        "internal_transfer",
+        "capital_reservation",
+        "capital_release",
+        "realized_pnl",
+        "reconciliation_correction"
+      ]
+    },
+    {
+      "canonical_name": "RuntimeSession",
+      "id_field": "runtime_session_id",
+      "id_prefix": "run",
+      "purpose": "core runtime process/session",
+      "parent": "DeviceInstallation",
+      "lifecycle_scope": "event/runtime scope with durable audit value",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "DeviceInstallation",
+          "RuntimeSession",
+          "one_to_many"
+        ],
+        [
+          "RuntimeSession",
+          "Decision",
+          "one_to_many_possible_source"
+        ],
+        [
+          "RuntimeSession",
+          "AuditEvent",
+          "optional_runtime_reference"
+        ]
+      ],
+      "legacy_names": []
+    },
+    {
+      "canonical_name": "AuditEvent",
+      "id_field": "audit_event_id",
+      "id_prefix": "evt",
+      "purpose": "immutable audit/security/runtime event",
+      "parent": "DeviceInstallation",
+      "lifecycle_scope": "event/runtime scope with durable audit value",
+      "persistence": true,
+      "saas_sync_candidate": true,
+      "secret_policy": "must not contain secrets",
+      "relationships": [
+        [
+          "AuditEvent",
+          "LedgerEntry",
+          "optional_reference"
+        ],
+        [
+          "DeviceInstallation",
+          "AuditEvent",
+          "one_to_many"
+        ],
+        [
+          "RuntimeSession",
+          "AuditEvent",
+          "optional_runtime_reference"
+        ]
+      ],
+      "legacy_names": [],
+      "optional_references": [
+        "runtime_session_id",
+        "operator_id",
+        "workspace_id",
+        "exchange_account_id",
+        "order_id",
+        "ledger_entry_id"
+      ],
+      "audit_event_categories": [
+        "authentication",
+        "authorization",
+        "configuration",
+        "credential_management",
+        "device_management",
+        "licensing",
+        "live_activation",
+        "runtime",
+        "trading",
+        "risk",
+        "recovery",
+        "update",
+        "security"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "CryptoHunterAccount",
+      "to": "DeviceInstallation",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "CryptoHunterAccount",
+      "to": "OperatorIdentity",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "CryptoHunterAccount",
+      "to": "Workspace",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Workspace",
+      "to": "Portfolio",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "ExchangeAccount",
+      "to": "TradingUniverse",
+      "cardinality": "one_to_many_versioned"
+    },
+    {
+      "from": "StrategyInstance",
+      "to": "ExchangeAccount",
+      "cardinality": "many_to_many_assignments"
+    },
+    {
+      "from": "StrategyInstance",
+      "to": "Instrument",
+      "cardinality": "many_to_many_assignments"
+    },
+    {
+      "from": "StrategyInstance",
+      "to": "MarketDataRoute",
+      "cardinality": "many_to_many"
+    },
+    {
+      "from": "OrderIntent",
+      "to": "ExecutionRoute",
+      "cardinality": "optional_policy_reference"
+    },
+    {
+      "from": "ExchangeAccount",
+      "to": "Order",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Order",
+      "to": "Fill",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "ExchangeAccount",
+      "to": "ExecutionLease",
+      "cardinality": "one_to_many_per_scope"
+    },
+    {
+      "from": "Portfolio",
+      "to": "ExchangeAccount",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Workspace",
+      "to": "Instrument",
+      "cardinality": "one_to_many_catalog"
+    },
+    {
+      "from": "TradingUniverse",
+      "to": "Instrument",
+      "cardinality": "many_to_many_membership"
+    },
+    {
+      "from": "Workspace",
+      "to": "StrategyInstance",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "StrategyDefinition",
+      "to": "StrategyInstance",
+      "cardinality": "one_to_many_reference"
+    },
+    {
+      "from": "DeviceInstallation",
+      "to": "LiveAccessGrant",
+      "cardinality": "one_to_many_history"
+    },
+    {
+      "from": "OperatorIdentity",
+      "to": "LiveAccessGrant",
+      "cardinality": "authorization_reference"
+    },
+    {
+      "from": "Portfolio",
+      "to": "LedgerEntry",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "StrategyInstance",
+      "to": "Signal",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Decision",
+      "to": "OrderIntent",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "OrderIntent",
+      "to": "Order",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Fill",
+      "to": "LedgerEntry",
+      "cardinality": "one_to_many_possible_source"
+    },
+    {
+      "from": "AuditEvent",
+      "to": "LedgerEntry",
+      "cardinality": "optional_reference"
+    },
+    {
+      "from": "ExchangeAccount",
+      "to": "CredentialProfile",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Workspace",
+      "to": "MarketDataRoute",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Workspace",
+      "to": "ExecutionRoute",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Workspace",
+      "to": "RiskPolicy",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "RiskPolicy",
+      "to": "RiskBudget",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "DeviceInstallation",
+      "to": "RuntimeSession",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Workspace",
+      "to": "StrategyDefinition",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Workspace",
+      "to": "Decision",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "Signal",
+      "to": "Decision",
+      "cardinality": "one_to_many_possible_source"
+    },
+    {
+      "from": "OperatorIdentity",
+      "to": "Decision",
+      "cardinality": "one_to_many_possible_source"
+    },
+    {
+      "from": "RuntimeSession",
+      "to": "Decision",
+      "cardinality": "one_to_many_possible_source"
+    },
+    {
+      "from": "DeviceInstallation",
+      "to": "AuditEvent",
+      "cardinality": "one_to_many"
+    },
+    {
+      "from": "RuntimeSession",
+      "to": "AuditEvent",
+      "cardinality": "optional_runtime_reference"
+    }
+  ],
+  "identifier_policy": {
+    "persistent_id_format": "<prefix>_<uuidv7>",
+    "regex": "^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "uuid_version": "uuidv7",
+    "rules": [
+      "lowercase",
+      "stable unique entity prefix",
+      "no usernames/exchanges/symbols/secrets",
+      "immutable after rename",
+      "display names stored separately",
+      "safe for JSON SQLite Protobuf logs API",
+      "legacy strings migrated by explicit mapping",
+      "never derive durable ID from name"
+    ]
+  },
+  "external_identifier_fields": [
+    "exchange_id",
+    "venue_account_reference",
+    "venue_symbol",
+    "venue_order_id",
+    "venue_trade_id"
+  ],
+  "security_boundaries": [
+    "CredentialProfile stores only secure-store references, not plaintext API keys.",
+    "Saved secrets, API key values, passphrases, private TLS keys and recovery tokens must not return to QML after save.",
+    "Internal IDs and external non-secret venue IDs may appear in logs; secrets and credential material must not.",
+    "Biometrics and PIN are not DeviceFingerprint.",
+    "DeviceFingerprint is not an API key.",
+    "Operator authentication is not execution authorization.",
+    "Online SaaS account cannot be a critical dependency for an already running Core.",
+    "Live grant cannot be a normal editable boolean.",
+    "Environment name alone must not choose arbitrary endpoint; adapter endpoint policy must also validate.",
+    "Decision provenance is explicit and must not be satisfied by creating synthetic Signal records.",
+    "AuditEvent records pre-Core and Core runtime security events without plaintext secrets or biometric data."
+  ],
+  "invariants": [
+    "A valid operator password cannot bypass missing Live product capability.",
+    "Active trading environment does not become LIVE before ProductCapability, LiveAccessGrant and safety gates pass.",
+    "LiveAccessGrant and kill switch state are independent.",
+    "Triggered kill switch does not delete durable Live grant but blocks execution authorization.",
+    "Restart does not reset a triggered kill switch.",
+    "Closing GUI does not change Core active environment or runtime state.",
+    "Locked GUI does not necessarily stop Core.",
+    "One unavailable exchange account does not automatically change environment for other accounts.",
+    "Missing ExecutionLease blocks order entry but not reads or reconciliation.",
+    "StrategyInstance stores a durable reference to the StrategyDefinition version used for configuration or runtime and strategy history is not automatically deleted when a definition is updated or removed.",
+    "At most one currently active LiveAccessGrant applies to a given installation/policy scope; grants may be revoked or suspended without changing historical records; absence of a grant blocks LIVE but not PAPER or TESTNET.",
+    "For a given ExchangeAccount and execution scope at most one ExecutionLease may be active; expired or released leases remain in history; missing active lease blocks order entry but not reads or reconciliation.",
+    "Order cannot be created without a source OrderIntent except during explicitly marked migration or reconciliation import; every exception must include provenance.",
+    "Every Decision must have exactly one explicit source/provenance; strategy_signal requires signal_id; operator_action requires operator_id; recovery_policy and reconciliation_import require runtime_session_id or explicit source_event_id; Decision must not create a synthetic Signal only to satisfy ownership.",
+    "The StrategyInstance to Signal to Decision to OrderIntent to Order to Fill to LedgerEntry path is a supported automated lifecycle, not the only valid decision flow.",
+    "The OperatorIdentity to Decision to OrderIntent to Order to Fill to LedgerEntry path is the supported manual/operator lifecycle.",
+    "AuditEvent may exist without RuntimeSession.",
+    "Wizard, login, PIN, biometric, licensing, API-key-management, update and device-rebind events must be auditable before Core starts.",
+    "If an AuditEvent is created while Core is running, runtime_session_id should be recorded.",
+    "AuditEvent is immutable and append-only.",
+    "AuditEvent must not contain secrets or biometric data."
+  ],
+  "legacy_conflicts": [
+    {
+      "term": "demo",
+      "current_meanings": [
+        "frontend maps demo to TESTNET",
+        "docs use demo→paper→live pipeline"
+      ],
+      "canonical_target": "deprecated alias requiring context-specific migration",
+      "migration_rule": "Do not rewrite blindly; classify old Demo as fixture, PAPER simulation, or exchange TESTNET before migration",
+      "evidence_paths": [
+        "bot_core/runtime/frontend.py",
+        "docs/architecture/desktop_shell_plan.md"
+      ]
+    },
+    {
+      "term": "sandbox",
+      "current_meanings": [
+        "adapter endpoint classification through testnet/sandbox helpers",
+        "not a product-wide environment"
+      ],
+      "canonical_target": "adapter endpoint classification; public target TESTNET",
+      "migration_rule": "Keep sandbox only in adapter endpoint metadata/migration; expose TESTNET publicly",
+      "evidence_paths": [
+        "bot_core/exchanges/manager.py",
+        "config/environments/exchange_modes.yaml"
+      ]
+    },
+    {
+      "term": "production/prod",
+      "current_meanings": [
+        "frontend accepts prod/production as LIVE aliases"
+      ],
+      "canonical_target": "legacy alias LIVE only in migration layer",
+      "migration_rule": "Reject outside migration/import normalization after future change",
+      "evidence_paths": [
+        "bot_core/runtime/frontend.py"
+      ]
+    },
+    {
+      "term": "primary",
+      "current_meanings": [
+        "frontend bootstrap adapter name",
+        "live default_route fallback and journal fields primary_exchange"
+      ],
+      "canonical_target": "legacy route/account alias; not durable ID",
+      "migration_rule": "Replace with ExchangeAccount/ExecutionRoute IDs in future migration",
+      "evidence_paths": [
+        "bot_core/runtime/frontend.py",
+        "bot_core/execution/execution_service.py",
+        "bot_core/runtime/journal.py"
+      ]
+    },
+    {
+      "term": "Environment default LIVE",
+      "current_meanings": [
+        "ExchangeCredentials defaults environment to LIVE"
+      ],
+      "canonical_target": "legacy risk: missing env must not imply LIVE",
+      "migration_rule": "Future migration to fail closed TESTNET or local PAPER by context",
+      "evidence_paths": [
+        "bot_core/exchanges/base.py"
+      ]
+    },
+    {
+      "term": "Instrument string",
+      "current_meanings": [
+        "OrderRequest/proto use exchange+symbol/venue_symbol strings"
+      ],
+      "canonical_target": "Instrument ID plus external venue_symbol",
+      "migration_rule": "Future schema separates instr_ ID from venue_symbol",
+      "evidence_paths": [
+        "bot_core/exchanges/base.py",
+        "proto/trading.proto"
+      ]
+    }
+  ],
+  "evidence_paths": [
+    "docs/architecture/cryptohunter_product_architecture/current_state_inventory.md",
+    "docs/architecture/cryptohunter_product_architecture/current_state_inventory.json",
+    "bot_core/exchanges/base.py",
+    "bot_core/runtime/frontend.py",
+    "bot_core/runtime/journal.py",
+    "bot_core/runtime/multi_strategy_scheduler.py",
+    "bot_core/execution/live_router.py",
+    "bot_core/execution/execution_service.py",
+    "bot_core/config",
+    "bot_core/security",
+    "bot_core/risk",
+    "config/core.yaml",
+    "config/environments/exchange_modes.yaml",
+    "ui/config/preview_local.yaml",
+    "proto/trading.proto",
+    "docs/ARCHITECTURE.md",
+    "docs/architecture/phase1_foundation.md",
+    "docs/architecture/desktop_shell_plan.md"
+  ]
+}
