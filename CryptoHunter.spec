@@ -3,7 +3,10 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_delvewheel_libs_directory,
+    collect_submodules,
+)
 
 ROOT = Path(SPECPATH)  # noqa: F821
 
@@ -12,6 +15,15 @@ app_datas = [
     (str(ROOT / "ui" / "qml"), "ui/qml"),
     (str(ROOT / "ui" / "config" / "preview_local.yaml"), "ui/config"),
 ]
+
+app_binaries = []
+
+app_datas, app_binaries = collect_delvewheel_libs_directory(
+    "numpy",
+    datas=app_datas,
+    binaries=app_binaries,
+)
+
 hiddenimports = [
     "PySide6.QtCore",
     "PySide6.QtGui",
@@ -31,7 +43,7 @@ block_cipher = None
 a = Analysis(  # noqa: F821
     [str(ROOT / "ui" / "pyside_app" / "__main__.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=app_binaries,
     datas=app_datas,
     hiddenimports=hiddenimports,
     hookspath=[],
