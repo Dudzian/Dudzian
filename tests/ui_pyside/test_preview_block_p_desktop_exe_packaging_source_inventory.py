@@ -855,9 +855,13 @@ def test_ast_entrypoint_sources_without_importing_modules() -> None:
     main_tree = ast.parse((ROOT / "ui/pyside_app/__main__.py").read_text(encoding="utf-8"))
     assert any(
         isinstance(node, ast.ImportFrom)
-        and node.module == "app"
-        and node.level == 1
+        and node.module == "ui.pyside_app.app"
+        and node.level == 0
         and [alias.name for alias in node.names] == ["main"]
+        for node in main_tree.body
+    )
+    assert not any(
+        isinstance(node, ast.ImportFrom) and node.module == "app" and node.level == 1
         for node in main_tree.body
     )
     if_node = next(node for node in main_tree.body if isinstance(node, ast.If))

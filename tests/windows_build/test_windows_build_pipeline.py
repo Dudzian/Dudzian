@@ -8,10 +8,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from PyInstaller.utils.hooks import collect_submodules
-
-import ui.backend as ui_backend
-
 from scripts.verify_windows_artifact import (
     NUMPY_OPENBLAS_PATTERN,
     QT_PLATFORM_CANDIDATES,
@@ -139,14 +135,30 @@ def test_spec_collects_numpy_delvewheel_runtime_libs_for_pyinstaller():
     assert _keyword_name(analysis, "datas") == "app_datas"
 
 
-def test_pyinstaller_collects_every_dynamic_ui_backend_export():
-    collected = set(collect_submodules("ui.backend"))
-    required = {
-        f"ui.backend.{module_path.removeprefix('.')}"
-        for module_path in ui_backend._MODULE_BY_EXPORT.values()
-    }
+def _ui_backend_export_modules_from_ast() -> dict[str, str]:
+    backend_init = ROOT / "ui/backend/__init__.py"
+    tree = ast.parse(backend_init.read_text(encoding="utf-8"), filename=str(backend_init))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_MODULE_BY_EXPORT"
+            for target in node.targets
+        ):
+            mapping = ast.literal_eval(node.value)
+            assert isinstance(mapping, dict)
+            return mapping
+    raise AssertionError("_MODULE_BY_EXPORT assignment not found")
 
-    assert required <= collected
+
+def test_dynamic_ui_backend_export_modules_exist_without_importing_pyinstaller():
+    mapping = _ui_backend_export_modules_from_ast()
+
+    assert mapping
+    for module_path in mapping.values():
+        assert isinstance(module_path, str)
+        assert module_path.startswith(".")
+        assert (
+            ROOT / "ui/backend" / f"{module_path.removeprefix('.').replace('.', '/')}.py"
+        ).is_file()
 
 
 def _create_valid_artifact(root: Path, *, internal: bool = True) -> Path:
@@ -161,6 +173,32 @@ def _create_valid_artifact(root: Path, *, internal: bool = True) -> Path:
     )
     (data_root / "ui/qml").mkdir(parents=True)
     (data_root / "ui/qml/Icon.qml").write_text("import QtQuick\nItem {}\n", encoding="utf-8")
+    theme_dir = data_root / "ui/pyside_app/theme"
+    icons_dir = theme_dir / "icons"
+    icons_dir.mkdir(parents=True)
+    (theme_dir / "palette.json").write_text(
+        json.dumps(
+            {
+                "palettes": {"dark": {"background": "#000000"}},
+                "gradients": {"dark": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (theme_dir / "icons.json").write_text(
+        json.dumps(
+            {
+                "icons": {
+                    "refresh": {
+                        "file": "refresh.svg",
+                        "type": "svg",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (icons_dir / "refresh.svg").write_text("<svg/>", encoding="utf-8")
     (data_root / "PySide6/plugins/platforms").mkdir(parents=True)
     (data_root / "PySide6/plugins/platforms/qwindows.dll").write_bytes(b"dll")
     numpy_libs = data_root / "numpy.libs"
@@ -268,6 +306,8 @@ def test_workflow_uses_isolated_artifact_smoke_and_lockfile():
     assert "python -m pip install -e .[dev,desktop]" in text
     assert "python -m pip install -e .[dev,desktop] --no-deps" not in text
     assert "python -m pip check" in text
+    assert "python scripts/verify_windows_pyinstaller_collectors.py" in text
+    assert "build/reports/pyinstaller-collectors.log" in text
     isolated_smoke_section = text[
         text.index("Smoke test isolated artifact") : text.index("Package ZIP")
     ]
@@ -447,6 +487,68 @@ def test_artifact_scanner_requires_internal_data_files(tmp_path, relative, expec
     result = validate_artifact(tmp_path)
     assert not result.ok
     assert expected in result.missing
+
+
+@pytest.mark.parametrize(
+    "relative,expected",
+    [
+        ("ui/pyside_app/theme/palette.json", "ui/pyside_app/theme/palette.json"),
+        ("ui/pyside_app/theme/icons.json", "ui/pyside_app/theme/icons.json"),
+    ],
+)
+def test_artifact_scanner_requires_theme_manifest_files(tmp_path, relative, expected):
+    data_root = _create_valid_artifact(tmp_path)
+    (data_root / relative).unlink()
+
+    result = validate_artifact(tmp_path)
+
+    assert not result.ok
+    assert expected in result.missing
+
+
+def test_artifact_scanner_rejects_invalid_theme_icons_json(tmp_path):
+    data_root = _create_valid_artifact(tmp_path)
+    (data_root / "ui/pyside_app/theme/icons.json").write_text("{", encoding="utf-8")
+
+    result = validate_artifact(tmp_path)
+
+    assert not result.ok
+    assert any(item.startswith("Theme icons JSON invalid:") for item in result.missing)
+
+
+def test_artifact_scanner_requires_theme_icons_mapping(tmp_path):
+    data_root = _create_valid_artifact(tmp_path)
+    (data_root / "ui/pyside_app/theme/icons.json").write_text(
+        json.dumps({"icons": []}), encoding="utf-8"
+    )
+
+    result = validate_artifact(tmp_path)
+
+    assert not result.ok
+    assert "Theme icons JSON: icons mapping" in result.missing
+
+
+def test_artifact_scanner_requires_svg_files_declared_by_theme_icons_json(tmp_path):
+    data_root = _create_valid_artifact(tmp_path)
+    (data_root / "ui/pyside_app/theme/icons/refresh.svg").unlink()
+
+    result = validate_artifact(tmp_path)
+
+    assert not result.ok
+    assert "Theme icon: refresh.svg" in result.missing
+
+
+def test_artifact_scanner_rejects_theme_icon_outside_theme_icons_contract(tmp_path):
+    data_root = _create_valid_artifact(tmp_path)
+    (data_root / "ui/pyside_app/theme/icons/refresh.svg").unlink()
+    outside = data_root / "ui/pyside_app/theme/refresh.svg"
+    outside.write_text("<svg/>", encoding="utf-8")
+
+    result = validate_artifact(tmp_path)
+
+    assert not result.ok
+    assert outside.is_file()
+    assert "Theme icon: refresh.svg" in result.missing
 
 
 def test_root_level_source_ui_does_not_mask_missing_internal_resources(tmp_path):

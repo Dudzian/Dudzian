@@ -14,6 +14,18 @@ app_datas = [
     (str(ROOT / "ui" / "pyside_app" / "qml"), "ui/pyside_app/qml"),
     (str(ROOT / "ui" / "qml"), "ui/qml"),
     (str(ROOT / "ui" / "config" / "preview_local.yaml"), "ui/config"),
+    (
+        str(ROOT / "ui" / "pyside_app" / "theme" / "palette.json"),
+        "ui/pyside_app/theme",
+    ),
+    (
+        str(ROOT / "ui" / "pyside_app" / "theme" / "icons.json"),
+        "ui/pyside_app/theme",
+    ),
+    (
+        str(ROOT / "ui" / "pyside_app" / "theme" / "icons"),
+        "ui/pyside_app/theme/icons",
+    ),
 ]
 
 app_binaries = []
