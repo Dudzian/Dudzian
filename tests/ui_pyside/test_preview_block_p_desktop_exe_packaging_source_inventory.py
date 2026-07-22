@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import copy
 import json
-import os
 import sys
 import tomllib
 from pathlib import Path
@@ -945,8 +944,16 @@ def test_default_config_resolves_preview_local_source_and_frozen(
     monkeypatch.setattr(sys, "platform", "win32")
 
     frozen_options = AppOptions.parse([])
-    assert frozen_options.config_path == frozen_config.resolve()
-    assert os.path.commonpath([frozen_options.config_path, ROOT]) != str(ROOT)
+
+    resolved_internal_root = internal_root.resolve()
+    resolved_frozen_config = frozen_config.resolve()
+
+    assert frozen_options.config_path == resolved_frozen_config
+    assert resolved_internal_root in resolved_frozen_config.parents
+    assert resolved_frozen_config.relative_to(resolved_internal_root) == Path(
+        "ui/config/preview_local.yaml"
+    )
+    assert ROOT.resolve() not in resolved_frozen_config.parents
 
 
 def test_existing_cli_preview_plan_ast_inventory() -> None:
