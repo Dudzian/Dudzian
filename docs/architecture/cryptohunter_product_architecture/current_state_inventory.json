@@ -1,0 +1,401 @@
+{
+  "schema_version": "cryptohunter.current_state_inventory.v1",
+  "repository_baseline_commit": "d8de0acba975af035df296d2d39d36ea58979c65",
+  "generated_at_utc": "2026-07-22T20:13:47Z",
+  "current_windows_app": {
+    "entrypoint": "ui/pyside_app/__main__.py",
+    "spec_file": "CryptoHunter.spec",
+    "ui_stack": "PySide6 QGuiApplication + QQmlApplicationEngine loading ui/pyside_app/qml/MainWindow.qml with bundled ui/qml imports",
+    "packaging_workflow": ".github/workflows/windows-build.yml",
+    "status": "IMPLEMENTED"
+  },
+  "status_values": [
+    "IMPLEMENTED",
+    "PARTIAL",
+    "PREVIEW_ONLY",
+    "PLANNED",
+    "CONFLICTING",
+    "UNKNOWN"
+  ],
+  "components": [
+    {
+      "id": "windows_app_pyside_qml",
+      "name": "CryptoHunter Windows EXE PySide6/QML shell",
+      "domain": "windows_app",
+      "status": "IMPLEMENTED",
+      "summary": "PyInstaller spec builds CryptoHunter from ui/pyside_app/__main__.py; the app loads ui/pyside_app/qml/MainWindow.qml by default and bundles shared ui/qml imports.",
+      "evidence_paths": [
+        "CryptoHunter.spec",
+        "ui/pyside_app/__main__.py",
+        "ui/pyside_app/app.py",
+        "ui/pyside_app/qml/MainWindow.qml",
+        "ui/qml/components/FirstRunWizard.qml",
+        ".github/workflows/windows-build.yml",
+        "scripts/build_windows.ps1",
+        "tests/windows_build/test_windows_build_pipeline.py",
+        "tests/ui_pyside/test_source_smoke.py"
+      ],
+      "evidence_symbols": [
+        "Analysis([ui/pyside_app/__main__.py])",
+        "AppOptions.from_namespace",
+        "BotPysideApplication.load",
+        "QQmlApplicationEngine",
+        "FirstRunWizard"
+      ],
+      "roadmap_impact": "Current EXE baseline is PySide6/QML; future UI decisions must preserve or intentionally replace this entrypoint."
+    },
+    {
+      "id": "frontend_legacy_electron_react",
+      "name": "ui/desktop Electron/React renderer",
+      "domain": "frontend",
+      "status": "PARTIAL",
+      "summary": "React/Vite/Electron assets exist with TypeScript configuration, but the Windows EXE spec does not include ui/desktop and current packaging points at PySide6/QML.",
+      "evidence_paths": [
+        "ui/desktop/package.json",
+        "ui/desktop/src/renderer/App.tsx",
+        "ui/desktop/tsconfig.json",
+        "CryptoHunter.spec",
+        "ui/README.md"
+      ],
+      "evidence_symbols": [
+        "ui/desktop/package.json",
+        "App.tsx",
+        "app_datas"
+      ],
+      "roadmap_impact": "Likely legacy or alternate frontend; audit unique screens before migration/removal decisions."
+    },
+    {
+      "id": "frontend_shared_qml_library",
+      "name": "ui/qml shared QML component library",
+      "domain": "frontend",
+      "status": "PARTIAL",
+      "summary": "Shared QML components are bundled by CryptoHunter.spec and imported by the PySide shell, but many panels are source/read-model surfaces rather than verified runtime execution controls.",
+      "evidence_paths": [
+        "CryptoHunter.spec",
+        "ui/qml/components/BotAppWindow.qml",
+        "ui/qml/components/FirstRunWizard.qml",
+        "ui/qml/dashboard/RuntimeOverview.qml",
+        "tests/ui_pyside/test_source_smoke.py"
+      ],
+      "evidence_symbols": [
+        "ui/qml",
+        "BotAppWindow",
+        "RuntimeOverview",
+        "FirstRunWizard"
+      ],
+      "roadmap_impact": "Reusable visual foundation; distinguish runtime-backed panels from preview surfaces in later M0 elements."
+    },
+    {
+      "id": "runtime_live_router_primary",
+      "name": "LiveExecutionRouter and current primary adapter bootstrap",
+      "domain": "execution",
+      "status": "PARTIAL",
+      "summary": "LiveExecutionRouter can route across multiple adapters, but the GUI/frontend bootstrap currently wraps ExchangeManager as a single adapter registered under 'primary' with default_route ('primary',). Live build is also skipped when DUDZIAN_TEST_MODE is set.",
+      "evidence_paths": [
+        "bot_core/execution/live_router.py",
+        "bot_core/execution/execution_service.py",
+        "bot_core/runtime/frontend.py",
+        "tests/integration/test_execution_router_failover.py",
+        "tests/security/test_withdrawal_signing_integration.py"
+      ],
+      "evidence_symbols": [
+        "LiveExecutionRouter",
+        "RoutingPlan",
+        "build_live_execution_service",
+        "_collect_adapters",
+        "LiveExecutionRouter(adapters={'primary': adapter})"
+      ],
+      "roadmap_impact": "Execution core has multi-adapter capability, while current GUI runtime path is effectively single ExchangeManager adapter named primary."
+    },
+    {
+      "id": "exchange_manager_registry",
+      "name": "ExchangeManager native adapter registry",
+      "domain": "exchanges",
+      "status": "PARTIAL",
+      "summary": "ExchangeManager contains dynamic/native adapter registry loading from config/core.yaml with many exchange classes, paper simulators and sandbox enabling helpers; real runtime activation depends on config and environment.",
+      "evidence_paths": [
+        "bot_core/exchanges/manager.py",
+        "bot_core/exchanges/base.py",
+        "bot_core/exchanges/paper_simulator.py",
+        "config/core.yaml",
+        "tests/integration/test_exchange_manager_failover.py",
+        "scripts/list_exchange_adapters.py"
+      ],
+      "evidence_symbols": [
+        "ExchangeManager",
+        "reload_native_adapters",
+        "iter_registered_native_adapters",
+        "_enable_sandbox_mode",
+        "_NATIVE_ADAPTER_REGISTRY"
+      ],
+      "roadmap_impact": "Reusable exchange foundation, but M0 must define supported exchange/account topology and live gates."
+    },
+    {
+      "id": "environment_modes_and_live_gate",
+      "name": "Demo/paper/testnet/live environment representation and gates",
+      "domain": "environments",
+      "status": "CONFLICTING",
+      "summary": "Code and docs contain demo, paper, testnet/sandbox and live concepts; live requires enabled runtime.execution.live, while UI preview and docs also expose demo/paper/live flows that are not equivalent to verified live trading.",
+      "evidence_paths": [
+        "bot_core/execution/execution_service.py",
+        "bot_core/runtime/execution_bootstrapper.py",
+        "bot_core/exchanges/manager.py",
+        "config/environments/exchange_modes.yaml",
+        "docs/testing/e2e_demo_paper.md",
+        "docs/runtime/runtime_architecture.md",
+        "ui/config/preview_local.yaml"
+      ],
+      "evidence_symbols": [
+        "resolve_execution_mode",
+        "ExecutionBootstrapper.bootstrap_execution_service",
+        "_enable_sandbox_mode",
+        "runtime.execution.live"
+      ],
+      "roadmap_impact": "M0 must normalize vocabulary and explicitly separate UI demo/preview, paper simulator, exchange sandbox/testnet and live."
+    },
+    {
+      "id": "trading_universe_preview",
+      "name": "Trading universe selection, AI candidates and market imports",
+      "domain": "trading_universe",
+      "status": "PREVIEW_ONLY",
+      "summary": "UI contains scanner/market/universe preview surfaces and fixtures/read models; no evidence was found that the current EXE executes autonomous live universe expansion from those screens.",
+      "evidence_paths": [
+        "ui/pyside_app/preview_read_only_market_data_static_fixture.py",
+        "ui/pyside_app/preview_read_only_market_data_read_model.py",
+        "ui/pyside_app/preview_decision_engine_dry_run_static_fixture.py",
+        "tests/ui_pyside/test_preview_read_only_market_data_static_fixture.py",
+        "tests/ui_pyside/test_market_scanner_source.py"
+      ],
+      "evidence_symbols": [
+        "preview_read_only_market_data_static_fixture",
+        "preview_read_only_market_data_read_model",
+        "preview_decision_engine_dry_run_static_fixture"
+      ],
+      "roadmap_impact": "Keep as product-contract input; do not treat preview candidates as implemented trading universe automation."
+    },
+    {
+      "id": "strategy_ai_governor",
+      "name": "Strategies, scheduler and AI governor",
+      "domain": "strategy_ai",
+      "status": "PARTIAL",
+      "summary": "Strategy definitions, multi-strategy scheduler and AI governor modules/tests exist, but several UI AI Center flows are static read models or demo fixtures.",
+      "evidence_paths": [
+        "bot_core/runtime/multi_strategy_scheduler.py",
+        "bot_core/auto_trader/ai_governor.py",
+        "bot_core/strategies/catalog.py",
+        "ui/backend/ai_governor_demo.py",
+        "tests/test_strategy_preset_wizard.py",
+        "tests/ui_pyside/test_ai_decisions_view.py"
+      ],
+      "evidence_symbols": [
+        "MultiStrategyScheduler",
+        "AIGovernor",
+        "StrategyCatalog",
+        "ai_governor_demo"
+      ],
+      "roadmap_impact": "Reusable strategy/governor foundation; M0 must define binding of strategy instances to accounts, exchanges and pairs."
+    },
+    {
+      "id": "risk_security_foundation",
+      "name": "Risk, kill switch, secrets and licensing controls",
+      "domain": "risk_security",
+      "status": "PARTIAL",
+      "summary": "Risk/security modules include risk engines, kill-switch previews, secret management, licensing and signer/hardware-wallet tests; current UI has preview/read-only safety gates as well as backend controllers.",
+      "evidence_paths": [
+        "bot_core/risk/engine.py",
+        "bot_core/risk/base.py",
+        "bot_core/security/__init__.py",
+        "core/licensing/controller.py",
+        "ui/backend/licensing_controller.py",
+        "ui/pyside_app/preview_kill_switch_read_model.py",
+        "tests/security/test_withdrawal_signing_integration.py",
+        "tests/ui_pyside/test_preview_risk_governor_limits_read_model.py"
+      ],
+      "evidence_symbols": [
+        "RiskEngine",
+        "RiskProfile",
+        "SecretManager",
+        "LicenseGate",
+        "preview_kill_switch_read_model"
+      ],
+      "roadmap_impact": "Strong reusable safety primitives, but M0 must classify hard runtime gates versus preview/status surfaces."
+    },
+    {
+      "id": "persistence_data_layers",
+      "name": "Persistence: SQLite, JSONL, Parquet, journals and updates",
+      "domain": "persistence",
+      "status": "PARTIAL",
+      "summary": "Repository includes JSONL ledgers/journals, Parquet storage tests, SQLite/reporting/update package code and backup/update docs; coverage is fragmented across runtime, execution, reporting and updater modules.",
+      "evidence_paths": [
+        "bot_core/runtime/journal.py",
+        "bot_core/execution/paper.py",
+        "tests/test_parquet_storage.py",
+        "tests/reporting/test_environment_storage.py",
+        "tests/update/test_update_package_cli.py",
+        "ui/backend/update_controller.py",
+        "docs/offline_updates.md"
+      ],
+      "evidence_symbols": [
+        "TradingDecisionJournal",
+        "PaperTradingExecutionService",
+        "LedgerEntry",
+        "UpdateController"
+      ],
+      "roadmap_impact": "M0 should establish canonical persistence boundaries for orders/fills, portfolio, backup and rollback."
+    },
+    {
+      "id": "background_shell_ops",
+      "name": "Background runtime and operator shell behavior",
+      "domain": "background_shell",
+      "status": "UNKNOWN",
+      "summary": "Offline daemon/local gateway/runtime service modules exist, but no verified evidence in the current EXE audit proves tray/autostart/HUD/reconnect semantics or background survival after window close.",
+      "evidence_paths": [
+        "bot_core/runtime/offline_daemon.py",
+        "bot_core/runtime/local_gateway.py",
+        "bot_core/runtime/local_service.py",
+        "ui/backend/runtime_service.py",
+        "docs/architecture/desktop_shell_plan.md"
+      ],
+      "evidence_symbols": [
+        "offline_daemon",
+        "local_gateway",
+        "RuntimeService"
+      ],
+      "roadmap_impact": "High-risk M0 decision area; verify operator shell lifecycle before implementation."
+    },
+    {
+      "id": "packaging_updater_ci",
+      "name": "Packaging, updater, artifact smoke and CI",
+      "domain": "packaging_ci",
+      "status": "IMPLEMENTED",
+      "summary": "Windows CI installs desktop requirements, runs focused tests, builds PyInstaller onedir, verifies CryptoHunter.exe exists, verifies artifact contents, runs isolated --smoke-test and uploads ZIP/reports; local scripts mirror this build path.",
+      "evidence_paths": [
+        ".github/workflows/windows-build.yml",
+        "scripts/build_windows.ps1",
+        "scripts/verify_windows_artifact.py",
+        "scripts/verify_windows_smoke_report.py",
+        "tests/windows_build/test_windows_build_pipeline.py",
+        "ui/backend/update_controller.py",
+        "tests/update/test_update_package_cli.py"
+      ],
+      "evidence_symbols": [
+        "Build CryptoHunter Windows x64",
+        "Verify artifact contents",
+        "Smoke test isolated artifact",
+        "verify_windows_smoke_report"
+      ],
+      "roadmap_impact": "Packaging is a usable foundation; updater/rollback contract still needs M0 boundary decisions."
+    }
+  ],
+  "frontend_stacks": [
+    {
+      "path": "ui/pyside_app",
+      "status": "IMPLEMENTED",
+      "in_current_exe": true
+    },
+    {
+      "path": "ui/qml",
+      "status": "PARTIAL",
+      "in_current_exe": true
+    },
+    {
+      "path": "ui/desktop",
+      "status": "PARTIAL",
+      "in_current_exe": false
+    },
+    {
+      "path": "ui/src",
+      "status": "UNKNOWN",
+      "in_current_exe": false
+    }
+  ],
+  "environment_findings": [
+    "LiveExecutionRouter build requires runtime.execution.live enabled.",
+    "ui/pyside_app preview modules model paper/testnet/live gates without proving runtime activation.",
+    "ExchangeManager can enable CCXT sandbox/testnet via setSandboxMode/set_sandbox_mode or test URLs."
+  ],
+  "roadmap_conflicts": [
+    "Docs/UI preview flows mention live/demo/paper capabilities beyond what current EXE audit verifies as runtime execution."
+  ],
+  "reusable_foundations": [
+    "PySide6/QML shell",
+    "LiveExecutionRouter",
+    "ExchangeManager native adapter registry",
+    "risk/security primitives",
+    "Windows build workflow"
+  ],
+  "legacy_or_duplicate_candidates": [
+    "ui/desktop Electron/React path",
+    "preview_* read models and static fixtures that duplicate runtime concepts"
+  ],
+  "unknowns": [
+    "Tray/autostart/HUD/window-close behavior",
+    "Final multi-account topology",
+    "Canonical order/fill persistence boundary"
+  ],
+  "evidence_files": [
+    ".github/workflows/windows-build.yml",
+    "CryptoHunter.spec",
+    "bot_core/auto_trader/ai_governor.py",
+    "bot_core/exchanges/base.py",
+    "bot_core/exchanges/manager.py",
+    "bot_core/exchanges/paper_simulator.py",
+    "bot_core/execution/execution_service.py",
+    "bot_core/execution/live_router.py",
+    "bot_core/execution/paper.py",
+    "bot_core/risk/base.py",
+    "bot_core/risk/engine.py",
+    "bot_core/runtime/execution_bootstrapper.py",
+    "bot_core/runtime/frontend.py",
+    "bot_core/runtime/journal.py",
+    "bot_core/runtime/local_gateway.py",
+    "bot_core/runtime/local_service.py",
+    "bot_core/runtime/multi_strategy_scheduler.py",
+    "bot_core/runtime/offline_daemon.py",
+    "bot_core/security/__init__.py",
+    "bot_core/strategies/catalog.py",
+    "config/core.yaml",
+    "config/environments/exchange_modes.yaml",
+    "core/licensing/controller.py",
+    "docs/architecture/desktop_shell_plan.md",
+    "docs/offline_updates.md",
+    "docs/runtime/runtime_architecture.md",
+    "docs/testing/e2e_demo_paper.md",
+    "scripts/build_windows.ps1",
+    "scripts/list_exchange_adapters.py",
+    "scripts/verify_windows_artifact.py",
+    "scripts/verify_windows_smoke_report.py",
+    "tests/integration/test_exchange_manager_failover.py",
+    "tests/integration/test_execution_router_failover.py",
+    "tests/reporting/test_environment_storage.py",
+    "tests/security/test_withdrawal_signing_integration.py",
+    "tests/test_parquet_storage.py",
+    "tests/test_strategy_preset_wizard.py",
+    "tests/ui_pyside/test_ai_decisions_view.py",
+    "tests/ui_pyside/test_market_scanner_source.py",
+    "tests/ui_pyside/test_preview_read_only_market_data_static_fixture.py",
+    "tests/ui_pyside/test_preview_risk_governor_limits_read_model.py",
+    "tests/ui_pyside/test_source_smoke.py",
+    "tests/update/test_update_package_cli.py",
+    "tests/windows_build/test_windows_build_pipeline.py",
+    "ui/README.md",
+    "ui/backend/ai_governor_demo.py",
+    "ui/backend/licensing_controller.py",
+    "ui/backend/runtime_service.py",
+    "ui/backend/update_controller.py",
+    "ui/config/preview_local.yaml",
+    "ui/desktop/package.json",
+    "ui/desktop/src/renderer/App.tsx",
+    "ui/desktop/tsconfig.json",
+    "ui/pyside_app/__main__.py",
+    "ui/pyside_app/app.py",
+    "ui/pyside_app/preview_decision_engine_dry_run_static_fixture.py",
+    "ui/pyside_app/preview_kill_switch_read_model.py",
+    "ui/pyside_app/preview_read_only_market_data_read_model.py",
+    "ui/pyside_app/preview_read_only_market_data_static_fixture.py",
+    "ui/pyside_app/qml/MainWindow.qml",
+    "ui/qml/components/BotAppWindow.qml",
+    "ui/qml/components/FirstRunWizard.qml",
+    "ui/qml/dashboard/RuntimeOverview.qml"
+  ]
+}
