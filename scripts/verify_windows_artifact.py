@@ -27,7 +27,11 @@ REQUIRED_ROOT_FILES = (EXE_NAME, "BUILD_INFO.txt")
 REQUIRED_DATA_FILES = (
     "ui/config/preview_local.yaml",
     "ui/pyside_app/qml/MainWindow.qml",
+    "ui/pyside_app/theme/palette.json",
+    "ui/pyside_app/theme/icons.json",
 )
+THEME_ICONS_JSON = "ui/pyside_app/theme/icons.json"
+THEME_ICONS_ROOT = "ui/pyside_app/theme/icons"
 REQUIRED_QML_ROOTS = ("ui/pyside_app/qml", "ui/qml")
 NUMPY_OPENBLAS_PATTERN = "numpy.libs/libopenblas*.dll"
 QT_PLATFORM_CANDIDATES = (
@@ -93,6 +97,37 @@ def _is_forbidden(relative: str) -> bool:
     return any(lowered.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES)
 
 
+def _validate_theme_icons(data_root: Path, missing: list[str]) -> None:
+    icons_json_path = data_root / THEME_ICONS_JSON
+    if not icons_json_path.is_file():
+        return
+    try:
+        payload = json.loads(icons_json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        missing.append(f"Theme icons JSON invalid: {exc.msg}")
+        return
+    icons = payload.get("icons") if isinstance(payload, dict) else None
+    if not isinstance(icons, dict):
+        missing.append("Theme icons JSON: icons mapping")
+        return
+    icons_root = data_root / THEME_ICONS_ROOT
+    for icon_name, icon in sorted(icons.items()):
+        if not isinstance(icon, dict) or "file" not in icon:
+            continue
+        icon_file = icon["file"]
+        if not isinstance(icon_file, str) or not icon_file:
+            missing.append(f"Theme icon {icon_name}: file")
+            continue
+        icon_path = icons_root / icon_file
+        try:
+            icon_path.resolve(strict=False).relative_to(icons_root.resolve(strict=False))
+        except ValueError:
+            missing.append(f"Theme icon: {icon_file}")
+            continue
+        if not icon_path.is_file():
+            missing.append(f"Theme icon: {icon_file}")
+
+
 def validate_artifact(artifact_dir: str | Path) -> ArtifactValidationResult:
     root = Path(artifact_dir).resolve()
     data_root = artifact_data_root(root)
@@ -119,6 +154,7 @@ def validate_artifact(artifact_dir: str | Path) -> ArtifactValidationResult:
             missing.append(relative)
     if not any((data_root / relative).is_file() for relative in QT_PLATFORM_CANDIDATES):
         missing.append("Qt qwindows.dll platform plugin")
+    _validate_theme_icons(data_root, missing)
     numpy_openblas_matches = list(data_root.glob(NUMPY_OPENBLAS_PATTERN))
     if not numpy_openblas_matches:
         missing.append("NumPy OpenBLAS runtime DLL")

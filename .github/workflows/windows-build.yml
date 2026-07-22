@@ -42,6 +42,10 @@ jobs:
           python -m pip check
           python -m pip freeze | Out-File -FilePath build/reports/pip-freeze.txt -Encoding utf8
 
+      - name: Verify PyInstaller collectors
+        shell: pwsh
+        run: python scripts/verify_windows_pyinstaller_collectors.py *> build/reports/pyinstaller-collectors.log
+
       - name: Focused tests
         shell: pwsh
         run: python -m pytest tests/windows_build -q
@@ -180,6 +184,7 @@ jobs:
             build/reports/BUILD_INFO.txt
             build/reports/SHA256SUMS.txt
             build/reports/artifact-verify.log
+            build/reports/pyinstaller-collectors.log
             build/reports/pip-freeze.txt
             build/reports/ZIP_SHA256.txt
           if-no-files-found: ignore
