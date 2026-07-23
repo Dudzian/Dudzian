@@ -279,3 +279,62 @@ Enter maintenance/update/backup preparation mode. Expected result: `maintenance_
 - CORE_HANDSHAKE with Core IPC UNREACHABLE is invalid
 - Core-mutating commands use only REACHABLE CORE_HANDSHAKE CONFIRMED_CURRENT state cases
 - ordinary CLOSE_DESKTOP_SHELL cannot close a pending restart without a confirmed running TrayAgent
+
+## M0.3 audit fix: restart provenance, independent proof, and state-case validation
+
+JSON is the machine source of truth for this section.  The M0.3 status remains **under audit**.
+
+### Bidirectional restart predicate contract
+
+`SUPERVISED_RESTART_PENDING` is bidirectional: `crashed_restart_scheduled` and `supervised_restart_in_progress` require it, while non-restart lifecycle pairs forbid it.  `crashed_restart_exhausted` is not a pending restart.  Implementations validate lifecycle-pair predicate requirements before matching any `state_case`.
+
+Generic stale/unknown cases no longer contain `crashed_restart_scheduled` or `supervised_restart_in_progress`; restart lifecycle pairs are handled only by explicit restart cases.  Pending restart with a confirmed running Tray is not silently closed: close is forbidden and must route to hide-to-background or controlled shutdown/cancel.  Pending restart without a running Tray is also forbidden; the GUI remains visible or presents controlled shutdown/cancel.
+
+### Independent observation proof
+
+`INDEPENDENT_OBSERVATION_PROOF_VALIDATED` means all independent observation checks succeeded: `PID_VALIDATED`, `START_NONCE_VALIDATED`, `SOURCE_FRESHNESS_VALIDATED`, `DEVICE_INSTALLATION_IDENTITY_MATCHED`, and `STATE_STORE_IDENTITY_MATCHED`.  The only observation sources allowed for this proof are `PROCESS_LOCK` and `CONNECTION_DESCRIPTOR`; it is forbidden for `CACHED_SNAPSHOT`, `NONE`, `CORE_HANDSHAKE`, and `TRAY_SUPERVISOR`.
+
+`PROCESS_LOCK + CONFIRMED_CURRENT` and `CONNECTION_DESCRIPTOR + CONFIRMED_CURRENT` require `INDEPENDENT_OBSERVATION_PROOF_VALIDATED`.  `CORE_HANDSHAKE` uses IPC confirmation, and `TRAY_SUPERVISOR` requires `TRAY_PROCESS_CONFIRMED_RUNNING` with a healthy or degraded Tray.
+
+### Stale observation and fail-closed matching
+
+`CORE_STATE_OBSERVATION_STALE` requires `STALE` confidence and cannot coexist with `CONFIRMED_CURRENT`.  `CACHED_SNAPSHOT + STALE` requires the stale predicate; `NONE` requires `UNKNOWN` and cannot use stale observation as current proof.  Stale observation cannot authorize silent close or mutating Core commands; it may only produce warning, acknowledgement, forbidden, or fail-closed paths.
+
+### Generic constraint interpreter and `case_kind`
+
+The test contract interprets `state_axis_consistency_constraints` generically instead of reimplementing rule-specific semantics.  It also executes lifecycle-pair predicate requirements and the independent observation proof contract before matching state cases.
+
+Every state case has exactly one `case_kind`: `normal`, `forbidden`, or `forbidden_catch_all`.  `normal` means `allowed=true`; `forbidden` and `forbidden_catch_all` mean `allowed=false`.  Normal and forbidden cases must have at least one semantically valid witness.  Missing matches fail closed, multiple matches are contract errors, and there is no first-match-wins behavior.
+
+### State-case variant coverage and OS best-effort refinement
+
+Normal and forbidden `state_case` entries must not contain dead variants.  Each declared lifecycle pair, IPC reachability state, observation source, confidence state, Tray health state, and every declared axis product must have at least one semantically valid predicate witness; otherwise the variant must be moved to a separate case or removed.  `forbidden_catch_all` remains the only broad fallback kind and is validated separately.
+
+Generic unreachable handling is split by provenance: `CACHED_SNAPSHOT + STALE` uses `unreachable_stale_snapshot` and requires both `RUNTIME_ACTIVITY_UNKNOWN` and `CORE_STATE_OBSERVATION_STALE`; `NONE + UNKNOWN` uses `unreachable_no_observation`, requires only `RUNTIME_ACTIVITY_UNKNOWN`, and forbids both `CORE_STATE_OBSERVATION_STALE` and `INDEPENDENT_OBSERVATION_PROOF_VALIDATED`.  Generic unknown cases still exclude restart lifecycle pairs.
+
+Independent current proof and Tray-supervisor current observation are disjoint.  Cases that use `PROCESS_LOCK` or `CONNECTION_DESCRIPTOR` with `CONFIRMED_CURRENT` require `INDEPENDENT_OBSERVATION_PROOF_VALIDATED`; cases that use `TRAY_SUPERVISOR` with `CONFIRMED_CURRENT` require `TRAY_PROCESS_CONFIRMED_RUNNING` and forbid independent proof.
+
+`HIDE_TO_BACKGROUND` no longer uses a broad `tray_unavailable` catch-all.  It has separate forbidden paths for reachable Core, independent current observation, cached stale observation, and no observation, so each no-Tray variant has its own valid witness and no restart-specific overlap.
+
+`OS_SESSION_LOGOFF` and `OS_SHUTDOWN` now expose five best-effort paths: reachable IPC handshake, independent current proof, Tray supervisor current observation, cached stale observation, and no observation.  Trusted OS events do not require operator authentication, client role, or command authorization context merely because Core IPC or an observation source is missing.
+
+The generic constraint interpreter validates every `when` reference against the corresponding JSON axis, enforces unique non-empty `rule_id` values, and validates the independent observation proof contract keys, required checks, source disjointness, and full observation-source coverage.  JSON remains the machine source of truth.
+
+
+### Closed observation-axis coverage and Tray-supervisor current routes
+
+The observation axis is closed by machine rules: `CORE_HANDSHAKE` is only `REACHABLE + CONFIRMED_CURRENT`; `PROCESS_LOCK` and `CONNECTION_DESCRIPTOR` are only `UNREACHABLE + CONFIRMED_CURRENT` with `INDEPENDENT_OBSERVATION_PROOF_VALIDATED`; `TRAY_SUPERVISOR` is only `UNREACHABLE + CONFIRMED_CURRENT` with a healthy/degraded Tray and `TRAY_PROCESS_CONFIRMED_RUNNING`; `CACHED_SNAPSHOT` is only `UNREACHABLE + STALE` with `CORE_STATE_OBSERVATION_STALE`; and `NONE` is only `UNREACHABLE + UNKNOWN` without stale or independent proof predicates.
+
+`CLOSE_DESKTOP_SHELL` has explicit Tray-supervisor current paths for `crashed_unscheduled` and `crashed_restart_exhausted`.  These paths require a running Tray, forbid independent proof, allow close only with acknowledgement, and do not claim that a crashed Core is running.
+
+`EXIT_TRAY_AGENT` has explicit Tray-supervisor current paths for `crashed_unscheduled`, `crashed_restart_scheduled`, `supervised_restart_in_progress`, and `crashed_restart_exhausted`.  Each path requires acknowledgement and secondary confirmation, states that Core is not stopped by exiting Tray, warns that Core may restart without Tray icon, HUD, or notifications, and says the user can cancel.
+
+`OS_SESSION_LOGOFF` and `OS_SHUTDOWN` must match every semantically valid context through exactly one of the five best-effort paths.  An unmatched OS context or multiple matches are contract errors; there is no first-match-wins fallback.  JSON remains the machine source of truth.
+
+### Applicability aggregation and EXIT_TRAY_AGENT confirmation policy
+
+Intent `applicability` is an aggregate of axis values used by its `state_cases`; it is not a Cartesian product of allowed runtime combinations.  Every lifecycle health/restart pair, IPC reachability value, observation source, confidence value, and Tray health value declared by a state case must be present in the owning intent's applicability aggregate, while exact matching remains defined only by the state cases.
+
+`EXIT_TRAY_AGENT` includes `TRAY_SUPERVISOR` in its applicability observation-source aggregate because its explicit Tray-supervisor current cases use that source.  `inactive_core` is the only `EXIT_TRAY_AGENT` state case that may skip secondary confirmation: it is limited to `not_started`/`stopped`, `UNREACHABLE`, `NO_ACTIVE_RUNTIME_CONFIRMED`, `INDEPENDENT_OBSERVATION_PROOF_VALIDATED`, and forbids pending restart, active runtime, and unknown runtime predicates.
+
+All other `EXIT_TRAY_AGENT` normal cases that involve active Core, unknown state, stale observation, crash, scheduled restart, restart in progress, restart exhausted, reachable Core, or Tray-supervisor current crash/restart observation require secondary confirmation.  The confirmation policy therefore says that all `UNREACHABLE` cases except machine-confirmed `inactive_core` require secondary confirmation; JSON remains the machine source of truth.

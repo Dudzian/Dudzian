@@ -556,7 +556,8 @@
           "requires_operator_acknowledgement": false,
           "requires_secondary_confirmation": false,
           "required_predicates": [
-            "NO_ACTIVE_RUNTIME_CONFIRMED"
+            "NO_ACTIVE_RUNTIME_CONFIRMED",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
           ],
           "forbidden_predicates": [
             "SUPERVISED_RESTART_PENDING",
@@ -574,53 +575,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
-        },
-        {
-          "case_id": "unreachable_unknown_core",
-          "core_lifecycle_pair_ids": [
-            "not_started",
-            "ordinary_starting",
-            "supervised_restart_in_progress",
-            "healthy",
-            "degraded",
-            "stopping",
-            "stopped",
-            "crashed_unscheduled",
-            "crashed_restart_scheduled",
-            "crashed_restart_exhausted"
           ],
-          "tray_process_health_states": [
-            "NOT_STARTED",
-            "STARTING",
-            "HEALTHY",
-            "DEGRADED",
-            "STOPPING",
-            "STOPPED",
-            "CRASHED"
-          ],
-          "allowed": true,
-          "requires_operator_acknowledgement": true,
-          "requires_secondary_confirmation": false,
-          "required_predicates": [
-            "RUNTIME_ACTIVITY_UNKNOWN"
-          ],
-          "forbidden_predicates": [
-            "NO_ACTIVE_RUNTIME_CONFIRMED",
-            "SUPERVISED_RESTART_PENDING"
-          ],
-          "reason": "Unreachable Core has unknown runtime activity or stale observation; warning acknowledgement required.",
-          "core_ipc_reachability_states": [
-            "UNREACHABLE"
-          ],
-          "core_state_observation_sources": [
-            "CACHED_SNAPSHOT",
-            "NONE"
-          ],
-          "core_state_confidence_states": [
-            "STALE",
-            "UNKNOWN"
-          ]
+          "case_kind": "normal"
         },
         {
           "case_id": "crashed_unscheduled",
@@ -639,7 +595,9 @@
           "allowed": true,
           "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": false,
-          "required_predicates": [],
+          "required_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
           "forbidden_predicates": [],
           "reason": "Crashed unscheduled Core can be closed only after warning.",
           "core_ipc_reachability_states": [
@@ -651,37 +609,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
-        },
-        {
-          "case_id": "restarting_with_tray_available",
-          "core_lifecycle_pair_ids": [
-            "crashed_restart_scheduled"
           ],
-          "tray_process_health_states": [
-            "HEALTHY",
-            "DEGRADED"
-          ],
-          "allowed": false,
-          "requires_operator_acknowledgement": true,
-          "requires_secondary_confirmation": false,
-          "required_predicates": [
-            "TRAY_PROCESS_CONFIRMED_RUNNING",
-            "SUPERVISED_RESTART_PENDING"
-          ],
-          "forbidden_predicates": [],
-          "reason": "route_to_background_policy: scheduled restart with Tray available must use HIDE_TO_BACKGROUND or controlled shutdown/cancel path.",
-          "core_ipc_reachability_states": [
-            "UNREACHABLE"
-          ],
-          "core_state_observation_sources": [
-            "PROCESS_LOCK",
-            "CONNECTION_DESCRIPTOR",
-            "TRAY_SUPERVISOR"
-          ],
-          "core_state_confidence_states": [
-            "CONFIRMED_CURRENT"
-          ]
+          "case_kind": "normal"
         },
         {
           "case_id": "restarting_without_tray_scheduled",
@@ -699,7 +628,8 @@
           "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": false,
           "required_predicates": [
-            "SUPERVISED_RESTART_PENDING"
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
           ],
           "forbidden_predicates": [
             "TRAY_PROCESS_CONFIRMED_RUNNING"
@@ -714,7 +644,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "forbidden"
         },
         {
           "case_id": "restarting_with_tray_available_ipc_unreachable",
@@ -732,7 +663,9 @@
             "TRAY_PROCESS_CONFIRMED_RUNNING",
             "SUPERVISED_RESTART_PENDING"
           ],
-          "forbidden_predicates": [],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
           "reason": "route_to_background_policy: supervised restart with Tray available must use HIDE_TO_BACKGROUND or controlled shutdown/cancel path.",
           "core_ipc_reachability_states": [
             "UNREACHABLE"
@@ -742,7 +675,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "forbidden"
         },
         {
           "case_id": "restarting_with_tray_available_ipc_reachable",
@@ -769,7 +703,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "forbidden"
         },
         {
           "case_id": "restarting_without_tray",
@@ -787,23 +722,25 @@
           "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": false,
           "required_predicates": [
-            "SUPERVISED_RESTART_PENDING"
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN"
           ],
           "forbidden_predicates": [
-            "TRAY_PROCESS_CONFIRMED_RUNNING"
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
           ],
           "reason": "forbidden: supervised restart cannot be closed without a confirmed running TrayAgent; GUI remains visible or opens controlled shutdown/cancel path.",
           "core_ipc_reachability_states": [
             "UNREACHABLE"
           ],
           "core_state_observation_sources": [
-            "CACHED_SNAPSHOT",
             "NONE"
           ],
           "core_state_confidence_states": [
-            "STALE",
             "UNKNOWN"
-          ]
+          ],
+          "case_kind": "forbidden"
         },
         {
           "case_id": "restart_exhausted",
@@ -822,7 +759,9 @@
           "allowed": true,
           "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": false,
-          "required_predicates": [],
+          "required_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
           "forbidden_predicates": [],
           "reason": "Restart exhausted needs visible operator action; warning required.",
           "core_ipc_reachability_states": [
@@ -834,7 +773,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         },
         {
           "case_id": "active_reachable_core",
@@ -869,7 +809,327 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "forbidden"
+        },
+        {
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "case_kind": "forbidden",
+          "case_id": "restarting_without_tray_scheduled_stale",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "reason": "Pending scheduled restart with stale cached observation and no running Tray is forbidden; GUI stays visible or offers controlled shutdown/cancel."
+        },
+        {
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "case_kind": "forbidden",
+          "case_id": "restarting_without_tray_scheduled_unknown",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_state_observation_sources": [
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "UNKNOWN"
+          ],
+          "reason": "Pending scheduled restart with no current observation and no running Tray is forbidden; GUI stays visible or offers controlled shutdown/cancel."
+        },
+        {
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "case_kind": "forbidden",
+          "case_id": "restart_in_progress_without_tray_stale_snapshot",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "reason": "Restart in progress with stale cached observation and no running Tray is forbidden; GUI stays visible or offers controlled shutdown/cancel."
+        },
+        {
+          "case_id": "unreachable_stale_snapshot",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED",
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Unreachable non-restart Core with stale cached observation; close warns/acknowledges and never treats cache as current.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "unreachable_no_observation",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "UNKNOWN"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED",
+            "SUPERVISED_RESTART_PENDING",
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Unreachable non-restart Core with no observation; close warns/acknowledges and fails closed on current-state claims.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "restarting_with_tray_available_independent_current",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Scheduled restart confirmed by independent proof with running Tray; close is forbidden and routes to hide/background or controlled shutdown/cancel.",
+          "case_kind": "forbidden"
+        },
+        {
+          "case_id": "restarting_with_tray_available_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Scheduled restart confirmed by Tray supervisor; close is forbidden and routes to hide/background or controlled shutdown/cancel.",
+          "case_kind": "forbidden"
+        },
+        {
+          "case_id": "crashed_unscheduled_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_unscheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Tray supervisor confirms crashed Core; close may proceed with acknowledgement and must not claim Core is running.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "restart_exhausted_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Tray supervisor confirms restart exhaustion; close may proceed with acknowledgement and message requires operator action.",
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "LOCAL_SHELL_ACTION",
@@ -920,7 +1180,9 @@
           "DEGRADED",
           "NOT_STARTED",
           "STOPPED",
-          "CRASHED"
+          "CRASHED",
+          "STARTING",
+          "STOPPING"
         ],
         "desktop_window_states": [
           "VISIBLE"
@@ -1013,107 +1275,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
-        },
-        {
-          "case_id": "unreachable_core",
-          "core_lifecycle_pair_ids": [
-            "not_started",
-            "ordinary_starting",
-            "supervised_restart_in_progress",
-            "healthy",
-            "degraded",
-            "stopping",
-            "stopped",
-            "crashed_unscheduled",
-            "crashed_restart_scheduled",
-            "crashed_restart_exhausted"
           ],
-          "tray_process_health_states": [
-            "HEALTHY",
-            "DEGRADED"
-          ],
-          "allowed": true,
-          "requires_operator_acknowledgement": true,
-          "requires_secondary_confirmation": false,
-          "required_predicates": [
-            "TRAY_PROCESS_CONFIRMED_RUNNING",
-            "RUNTIME_ACTIVITY_UNKNOWN"
-          ],
-          "forbidden_predicates": [
-            "SUPERVISED_RESTART_PENDING"
-          ],
-          "reason": "Unreachable Core requires acknowledgement; Tray remains responsible for status.",
-          "core_ipc_reachability_states": [
-            "UNREACHABLE"
-          ],
-          "core_state_observation_sources": [
-            "CACHED_SNAPSHOT",
-            "NONE"
-          ],
-          "core_state_confidence_states": [
-            "STALE",
-            "UNKNOWN"
-          ]
-        },
-        {
-          "case_id": "crashed_unscheduled",
-          "core_lifecycle_pair_ids": [
-            "crashed_unscheduled"
-          ],
-          "tray_process_health_states": [
-            "HEALTHY",
-            "DEGRADED"
-          ],
-          "allowed": true,
-          "requires_operator_acknowledgement": true,
-          "requires_secondary_confirmation": false,
-          "required_predicates": [
-            "TRAY_PROCESS_CONFIRMED_RUNNING"
-          ],
-          "forbidden_predicates": [],
-          "reason": "Crashed unscheduled state is shown by Tray; do not claim the crashed Core is running.",
-          "core_ipc_reachability_states": [
-            "UNREACHABLE"
-          ],
-          "core_state_observation_sources": [
-            "PROCESS_LOCK",
-            "CONNECTION_DESCRIPTOR",
-            "TRAY_SUPERVISOR"
-          ],
-          "core_state_confidence_states": [
-            "CONFIRMED_CURRENT"
-          ]
-        },
-        {
-          "case_id": "crashed_restart_scheduled",
-          "core_lifecycle_pair_ids": [
-            "crashed_restart_scheduled"
-          ],
-          "tray_process_health_states": [
-            "HEALTHY",
-            "DEGRADED"
-          ],
-          "allowed": true,
-          "requires_operator_acknowledgement": true,
-          "requires_secondary_confirmation": false,
-          "required_predicates": [
-            "TRAY_PROCESS_CONFIRMED_RUNNING",
-            "SUPERVISED_RESTART_PENDING"
-          ],
-          "forbidden_predicates": [],
-          "reason": "Scheduled restart is supervised by Tray.",
-          "core_ipc_reachability_states": [
-            "UNREACHABLE"
-          ],
-          "core_state_observation_sources": [
-            "PROCESS_LOCK",
-            "CONNECTION_DESCRIPTOR",
-            "TRAY_SUPERVISOR"
-          ],
-          "core_state_confidence_states": [
-            "CONFIRMED_CURRENT"
-          ]
+          "case_kind": "normal"
         },
         {
           "case_id": "restart_in_progress_ipc_unreachable",
@@ -1131,7 +1294,9 @@
             "TRAY_PROCESS_CONFIRMED_RUNNING",
             "SUPERVISED_RESTART_PENDING"
           ],
-          "forbidden_predicates": [],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
           "reason": "STARTING + IN_PROGRESS is supervised restart; Tray remains active and acknowledgement is required. IPC unreachable; Tray supervisor confirms supervised restart.",
           "core_ipc_reachability_states": [
             "UNREACHABLE"
@@ -1141,7 +1306,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         },
         {
           "case_id": "restart_in_progress_ipc_reachable",
@@ -1169,12 +1335,238 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         },
         {
-          "case_id": "restart_exhausted",
+          "case_id": "crashed_restart_scheduled_stale_with_tray_ack",
+          "case_kind": "normal",
           "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED"
+          ],
+          "reason": "Scheduled restart with stale cached observation may hide only after acknowledgement while Tray remains running; Core lifecycle and supervision restart state are unchanged."
+        },
+        {
+          "case_id": "restart_stale_unknown_without_tray_forbidden",
+          "case_kind": "forbidden",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled",
+            "supervised_restart_in_progress"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "reason": "Pending restart with stale observation and no running Tray cannot hide the GUI."
+        },
+        {
+          "case_id": "restart_unknown_without_tray_forbidden",
+          "case_kind": "forbidden",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled",
+            "supervised_restart_in_progress"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "UNKNOWN"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Pending restart with unknown observation and no running Tray cannot hide the GUI."
+        },
+        {
+          "case_id": "unreachable_stale_snapshot",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
             "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Hide with running Tray and stale cached non-restart Core observation requires acknowledgement; Core lifecycle is unchanged.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "unreachable_no_observation",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "UNKNOWN"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Hide with running Tray and no Core observation requires acknowledgement; Core lifecycle is unchanged.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "crashed_unscheduled_independent_current",
+          "core_lifecycle_pair_ids": [
+            "crashed_unscheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Unscheduled crash confirmed by independent proof may hide only while Tray remains available and acknowledgement is shown.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "crashed_unscheduled_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_unscheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
           ],
           "tray_process_health_states": [
             "HEALTHY",
@@ -1186,33 +1578,153 @@
           "required_predicates": [
             "TRAY_PROCESS_CONFIRMED_RUNNING"
           ],
-          "forbidden_predicates": [],
-          "reason": "OPERATOR_ACTION_REQUIRED must remain visible through Tray/HUD.",
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Unscheduled crash confirmed by Tray supervisor may hide only while Tray remains available and acknowledgement is shown.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "crashed_restart_scheduled_independent_current",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
           "core_ipc_reachability_states": [
             "UNREACHABLE"
           ],
           "core_state_observation_sources": [
             "PROCESS_LOCK",
-            "CONNECTION_DESCRIPTOR",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Scheduled restart confirmed by independent proof may hide only with running Tray; supervision state is unchanged.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "crashed_restart_scheduled_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
             "TRAY_SUPERVISOR"
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Scheduled restart confirmed by Tray supervisor may hide only with running Tray; supervision state is unchanged.",
+          "case_kind": "normal"
         },
         {
-          "case_id": "tray_unavailable",
+          "case_id": "restart_exhausted_independent_current",
           "core_lifecycle_pair_ids": [
-            "not_started",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "OPERATOR_ACTION_REQUIRED restart exhaustion confirmed by independent proof may hide only with running Tray.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "restart_exhausted_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "OPERATOR_ACTION_REQUIRED restart exhaustion confirmed by Tray supervisor may hide only with running Tray.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "tray_unavailable_reachable_core",
+          "core_lifecycle_pair_ids": [
             "ordinary_starting",
-            "supervised_restart_in_progress",
             "healthy",
             "degraded",
-            "stopping",
-            "stopped",
-            "crashed_unscheduled",
-            "crashed_restart_scheduled",
-            "crashed_restart_exhausted"
+            "stopping"
+          ],
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
           ],
           "tray_process_health_states": [
             "NOT_STARTED",
@@ -1220,29 +1732,138 @@
             "CRASHED"
           ],
           "allowed": false,
-          "requires_operator_acknowledgement": false,
+          "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": false,
-          "required_predicates": [],
+          "required_predicates": [
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
           "forbidden_predicates": [
             "TRAY_PROCESS_CONFIRMED_RUNNING"
           ],
-          "reason": "Tray unavailable: no silent hide; remain in GUI or choose another safe path.",
+          "reason": "Forbidden: active reachable Core cannot be hidden when Tray is unavailable.",
+          "case_kind": "forbidden"
+        },
+        {
+          "case_id": "tray_unavailable_independent_current",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_exhausted"
+          ],
           "core_ipc_reachability_states": [
-            "REACHABLE",
             "UNREACHABLE"
           ],
           "core_state_observation_sources": [
-            "CORE_HANDSHAKE",
             "PROCESS_LOCK",
-            "CONNECTION_DESCRIPTOR",
-            "CACHED_SNAPSHOT",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "Forbidden: independently confirmed Core state cannot be hidden when Tray is unavailable.",
+          "case_kind": "forbidden"
+        },
+        {
+          "case_id": "tray_unavailable_cached_stale",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Forbidden: stale cached Core state cannot be hidden when Tray is unavailable.",
+          "case_kind": "forbidden"
+        },
+        {
+          "case_id": "tray_unavailable_no_observation",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
             "NONE"
           ],
           "core_state_confidence_states": [
-            "CONFIRMED_CURRENT",
-            "STALE",
             "UNKNOWN"
-          ]
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING",
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Forbidden: absent Core observation cannot be hidden when Tray is unavailable.",
+          "case_kind": "forbidden"
         }
       ],
       "evaluation_route": "LOCAL_SHELL_ACTION",
@@ -1362,7 +1983,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "CORE_COMMAND",
@@ -1476,7 +2098,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "CORE_COMMAND",
@@ -1600,7 +2223,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "CORE_COMMAND",
@@ -1664,13 +2288,9 @@
           "AUTHENTICATED"
         ],
         "conditions": [
-          "without secondary confirmation only when Core is NOT_STARTED or STOPPED",
-          "no pending supervised restart",
-          "no active runtime",
-          "secondary confirmation required for Core STARTING, HEALTHY, DEGRADED, STOPPING",
-          "secondary confirmation required for CRASHED with active restart policy",
-          "secondary confirmation required when Core IPC reachability is UNREACHABLE",
-          "secondary confirmation required when Core state is unknown",
+          "no secondary confirmation only for inactive_core: lifecycle not_started or stopped, restart state NONE, Core IPC UNREACHABLE, NO_ACTIVE_RUNTIME_CONFIRMED, INDEPENDENT_OBSERVATION_PROOF_VALIDATED, no ACTIVE_RUNTIME_PRESENT, no RUNTIME_ACTIVITY_UNKNOWN, and no SUPERVISED_RESTART_PENDING",
+          "all UNREACHABLE cases except machine-confirmed inactive_core require secondary confirmation",
+          "secondary confirmation required for Core STARTING, HEALTHY, DEGRADED, STOPPING, CRASHED, scheduled restart, restart in progress, restart exhausted, unknown state, stale observation, or Tray-supervisor current crash/restart observation",
           "message must state Core may continue running without tray icon and notifications",
           "never stops Core automatically"
         ],
@@ -1689,7 +2309,8 @@
           "CONNECTION_DESCRIPTOR",
           "CACHED_SNAPSHOT",
           "NONE",
-          "CORE_HANDSHAKE"
+          "CORE_HANDSHAKE",
+          "TRAY_SUPERVISOR"
         ],
         "core_state_confidence_states": [
           "CONFIRMED_CURRENT",
@@ -1700,14 +2321,16 @@
       "confirmation_policy": {
         "mode": "conditional",
         "conditions": [
-          "no secondary confirmation only when Core process health is NOT_STARTED or STOPPED, core supervision restart state is NONE, and no active runtime",
-          "secondary confirmation required when core supervision restart state is SCHEDULED or IN_PROGRESS",
-          "secondary confirmation required when Core is active",
-          "secondary confirmation required when Core IPC reachability is UNREACHABLE",
-          "secondary confirmation required when Core process health is CRASHED",
-          "secondary confirmation required when Core state is uncertain",
+          "no secondary confirmation only for inactive_core: lifecycle not_started or stopped, Core IPC UNREACHABLE, NO_ACTIVE_RUNTIME_CONFIRMED, INDEPENDENT_OBSERVATION_PROOF_VALIDATED, no SUPERVISED_RESTART_PENDING, no ACTIVE_RUNTIME_PRESENT, and no RUNTIME_ACTIVITY_UNKNOWN",
+          "all UNREACHABLE cases except machine-confirmed inactive_core require secondary confirmation",
+          "secondary confirmation required for active Core, unknown Core state, stale observation, crashed Core, scheduled restart, restart in progress, restart exhausted, and Tray-supervisor current crash/restart observation",
+          "secondary confirmation required when Core is REACHABLE because Core remains running without tray icon and notifications",
           "EXHAUSTED warning says Tray is needed to present operator-action-required state",
-          "secondary confirmation required for active, unknown, unreachable, or restarting Core"
+          "secondary confirmation required for active, unknown, unreachable except inactive_core, or restarting Core",
+          "core supervision restart state is NONE for the machine-confirmed inactive_core exception",
+          "secondary confirmation required when core supervision restart state is SCHEDULED or IN_PROGRESS",
+          "no secondary confirmation only when Core process health is NOT_STARTED or STOPPED and the state_case is inactive_core with machine-confirmed no active runtime",
+          "secondary confirmation required for active, unknown, unreachable, or restarting Core except machine-confirmed inactive_core"
         ]
       },
       "operator_acknowledgement_policy": {
@@ -1742,7 +2365,8 @@
           "requires_operator_acknowledgement": false,
           "requires_secondary_confirmation": false,
           "required_predicates": [
-            "NO_ACTIVE_RUNTIME_CONFIRMED"
+            "NO_ACTIVE_RUNTIME_CONFIRMED",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
           ],
           "forbidden_predicates": [
             "RUNTIME_ACTIVITY_UNKNOWN",
@@ -1760,53 +2384,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
-        },
-        {
-          "case_id": "unreachable_core",
-          "core_lifecycle_pair_ids": [
-            "not_started",
-            "ordinary_starting",
-            "supervised_restart_in_progress",
-            "healthy",
-            "degraded",
-            "stopping",
-            "stopped",
-            "crashed_unscheduled",
-            "crashed_restart_scheduled",
-            "crashed_restart_exhausted"
           ],
-          "tray_process_health_states": [
-            "NOT_STARTED",
-            "STARTING",
-            "HEALTHY",
-            "DEGRADED",
-            "STOPPING",
-            "STOPPED",
-            "CRASHED"
-          ],
-          "allowed": true,
-          "requires_operator_acknowledgement": true,
-          "requires_secondary_confirmation": true,
-          "required_predicates": [
-            "RUNTIME_ACTIVITY_UNKNOWN"
-          ],
-          "forbidden_predicates": [
-            "NO_ACTIVE_RUNTIME_CONFIRMED",
-            "SUPERVISED_RESTART_PENDING"
-          ],
-          "reason": "Unreachable Core has unknown activity/stale observation; exiting Tray needs confirmation.",
-          "core_ipc_reachability_states": [
-            "UNREACHABLE"
-          ],
-          "core_state_observation_sources": [
-            "CACHED_SNAPSHOT",
-            "NONE"
-          ],
-          "core_state_confidence_states": [
-            "STALE",
-            "UNKNOWN"
-          ]
+          "case_kind": "normal"
         },
         {
           "case_id": "active_core",
@@ -1841,7 +2420,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         },
         {
           "case_id": "crashed_unscheduled",
@@ -1860,7 +2440,9 @@
           "allowed": true,
           "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": true,
-          "required_predicates": [],
+          "required_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
           "forbidden_predicates": [],
           "reason": "Crashed state still needs Tray visibility.",
           "core_ipc_reachability_states": [
@@ -1872,7 +2454,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         },
         {
           "case_id": "crashed_restart_scheduled",
@@ -1892,10 +2475,11 @@
           "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": true,
           "required_predicates": [
-            "SUPERVISED_RESTART_PENDING"
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
           ],
           "forbidden_predicates": [],
-          "reason": "Scheduled restart pending requires Tray visibility and confirmation.",
+          "reason": "Scheduled restart pending requires Tray visibility and confirmation. Secondary confirmation warns that Core may restart without tray icon, HUD, or notifications; EXIT_TRAY_AGENT never stops Core automatically.",
           "core_ipc_reachability_states": [
             "UNREACHABLE"
           ],
@@ -1905,7 +2489,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         },
         {
           "case_id": "restart_in_progress_ipc_unreachable",
@@ -1925,10 +2510,11 @@
           "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": true,
           "required_predicates": [
-            "SUPERVISED_RESTART_PENDING"
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
           ],
           "forbidden_predicates": [],
-          "reason": "Supervised restart in progress with IPC unreachable requires Tray visibility and confirmation.",
+          "reason": "Supervised restart in progress with IPC unreachable requires Tray visibility and confirmation. Secondary confirmation warns that Core may restart without tray icon, HUD, or notifications; EXIT_TRAY_AGENT never stops Core automatically.",
           "core_ipc_reachability_states": [
             "UNREACHABLE"
           ],
@@ -1937,7 +2523,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         },
         {
           "case_id": "restart_in_progress_ipc_reachable",
@@ -1960,7 +2547,7 @@
             "SUPERVISED_RESTART_PENDING"
           ],
           "forbidden_predicates": [],
-          "reason": "Supervised restart in progress with IPC reachable still requires confirmation before exiting Tray.",
+          "reason": "Supervised restart in progress with IPC reachable still requires confirmation before exiting Tray. Secondary confirmation warns that Core may restart without tray icon, HUD, or notifications; EXIT_TRAY_AGENT never stops Core automatically.",
           "core_ipc_reachability_states": [
             "REACHABLE"
           ],
@@ -1969,7 +2556,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         },
         {
           "case_id": "restart_exhausted",
@@ -1988,7 +2576,9 @@
           "allowed": true,
           "requires_operator_acknowledgement": true,
           "requires_secondary_confirmation": true,
-          "required_predicates": [],
+          "required_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
           "forbidden_predicates": [],
           "reason": "Exiting Tray loses visible OPERATOR_ACTION_REQUIRED state.",
           "core_ipc_reachability_states": [
@@ -2000,7 +2590,328 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "crashed_restart_scheduled_stale",
+          "case_kind": "normal",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Secondary confirmation warns that Core may restart without tray icon, HUD, or notifications; EXIT_TRAY_AGENT never stops Core automatically."
+        },
+        {
+          "case_id": "crashed_restart_scheduled_unknown",
+          "case_kind": "normal",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "UNKNOWN"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Secondary confirmation warns that Core may restart without tray icon, HUD, or notifications; EXIT_TRAY_AGENT never stops Core automatically."
+        },
+        {
+          "case_id": "restart_in_progress_stale_unknown",
+          "case_kind": "normal",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Secondary confirmation warns that Core may restart without tray icon, HUD, or notifications; EXIT_TRAY_AGENT never stops Core automatically."
+        },
+        {
+          "case_id": "unreachable_stale_snapshot",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED",
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Unreachable Core stale snapshot has unknown activity; exiting Tray needs confirmation.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "unreachable_no_observation",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "UNKNOWN"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED",
+            "SUPERVISED_RESTART_PENDING",
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Unreachable Core with no observation has unknown activity; exiting Tray needs confirmation.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "crashed_unscheduled_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_unscheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Core is not stopped by EXIT_TRAY_AGENT; Core may restart without Tray icon, HUD, or notifications; user can cancel.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "crashed_restart_scheduled_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Core is not stopped by EXIT_TRAY_AGENT; Core may restart without Tray icon, HUD, or notifications; user can cancel.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "restart_in_progress_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Core is not stopped by EXIT_TRAY_AGENT; Core may restart without Tray icon, HUD, or notifications; user can cancel.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "restart_exhausted_tray_supervisor",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Core is not stopped by EXIT_TRAY_AGENT; Core may restart without Tray icon, HUD, or notifications; user can cancel.",
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "LOCAL_SHELL_ACTION",
@@ -2129,7 +3040,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "CORE_COMMAND",
@@ -2229,34 +3141,14 @@
       },
       "state_cases": [
         {
-          "case_id": "os_best_effort_ipc_reachable",
+          "case_id": "os_event_ipc_reachable",
           "core_lifecycle_pair_ids": [
-            "not_started",
             "ordinary_starting",
             "supervised_restart_in_progress",
             "healthy",
             "degraded",
-            "stopping",
-            "stopped",
-            "crashed_unscheduled",
-            "crashed_restart_scheduled",
-            "crashed_restart_exhausted"
+            "stopping"
           ],
-          "tray_process_health_states": [
-            "NOT_STARTED",
-            "STARTING",
-            "HEALTHY",
-            "DEGRADED",
-            "STOPPING",
-            "STOPPED",
-            "CRASHED"
-          ],
-          "allowed": true,
-          "requires_operator_acknowledgement": false,
-          "requires_secondary_confirmation": false,
-          "required_predicates": [],
-          "forbidden_predicates": [],
-          "reason": "Operating-system lifecycle event is handled best-effort for any canonical lifecycle pair.",
           "core_ipc_reachability_states": [
             "REACHABLE"
           ],
@@ -2265,21 +3157,6 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
-        },
-        {
-          "case_id": "os_best_effort_ipc_unreachable",
-          "core_lifecycle_pair_ids": [
-            "not_started",
-            "ordinary_starting",
-            "supervised_restart_in_progress",
-            "healthy",
-            "degraded",
-            "stopping",
-            "stopped",
-            "crashed_unscheduled",
-            "crashed_restart_scheduled",
-            "crashed_restart_exhausted"
           ],
           "tray_process_health_states": [
             "NOT_STARTED",
@@ -2295,22 +3172,177 @@
           "requires_secondary_confirmation": false,
           "required_predicates": [],
           "forbidden_predicates": [],
-          "reason": "Operating-system lifecycle event is handled best-effort for any canonical lifecycle pair.",
+          "reason": "Trusted OS event best-effort path with reachable Core handshake.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "os_event_independent_current",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
           "core_ipc_reachability_states": [
             "UNREACHABLE"
           ],
           "core_state_observation_sources": [
             "PROCESS_LOCK",
-            "CONNECTION_DESCRIPTOR",
-            "TRAY_SUPERVISOR",
-            "CACHED_SNAPSHOT",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Trusted OS event best-effort path with independent current proof while IPC is unavailable.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "os_event_tray_supervisor_current",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Trusted OS event best-effort path with current Tray supervisor observation while IPC is unavailable.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "os_event_cached_stale",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Trusted OS event best-effort path with stale cached observation while IPC is unavailable.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "os_event_no_observation",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
             "NONE"
           ],
           "core_state_confidence_states": [
-            "CONFIRMED_CURRENT",
-            "STALE",
             "UNKNOWN"
-          ]
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Trusted OS event best-effort path with no Core observation while IPC is unavailable.",
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "OPERATING_SYSTEM_EVENT",
@@ -2411,34 +3443,14 @@
       },
       "state_cases": [
         {
-          "case_id": "os_best_effort_ipc_reachable",
+          "case_id": "os_event_ipc_reachable",
           "core_lifecycle_pair_ids": [
-            "not_started",
             "ordinary_starting",
             "supervised_restart_in_progress",
             "healthy",
             "degraded",
-            "stopping",
-            "stopped",
-            "crashed_unscheduled",
-            "crashed_restart_scheduled",
-            "crashed_restart_exhausted"
+            "stopping"
           ],
-          "tray_process_health_states": [
-            "NOT_STARTED",
-            "STARTING",
-            "HEALTHY",
-            "DEGRADED",
-            "STOPPING",
-            "STOPPED",
-            "CRASHED"
-          ],
-          "allowed": true,
-          "requires_operator_acknowledgement": false,
-          "requires_secondary_confirmation": false,
-          "required_predicates": [],
-          "forbidden_predicates": [],
-          "reason": "Operating-system lifecycle event is handled best-effort for any canonical lifecycle pair.",
           "core_ipc_reachability_states": [
             "REACHABLE"
           ],
@@ -2447,21 +3459,6 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
-        },
-        {
-          "case_id": "os_best_effort_ipc_unreachable",
-          "core_lifecycle_pair_ids": [
-            "not_started",
-            "ordinary_starting",
-            "supervised_restart_in_progress",
-            "healthy",
-            "degraded",
-            "stopping",
-            "stopped",
-            "crashed_unscheduled",
-            "crashed_restart_scheduled",
-            "crashed_restart_exhausted"
           ],
           "tray_process_health_states": [
             "NOT_STARTED",
@@ -2477,22 +3474,177 @@
           "requires_secondary_confirmation": false,
           "required_predicates": [],
           "forbidden_predicates": [],
-          "reason": "Operating-system lifecycle event is handled best-effort for any canonical lifecycle pair.",
+          "reason": "Trusted OS event best-effort path with reachable Core handshake.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "os_event_independent_current",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
           "core_ipc_reachability_states": [
             "UNREACHABLE"
           ],
           "core_state_observation_sources": [
             "PROCESS_LOCK",
-            "CONNECTION_DESCRIPTOR",
-            "TRAY_SUPERVISOR",
-            "CACHED_SNAPSHOT",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Trusted OS event best-effort path with independent current proof while IPC is unavailable.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "os_event_tray_supervisor_current",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Trusted OS event best-effort path with current Tray supervisor observation while IPC is unavailable.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "os_event_cached_stale",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT"
+          ],
+          "core_state_confidence_states": [
+            "STALE"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "forbidden_predicates": [
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Trusted OS event best-effort path with stale cached observation while IPC is unavailable.",
+          "case_kind": "normal"
+        },
+        {
+          "case_id": "os_event_no_observation",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
             "NONE"
           ],
           "core_state_confidence_states": [
-            "CONFIRMED_CURRENT",
-            "STALE",
             "UNKNOWN"
-          ]
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [
+            "CORE_STATE_OBSERVATION_STALE",
+            "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+          ],
+          "reason": "Trusted OS event best-effort path with no Core observation while IPC is unavailable.",
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "OPERATING_SYSTEM_EVENT",
@@ -2625,7 +3777,8 @@
           ],
           "core_state_confidence_states": [
             "CONFIRMED_CURRENT"
-          ]
+          ],
+          "case_kind": "normal"
         }
       ],
       "evaluation_route": "CORE_COMMAND",
@@ -2652,16 +3805,16 @@
       "alerts count"
     ],
     "menu": [
-      "Otwórz CryptoHunter",
-      "Pokaż panel statusu",
-      "Pokaż/ukryj Compact Status HUD",
+      "Otw\u00f3rz CryptoHunter",
+      "Poka\u017c panel statusu",
+      "Poka\u017c/ukryj Compact Status HUD",
       "Wstrzymaj strategie",
-      "Wznów strategie",
+      "Wzn\u00f3w strategie",
       "Synchronizuj teraz",
       "Zatrzymaj wszystkie strategie",
-      "Kill switch…",
-      "Zatrzymaj Core i zakończ…",
-      "Zakończ Tray Agent"
+      "Kill switch\u2026",
+      "Zatrzymaj Core i zako\u0144cz\u2026",
+      "Zako\u0144cz Tray Agent"
     ],
     "rules": [
       "never show command executed before Core confirmation",
@@ -2708,7 +3861,7 @@
       "active strategy count",
       "alert count",
       "kill switch state",
-      "Odblokuj aplikację, aby zobaczyć szczegóły"
+      "Odblokuj aplikacj\u0119, aby zobaczy\u0107 szczeg\u00f3\u0142y"
     ]
   },
   "failure_matrix": [
@@ -3334,6 +4487,10 @@
     {
       "predicate_id": "CORE_STATE_OBSERVATION_STALE",
       "description": "Observed Core state may be stale and cannot be used as current truth."
+    },
+    {
+      "predicate_id": "INDEPENDENT_OBSERVATION_PROOF_VALIDATED",
+      "description": "Validated independent observation proof: PID, start_nonce, source freshness, DeviceInstallation identity, and state-store identity all match."
     }
   ],
   "core_ipc_reachability_states": [
@@ -3529,7 +4686,41 @@
         ],
         "reason": "Cached snapshot cannot provide CONFIRMED_CURRENT after IPC loss."
       }
-    ]
+    ],
+    "required_predicates_by_lifecycle_pair": {
+      "crashed_restart_scheduled": [
+        "SUPERVISED_RESTART_PENDING"
+      ],
+      "supervised_restart_in_progress": [
+        "SUPERVISED_RESTART_PENDING"
+      ]
+    },
+    "forbidden_predicates_by_lifecycle_pair": {
+      "not_started": [
+        "SUPERVISED_RESTART_PENDING"
+      ],
+      "ordinary_starting": [
+        "SUPERVISED_RESTART_PENDING"
+      ],
+      "healthy": [
+        "SUPERVISED_RESTART_PENDING"
+      ],
+      "degraded": [
+        "SUPERVISED_RESTART_PENDING"
+      ],
+      "stopping": [
+        "SUPERVISED_RESTART_PENDING"
+      ],
+      "stopped": [
+        "SUPERVISED_RESTART_PENDING"
+      ],
+      "crashed_unscheduled": [
+        "SUPERVISED_RESTART_PENDING"
+      ],
+      "crashed_restart_exhausted": [
+        "SUPERVISED_RESTART_PENDING"
+      ]
+    }
   },
   "state_axis_consistency_constraints": {
     "rules": [
@@ -3562,6 +4753,9 @@
         ],
         "requires_core_state_confidence_states": [
           "CONFIRMED_CURRENT"
+        ],
+        "allowed_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
         ]
       },
       {
@@ -3591,6 +4785,18 @@
           "STOPPING",
           "STOPPED",
           "CRASHED"
+        ],
+        "requires_core_ipc_reachability_states": [
+          "UNREACHABLE"
+        ],
+        "allowed_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "requires_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "forbidden_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
         ]
       },
       {
@@ -3599,11 +4805,23 @@
           "core_state_observation_source": "CACHED_SNAPSHOT"
         },
         "allowed_core_state_confidence_states": [
-          "STALE",
-          "UNKNOWN"
+          "STALE"
         ],
         "forbidden_core_state_confidence_states": [
-          "CONFIRMED_CURRENT"
+          "CONFIRMED_CURRENT",
+          "UNKNOWN"
+        ],
+        "requires_core_ipc_reachability_states": [
+          "UNREACHABLE"
+        ],
+        "requires_core_state_confidence_states": [
+          "STALE"
+        ],
+        "requires_predicates": [
+          "CORE_STATE_OBSERVATION_STALE"
+        ],
+        "forbidden_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
         ]
       },
       {
@@ -3617,23 +4835,155 @@
         "forbidden_core_state_confidence_states": [
           "STALE",
           "CONFIRMED_CURRENT"
+        ],
+        "requires_core_ipc_reachability_states": [
+          "UNREACHABLE"
+        ],
+        "allowed_core_state_confidence_states": [
+          "UNKNOWN"
+        ],
+        "forbidden_predicates": [
+          "CORE_STATE_OBSERVATION_STALE",
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
         ]
       },
       {
-        "rule_id": "process_lock_descriptor_are_unreachable_independent_proofs",
+        "rule_id": "cached_snapshot_stale_requires_stale_predicate",
         "when": {
-          "core_state_observation_source": [
-            "PROCESS_LOCK",
-            "CONNECTION_DESCRIPTOR"
-          ]
+          "core_state_observation_source": "CACHED_SNAPSHOT",
+          "core_state_confidence_state": "STALE"
+        },
+        "requires_predicates": [
+          "CORE_STATE_OBSERVATION_STALE"
+        ]
+      },
+      {
+        "rule_id": "stale_predicate_requires_stale_confidence",
+        "when": {
+          "predicate": "CORE_STATE_OBSERVATION_STALE"
+        },
+        "requires_core_state_confidence_states": [
+          "STALE"
+        ]
+      },
+      {
+        "rule_id": "stale_predicate_forbids_confirmed_current",
+        "when": {
+          "predicate": "CORE_STATE_OBSERVATION_STALE"
+        },
+        "forbidden_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      {
+        "rule_id": "cached_snapshot_forbids_confirmed_current",
+        "when": {
+          "core_state_observation_source": "CACHED_SNAPSHOT"
+        },
+        "forbidden_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      {
+        "rule_id": "none_unknown_forbids_stale_predicate",
+        "when": {
+          "core_state_observation_source": "NONE",
+          "core_state_confidence_state": "UNKNOWN"
+        },
+        "forbidden_predicates": [
+          "CORE_STATE_OBSERVATION_STALE"
+        ]
+      },
+      {
+        "rule_id": "independent_proof_process_lock_current",
+        "when": {
+          "core_state_observation_source": "PROCESS_LOCK",
+          "core_state_confidence_state": "CONFIRMED_CURRENT"
+        },
+        "requires_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+        ]
+      },
+      {
+        "rule_id": "independent_proof_connection_descriptor_current",
+        "when": {
+          "core_state_observation_source": "CONNECTION_DESCRIPTOR",
+          "core_state_confidence_state": "CONFIRMED_CURRENT"
+        },
+        "requires_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+        ]
+      },
+      {
+        "rule_id": "independent_proof_forbidden_with_cached_snapshot",
+        "when": {
+          "core_state_observation_source": "CACHED_SNAPSHOT"
+        },
+        "forbidden_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+        ]
+      },
+      {
+        "rule_id": "independent_proof_forbidden_with_none",
+        "when": {
+          "core_state_observation_source": "NONE"
+        },
+        "forbidden_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+        ]
+      },
+      {
+        "rule_id": "independent_proof_forbidden_with_core_handshake",
+        "when": {
+          "core_state_observation_source": "CORE_HANDSHAKE"
+        },
+        "forbidden_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+        ]
+      },
+      {
+        "rule_id": "independent_proof_forbidden_with_tray_supervisor",
+        "when": {
+          "core_state_observation_source": "TRAY_SUPERVISOR"
+        },
+        "forbidden_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+        ]
+      },
+      {
+        "rule_id": "process_lock_requires_unreachable_current_proof",
+        "when": {
+          "core_state_observation_source": "PROCESS_LOCK"
         },
         "requires_core_ipc_reachability_states": [
           "UNREACHABLE"
         ],
-        "confirmed_current_requires": [
-          "validated PID",
-          "validated start_nonce",
-          "validated process lock or descriptor freshness"
+        "allowed_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "requires_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "requires_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
+        ]
+      },
+      {
+        "rule_id": "connection_descriptor_requires_unreachable_current_proof",
+        "when": {
+          "core_state_observation_source": "CONNECTION_DESCRIPTOR"
+        },
+        "requires_core_ipc_reachability_states": [
+          "UNREACHABLE"
+        ],
+        "allowed_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "requires_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "requires_predicates": [
+          "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"
         ]
       }
     ]
@@ -3688,5 +5038,25 @@
         "accepted_or_rejected_result_is_audited"
       ]
     }
-  ]
+  ],
+  "independent_observation_proof_contract": {
+    "predicate": "INDEPENDENT_OBSERVATION_PROOF_VALIDATED",
+    "required_checks": [
+      "PID_VALIDATED",
+      "START_NONCE_VALIDATED",
+      "SOURCE_FRESHNESS_VALIDATED",
+      "DEVICE_INSTALLATION_IDENTITY_MATCHED",
+      "STATE_STORE_IDENTITY_MATCHED"
+    ],
+    "allowed_observation_sources": [
+      "PROCESS_LOCK",
+      "CONNECTION_DESCRIPTOR"
+    ],
+    "forbidden_observation_sources": [
+      "CACHED_SNAPSHOT",
+      "NONE",
+      "CORE_HANDSHAKE",
+      "TRAY_SUPERVISOR"
+    ]
+  }
 }
