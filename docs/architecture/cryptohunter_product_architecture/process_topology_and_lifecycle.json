@@ -1,0 +1,3692 @@
+{
+  "schema_version": "cryptohunter.process_topology_and_lifecycle.v1",
+  "m0_element": "M0.3",
+  "status": "under audit",
+  "baseline_commit": "9c3cb7588c399c533f48317a36bee84c68acba9f",
+  "verified_current_state": [
+    {
+      "claim": "Current RuntimeService is constructed in the GUI/QML bridge process.",
+      "evidence_paths": [
+        "ui/pyside_app/qml_bridge.py",
+        "ui/backend/runtime_service.py"
+      ]
+    },
+    {
+      "claim": "Current UiGrpcBridge wraps RuntimeService for QML and is not evidence of real gRPC transport to a separate Core process.",
+      "evidence_paths": [
+        "ui/pyside_app/controllers/ui_grpc_bridge.py",
+        "ui/pyside_app/qml_bridge.py"
+      ]
+    },
+    {
+      "claim": "Application bootstrap uses PySide QGuiApplication path; M0.3 does not change it.",
+      "evidence_paths": [
+        "ui/pyside_app/app.py",
+        "ui/pyside_app/__main__.py"
+      ]
+    },
+    {
+      "claim": "Generated protobuf includes RuntimeService gRPC stubs and proto declares RuntimeService; this is source material for logical IPC, not proof of separate CoreHost process.",
+      "evidence_paths": [
+        "bot_core/generated/trading_pb2_grpc.py",
+        "proto/trading.proto"
+      ]
+    },
+    {
+      "claim": "Desktop shell plan and phase foundation mention IPC/gRPC as architecture source material, not complete tray/background/autostart implementation evidence.",
+      "evidence_paths": [
+        "docs/architecture/desktop_shell_plan.md",
+        "docs/architecture/phase1_foundation.md"
+      ]
+    },
+    {
+      "claim": "Windows packaging/smoke tests exist and are evidence only for packaging/smoke coverage, not process separation.",
+      "evidence_paths": [
+        "CryptoHunter.spec",
+        "scripts/windows_build_probe.py",
+        "tests/ui_pyside/test_source_smoke.py"
+      ]
+    }
+  ],
+  "process_roles": [
+    {
+      "name": "core_host",
+      "purpose": "Authoritative runtime host for trading state, exchange adapters, market data, strategy execution, risk, persistence, ledger, reconciliation, execution leases, audit and client read models.",
+      "lifecycle_owner": "desktop_user_session supervisor initially; future windows_service_manager in service deployment; never DesktopShell",
+      "multiplicity": "one active CoreHost per local state store and DeviceInstallation",
+      "owns_trading_state": true,
+      "may_access_exchange_api": true,
+      "may_render_ui": false,
+      "may_survive_desktop_shell_exit": true,
+      "responsibilities": [
+        "single source of truth for trading runtime",
+        "exchange adapters",
+        "market data",
+        "strategies",
+        "risk manager",
+        "execution",
+        "persistence",
+        "ledger",
+        "reconciliation",
+        "execution leases",
+        "runtime audit",
+        "read models for clients"
+      ],
+      "forbidden_responsibilities": [
+        "depend on GUI visibility",
+        "load QML",
+        "own system tray",
+        "be lifecycle-owned by DesktopShell",
+        "exit merely because DesktopShell closed"
+      ],
+      "may_consume_maintenance_authorization": false,
+      "may_apply_runtime_mutations": true,
+      "may_request_runtime_mutations": false,
+      "may_issue_ipc_commands": false
+    },
+    {
+      "name": "tray_agent",
+      "purpose": "Windows notification-area client and desktop-session supervisor for status, notifications, DesktopShell restore, optional Compact Status HUD and reconnect.",
+      "lifecycle_owner": "logged-in Windows user session",
+      "multiplicity": "one active TrayAgent per logged-in user session",
+      "owns_trading_state": false,
+      "may_access_exchange_api": false,
+      "may_render_ui": true,
+      "may_survive_desktop_shell_exit": true,
+      "responsibilities": [
+        "tray icon",
+        "Core status",
+        "notifications",
+        "open or restore DesktopShell",
+        "optional Compact Status HUD",
+        "desktop-session Core supervision",
+        "reconnect after GUI or IPC failure"
+      ],
+      "forbidden_responsibilities": [
+        "direct exchange API access",
+        "own trading state",
+        "own ledger",
+        "place orders except by authorized Core command"
+      ],
+      "may_consume_maintenance_authorization": false,
+      "may_apply_runtime_mutations": false,
+      "may_request_runtime_mutations": true,
+      "may_issue_ipc_commands": true
+    },
+    {
+      "name": "desktop_shell",
+      "purpose": "Full PySide/QML client for dashboard, terminal, configuration, wizard, charts, read-model presentation and authorized Core commands.",
+      "lifecycle_owner": "interactive user request and DesktopShell process",
+      "multiplicity": "initial release may enforce one main GUI process per user session; Core protocol supports multiple read-only clients",
+      "owns_trading_state": false,
+      "may_access_exchange_api": false,
+      "may_render_ui": true,
+      "may_survive_desktop_shell_exit": false,
+      "responsibilities": [
+        "PySide/QML GUI",
+        "dashboard",
+        "terminal",
+        "configuration",
+        "wizard",
+        "charts",
+        "read model presentation",
+        "send authorized commands to Core"
+      ],
+      "forbidden_responsibilities": [
+        "direct exchange API access",
+        "own runtime",
+        "own open orders",
+        "retain stored secrets after save",
+        "assume closing GUI stops Core"
+      ],
+      "may_consume_maintenance_authorization": false,
+      "may_apply_runtime_mutations": false,
+      "may_request_runtime_mutations": true,
+      "may_issue_ipc_commands": true
+    },
+    {
+      "name": "bootstrapper",
+      "purpose": "One-shot launcher and discovery helper for CoreHost, TrayAgent, DesktopShell-on-demand and future maintenance/update mode.",
+      "lifecycle_owner": "startup invocation",
+      "multiplicity": "short-lived per launch request",
+      "owns_trading_state": false,
+      "may_access_exchange_api": false,
+      "may_render_ui": false,
+      "may_survive_desktop_shell_exit": false,
+      "responsibilities": [
+        "one-shot launch of correct processes",
+        "find running Core",
+        "launch TrayAgent",
+        "launch DesktopShell on demand",
+        "enter later maintenance/update mode",
+        "pass safe startup references only",
+        "consume protected MaintenanceAuthorization handoff for update/restart workflow"
+      ],
+      "forbidden_responsibilities": [
+        "long-term ownership of Core",
+        "pass secrets in command line",
+        "own mutable trading state",
+        "direct exchange API access",
+        "grant itself maintenance authorization",
+        "issue ordinary trading/runtime commands"
+      ],
+      "may_consume_maintenance_authorization": true,
+      "may_apply_runtime_mutations": false,
+      "may_request_runtime_mutations": false,
+      "may_issue_ipc_commands": false
+    }
+  ],
+  "future_external_roles": [
+    {
+      "name": "windows_service_manager",
+      "status": "future_external_role_not_initial_implementation",
+      "purpose": "May supervise CoreHost in future service deployment mode"
+    }
+  ],
+  "deployment_modes": [
+    {
+      "name": "desktop_user_session",
+      "status": "initial",
+      "implemented_in_m0_3": false,
+      "guarantees": [
+        "CoreHost runs under Windows user account",
+        "TrayAgent runs in logged-in user session",
+        "DesktopShell opens and closes independently",
+        "Core continues after GUI close",
+        "Core continues after Windows lock screen",
+        "Core continues after GUI crash"
+      ],
+      "non_guarantees": [
+        "does not promise operation after user logoff",
+        "does not promise operation while system is powered off"
+      ],
+      "ui_wording": "Uruchamiaj po zalogowaniu do Windows"
+    },
+    {
+      "name": "windows_service",
+      "status": "future_not_implemented",
+      "implemented_in_m0_3": false,
+      "guarantees": [
+        "CoreHost may start with the system",
+        "CoreHost may run without logged-in user session",
+        "TrayAgent and DesktopShell attach after logon",
+        "Protobuf/IPC and domain model stay compatible"
+      ],
+      "requires": [
+        "secure store contract",
+        "service identity",
+        "permissions contract"
+      ],
+      "non_equivalence": "Must not be treated automatically as equivalent to desktop_user_session"
+    }
+  ],
+  "process_health_states": [
+    "NOT_STARTED",
+    "STARTING",
+    "HEALTHY",
+    "DEGRADED",
+    "STOPPING",
+    "STOPPED",
+    "CRASHED"
+  ],
+  "authority_boundaries": [
+    "CoreHost is the only authority for mutable trading state",
+    "GUI and Tray are clients",
+    "GUI state cannot be fresher than Core-confirmed state",
+    "GUI must not show command success before Core acknowledgement",
+    "GUI and Tray do not communicate directly with exchanges",
+    "GUI and Tray do not edit state files as Core control plane",
+    "Shared files are not a control plane",
+    "All mutating commands use versioned IPC",
+    "Mutating commands include command_id, correlation_id, client_instance_id, operator authorization context when required, expected protocol/schema version, accepted/rejected result and audit reference",
+    "Core re-checks execution authorization",
+    "GUI lock and operator authentication differ from execution authorization",
+    "Tray/HUD are read-only except explicitly defined operator commands"
+  ],
+  "ipc_contract": {
+    "canonical_logical_interface": "versioned Protobuf/gRPC",
+    "allowed_transports": [
+      "loopback gRPC",
+      "future secure local IPC/named pipe"
+    ],
+    "default_transport_scope": "local-only",
+    "public_network_listener_by_default": false,
+    "remote_access_requires_future_capability": true,
+    "domain_logic_transport_independent": true,
+    "handshake_required": true,
+    "handshake_fields": [
+      "protocol_version",
+      "client_role",
+      "client_version",
+      "client_instance_id",
+      "device_installation_id",
+      "supported_capabilities",
+      "requested_workspace_id",
+      "authentication_authorization_reference",
+      "core_runtime_session_id",
+      "server_capabilities",
+      "compatibility_result"
+    ],
+    "heartbeat_and_reconnect": [
+      "clients detect Core loss and enter DISCONNECTED/UNREACHABLE",
+      "stale data is visibly marked stale",
+      "bounded exponential backoff with jitter",
+      "after reconnect full snapshot is fetched before streams",
+      "unacknowledged mutating command outcome is unknown and reconciled by command_id",
+      "non-idempotent command is not replayed without status check"
+    ]
+  },
+  "discovery_contract": {
+    "publishes_protected_connection_descriptor": true,
+    "descriptor_may_contain": [
+      "pid",
+      "endpoint",
+      "protocol_version",
+      "runtime_session_id",
+      "start_nonce",
+      "device_installation_id"
+    ],
+    "descriptor_must_not_contain": [
+      "api_keys",
+      "api_secrets",
+      "pin",
+      "recovery_tokens",
+      "biometric_data",
+      "plaintext_operator_password"
+    ],
+    "acl_required": "descriptor file and IPC endpoint limited to correct user/installation",
+    "secrets_in_command_line": false,
+    "transport_secret_source": "secure store or protected OS mechanism if needed",
+    "not_implemented_in_m0_3": [
+      "concrete transport",
+      "certificates"
+    ]
+  },
+  "single_instance_policy": {
+    "core_host": [
+      "one active CoreHost per local state store / DeviceInstallation",
+      "local process lock blocks second Core on same data",
+      "process lock does not replace ExchangeAccount ExecutionLease",
+      "ExecutionLease protects account across devices/runtime instances"
+    ],
+    "tray_agent": [
+      "one active instance per logged-in user session",
+      "second instance forwards show/open to existing instance and exits"
+    ],
+    "desktop_shell": [
+      "initial release may enforce one main GUI process per session",
+      "Core protocol supports multiple read-only clients",
+      "future web/mobile panel must not require base Core contract change"
+    ]
+  },
+  "startup_sequence": [
+    {
+      "step_id": "resolve_device_installation_and_state_store_identity",
+      "order": 1,
+      "actor": "bootstrapper_or_core_host",
+      "description": "Resolve DeviceInstallation and canonical local state-store identity before any mutable initialization."
+    },
+    {
+      "step_id": "acquire_local_process_lock",
+      "order": 2,
+      "actor": "core_host",
+      "description": "Atomically acquire the local process lock for that DeviceInstallation/state-store identity."
+    },
+    {
+      "step_id": "handle_lock_busy",
+      "order": 3,
+      "actor": "core_host_contender",
+      "description": "If the lock is busy, do not open mutable state store, do not create RuntimeSession, do not initialize adapters, and return information about the existing Core."
+    },
+    {
+      "step_id": "create_runtime_session",
+      "order": 4,
+      "actor": "core_host",
+      "description": "After owning the lock, create the RuntimeSession."
+    },
+    {
+      "step_id": "open_state_store",
+      "order": 5,
+      "actor": "core_host",
+      "description": "Open the mutable state store only after the process lock is held."
+    },
+    {
+      "step_id": "verify_integrity",
+      "order": 6,
+      "actor": "core_host",
+      "description": "Verify state-store integrity."
+    },
+    {
+      "step_id": "read_kill_switch_and_last_environment",
+      "order": 7,
+      "actor": "core_host",
+      "description": "Read durable kill switch state and last trading environment."
+    },
+    {
+      "step_id": "load_configuration_and_secure_store_references",
+      "order": 8,
+      "actor": "core_host",
+      "description": "Load configuration and secure-store references without putting secrets in command line."
+    },
+    {
+      "step_id": "connect_accounts_reconcile_and_acquire_leases",
+      "order": 9,
+      "actor": "core_host",
+      "description": "Connect accounts as allowed by readiness gates, perform reconciliation, and acquire required ExecutionLease records."
+    },
+    {
+      "step_id": "ready_gate",
+      "order": 10,
+      "actor": "core_host",
+      "description": "Enter READY only after startup readiness, reconciliation, authorization, lease, kill-switch and capability/policy gates pass."
+    },
+    {
+      "step_id": "tray_shows_real_core_state",
+      "order": 11,
+      "actor": "tray_agent",
+      "description": "TrayAgent shows actual Core state."
+    },
+    {
+      "step_id": "desktop_shell_on_preference_or_request",
+      "order": 12,
+      "actor": "desktop_shell",
+      "description": "DesktopShell opens only by user preference, setup need, or request."
+    }
+  ],
+  "state_model_separation": [
+    "process_health_state",
+    "M0.2 runtime_state",
+    "exchange connection state",
+    "operator GUI lock state"
+  ],
+  "window_close_policy": {
+    "active_core_or_strategies": {
+      "title": "CryptoHunter nadal pracuje",
+      "default_safe_option": "background",
+      "rememberable_options": [
+        "background"
+      ],
+      "tray_agent_required_for_safe_hide": true,
+      "close_x_stops_core": false,
+      "options": [
+        "background",
+        "stop_core_with_secondary_confirmation",
+        "cancel"
+      ],
+      "rules": [
+        "stop_core_with_secondary_confirmation opens controlled shutdown dialog and does not stop immediately",
+        "cancel returns to app",
+        "click X is not kill switch",
+        "click X does not change active trading environment",
+        "click X does not reset operator authentication or ExecutionLease",
+        "background hides or exits DesktopShell while TrayAgent remains active",
+        "HIDE_TO_BACKGROUND does not change Core lifecycle",
+        "Core may be running, unreachable, stopping, or in supervised restart",
+        "UI must show the actual Core state"
+      ]
+    },
+    "stopped_core_options": [
+      "close_window_leave_tray_agent",
+      "exit_tray_agent",
+      "cancel"
+    ]
+  },
+  "shutdown_intents": [
+    {
+      "name": "CLOSE_DESKTOP_SHELL",
+      "description": "Close only the DesktopShell window/process.",
+      "allowed_client_roles": [
+        "desktop_shell"
+      ],
+      "requires_core_reachable": false,
+      "requires_operator_authentication": false,
+      "requires_secondary_confirmation": false,
+      "stops_desktop_shell": true,
+      "stops_tray_agent": false,
+      "stops_strategies": false,
+      "stops_core": false,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": false,
+      "persists_checkpoint": false,
+      "expected_core_result": "no_core_call_required_or_core_state_unchanged",
+      "invariants": [
+        "stops only DesktopShell",
+        "does not stop Core",
+        "does not stop TrayAgent",
+        "does not stop strategies"
+      ],
+      "handoff_clients": [],
+      "event_sources": [],
+      "trigger_kind": "client_command",
+      "applicability": {
+        "core_process_health_states": [
+          "NOT_STARTED",
+          "STOPPED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "CRASHED"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE"
+        ],
+        "operator_authentication_states": [
+          "LOCKED",
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "silent ordinary close allowed only when Core process health is NOT_STARTED or STOPPED",
+          "silent ordinary close requires core supervision restart state NONE",
+          "silent ordinary close requires no active runtime",
+          "silent ordinary close requires sufficiently confirmed Core state",
+          "close must not leave an active Core without TrayAgent"
+        ],
+        "core_supervision_restart_states": [
+          "NONE",
+          "IN_PROGRESS",
+          "SCHEDULED",
+          "EXHAUSTED"
+        ],
+        "core_ipc_reachability_states": [
+          "UNREACHABLE",
+          "REACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "PROCESS_LOCK",
+          "CONNECTION_DESCRIPTOR",
+          "CACHED_SNAPSHOT",
+          "NONE",
+          "TRAY_SUPERVISOR",
+          "CORE_HANDSHAKE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT",
+          "STALE",
+          "UNKNOWN"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "never",
+        "conditions": []
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "conditional",
+        "conditions": [
+          "Core IPC reachability is UNREACHABLE",
+          "Core process health is CRASHED",
+          "core supervision restart state is SCHEDULED or IN_PROGRESS",
+          "observed Core state may be stale",
+          "closing may leave a running or restarting Core without visible GUI"
+        ],
+        "message_requirements": [
+          "Core may still be running or may be automatically started",
+          "closing the window does not stop Core",
+          "user can cancel",
+          "user can try reconnect",
+          "must not display Core stopped only because IPC is UNREACHABLE"
+        ]
+      },
+      "state_cases": [
+        {
+          "case_id": "silent_confirmed_inactive",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "stopped"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING",
+            "ACTIVE_RUNTIME_PRESENT",
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE"
+          ],
+          "reason": "Confirmed inactive Core may close silently.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "unreachable_unknown_core",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "Unreachable Core has unknown runtime activity or stale observation; warning acknowledgement required.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT",
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "STALE",
+            "UNKNOWN"
+          ]
+        },
+        {
+          "case_id": "crashed_unscheduled",
+          "core_lifecycle_pair_ids": [
+            "crashed_unscheduled"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [],
+          "reason": "Crashed unscheduled Core can be closed only after warning.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restarting_with_tray_available",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "route_to_background_policy: scheduled restart with Tray available must use HIDE_TO_BACKGROUND or controlled shutdown/cancel path.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR",
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restarting_without_tray_scheduled",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "reason": "forbidden: scheduled restart cannot be closed without a confirmed running TrayAgent; GUI remains visible or opens controlled shutdown/cancel path.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restarting_with_tray_available_ipc_unreachable",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "route_to_background_policy: supervised restart with Tray available must use HIDE_TO_BACKGROUND or controlled shutdown/cancel path.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restarting_with_tray_available_ipc_reachable",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "route_to_background_policy: reachable supervised restart with Tray available must use HIDE_TO_BACKGROUND or controlled shutdown/cancel path.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restarting_without_tray",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "reason": "forbidden: supervised restart cannot be closed without a confirmed running TrayAgent; GUI remains visible or opens controlled shutdown/cancel path.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT",
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "STALE",
+            "UNKNOWN"
+          ]
+        },
+        {
+          "case_id": "restart_exhausted",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [],
+          "reason": "Restart exhausted needs visible operator action; warning required.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "active_reachable_core",
+          "core_lifecycle_pair_ids": [
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
+          "forbidden_predicates": [],
+          "reason": "use HIDE_TO_BACKGROUND or controlled shutdown dialog",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        }
+      ],
+      "evaluation_route": "LOCAL_SHELL_ACTION",
+      "requires_command_authorization_context": false,
+      "requires_core_command_submission": false
+    },
+    {
+      "name": "HIDE_TO_BACKGROUND",
+      "description": "Hide or exit DesktopShell while TrayAgent remains active and the current Core lifecycle or supervised-restart lifecycle continues unchanged.",
+      "allowed_client_roles": [
+        "desktop_shell"
+      ],
+      "requires_core_reachable": false,
+      "requires_operator_authentication": false,
+      "requires_secondary_confirmation": false,
+      "stops_desktop_shell": true,
+      "stops_tray_agent": false,
+      "stops_strategies": false,
+      "stops_core": false,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": false,
+      "persists_checkpoint": false,
+      "expected_core_result": "desktop_hidden_core_lifecycle_unchanged",
+      "invariants": [
+        "requires active TrayAgent",
+        "strategies remain governed by Core policy",
+        "only background may be remembered",
+        "HIDE_TO_BACKGROUND does not change Core process health",
+        "HIDE_TO_BACKGROUND does not change supervision restart state",
+        "TrayAgent remains active and supervises Core or its restart",
+        "strategies remain controlled only by actual Core state"
+      ],
+      "handoff_clients": [],
+      "event_sources": [],
+      "trigger_kind": "client_command",
+      "applicability": {
+        "core_process_health_states": [
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "NOT_STARTED",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "tray_process_health_states": [
+          "HEALTHY",
+          "DEGRADED",
+          "NOT_STARTED",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE"
+        ],
+        "operator_authentication_states": [
+          "LOCKED",
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "TrayAgent process health must be HEALTHY or DEGRADED",
+          "TrayAgent must actually be running",
+          "Core IPC reachability must be REACHABLE or an explicit transitional-disconnect policy must be shown",
+          "no silent hide when both Core and Tray are unreachable",
+          "CRASHED is allowed only with a running TrayAgent",
+          "SCHEDULED or IN_PROGRESS means Tray supervises restart",
+          "EXHAUSTED is shown as operator-action-required state",
+          "must not display Core running when Core process health is CRASHED",
+          "only this intent may be remembered as default for active Core"
+        ],
+        "core_supervision_restart_states": [
+          "NONE",
+          "IN_PROGRESS",
+          "SCHEDULED",
+          "EXHAUSTED"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE",
+          "UNREACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "CORE_HANDSHAKE",
+          "CACHED_SNAPSHOT",
+          "NONE",
+          "PROCESS_LOCK",
+          "CONNECTION_DESCRIPTOR",
+          "TRAY_SUPERVISOR"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT",
+          "STALE",
+          "UNKNOWN"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "never",
+        "conditions": []
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "conditional",
+        "conditions": [
+          "Core IPC reachability is UNREACHABLE",
+          "Core process health is CRASHED",
+          "core supervision restart state is SCHEDULED or IN_PROGRESS",
+          "Core state is uncertain"
+        ],
+        "message_requirements": [
+          "Core may be unreachable, restarting, or still working despite IPC loss",
+          "TrayAgent remains responsible for visible status and supervision",
+          "must not claim Core is running when Core process health is CRASHED",
+          "user can cancel instead of hiding to background"
+        ]
+      },
+      "state_cases": [
+        {
+          "case_id": "active_reachable_core",
+          "core_lifecycle_pair_ids": [
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Active reachable Core can continue under Tray visibility.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "unreachable_core",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "Unreachable Core requires acknowledgement; Tray remains responsible for status.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT",
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "STALE",
+            "UNKNOWN"
+          ]
+        },
+        {
+          "case_id": "crashed_unscheduled",
+          "core_lifecycle_pair_ids": [
+            "crashed_unscheduled"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Crashed unscheduled state is shown by Tray; do not claim the crashed Core is running.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR",
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "crashed_restart_scheduled",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Scheduled restart is supervised by Tray.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR",
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restart_in_progress_ipc_unreachable",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "STARTING + IN_PROGRESS is supervised restart; Tray remains active and acknowledgement is required. IPC unreachable; Tray supervisor confirms supervised restart.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restart_in_progress_ipc_reachable",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "STARTING + IN_PROGRESS is supervised restart; Tray remains active and acknowledgement is required. IPC reachable through Core handshake during supervised restart.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restart_exhausted",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "HEALTHY",
+            "DEGRADED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "OPERATOR_ACTION_REQUIRED must remain visible through Tray/HUD.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR",
+            "TRAY_SUPERVISOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "tray_unavailable",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": false,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [
+            "TRAY_PROCESS_CONFIRMED_RUNNING"
+          ],
+          "reason": "Tray unavailable: no silent hide; remain in GUI or choose another safe path.",
+          "core_ipc_reachability_states": [
+            "REACHABLE",
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE",
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR",
+            "CACHED_SNAPSHOT",
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT",
+            "STALE",
+            "UNKNOWN"
+          ]
+        }
+      ],
+      "evaluation_route": "LOCAL_SHELL_ACTION",
+      "requires_command_authorization_context": false,
+      "requires_core_command_submission": false
+    },
+    {
+      "name": "STOP_STRATEGIES",
+      "description": "Request Core to stop strategy execution.",
+      "allowed_client_roles": [
+        "desktop_shell",
+        "tray_agent"
+      ],
+      "requires_core_reachable": true,
+      "requires_operator_authentication": true,
+      "requires_secondary_confirmation": true,
+      "stops_desktop_shell": false,
+      "stops_tray_agent": false,
+      "stops_strategies": true,
+      "stops_core": false,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": true,
+      "persists_checkpoint": true,
+      "expected_core_result": "strategies_stopped_core_running",
+      "invariants": [
+        "does not stop Core",
+        "is not kill switch",
+        "does not change active environment"
+      ],
+      "handoff_clients": [],
+      "event_sources": [],
+      "trigger_kind": "client_command",
+      "applicability": {
+        "core_process_health_states": [
+          "HEALTHY",
+          "DEGRADED"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE",
+          "HIDDEN",
+          "CLOSED"
+        ],
+        "operator_authentication_states": [
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "strategies active or resumable through Core policy"
+        ],
+        "core_supervision_restart_states": [
+          "NONE"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "CORE_HANDSHAKE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "always",
+        "conditions": [
+          "operator requests strategy stop"
+        ]
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "always",
+        "conditions": [
+          "operator must acknowledge intent effect"
+        ],
+        "message_requirements": [
+          "show command impact before submission"
+        ]
+      },
+      "state_cases": [
+        {
+          "case_id": "reachable_running_core",
+          "core_lifecycle_pair_ids": [
+            "healthy",
+            "degraded"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "STOP_STRATEGIES is allowed only for reachable Core with restart state NONE.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        }
+      ],
+      "evaluation_route": "CORE_COMMAND",
+      "requires_command_authorization_context": true,
+      "requires_core_command_submission": true
+    },
+    {
+      "name": "PAUSE_STRATEGIES",
+      "description": "Pause generation of new OrderIntent according to later execution contract.",
+      "allowed_client_roles": [
+        "desktop_shell",
+        "tray_agent"
+      ],
+      "requires_core_reachable": true,
+      "requires_operator_authentication": true,
+      "requires_secondary_confirmation": false,
+      "stops_desktop_shell": false,
+      "stops_tray_agent": false,
+      "stops_strategies": false,
+      "stops_core": false,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": true,
+      "persists_checkpoint": false,
+      "expected_core_result": "new_order_intents_paused_core_running",
+      "invariants": [
+        "does not stop Core",
+        "does not imply kill switch",
+        "resume requires Core policy gates"
+      ],
+      "handoff_clients": [],
+      "event_sources": [],
+      "trigger_kind": "client_command",
+      "applicability": {
+        "core_process_health_states": [
+          "HEALTHY",
+          "DEGRADED"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE",
+          "HIDDEN",
+          "CLOSED"
+        ],
+        "operator_authentication_states": [
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "new OrderIntent generation can be paused by Core policy"
+        ],
+        "core_supervision_restart_states": [
+          "NONE"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "CORE_HANDSHAKE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "never",
+        "conditions": []
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "never",
+        "conditions": [],
+        "message_requirements": []
+      },
+      "state_cases": [
+        {
+          "case_id": "reachable_running_core",
+          "core_lifecycle_pair_ids": [
+            "healthy",
+            "degraded"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "PAUSE_STRATEGIES is allowed only for reachable Core with restart state NONE.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        }
+      ],
+      "evaluation_route": "CORE_COMMAND",
+      "requires_command_authorization_context": true,
+      "requires_core_command_submission": true
+    },
+    {
+      "name": "STOP_CORE_GRACEFULLY",
+      "description": "Controlled graceful Core shutdown request.",
+      "allowed_client_roles": [
+        "desktop_shell",
+        "tray_agent"
+      ],
+      "requires_core_reachable": true,
+      "requires_operator_authentication": true,
+      "requires_secondary_confirmation": true,
+      "stops_desktop_shell": false,
+      "stops_tray_agent": false,
+      "stops_strategies": true,
+      "stops_core": true,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": true,
+      "persists_checkpoint": true,
+      "expected_core_result": "core_stopped_after_controlled_shutdown",
+      "invariants": [
+        "not a kill switch",
+        "blocks new OrderIntent",
+        "persists checkpoint",
+        "requires secondary confirmation"
+      ],
+      "handoff_clients": [],
+      "event_sources": [],
+      "trigger_kind": "client_command",
+      "applicability": {
+        "core_process_health_states": [
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE",
+          "HIDDEN",
+          "CLOSED"
+        ],
+        "operator_authentication_states": [
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "Core reachable",
+          "shutdown dialog has shown active strategies, open orders and positions"
+        ],
+        "core_supervision_restart_states": [
+          "NONE"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "CORE_HANDSHAKE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "always",
+        "conditions": [
+          "controlled Core shutdown requires secondary confirmation"
+        ]
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "always",
+        "conditions": [
+          "operator must acknowledge intent effect"
+        ],
+        "message_requirements": [
+          "show command impact before submission"
+        ]
+      },
+      "state_cases": [
+        {
+          "case_id": "reachable_running_core",
+          "core_lifecycle_pair_ids": [
+            "ordinary_starting",
+            "healthy",
+            "degraded"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "Graceful Core stop requires reachable Core with restart state NONE.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        }
+      ],
+      "evaluation_route": "CORE_COMMAND",
+      "requires_command_authorization_context": true,
+      "requires_core_command_submission": true
+    },
+    {
+      "name": "EXIT_TRAY_AGENT",
+      "description": "Exit TrayAgent while leaving Core state unchanged.",
+      "allowed_client_roles": [
+        "tray_agent"
+      ],
+      "requires_core_reachable": false,
+      "requires_operator_authentication": false,
+      "requires_secondary_confirmation": null,
+      "stops_desktop_shell": false,
+      "stops_tray_agent": true,
+      "stops_strategies": false,
+      "stops_core": false,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": false,
+      "persists_checkpoint": false,
+      "expected_core_result": "tray_exited_core_unchanged",
+      "invariants": [
+        "does not stop Core",
+        "requires secondary confirmation when Core is active",
+        "warns notifications/status are lost while Core keeps running",
+        "user can cancel",
+        "cannot be remembered automatically",
+        "relaunch discovers existing Core"
+      ],
+      "handoff_clients": [],
+      "event_sources": [],
+      "trigger_kind": "client_command",
+      "applicability": {
+        "core_process_health_states": [
+          "NOT_STARTED",
+          "STOPPED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "CRASHED"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE",
+          "HIDDEN",
+          "CLOSED"
+        ],
+        "operator_authentication_states": [
+          "LOCKED",
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "without secondary confirmation only when Core is NOT_STARTED or STOPPED",
+          "no pending supervised restart",
+          "no active runtime",
+          "secondary confirmation required for Core STARTING, HEALTHY, DEGRADED, STOPPING",
+          "secondary confirmation required for CRASHED with active restart policy",
+          "secondary confirmation required when Core IPC reachability is UNREACHABLE",
+          "secondary confirmation required when Core state is unknown",
+          "message must state Core may continue running without tray icon and notifications",
+          "never stops Core automatically"
+        ],
+        "core_supervision_restart_states": [
+          "NONE",
+          "IN_PROGRESS",
+          "SCHEDULED",
+          "EXHAUSTED"
+        ],
+        "core_ipc_reachability_states": [
+          "UNREACHABLE",
+          "REACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "PROCESS_LOCK",
+          "CONNECTION_DESCRIPTOR",
+          "CACHED_SNAPSHOT",
+          "NONE",
+          "CORE_HANDSHAKE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT",
+          "STALE",
+          "UNKNOWN"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "conditional",
+        "conditions": [
+          "no secondary confirmation only when Core process health is NOT_STARTED or STOPPED, core supervision restart state is NONE, and no active runtime",
+          "secondary confirmation required when core supervision restart state is SCHEDULED or IN_PROGRESS",
+          "secondary confirmation required when Core is active",
+          "secondary confirmation required when Core IPC reachability is UNREACHABLE",
+          "secondary confirmation required when Core process health is CRASHED",
+          "secondary confirmation required when Core state is uncertain",
+          "EXHAUSTED warning says Tray is needed to present operator-action-required state",
+          "secondary confirmation required for active, unknown, unreachable, or restarting Core"
+        ]
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "conditional",
+        "conditions": [
+          "Core may continue running without tray icon and notifications",
+          "EXHAUSTED requires operator-action-required status visibility"
+        ],
+        "message_requirements": [
+          "Core may continue running without tray icon and notifications",
+          "Tray may be needed to present Core restart or operator-action-required state",
+          "user can cancel"
+        ]
+      },
+      "state_cases": [
+        {
+          "case_id": "inactive_core",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "stopped"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED"
+          ],
+          "forbidden_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN",
+            "CORE_STATE_OBSERVATION_STALE",
+            "ACTIVE_RUNTIME_PRESENT",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "Confirmed inactive Core with no active runtime; Tray may exit without secondary confirmation.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "unreachable_core",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "RUNTIME_ACTIVITY_UNKNOWN"
+          ],
+          "forbidden_predicates": [
+            "NO_ACTIVE_RUNTIME_CONFIRMED",
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "Unreachable Core has unknown activity/stale observation; exiting Tray needs confirmation.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CACHED_SNAPSHOT",
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "STALE",
+            "UNKNOWN"
+          ]
+        },
+        {
+          "case_id": "active_core",
+          "core_lifecycle_pair_ids": [
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Active Core would continue without Tray notifications.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "crashed_unscheduled",
+          "core_lifecycle_pair_ids": [
+            "crashed_unscheduled"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [],
+          "forbidden_predicates": [],
+          "reason": "Crashed state still needs Tray visibility.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "crashed_restart_scheduled",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_scheduled"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Scheduled restart pending requires Tray visibility and confirmation.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restart_in_progress_ipc_unreachable",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Supervised restart in progress with IPC unreachable requires Tray visibility and confirmation.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restart_in_progress_ipc_reachable",
+          "core_lifecycle_pair_ids": [
+            "supervised_restart_in_progress"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "forbidden_predicates": [],
+          "reason": "Supervised restart in progress with IPC reachable still requires confirmation before exiting Tray.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "restart_exhausted",
+          "core_lifecycle_pair_ids": [
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [],
+          "forbidden_predicates": [],
+          "reason": "Exiting Tray loses visible OPERATOR_ACTION_REQUIRED state.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        }
+      ],
+      "evaluation_route": "LOCAL_SHELL_ACTION",
+      "requires_command_authorization_context": false,
+      "requires_core_command_submission": false
+    },
+    {
+      "name": "TRIGGER_KILL_SWITCH",
+      "description": "Trigger kill switch to block execution while Core remains available for read/reconciliation.",
+      "allowed_client_roles": [
+        "desktop_shell",
+        "tray_agent"
+      ],
+      "requires_core_reachable": true,
+      "requires_operator_authentication": true,
+      "requires_secondary_confirmation": null,
+      "stops_desktop_shell": false,
+      "stops_tray_agent": false,
+      "stops_strategies": false,
+      "stops_core": false,
+      "triggers_kill_switch": true,
+      "blocks_new_order_intents": true,
+      "persists_checkpoint": true,
+      "expected_core_result": "kill_switch_triggered_core_running",
+      "invariants": [
+        "leaves Core running",
+        "blocks execution",
+        "does not automatically stop Core",
+        "requires appropriate authorization",
+        "confirmation/authorization policy is refined by M0.9 risk contract",
+        "UI cannot weaken kill switch confirmation or authorization policy"
+      ],
+      "handoff_clients": [],
+      "event_sources": [],
+      "trigger_kind": "client_command",
+      "applicability": {
+        "core_process_health_states": [
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE",
+          "HIDDEN",
+          "CLOSED"
+        ],
+        "operator_authentication_states": [
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "risk contract M0.9 defines final confirmation/authorization level",
+          "UI cannot weaken confirmation or authorization policy"
+        ],
+        "core_supervision_restart_states": [
+          "NONE"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "CORE_HANDSHAKE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "conditional",
+        "conditions": [
+          "confirmation/authorization policy will be refined by risk contract M0.9",
+          "policy cannot be weakened by UI"
+        ]
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "conditional",
+        "conditions": [
+          "risk or state dependent acknowledgement may be required"
+        ],
+        "message_requirements": [
+          "message is defined by later domain-specific contract"
+        ]
+      },
+      "state_cases": [
+        {
+          "case_id": "reachable_running_core",
+          "core_lifecycle_pair_ids": [
+            "ordinary_starting",
+            "healthy",
+            "degraded",
+            "stopping"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": null,
+          "required_predicates": [
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "Kill switch trigger is allowed only for reachable Core with restart state NONE in M0.3.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        }
+      ],
+      "evaluation_route": "CORE_COMMAND",
+      "requires_command_authorization_context": true,
+      "requires_core_command_submission": true
+    },
+    {
+      "name": "OS_SESSION_LOGOFF",
+      "description": "Handle Windows user logoff in desktop_user_session.",
+      "allowed_client_roles": [],
+      "requires_core_reachable": false,
+      "requires_operator_authentication": false,
+      "requires_secondary_confirmation": false,
+      "stops_desktop_shell": true,
+      "stops_tray_agent": true,
+      "stops_strategies": true,
+      "stops_core": true,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": true,
+      "persists_checkpoint": true,
+      "expected_core_result": "graceful_session_shutdown_best_effort",
+      "invariants": [
+        "desktop_user_session does not guarantee continued operation",
+        "runs graceful session shutdown",
+        "must not promise operation after logout"
+      ],
+      "handoff_clients": [],
+      "event_sources": [
+        "operating_system",
+        "windows_session_manager"
+      ],
+      "trigger_kind": "operating_system_event",
+      "applicability": {
+        "core_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE",
+          "HIDDEN",
+          "CLOSED"
+        ],
+        "operator_authentication_states": [
+          "LOCKED",
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "Windows session logoff event received",
+          "best-effort regardless of reachability"
+        ],
+        "core_supervision_restart_states": [
+          "NONE",
+          "IN_PROGRESS",
+          "SCHEDULED",
+          "EXHAUSTED"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE",
+          "UNREACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "CORE_HANDSHAKE",
+          "PROCESS_LOCK",
+          "CONNECTION_DESCRIPTOR",
+          "TRAY_SUPERVISOR",
+          "CACHED_SNAPSHOT",
+          "NONE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT",
+          "STALE",
+          "UNKNOWN"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "never",
+        "conditions": []
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "never",
+        "conditions": [],
+        "message_requirements": []
+      },
+      "state_cases": [
+        {
+          "case_id": "os_best_effort_ipc_reachable",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [],
+          "reason": "Operating-system lifecycle event is handled best-effort for any canonical lifecycle pair.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "os_best_effort_ipc_unreachable",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [],
+          "reason": "Operating-system lifecycle event is handled best-effort for any canonical lifecycle pair.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR",
+            "TRAY_SUPERVISOR",
+            "CACHED_SNAPSHOT",
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT",
+            "STALE",
+            "UNKNOWN"
+          ]
+        }
+      ],
+      "evaluation_route": "OPERATING_SYSTEM_EVENT",
+      "requires_command_authorization_context": false,
+      "requires_core_command_submission": false
+    },
+    {
+      "name": "OS_SHUTDOWN",
+      "description": "Handle Windows shutdown/restart.",
+      "allowed_client_roles": [],
+      "requires_core_reachable": false,
+      "requires_operator_authentication": false,
+      "requires_secondary_confirmation": false,
+      "stops_desktop_shell": true,
+      "stops_tray_agent": true,
+      "stops_strategies": true,
+      "stops_core": true,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": true,
+      "persists_checkpoint": true,
+      "expected_core_result": "checkpoint_best_effort_shutdown",
+      "invariants": [
+        "blocks new OrderIntent",
+        "checkpoints in available time",
+        "does not promise completion of all network operations",
+        "next startup reconciles"
+      ],
+      "handoff_clients": [],
+      "event_sources": [
+        "operating_system",
+        "windows_session_manager"
+      ],
+      "trigger_kind": "operating_system_event",
+      "applicability": {
+        "core_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE",
+          "HIDDEN",
+          "CLOSED"
+        ],
+        "operator_authentication_states": [
+          "LOCKED",
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "Windows shutdown or restart event received",
+          "best-effort regardless of reachability"
+        ],
+        "core_supervision_restart_states": [
+          "NONE",
+          "IN_PROGRESS",
+          "SCHEDULED",
+          "EXHAUSTED"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE",
+          "UNREACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "CORE_HANDSHAKE",
+          "PROCESS_LOCK",
+          "CONNECTION_DESCRIPTOR",
+          "TRAY_SUPERVISOR",
+          "CACHED_SNAPSHOT",
+          "NONE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT",
+          "STALE",
+          "UNKNOWN"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "never",
+        "conditions": []
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "never",
+        "conditions": [],
+        "message_requirements": []
+      },
+      "state_cases": [
+        {
+          "case_id": "os_best_effort_ipc_reachable",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [],
+          "reason": "Operating-system lifecycle event is handled best-effort for any canonical lifecycle pair.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        },
+        {
+          "case_id": "os_best_effort_ipc_unreachable",
+          "core_lifecycle_pair_ids": [
+            "not_started",
+            "ordinary_starting",
+            "supervised_restart_in_progress",
+            "healthy",
+            "degraded",
+            "stopping",
+            "stopped",
+            "crashed_unscheduled",
+            "crashed_restart_scheduled",
+            "crashed_restart_exhausted"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": false,
+          "requires_secondary_confirmation": false,
+          "required_predicates": [],
+          "forbidden_predicates": [],
+          "reason": "Operating-system lifecycle event is handled best-effort for any canonical lifecycle pair.",
+          "core_ipc_reachability_states": [
+            "UNREACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR",
+            "TRAY_SUPERVISOR",
+            "CACHED_SNAPSHOT",
+            "NONE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT",
+            "STALE",
+            "UNKNOWN"
+          ]
+        }
+      ],
+      "evaluation_route": "OPERATING_SYSTEM_EVENT",
+      "requires_command_authorization_context": false,
+      "requires_core_command_submission": false
+    },
+    {
+      "name": "ENTER_MAINTENANCE_MODE",
+      "description": "Enter maintenance/update/backup preparation mode.",
+      "allowed_client_roles": [
+        "desktop_shell",
+        "tray_agent"
+      ],
+      "requires_core_reachable": true,
+      "requires_operator_authentication": true,
+      "requires_secondary_confirmation": true,
+      "stops_desktop_shell": false,
+      "stops_tray_agent": false,
+      "stops_strategies": true,
+      "stops_core": false,
+      "triggers_kill_switch": false,
+      "blocks_new_order_intents": true,
+      "persists_checkpoint": true,
+      "expected_core_result": "maintenance_mode_entered",
+      "invariants": [
+        "blocks new trading commands",
+        "prepares update or backup",
+        "does not reset kill switch",
+        "prevents new trading commands before update",
+        "DesktopShell or TrayAgent authorizes maintenance",
+        "Core confirms entering maintenance",
+        "Bootstrapper may execute update/restart workflow only from issued handoff",
+        "Bootstrapper cannot switch a running Core into maintenance without authorization",
+        "A stopped Core cannot acknowledge ENTER_MAINTENANCE_MODE"
+      ],
+      "handoff_clients": [
+        "bootstrapper"
+      ],
+      "event_sources": [],
+      "trigger_kind": "client_command",
+      "applicability": {
+        "core_process_health_states": [
+          "HEALTHY",
+          "DEGRADED"
+        ],
+        "tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "HEALTHY",
+          "DEGRADED",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ],
+        "desktop_window_states": [
+          "VISIBLE",
+          "HIDDEN",
+          "CLOSED"
+        ],
+        "operator_authentication_states": [
+          "AUTHENTICATED"
+        ],
+        "conditions": [
+          "ENTER_MAINTENANCE_MODE is a command to a running Core",
+          "operator authorization required",
+          "Core confirmation required",
+          "checkpoint required",
+          "Core issues MaintenanceAuthorization handoff",
+          "offline update after Core stops uses already issued handoff and is not a new ENTER_MAINTENANCE_MODE"
+        ],
+        "core_supervision_restart_states": [
+          "NONE"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE"
+        ],
+        "core_state_observation_sources": [
+          "CORE_HANDSHAKE"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      "confirmation_policy": {
+        "mode": "always",
+        "conditions": [
+          "maintenance requires operator-authorized handoff"
+        ]
+      },
+      "operator_acknowledgement_policy": {
+        "mode": "always",
+        "conditions": [
+          "operator must acknowledge intent effect"
+        ],
+        "message_requirements": [
+          "show command impact before submission"
+        ]
+      },
+      "state_cases": [
+        {
+          "case_id": "reachable_running_core",
+          "core_lifecycle_pair_ids": [
+            "healthy",
+            "degraded"
+          ],
+          "tray_process_health_states": [
+            "NOT_STARTED",
+            "STARTING",
+            "HEALTHY",
+            "DEGRADED",
+            "STOPPING",
+            "STOPPED",
+            "CRASHED"
+          ],
+          "allowed": true,
+          "requires_operator_acknowledgement": true,
+          "requires_secondary_confirmation": true,
+          "required_predicates": [
+            "ACTIVE_RUNTIME_PRESENT"
+          ],
+          "forbidden_predicates": [
+            "SUPERVISED_RESTART_PENDING"
+          ],
+          "reason": "Maintenance entry requires reachable running Core with restart state NONE and issued handoff.",
+          "core_ipc_reachability_states": [
+            "REACHABLE"
+          ],
+          "core_state_observation_sources": [
+            "CORE_HANDSHAKE"
+          ],
+          "core_state_confidence_states": [
+            "CONFIRMED_CURRENT"
+          ]
+        }
+      ],
+      "evaluation_route": "CORE_COMMAND",
+      "requires_command_authorization_context": true,
+      "requires_core_command_submission": true
+    }
+  ],
+  "tray_contract": {
+    "presentation_states": [
+      "healthy/running",
+      "connecting/synchronizing",
+      "stopped",
+      "degraded",
+      "critical",
+      "kill switch triggered",
+      "Live active"
+    ],
+    "tooltip_fields": [
+      "CryptoHunter",
+      "active environment",
+      "runtime state",
+      "online/total ExchangeAccount count",
+      "active strategies count",
+      "alerts count"
+    ],
+    "menu": [
+      "Otwórz CryptoHunter",
+      "Pokaż panel statusu",
+      "Pokaż/ukryj Compact Status HUD",
+      "Wstrzymaj strategie",
+      "Wznów strategie",
+      "Synchronizuj teraz",
+      "Zatrzymaj wszystkie strategie",
+      "Kill switch…",
+      "Zatrzymaj Core i zakończ…",
+      "Zakończ Tray Agent"
+    ],
+    "rules": [
+      "never show command executed before Core confirmation",
+      "unreachable Core is explicit UNREACHABLE",
+      "no fake Running from cache",
+      "risky commands require later M0.9 confirmation/authorization",
+      "kill switch reset is not unprotected quick action",
+      "stores no API keys",
+      "EXIT_TRAY_AGENT requires secondary confirmation when Core is active",
+      "EXIT_TRAY_AGENT warning states Core remains running without tray icon and notifications",
+      "EXIT_TRAY_AGENT can be cancelled by the user",
+      "EXIT_TRAY_AGENT cannot be remembered as an automatic choice",
+      "relaunching CryptoHunter should discover the existing Core"
+    ]
+  },
+  "hud_contract": {
+    "read_only": true,
+    "requirements": [
+      "translucent",
+      "movable",
+      "always-on-top",
+      "minimal and expanded views",
+      "edge snap",
+      "remember monitor and position",
+      "DPI/multi-monitor support",
+      "optional click-through",
+      "hideable",
+      "double-click opens DesktopShell",
+      "lost Core shows stale/unreachable",
+      "does not place orders",
+      "does not reset kill switch",
+      "does not edit configuration"
+    ],
+    "locked_hides": [
+      "full balances",
+      "exact portfolio values",
+      "keys",
+      "confidential identifiers",
+      "position details"
+    ],
+    "locked_may_show": [
+      "environment",
+      "Core running/not running",
+      "active strategy count",
+      "alert count",
+      "kill switch state",
+      "Odblokuj aplikację, aby zobaczyć szczegóły"
+    ]
+  },
+  "failure_matrix": [
+    {
+      "failure": "DesktopShell crash",
+      "affected_process": "desktop_shell",
+      "unaffected_processes": [
+        "core_host",
+        "tray_agent"
+      ],
+      "required_behavior": [
+        "Core continues",
+        "Tray continues"
+      ],
+      "recovery_behavior": [
+        "GUI restart fetches full snapshot"
+      ],
+      "forbidden_behavior": [
+        "stop Core"
+      ]
+    },
+    {
+      "failure": "TrayAgent crash",
+      "affected_process": "tray_agent",
+      "unaffected_processes": [
+        "core_host",
+        "desktop_shell"
+      ],
+      "required_behavior": [
+        "Core continues",
+        "no system notifications until Tray restart"
+      ],
+      "recovery_behavior": [
+        "new Tray discovers Core and fetches snapshot"
+      ],
+      "forbidden_behavior": [
+        "stop Core"
+      ]
+    },
+    {
+      "failure": "CoreHost crash",
+      "affected_process": "core_host",
+      "unaffected_processes": [
+        "desktop_shell",
+        "tray_agent"
+      ],
+      "required_behavior": [
+        "Tray shows critical/unreachable",
+        "no order locally final without reconciliation"
+      ],
+      "recovery_behavior": [
+        "supervision restarts with bounded backoff",
+        "Core reconciles before strategies resume",
+        "kill switch state remains durable"
+      ],
+      "forbidden_behavior": [
+        "assume order success",
+        "reset kill switch"
+      ]
+    },
+    {
+      "failure": "IPC disconnect",
+      "affected_process": "ipc",
+      "unaffected_processes": [
+        "core_host"
+      ],
+      "required_behavior": [
+        "GUI/Tray disconnected",
+        "unknown mutating command outcome not replayed blindly"
+      ],
+      "recovery_behavior": [
+        "check command status by command_id after reconnect"
+      ],
+      "forbidden_behavior": [
+        "automatic non-idempotent replay"
+      ]
+    },
+    {
+      "failure": "GUI freeze",
+      "affected_process": "desktop_shell",
+      "unaffected_processes": [
+        "core_host",
+        "tray_agent"
+      ],
+      "required_behavior": [
+        "UI watchdog may offer GUI restart"
+      ],
+      "recovery_behavior": [
+        "restart GUI only"
+      ],
+      "forbidden_behavior": [
+        "kill Core"
+      ]
+    },
+    {
+      "failure": "Exchange disconnect",
+      "affected_process": "exchange_account",
+      "unaffected_processes": [
+        "desktop_shell",
+        "tray_agent",
+        "other_exchange_accounts"
+      ],
+      "required_behavior": [
+        "affects matching ExchangeAccount",
+        "Core remains source of truth"
+      ],
+      "recovery_behavior": [
+        "account reconnect/reconcile policy"
+      ],
+      "forbidden_behavior": [
+        "change other accounts environment"
+      ]
+    },
+    {
+      "failure": "Windows lock screen",
+      "affected_process": "os_session",
+      "unaffected_processes": [
+        "core_host",
+        "tray_agent",
+        "desktop_shell"
+      ],
+      "required_behavior": [
+        "CoreHost continues",
+        "TrayAgent continues",
+        "strategies may continue according to Core policy",
+        "DesktopShell sets operator_interface_authentication = LOCKED",
+        "sensitive views are masked immediately",
+        "HUD enters locked visibility policy",
+        "no new manual commands until CryptoHunter re-authentication",
+        "Windows unlock alone does not automatically authenticate CryptoHunter",
+        "re-entry requires Windows Hello/PIN according to future M0 security contract"
+      ],
+      "recovery_behavior": [
+        "after Windows unlock, require CryptoHunter operator re-authentication before sensitive/manual controls return"
+      ],
+      "forbidden_behavior": [
+        "treat as logoff",
+        "expose sensitive views while locked",
+        "accept manual commands while operator interface is locked",
+        "treat Windows unlock alone as CryptoHunter authentication"
+      ]
+    },
+    {
+      "failure": "User logoff",
+      "affected_process": "os_session",
+      "unaffected_processes": [
+        "windows_service future"
+      ],
+      "required_behavior": [
+        "desktop_user_session gives no continued-running guarantee"
+      ],
+      "recovery_behavior": [
+        "graceful session shutdown",
+        "future windows_service may continue"
+      ],
+      "forbidden_behavior": [
+        "promise desktop mode works after logout"
+      ]
+    },
+    {
+      "failure": "Windows shutdown/restart",
+      "affected_process": "os",
+      "unaffected_processes": [
+        "none"
+      ],
+      "required_behavior": [
+        "Core blocks new OrderIntent",
+        "checkpoint",
+        "persist kill switch and runtime state"
+      ],
+      "recovery_behavior": [
+        "next start reconciliation"
+      ],
+      "forbidden_behavior": [
+        "accept new orders during shutdown"
+      ]
+    },
+    {
+      "failure": "Second CoreHost",
+      "affected_process": "core_host",
+      "unaffected_processes": [
+        "existing_core_host"
+      ],
+      "required_behavior": [
+        "local process lock rejects start",
+        "state store not taken over"
+      ],
+      "recovery_behavior": [
+        "client attaches to existing Core if appropriate"
+      ],
+      "forbidden_behavior": [
+        "bypass ExecutionLease"
+      ]
+    }
+  ],
+  "restart_policy": {
+    "backoff": "bounded exponential backoff with jitter",
+    "restart_counter": "count crashes in a time window",
+    "crash_loop": "requires operator intervention",
+    "rules": [
+      "no strategy resume before reconciliation",
+      "no automatic kill switch reset",
+      "no automatic environment change",
+      "no silent fallback from Live/Testnet to Paper",
+      "GUI crash does not increment Core crash counter",
+      "Tray restart does not create new Core RuntimeSession",
+      "crash detected moves supervision restart state to SCHEDULED",
+      "restart attempt moves supervision restart state to IN_PROGRESS",
+      "successful Core start moves supervision restart state to NONE",
+      "crash-loop limit moves supervision restart state to EXHAUSTED",
+      "EXHAUSTED maps startup readiness to OPERATOR_ACTION_REQUIRED"
+    ],
+    "supervision_restart_state_transitions": [
+      {
+        "from_restart_state": "NONE",
+        "required_core_process_health_states": [
+          "CRASHED"
+        ],
+        "from_core_lifecycle_pair_ids": [
+          "crashed_unscheduled"
+        ],
+        "event": "crash_detected",
+        "to_restart_state": "SCHEDULED",
+        "resulting_core_process_health_states": [
+          "CRASHED"
+        ],
+        "to_core_lifecycle_pair_ids": [
+          "crashed_restart_scheduled"
+        ]
+      },
+      {
+        "from_restart_state": "SCHEDULED",
+        "required_core_process_health_states": [
+          "CRASHED"
+        ],
+        "from_core_lifecycle_pair_ids": [
+          "crashed_restart_scheduled"
+        ],
+        "event": "backoff_elapsed_restart_attempt_begins",
+        "to_restart_state": "IN_PROGRESS",
+        "resulting_core_process_health_states": [
+          "STARTING"
+        ],
+        "to_core_lifecycle_pair_ids": [
+          "supervised_restart_in_progress"
+        ]
+      },
+      {
+        "from_restart_state": "IN_PROGRESS",
+        "required_core_process_health_states": [
+          "STARTING"
+        ],
+        "from_core_lifecycle_pair_ids": [
+          "supervised_restart_in_progress"
+        ],
+        "event": "core_started_successfully",
+        "to_restart_state": "NONE",
+        "resulting_core_process_health_states": [
+          "HEALTHY",
+          "DEGRADED"
+        ],
+        "to_core_lifecycle_pair_ids": [
+          "healthy",
+          "degraded"
+        ]
+      },
+      {
+        "from_restart_state": "SCHEDULED",
+        "required_core_process_health_states": [
+          "CRASHED"
+        ],
+        "from_core_lifecycle_pair_ids": [
+          "crashed_restart_scheduled"
+        ],
+        "event": "crash_loop_limit_exceeded",
+        "to_restart_state": "EXHAUSTED",
+        "resulting_core_process_health_states": [
+          "CRASHED"
+        ],
+        "to_core_lifecycle_pair_ids": [
+          "crashed_restart_exhausted"
+        ]
+      },
+      {
+        "from_restart_state": "IN_PROGRESS",
+        "required_core_process_health_states": [
+          "STARTING"
+        ],
+        "from_core_lifecycle_pair_ids": [
+          "supervised_restart_in_progress"
+        ],
+        "event": "crash_loop_limit_exceeded",
+        "to_restart_state": "EXHAUSTED",
+        "resulting_core_process_health_states": [
+          "CRASHED"
+        ],
+        "to_core_lifecycle_pair_ids": [
+          "crashed_restart_exhausted"
+        ]
+      },
+      {
+        "from_restart_state": "IN_PROGRESS",
+        "required_core_process_health_states": [
+          "STARTING"
+        ],
+        "from_core_lifecycle_pair_ids": [
+          "supervised_restart_in_progress"
+        ],
+        "event": "restart_attempt_failed",
+        "to_restart_state": "SCHEDULED",
+        "resulting_core_process_health_states": [
+          "CRASHED"
+        ],
+        "to_core_lifecycle_pair_ids": [
+          "crashed_restart_scheduled"
+        ]
+      }
+    ],
+    "readiness_mapping": {
+      "EXHAUSTED": "OPERATOR_ACTION_REQUIRED"
+    }
+  },
+  "security_rules": [
+    "no secrets in command line",
+    "no secrets in connection descriptor",
+    "no secrets in tray tooltip",
+    "no secrets in HUD",
+    "no secrets in crash report",
+    "DesktopShell does not receive full API secret again after save",
+    "each IPC client has explicit client_role",
+    "Core rejects incompatible protocols and unauthorized commands",
+    "GUI cannot grant itself privileges by QML setting",
+    "local IPC is not LAN-accessible by default",
+    "remote control requires future capability",
+    "operator authentication proof is short-lived reference/token, not raw PIN logged through layers",
+    "HUD is read-only",
+    "trigger kill switch and reset kill switch are separate commands"
+  ],
+  "invariants": [
+    "CLOSE_DESKTOP_SHELL does not stop Core",
+    "HIDE_TO_BACKGROUND does not stop Core",
+    "STOP_STRATEGIES does not stop Core",
+    "STOP_CORE_GRACEFULLY is not a kill switch",
+    "TRIGGER_KILL_SWITCH leaves Core active for read/reconciliation",
+    "EXIT_TRAY_AGENT does not stop Core without separate explicit choice",
+    "OS_SHUTDOWN checkpoints and controlled-stops within available time",
+    "User logoff in desktop_user_session may stop user processes; no post-logout promise",
+    "Maintenance mode blocks new trading commands before update",
+    "Windows lock screen does not stop Core in desktop_user_session",
+    "Future migration to windows_service must not require changing M0.2 domain identifiers or command/read-model contracts",
+    "Service mode keeps compatible IPC",
+    "No silent environment fallback from Live/Testnet to Paper",
+    "process lock precedes mutable state-store open",
+    "process lock precedes RuntimeSession creation",
+    "losing process-lock contender performs no mutable initialization",
+    "stale lock recovery requires PID/start nonce verification and must not blindly take over the state store",
+    "first-run incomplete never starts exchange-private connections or strategies",
+    "M0.3 does not create an installation_id alias",
+    "all IPC, discovery and persistence references use the M0.2 device_installation_id name",
+    "only CoreHost applies mutable trading state mutations",
+    "DesktopShell and TrayAgent may only send commands requesting mutations",
+    "a correctly authenticated command may still be rejected by Core",
+    "Bootstrapper does not send runtime or trading commands",
+    "UNREACHABLE never implies STOPPED",
+    "A stopped Core cannot acknowledge ENTER_MAINTENANCE_MODE",
+    "EXHAUSTED does not start Core without operator action",
+    "GUI crash does not change Core supervision restart state",
+    "Tray restart does not change Core supervision restart state",
+    "implementation must not interpret applicability as a free Cartesian product",
+    "missing matching state_case means intent is forbidden and fail-closed",
+    "for one combination of core lifecycle pair, reachability, Tray health, and required predicates at most one state_case may match per intent",
+    "more than one matching state_case is a contract error, not a priority mechanism",
+    "state_cases do not use first match wins",
+    "CRASHED + SCHEDULED is not equivalent to durable stopped",
+    "STARTING + IN_PROGRESS is supervised restart and is not equivalent to ordinary startup or durable stopped",
+    "lifecycle applicability is determined by exactly one matching state_case, while final intent executability requires all global role, authentication, authorization, trigger and Core gates",
+    "Core IPC REACHABLE requires CORE_HANDSHAKE and CONFIRMED_CURRENT",
+    "CORE_HANDSHAKE with Core IPC UNREACHABLE is invalid",
+    "Core-mutating commands use only REACHABLE CORE_HANDSHAKE CONFIRMED_CURRENT state cases",
+    "ordinary CLOSE_DESKTOP_SHELL cannot close a pending restart without a confirmed running TrayAgent"
+  ],
+  "legacy_conflicts": [
+    "Existing Desktop RuntimeService lives inside GUI process and conflicts with future CoreHost ownership",
+    "UiGrpcBridge name can be misleading; it is not currently an interprocess Core transport proof",
+    "Legacy daemon/gRPC architecture documents are source material only",
+    "Tray/background/autostart are not complete implementation in current baseline"
+  ],
+  "evidence_paths": [
+    "CryptoHunter.spec",
+    "ui/pyside_app/__main__.py",
+    "ui/pyside_app/app.py",
+    "ui/pyside_app/qml_bridge.py",
+    "ui/pyside_app/controllers/ui_grpc_bridge.py",
+    "ui/pyside_app/controllers/ui_runtime_state.py",
+    "ui/backend/runtime_service.py",
+    "ui/backend/grpc_decision_stream_client.py",
+    "bot_core/api/server.py",
+    "bot_core/cloud/service.py",
+    "bot_core/runtime/frontend.py",
+    "bot_core/runtime/cloud_client.py",
+    "bot_core/generated/trading_pb2_grpc.py",
+    "proto/trading.proto",
+    "scripts/run_trading_stub_server.py",
+    "docs/architecture/desktop_shell_plan.md",
+    "docs/architecture/phase1_foundation.md",
+    "docs/architecture/cryptohunter_product_architecture/current_state_inventory.md",
+    "docs/architecture/cryptohunter_product_architecture/current_state_inventory.json",
+    "docs/architecture/cryptohunter_product_architecture/canonical_domain_vocabulary.md",
+    "docs/architecture/cryptohunter_product_architecture/canonical_domain_vocabulary.json",
+    "scripts/windows_build_probe.py",
+    "tests/ui_pyside/test_source_smoke.py",
+    "docs/architecture/cryptohunter_product_architecture/README.md"
+  ],
+  "unresolved_questions": [
+    "Exact open-order shutdown policies in M0.5/M0.9/M0.10",
+    "M0.9 operator authorization UX and command risk levels",
+    "Future Windows Service secure store, identity and ACL contract",
+    "Concrete named-pipe/certificate transport design"
+  ],
+  "startup_readiness_states": [
+    {
+      "name": "SETUP_REQUIRED",
+      "description": "First-run wizard incomplete.",
+      "rules": [
+        "Core runs only in limited control-plane/readiness mode",
+        "no private exchange connections",
+        "no exchange-secret loading",
+        "no strategies",
+        "no order entry",
+        "DesktopShell opens wizard"
+      ]
+    },
+    {
+      "name": "CREDENTIALS_OPTIONAL",
+      "description": "Credentials are optional for Paper but required by Testnet/private exchanges.",
+      "rules": [
+        "Paper may run without exchange accounts",
+        "Testnet requires configured ExchangeAccount and credential reference"
+      ]
+    },
+    {
+      "name": "RECONCILIATION_REQUIRED",
+      "description": "Reconciliation gate has not passed.",
+      "rules": [
+        "strategies are not resumed"
+      ]
+    },
+    {
+      "name": "OPERATOR_ACTION_REQUIRED",
+      "description": "Operator intervention required.",
+      "rules": [
+        "crash loop, integrity problem, missing authorization or critical migration may cause this state"
+      ]
+    },
+    {
+      "name": "READY",
+      "description": "All required gates passed.",
+      "rules": [
+        "runtime may proceed according to policy"
+      ]
+    },
+    {
+      "name": "BLOCKED",
+      "description": "Trading runtime startup is forbidden.",
+      "rules": [
+        "diagnostics may remain available"
+      ]
+    }
+  ],
+  "autostart_policy": {
+    "start_core_on_logon": {
+      "default_enabled": true,
+      "activation_conditions": [
+        "wizard_completed"
+      ],
+      "description": "Start Core on Windows logon only after setup wizard completion."
+    },
+    "start_tray_on_logon": {
+      "default_enabled": true,
+      "activation_conditions": [
+        "windows_user_logon"
+      ],
+      "description": "Start TrayAgent on Windows logon."
+    },
+    "open_desktop_shell_on_logon": {
+      "default_enabled": false,
+      "activation_conditions": [
+        "user_preference_open_shell_on_logon"
+      ],
+      "description": "Do not open full DesktopShell on logon by default."
+    },
+    "show_hud_on_logon": {
+      "default_enabled": false,
+      "activation_conditions": [
+        "user_preference_show_hud_on_logon",
+        "tray_agent_available"
+      ],
+      "description": "Follow user preference; default is false and HUD requires TrayAgent."
+    },
+    "resume_runtime_after_reconciliation": {
+      "default_enabled": false,
+      "user_choice_required": true,
+      "activation_conditions": [
+        "reconciliation_passed",
+        "execution_lease_active",
+        "capability_allowed",
+        "policy_allowed",
+        "kill_switch_not_triggered"
+      ],
+      "description": "Separate explicit preference; not implied by Core autostart."
+    },
+    "invariants": [
+      "autostart Core does not imply automatic strategy resume",
+      "resume requires reconciliation, lease, capability, policy and non-triggered kill switch",
+      "HUD requires TrayAgent",
+      "open DesktopShell is not required for Core operation",
+      "before wizard completion autostart does not start trading"
+    ]
+  },
+  "external_event_sources": [
+    "operating_system",
+    "windows_session_manager",
+    "future_windows_service_manager"
+  ],
+  "desktop_window_states": [
+    "VISIBLE",
+    "HIDDEN",
+    "CLOSED"
+  ],
+  "operator_interface_authentication_states": [
+    "LOCKED",
+    "AUTHENTICATED"
+  ],
+  "supervision_restart_states": [
+    "NONE",
+    "SCHEDULED",
+    "IN_PROGRESS",
+    "EXHAUSTED"
+  ],
+  "valid_core_lifecycle_pairs": [
+    {
+      "pair_id": "not_started",
+      "core_process_health_state": "NOT_STARTED",
+      "core_supervision_restart_state": "NONE",
+      "description": "Core process is not started and has no supervised restart pending."
+    },
+    {
+      "pair_id": "ordinary_starting",
+      "core_process_health_state": "STARTING",
+      "core_supervision_restart_state": "NONE",
+      "description": "Normal user/session startup is in progress."
+    },
+    {
+      "pair_id": "supervised_restart_in_progress",
+      "core_process_health_state": "STARTING",
+      "core_supervision_restart_state": "IN_PROGRESS",
+      "description": "Supervisor is actively starting Core after a crash."
+    },
+    {
+      "pair_id": "healthy",
+      "core_process_health_state": "HEALTHY",
+      "core_supervision_restart_state": "NONE",
+      "description": "Core is healthy with no restart pending."
+    },
+    {
+      "pair_id": "degraded",
+      "core_process_health_state": "DEGRADED",
+      "core_supervision_restart_state": "NONE",
+      "description": "Core is degraded but running with no restart pending."
+    },
+    {
+      "pair_id": "stopping",
+      "core_process_health_state": "STOPPING",
+      "core_supervision_restart_state": "NONE",
+      "description": "Core is stopping under normal lifecycle."
+    },
+    {
+      "pair_id": "stopped",
+      "core_process_health_state": "STOPPED",
+      "core_supervision_restart_state": "NONE",
+      "description": "Core is stopped with no restart pending."
+    },
+    {
+      "pair_id": "crashed_unscheduled",
+      "core_process_health_state": "CRASHED",
+      "core_supervision_restart_state": "NONE",
+      "description": "Core has crashed and no restart has been scheduled yet."
+    },
+    {
+      "pair_id": "crashed_restart_scheduled",
+      "core_process_health_state": "CRASHED",
+      "core_supervision_restart_state": "SCHEDULED",
+      "description": "Core has crashed and restart is scheduled after backoff."
+    },
+    {
+      "pair_id": "crashed_restart_exhausted",
+      "core_process_health_state": "CRASHED",
+      "core_supervision_restart_state": "EXHAUSTED",
+      "description": "Core has crashed and restart attempts are exhausted; operator action is required."
+    }
+  ],
+  "state_predicates": [
+    {
+      "predicate_id": "NO_ACTIVE_RUNTIME_CONFIRMED",
+      "description": "Independent process-lock/descriptor proof confirms no active runtime; cached STOPPED alone is insufficient when reachability is UNREACHABLE."
+    },
+    {
+      "predicate_id": "ACTIVE_RUNTIME_PRESENT",
+      "description": "Core runtime is known to be active."
+    },
+    {
+      "predicate_id": "RUNTIME_ACTIVITY_UNKNOWN",
+      "description": "Runtime activity is unknown, typically after IPC loss or stale observation."
+    },
+    {
+      "predicate_id": "TRAY_PROCESS_CONFIRMED_RUNNING",
+      "description": "TrayAgent process is confirmed running and able to present status."
+    },
+    {
+      "predicate_id": "SUPERVISED_RESTART_PENDING",
+      "description": "Supervisor has scheduled or is performing a Core restart."
+    },
+    {
+      "predicate_id": "CORE_STATE_OBSERVATION_STALE",
+      "description": "Observed Core state may be stale and cannot be used as current truth."
+    }
+  ],
+  "core_ipc_reachability_states": [
+    "REACHABLE",
+    "UNREACHABLE"
+  ],
+  "core_state_observation_sources": [
+    "CORE_HANDSHAKE",
+    "PROCESS_LOCK",
+    "CONNECTION_DESCRIPTOR",
+    "TRAY_SUPERVISOR",
+    "CACHED_SNAPSHOT",
+    "NONE"
+  ],
+  "core_state_confidence_states": [
+    "CONFIRMED_CURRENT",
+    "STALE",
+    "UNKNOWN"
+  ],
+  "intent_evaluation_pipeline": [
+    {
+      "order": 1,
+      "step_id": "validate_trigger_kind_and_event_source",
+      "applies_to_routes": [
+        "LOCAL_SHELL_ACTION",
+        "CORE_COMMAND",
+        "OPERATING_SYSTEM_EVENT"
+      ]
+    },
+    {
+      "order": 2,
+      "step_id": "validate_client_role",
+      "applies_to_routes": [
+        "LOCAL_SHELL_ACTION",
+        "CORE_COMMAND"
+      ]
+    },
+    {
+      "order": 3,
+      "step_id": "validate_operator_interface_authentication",
+      "applies_to_routes": [
+        "LOCAL_SHELL_ACTION",
+        "CORE_COMMAND"
+      ]
+    },
+    {
+      "order": 4,
+      "step_id": "validate_command_authorization_context",
+      "applies_to_routes": [
+        "CORE_COMMAND"
+      ]
+    },
+    {
+      "order": 5,
+      "step_id": "validate_required_core_ipc_reachability",
+      "applies_to_routes": [
+        "CORE_COMMAND"
+      ]
+    },
+    {
+      "order": 6,
+      "step_id": "match_exactly_one_state_case",
+      "applies_to_routes": [
+        "LOCAL_SHELL_ACTION",
+        "CORE_COMMAND",
+        "OPERATING_SYSTEM_EVENT"
+      ]
+    },
+    {
+      "order": 7,
+      "step_id": "require_operator_acknowledgement_if_needed",
+      "applies_to_routes": [
+        "LOCAL_SHELL_ACTION",
+        "CORE_COMMAND"
+      ]
+    },
+    {
+      "order": 8,
+      "step_id": "require_secondary_confirmation_if_needed",
+      "applies_to_routes": [
+        "LOCAL_SHELL_ACTION",
+        "CORE_COMMAND"
+      ]
+    },
+    {
+      "order": 9,
+      "step_id": "submit_versioned_command_to_core",
+      "applies_to_routes": [
+        "CORE_COMMAND"
+      ]
+    },
+    {
+      "order": 10,
+      "step_id": "core_revalidates_execution_authorization",
+      "applies_to_routes": [
+        "CORE_COMMAND"
+      ]
+    },
+    {
+      "order": 11,
+      "step_id": "accepted_or_rejected_result_is_audited",
+      "applies_to_routes": [
+        "CORE_COMMAND",
+        "OPERATING_SYSTEM_EVENT",
+        "MAINTENANCE_HANDOFF"
+      ]
+    }
+  ],
+  "intent_evaluation_rules": [
+    "state_case determines lifecycle applicability, not full permission to execute",
+    "allowed true does not bypass client role validation",
+    "allowed true does not bypass operator authentication",
+    "allowed true does not bypass authorization context",
+    "zero or multiple matching state_cases means reject",
+    "Core is the final authority",
+    "UI success is shown only after Core acknowledgement"
+  ],
+  "state_predicate_constraints": {
+    "mutually_exclusive_groups": [
+      [
+        "NO_ACTIVE_RUNTIME_CONFIRMED",
+        "ACTIVE_RUNTIME_PRESENT",
+        "RUNTIME_ACTIVITY_UNKNOWN"
+      ]
+    ],
+    "implications": [
+      {
+        "predicate": "TRAY_PROCESS_CONFIRMED_RUNNING",
+        "requires_tray_process_health_states": [
+          "HEALTHY",
+          "DEGRADED"
+        ]
+      },
+      {
+        "predicate": "SUPERVISED_RESTART_PENDING",
+        "requires_core_lifecycle_pair_ids": [
+          "crashed_restart_scheduled",
+          "supervised_restart_in_progress"
+        ]
+      },
+      {
+        "predicate": "NO_ACTIVE_RUNTIME_CONFIRMED",
+        "requires_core_lifecycle_pair_ids": [
+          "not_started",
+          "stopped"
+        ],
+        "requires_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "requires_core_state_observation_sources": [
+          "PROCESS_LOCK",
+          "CONNECTION_DESCRIPTOR",
+          "TRAY_SUPERVISOR"
+        ]
+      },
+      {
+        "predicate": "ACTIVE_RUNTIME_PRESENT",
+        "forbidden_core_lifecycle_pair_ids": [
+          "not_started",
+          "stopped",
+          "crashed_unscheduled",
+          "crashed_restart_scheduled",
+          "crashed_restart_exhausted"
+        ]
+      },
+      {
+        "predicate": "CORE_STATE_OBSERVATION_STALE",
+        "cannot_alone_confirm": [
+          "NO_ACTIVE_RUNTIME_CONFIRMED"
+        ]
+      }
+    ],
+    "invalid_combinations": [
+      {
+        "core_lifecycle_pair_ids": [
+          "not_started",
+          "stopped",
+          "crashed_unscheduled",
+          "crashed_restart_scheduled",
+          "crashed_restart_exhausted"
+        ],
+        "core_ipc_reachability_states": [
+          "REACHABLE"
+        ],
+        "reason": "Stopped, not-started and crashed Core do not have a confirmed reachable Core IPC endpoint."
+      },
+      {
+        "core_state_observation_sources": [
+          "CACHED_SNAPSHOT"
+        ],
+        "core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "reason": "Cached snapshot cannot provide CONFIRMED_CURRENT after IPC loss."
+      }
+    ]
+  },
+  "state_axis_consistency_constraints": {
+    "rules": [
+      {
+        "rule_id": "core_ipc_reachable_requires_handshake_current",
+        "when": {
+          "core_ipc_reachability_state": "REACHABLE"
+        },
+        "requires_core_state_observation_sources": [
+          "CORE_HANDSHAKE"
+        ],
+        "requires_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ],
+        "forbidden_core_state_observation_sources": [
+          "PROCESS_LOCK",
+          "CONNECTION_DESCRIPTOR",
+          "TRAY_SUPERVISOR",
+          "CACHED_SNAPSHOT",
+          "NONE"
+        ]
+      },
+      {
+        "rule_id": "core_handshake_requires_reachable_current",
+        "when": {
+          "core_state_observation_source": "CORE_HANDSHAKE"
+        },
+        "requires_core_ipc_reachability_states": [
+          "REACHABLE"
+        ],
+        "requires_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      {
+        "rule_id": "core_ipc_unreachable_forbids_current_handshake",
+        "when": {
+          "core_ipc_reachability_state": "UNREACHABLE"
+        },
+        "forbidden_core_state_observation_sources": [
+          "CORE_HANDSHAKE"
+        ]
+      },
+      {
+        "rule_id": "tray_supervisor_requires_running_tray_and_predicate",
+        "when": {
+          "core_state_observation_source": "TRAY_SUPERVISOR"
+        },
+        "requires_tray_process_health_states": [
+          "HEALTHY",
+          "DEGRADED"
+        ],
+        "requires_predicates": [
+          "TRAY_PROCESS_CONFIRMED_RUNNING"
+        ],
+        "forbidden_tray_process_health_states": [
+          "NOT_STARTED",
+          "STARTING",
+          "STOPPING",
+          "STOPPED",
+          "CRASHED"
+        ]
+      },
+      {
+        "rule_id": "cached_snapshot_never_current",
+        "when": {
+          "core_state_observation_source": "CACHED_SNAPSHOT"
+        },
+        "allowed_core_state_confidence_states": [
+          "STALE",
+          "UNKNOWN"
+        ],
+        "forbidden_core_state_confidence_states": [
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      {
+        "rule_id": "none_source_requires_unknown",
+        "when": {
+          "core_state_observation_source": "NONE"
+        },
+        "requires_core_state_confidence_states": [
+          "UNKNOWN"
+        ],
+        "forbidden_core_state_confidence_states": [
+          "STALE",
+          "CONFIRMED_CURRENT"
+        ]
+      },
+      {
+        "rule_id": "process_lock_descriptor_are_unreachable_independent_proofs",
+        "when": {
+          "core_state_observation_source": [
+            "PROCESS_LOCK",
+            "CONNECTION_DESCRIPTOR"
+          ]
+        },
+        "requires_core_ipc_reachability_states": [
+          "UNREACHABLE"
+        ],
+        "confirmed_current_requires": [
+          "validated PID",
+          "validated start_nonce",
+          "validated process lock or descriptor freshness"
+        ]
+      }
+    ]
+  },
+  "intent_evaluation_routes": [
+    {
+      "route_id": "LOCAL_SHELL_ACTION",
+      "description": "Local DesktopShell/Tray lifecycle action; validates trigger/client role, uses intent-specific auth only, records local audit, and does not submit a Core command unless later contract explicitly adds one.",
+      "pipeline_steps": [
+        "validate_trigger_kind_and_event_source",
+        "validate_client_role",
+        "validate_operator_interface_authentication",
+        "match_exactly_one_state_case",
+        "require_operator_acknowledgement_if_needed",
+        "require_secondary_confirmation_if_needed",
+        "record_local_audit_event"
+      ]
+    },
+    {
+      "route_id": "CORE_COMMAND",
+      "description": "Versioned command to reachable Core; requires role, operator authentication, authorization context, Core IPC, Core revalidation, acknowledgement and audit.",
+      "pipeline_steps": [
+        "validate_trigger_kind_and_event_source",
+        "validate_client_role",
+        "validate_operator_interface_authentication",
+        "validate_command_authorization_context",
+        "validate_required_core_ipc_reachability",
+        "match_exactly_one_state_case",
+        "require_operator_acknowledgement_if_needed",
+        "require_secondary_confirmation_if_needed",
+        "submit_versioned_command_to_core",
+        "core_revalidates_execution_authorization",
+        "accepted_or_rejected_result_is_audited"
+      ]
+    },
+    {
+      "route_id": "OPERATING_SYSTEM_EVENT",
+      "description": "Trusted OS event; no client role/operator auth/command auth required; Core notification/checkpoint is best-effort only if Core IPC is available; result is audited.",
+      "pipeline_steps": [
+        "validate_trigger_kind_and_event_source",
+        "match_exactly_one_state_case",
+        "best_effort_core_notification_if_ipc_available",
+        "accepted_or_rejected_result_is_audited"
+      ]
+    },
+    {
+      "route_id": "MAINTENANCE_HANDOFF",
+      "description": "Bootstrapper stage after Core-issued MaintenanceAuthorization; cannot bypass prior operator/Core authorization.",
+      "pipeline_steps": [
+        "validate_maintenance_authorization_handoff",
+        "perform_authorized_update_or_restart_step",
+        "accepted_or_rejected_result_is_audited"
+      ]
+    }
+  ]
+}

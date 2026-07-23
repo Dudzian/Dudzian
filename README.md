@@ -40,6 +40,7 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - Walidacja katalogu: `python scripts/validate_marketplace_presets.py --presets config/marketplace/presets --min-count 15`
 - [Benchmark Stage6 vs CryptoHopper](docs/benchmark/cryptohopper_comparison.md)
 
+
 ## Alerty SLA feedu i HyperCare
 - Progi SLA (`latencja p95`, reconnecty, downtime) konfigurujesz w `observability.feed_sla` w `config/runtime.yaml`. Domyślne wartości (2.5/5 s, 3/6 reconnectów, 30/120 s downtime) są zgodne z runbookiem HyperCare i mogą być nadpisane zmiennymi środowiskowymi `BOT_CORE_UI_FEED_*`.
 - Desktopowy `RuntimeService` korzysta z `UiTelemetryAlertSink`, aby każdą zmianę stanu (`warning`, `critical`, `recovered`) wysłać do kanałów HyperCare (Telegram/Signal/e-mail) oraz zapisać w `logs/ui_telemetry_alerts.jsonl`.
