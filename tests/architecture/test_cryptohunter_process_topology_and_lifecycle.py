@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
+from collections import Counter
 from itertools import combinations
 from pathlib import Path
 
@@ -240,7 +242,11 @@ def test_shutdown_intents_have_complete_machine_contract() -> None:
         predicates = {predicate["predicate_id"] for predicate in data["state_predicates"]}
         case_ids = set()
         for case in intent["state_cases"]:
-            assert {"case_id", "core_lifecycle_pair_ids", "core_ipc_reachability_states", "core_state_observation_sources", "core_state_confidence_states", "tray_process_health_states", "allowed", "requires_operator_acknowledgement", "requires_secondary_confirmation", "required_predicates", "forbidden_predicates", "reason"} <= case.keys()
+            assert {"case_id", "case_kind", "core_lifecycle_pair_ids", "core_ipc_reachability_states", "core_state_observation_sources", "core_state_confidence_states", "tray_process_health_states", "allowed", "requires_operator_acknowledgement", "requires_secondary_confirmation", "required_predicates", "forbidden_predicates", "reason"} <= case.keys()
+            assert case["case_kind"] in {"normal", "forbidden", "forbidden_catch_all"}
+            assert (case["case_kind"] == "normal") == case["allowed"]
+            if case["case_kind"] in {"forbidden", "forbidden_catch_all"}:
+                assert case["allowed"] is False
             assert case["case_id"] not in case_ids
             case_ids.add(case["case_id"])
             assert set(case["core_lifecycle_pair_ids"]) <= pair_ids
@@ -496,13 +502,13 @@ def test_shutdown_intent_state_cases_are_authoritative() -> None:
     assert "more than one matching state_case is a contract error, not a priority mechanism" in invariants
     intents = intents_by_name(data)
     close_cases = {case["case_id"]: case for case in intents["CLOSE_DESKTOP_SHELL"]["state_cases"]}
-    assert {"silent_confirmed_inactive", "unreachable_unknown_core", "crashed_unscheduled", "restarting_with_tray_available", "restarting_with_tray_available_ipc_unreachable", "restarting_with_tray_available_ipc_reachable", "restarting_without_tray", "restarting_without_tray_scheduled", "restart_exhausted", "active_reachable_core"} <= set(close_cases)
+    assert {"silent_confirmed_inactive", "unreachable_stale_snapshot", "unreachable_no_observation", "crashed_unscheduled", "restarting_with_tray_available_independent_current", "restarting_with_tray_available_tray_supervisor", "restarting_with_tray_available_ipc_unreachable", "restarting_with_tray_available_ipc_reachable", "restarting_without_tray", "restarting_without_tray_scheduled", "restart_exhausted", "active_reachable_core"} <= set(close_cases)
     assert close_cases["silent_confirmed_inactive"]["core_lifecycle_pair_ids"] == ["not_started", "stopped"]
-    assert close_cases["silent_confirmed_inactive"]["required_predicates"] == ["NO_ACTIVE_RUNTIME_CONFIRMED"]
-    assert close_cases["unreachable_unknown_core"]["requires_operator_acknowledgement"] is True
-    assert "RUNTIME_ACTIVITY_UNKNOWN" in close_cases["unreachable_unknown_core"]["required_predicates"]
-    assert close_cases["restarting_with_tray_available"]["core_lifecycle_pair_ids"] == ["crashed_restart_scheduled"]
-    assert close_cases["restarting_with_tray_available"]["allowed"] is False
+    assert set(close_cases["silent_confirmed_inactive"]["required_predicates"]) == {"NO_ACTIVE_RUNTIME_CONFIRMED", "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"}
+    assert close_cases["unreachable_stale_snapshot"]["requires_operator_acknowledgement"] is True
+    assert "RUNTIME_ACTIVITY_UNKNOWN" in close_cases["unreachable_stale_snapshot"]["required_predicates"]
+    assert close_cases["restarting_with_tray_available_independent_current"]["core_lifecycle_pair_ids"] == ["crashed_restart_scheduled"]
+    assert close_cases["restarting_with_tray_available_independent_current"]["allowed"] is False
     assert close_cases["restarting_with_tray_available_ipc_unreachable"]["core_lifecycle_pair_ids"] == ["supervised_restart_in_progress"]
     assert close_cases["restarting_with_tray_available_ipc_reachable"]["core_ipc_reachability_states"] == ["REACHABLE"]
     assert close_cases["restarting_without_tray"]["allowed"] is False
@@ -513,7 +519,7 @@ def test_shutdown_intent_state_cases_are_authoritative() -> None:
     assert "Core and Tray remain active" not in hide["description"]
     assert "Core remains active" not in hide["invariants"]
     hide_cases = {case["case_id"]: case for case in hide["state_cases"]}
-    assert {"active_reachable_core", "unreachable_core", "crashed_unscheduled", "crashed_restart_scheduled", "restart_in_progress_ipc_unreachable", "restart_in_progress_ipc_reachable", "restart_exhausted", "tray_unavailable"} <= set(hide_cases)
+    assert {"active_reachable_core", "unreachable_stale_snapshot", "unreachable_no_observation", "crashed_unscheduled_independent_current", "crashed_unscheduled_tray_supervisor", "crashed_restart_scheduled_independent_current", "crashed_restart_scheduled_tray_supervisor", "restart_in_progress_ipc_unreachable", "restart_in_progress_ipc_reachable", "restart_exhausted_independent_current", "restart_exhausted_tray_supervisor", "tray_unavailable_reachable_core", "tray_unavailable_independent_current", "tray_unavailable_cached_stale", "tray_unavailable_no_observation"} <= set(hide_cases)
     assert hide_cases["active_reachable_core"]["core_lifecycle_pair_ids"] == ["ordinary_starting", "healthy", "degraded", "stopping"]
     assert hide_cases["restart_in_progress_ipc_unreachable"]["core_lifecycle_pair_ids"] == ["supervised_restart_in_progress"]
     assert hide_cases["restart_in_progress_ipc_unreachable"]["core_ipc_reachability_states"] == ["UNREACHABLE"]
@@ -522,9 +528,9 @@ def test_shutdown_intent_state_cases_are_authoritative() -> None:
     assert hide_cases["restart_in_progress_ipc_reachable"]["core_state_observation_sources"] == ["CORE_HANDSHAKE"]
     assert hide_cases["restart_in_progress_ipc_reachable"]["requires_operator_acknowledgement"] is True
     assert "TRAY_PROCESS_CONFIRMED_RUNNING" in hide_cases["restart_in_progress_ipc_reachable"]["required_predicates"]
-    assert hide_cases["restart_exhausted"]["core_lifecycle_pair_ids"] == ["crashed_restart_exhausted"]
-    assert "OPERATOR_ACTION_REQUIRED" in hide_cases["restart_exhausted"]["reason"]
-    assert hide_cases["tray_unavailable"]["allowed"] is False
+    assert hide_cases["restart_exhausted_independent_current"]["core_lifecycle_pair_ids"] == ["crashed_restart_exhausted"]
+    assert "OPERATOR_ACTION_REQUIRED" in hide_cases["restart_exhausted_independent_current"]["reason"]
+    assert hide_cases["tray_unavailable_reachable_core"]["allowed"] is False
 
     for name in ["STOP_STRATEGIES", "PAUSE_STRATEGIES", "STOP_CORE_GRACEFULLY", "TRIGGER_KILL_SWITCH", "ENTER_MAINTENANCE_MODE"]:
         cases = intents[name]["state_cases"]
@@ -535,11 +541,11 @@ def test_shutdown_intent_state_cases_are_authoritative() -> None:
         assert all(case["core_state_confidence_states"] == ["CONFIRMED_CURRENT"] for case in cases), name
 
     exit_cases = {case["case_id"]: case for case in intents["EXIT_TRAY_AGENT"]["state_cases"]}
-    assert {"inactive_core", "unreachable_core", "active_core", "crashed_unscheduled", "crashed_restart_scheduled", "restart_in_progress_ipc_unreachable", "restart_in_progress_ipc_reachable", "restart_exhausted"} <= set(exit_cases)
+    assert {"inactive_core", "unreachable_stale_snapshot", "unreachable_no_observation", "active_core", "crashed_unscheduled", "crashed_restart_scheduled", "restart_in_progress_ipc_unreachable", "restart_in_progress_ipc_reachable", "restart_exhausted"} <= set(exit_cases)
     assert exit_cases["inactive_core"]["requires_secondary_confirmation"] is False
     assert exit_cases["inactive_core"]["core_ipc_reachability_states"] == ["UNREACHABLE"]
-    assert exit_cases["unreachable_core"]["requires_secondary_confirmation"] is True
-    assert "NO_ACTIVE_RUNTIME_CONFIRMED" in exit_cases["unreachable_core"]["forbidden_predicates"]
+    assert exit_cases["unreachable_stale_snapshot"]["requires_secondary_confirmation"] is True
+    assert "NO_ACTIVE_RUNTIME_CONFIRMED" in exit_cases["unreachable_stale_snapshot"]["forbidden_predicates"]
 
 
 def test_restart_policy_supervision_state_transitions_and_readiness_mapping() -> None:
@@ -607,50 +613,176 @@ def _powerset(items: list[str]) -> list[set[str]]:
     return [set(combo) for size in range(len(items) + 1) for combo in combinations(items, size)]
 
 
-def _semantically_valid_combination(
-    data: dict,
-    pair_id: str,
-    ipc_reachability: str,
-    observation_source: str,
-    confidence: str,
-    tray_health: str,
-    predicates: set[str],
-) -> bool:
-    if ipc_reachability == "REACHABLE" and (observation_source != "CORE_HANDSHAKE" or confidence != "CONFIRMED_CURRENT"):
-        return False
-    if observation_source == "CORE_HANDSHAKE" and (ipc_reachability != "REACHABLE" or confidence != "CONFIRMED_CURRENT"):
-        return False
-    if ipc_reachability == "UNREACHABLE" and observation_source == "CORE_HANDSHAKE":
-        return False
-    if observation_source == "TRAY_SUPERVISOR" and (
-        tray_health not in {"HEALTHY", "DEGRADED"} or "TRAY_PROCESS_CONFIRMED_RUNNING" not in predicates
-    ):
-        return False
-    if observation_source == "CACHED_SNAPSHOT" and confidence == "CONFIRMED_CURRENT":
-        return False
-    if observation_source == "NONE" and confidence != "UNKNOWN":
-        return False
-    if observation_source in {"PROCESS_LOCK", "CONNECTION_DESCRIPTOR"} and ipc_reachability == "REACHABLE":
-        return False
+
+RULE_FIELDS = {
+    "rule_id", "when", "requires_core_ipc_reachability_states", "forbidden_core_ipc_reachability_states",
+    "requires_core_state_observation_sources", "forbidden_core_state_observation_sources",
+    "allowed_core_state_confidence_states", "requires_core_state_confidence_states",
+    "forbidden_core_state_confidence_states", "requires_tray_process_health_states",
+    "forbidden_tray_process_health_states", "requires_core_lifecycle_pair_ids",
+    "forbidden_core_lifecycle_pair_ids", "requires_predicates", "forbidden_predicates",
+}
+CONTEXT_FIELD_BY_AXIS = {
+    "core_lifecycle_pair_id": "pair_id",
+    "core_ipc_reachability_state": "ipc_reachability",
+    "core_state_observation_source": "observation_source",
+    "core_state_confidence_state": "confidence",
+    "tray_process_health_state": "tray_health",
+}
+RULE_FIELD_TO_CONTEXT = {
+    "core_ipc_reachability_states": "ipc_reachability",
+    "core_state_observation_sources": "observation_source",
+    "core_state_confidence_states": "confidence",
+    "tray_process_health_states": "tray_health",
+    "core_lifecycle_pair_ids": "pair_id",
+}
+
+
+def _context(pair_id: str, ipc_reachability: str, observation_source: str, confidence: str, tray_health: str, predicates: set[str]) -> dict:
+    return {
+        "pair_id": pair_id,
+        "ipc_reachability": ipc_reachability,
+        "observation_source": observation_source,
+        "confidence": confidence,
+        "tray_health": tray_health,
+        "predicates": predicates,
+    }
+
+
+_VALIDATED_CONTRACT_IDS: set[int] = set()
+
+def _validate_constraint_references(data: dict) -> None:
+    if id(data) in _VALIDATED_CONTRACT_IDS:
+        return
+    pair_ids = {pair["pair_id"] for pair in data["valid_core_lifecycle_pairs"]}
+    predicates = {predicate["predicate_id"] for predicate in data["state_predicates"]}
+    observation = set(data["core_state_observation_sources"])
+    confidence = set(data["core_state_confidence_states"])
+    reachability = set(data["core_ipc_reachability_states"])
+    tray = set(data["process_health_states"])
+    allowed_values = {
+        "core_lifecycle_pair_ids": pair_ids,
+        "predicates": predicates,
+        "core_state_observation_sources": observation,
+        "core_state_confidence_states": confidence,
+        "core_ipc_reachability_states": reachability,
+        "tray_process_health_states": tray,
+    }
+    seen_rule_ids: set[str] = set()
+    for rule in data["state_axis_consistency_constraints"]["rules"]:
+        assert set(rule) <= RULE_FIELDS, rule
+        assert isinstance(rule["rule_id"], str) and rule["rule_id"]
+        assert rule["rule_id"] not in seen_rule_ids
+        seen_rule_ids.add(rule["rule_id"])
+        when = rule.get("when", {})
+        assert isinstance(when, dict)
+        when_allowed_values = {
+            "core_lifecycle_pair_id": pair_ids,
+            "core_ipc_reachability_state": reachability,
+            "core_state_observation_source": observation,
+            "core_state_confidence_state": confidence,
+            "tray_process_health_state": tray,
+            "predicate": predicates,
+        }
+        for axis, value in when.items():
+            assert axis in CONTEXT_FIELD_BY_AXIS or axis == "predicate", (rule["rule_id"], axis)
+            assert isinstance(value, str), (rule["rule_id"], axis, value)
+            assert value in when_allowed_values[axis], (rule["rule_id"], axis, value)
+        for field, values in rule.items():
+            if field in {"rule_id", "when"}:
+                continue
+            assert isinstance(values, list) and all(isinstance(v, str) for v in values), (rule["rule_id"], field)
+            suffix = field.replace("requires_", "").replace("forbidden_", "").replace("allowed_", "")
+            assert suffix in allowed_values, (rule["rule_id"], field)
+            assert set(values) <= allowed_values[suffix], (rule["rule_id"], field, values)
     constraints = data["state_predicate_constraints"]
+    for mapping_name in ["required_predicates_by_lifecycle_pair", "forbidden_predicates_by_lifecycle_pair"]:
+        for pair_id, values in constraints[mapping_name].items():
+            assert pair_id in pair_ids
+            assert isinstance(values, list) and set(values) <= predicates
+    proof = data["independent_observation_proof_contract"]
+    assert set(proof) == {"predicate", "required_checks", "allowed_observation_sources", "forbidden_observation_sources"}
+    assert proof["predicate"] in predicates
+    assert set(proof["required_checks"]) == {"PID_VALIDATED", "START_NONCE_VALIDATED", "SOURCE_FRESHNESS_VALIDATED", "DEVICE_INSTALLATION_IDENTITY_MATCHED", "STATE_STORE_IDENTITY_MATCHED"}
+    allowed_sources = set(proof["allowed_observation_sources"])
+    forbidden_sources = set(proof["forbidden_observation_sources"])
+    assert allowed_sources <= observation
+    assert forbidden_sources <= observation
+    assert not allowed_sources & forbidden_sources
+    assert allowed_sources | forbidden_sources == observation
+    _VALIDATED_CONTRACT_IDS.add(id(data))
+
+
+def _rule_when_matches(rule: dict, ctx: dict) -> bool:
+    for axis, expected in rule.get("when", {}).items():
+        if axis == "predicate":
+            if expected not in ctx["predicates"]:
+                return False
+        elif ctx[CONTEXT_FIELD_BY_AXIS[axis]] != expected:
+            return False
+    return True
+
+
+def _rule_allows(rule: dict, ctx: dict) -> bool:
+    if not _rule_when_matches(rule, ctx):
+        return True
+    for field, values in rule.items():
+        if field in {"rule_id", "when"}:
+            continue
+        if field in {"requires_predicates"} and not set(values) <= ctx["predicates"]:
+            return False
+        if field in {"forbidden_predicates"} and set(values) & ctx["predicates"]:
+            return False
+        if field.startswith("requires_") and field != "requires_predicates":
+            axis = field.removeprefix("requires_")
+            if ctx[RULE_FIELD_TO_CONTEXT[axis]] not in values:
+                return False
+        if field.startswith("forbidden_") and field != "forbidden_predicates":
+            axis = field.removeprefix("forbidden_")
+            if ctx[RULE_FIELD_TO_CONTEXT[axis]] in values:
+                return False
+        if field.startswith("allowed_"):
+            axis = field.removeprefix("allowed_")
+            if ctx[RULE_FIELD_TO_CONTEXT[axis]] not in values:
+                return False
+    return True
+
+
+def _semantically_valid_combination(data: dict, pair_id: str, ipc_reachability: str, observation_source: str, confidence: str, tray_health: str, predicates: set[str]) -> bool:
+    ctx = _context(pair_id, ipc_reachability, observation_source, confidence, tray_health, predicates)
+    _validate_constraint_references(data)
+    for rule in data["state_axis_consistency_constraints"]["rules"]:
+        if not _rule_allows(rule, ctx):
+            return False
+    constraints = data["state_predicate_constraints"]
+    for pair, required in constraints["required_predicates_by_lifecycle_pair"].items():
+        if pair_id == pair and not set(required) <= predicates:
+            return False
+    for pair, forbidden in constraints["forbidden_predicates_by_lifecycle_pair"].items():
+        if pair_id == pair and set(forbidden) & predicates:
+            return False
+    proof = data["independent_observation_proof_contract"]
+    proof_predicate = proof["predicate"]
+    if proof_predicate in predicates and observation_source in proof["forbidden_observation_sources"]:
+        return False
+    if observation_source in proof["allowed_observation_sources"] and confidence == "CONFIRMED_CURRENT" and proof_predicate not in predicates:
+        return False
     for group in constraints["mutually_exclusive_groups"]:
         if len(set(group) & predicates) > 1:
             return False
-    implications = {item["predicate"]: item for item in constraints["implications"]}
-    if "TRAY_PROCESS_CONFIRMED_RUNNING" in predicates and tray_health not in implications["TRAY_PROCESS_CONFIRMED_RUNNING"]["requires_tray_process_health_states"]:
-        return False
-    if "SUPERVISED_RESTART_PENDING" in predicates and pair_id not in implications["SUPERVISED_RESTART_PENDING"]["requires_core_lifecycle_pair_ids"]:
-        return False
-    if "NO_ACTIVE_RUNTIME_CONFIRMED" in predicates:
-        rule = implications["NO_ACTIVE_RUNTIME_CONFIRMED"]
-        if pair_id not in rule["requires_core_lifecycle_pair_ids"]:
+    for implication in constraints["implications"]:
+        if implication["predicate"] not in predicates:
+            continue
+        if "requires_core_lifecycle_pair_ids" in implication and pair_id not in implication["requires_core_lifecycle_pair_ids"]:
             return False
-        if confidence not in rule["requires_core_state_confidence_states"]:
+        if "forbidden_core_lifecycle_pair_ids" in implication and pair_id in implication["forbidden_core_lifecycle_pair_ids"]:
             return False
-        if observation_source not in rule["requires_core_state_observation_sources"]:
+        if "requires_core_state_confidence_states" in implication and confidence not in implication["requires_core_state_confidence_states"]:
             return False
-    if "ACTIVE_RUNTIME_PRESENT" in predicates and pair_id in implications["ACTIVE_RUNTIME_PRESENT"]["forbidden_core_lifecycle_pair_ids"]:
-        return False
+        if "requires_core_state_observation_sources" in implication and observation_source not in implication["requires_core_state_observation_sources"]:
+            return False
+        if "requires_tray_process_health_states" in implication and tray_health not in implication["requires_tray_process_health_states"]:
+            return False
     for invalid in constraints["invalid_combinations"]:
         pair_matches = "core_lifecycle_pair_ids" not in invalid or pair_id in invalid["core_lifecycle_pair_ids"]
         ipc_matches = "core_ipc_reachability_states" not in invalid or ipc_reachability in invalid["core_ipc_reachability_states"]
@@ -697,9 +829,7 @@ def test_state_cases_are_deterministic_for_enumerated_combinations() -> None:
                                 )
     for intent in data["shutdown_intents"]:
         for case in intent["state_cases"]:
-            is_forbidden_catch_all = case["allowed"] is False and (
-                not case["required_predicates"] or case["forbidden_predicates"]
-            )
+            is_forbidden_catch_all = case["case_kind"] == "forbidden_catch_all"
             assert (intent["name"], case["case_id"]) in witnessed_cases or is_forbidden_catch_all, (intent["name"], case["case_id"])
     assert saw_multi_predicate_case
     assert not _semantically_valid_combination(data, "stopped", "REACHABLE", "CORE_HANDSHAKE", "CONFIRMED_CURRENT", "HEALTHY", set())
@@ -708,28 +838,28 @@ def test_state_cases_are_deterministic_for_enumerated_combinations() -> None:
     stopped_confirmed = [
         case["case_id"]
         for case in close_cases
-        if _case_matches(case, "stopped", "UNREACHABLE", "PROCESS_LOCK", "CONFIRMED_CURRENT", "HEALTHY", {"NO_ACTIVE_RUNTIME_CONFIRMED"})
+        if _case_matches(case, "stopped", "UNREACHABLE", "PROCESS_LOCK", "CONFIRMED_CURRENT", "HEALTHY", {"NO_ACTIVE_RUNTIME_CONFIRMED", "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"})
     ]
     assert stopped_confirmed == ["silent_confirmed_inactive"]
     stopped_stale = [
         case["case_id"]
         for case in close_cases
-        if _case_matches(case, "stopped", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "HEALTHY", {"RUNTIME_ACTIVITY_UNKNOWN"})
+        if _case_matches(case, "stopped", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "HEALTHY", {"RUNTIME_ACTIVITY_UNKNOWN", "CORE_STATE_OBSERVATION_STALE"})
     ]
-    assert stopped_stale == ["unreachable_unknown_core"]
+    assert stopped_stale == ["unreachable_stale_snapshot"]
     exit_cases = intents_by_name(data)["EXIT_TRAY_AGENT"]["state_cases"]
     stopped_unreachable_with_no_active_runtime = [
         case["case_id"]
         for case in exit_cases
-        if _case_matches(case, "stopped", "UNREACHABLE", "PROCESS_LOCK", "CONFIRMED_CURRENT", "HEALTHY", {"NO_ACTIVE_RUNTIME_CONFIRMED"})
+        if _case_matches(case, "stopped", "UNREACHABLE", "PROCESS_LOCK", "CONFIRMED_CURRENT", "HEALTHY", {"NO_ACTIVE_RUNTIME_CONFIRMED", "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"})
     ]
     assert stopped_unreachable_with_no_active_runtime == ["inactive_core"]
     stopped_unreachable_unknown = [
         case["case_id"]
         for case in exit_cases
-        if _case_matches(case, "stopped", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "HEALTHY", {"RUNTIME_ACTIVITY_UNKNOWN"})
+        if _case_matches(case, "stopped", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "HEALTHY", {"RUNTIME_ACTIVITY_UNKNOWN", "CORE_STATE_OBSERVATION_STALE"})
     ]
-    assert stopped_unreachable_unknown == ["unreachable_core"]
+    assert stopped_unreachable_unknown == ["unreachable_stale_snapshot"]
     hide_cases = intents_by_name(data)["HIDE_TO_BACKGROUND"]["state_cases"]
     matches = [
         case
@@ -768,6 +898,305 @@ def test_state_cases_are_deterministic_for_enumerated_combinations() -> None:
                 assert case["required_predicates"] or case["forbidden_predicates"] or (
                     case["core_state_observation_sources"] and case["core_state_confidence_states"]
                 ) or intent["trigger_kind"] == "operating_system_event", (intent["name"], case["case_id"])
+
+
+def test_restart_provenance_and_observation_proof_regressions() -> None:
+    data = load_contract()
+    intents = intents_by_name(data)
+    assert not _semantically_valid_combination(data, "supervised_restart_in_progress", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "STOPPED", {"RUNTIME_ACTIVITY_UNKNOWN", "CORE_STATE_OBSERVATION_STALE"})
+    close_cases = intents["CLOSE_DESKTOP_SHELL"]["state_cases"]
+    assert not any(case["allowed"] and _case_matches(case, "supervised_restart_in_progress", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "STOPPED", {"RUNTIME_ACTIVITY_UNKNOWN", "CORE_STATE_OBSERVATION_STALE"}) for case in close_cases)
+    generic_close = next(case for case in close_cases if case["case_id"] == "unreachable_stale_snapshot")
+    assert not _case_matches(generic_close, "supervised_restart_in_progress", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "STOPPED", {"RUNTIME_ACTIVITY_UNKNOWN", "CORE_STATE_OBSERVATION_STALE"})
+
+    scheduled_without_tray = {"SUPERVISED_RESTART_PENDING", "RUNTIME_ACTIVITY_UNKNOWN", "CORE_STATE_OBSERVATION_STALE"}
+    assert _semantically_valid_combination(data, "crashed_restart_scheduled", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "STOPPED", scheduled_without_tray)
+    matches = [case for case in close_cases if _case_matches(case, "crashed_restart_scheduled", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "STOPPED", scheduled_without_tray)]
+    assert [case["case_id"] for case in matches] == ["restarting_without_tray_scheduled_stale"]
+    assert not any(case["allowed"] for case in matches)
+    assert generic_close["case_id"] not in [case["case_id"] for case in matches]
+
+    assert not _semantically_valid_combination(data, "stopped", "UNREACHABLE", "PROCESS_LOCK", "CONFIRMED_CURRENT", "HEALTHY", {"NO_ACTIVE_RUNTIME_CONFIRMED"})
+    proof_predicates = {"NO_ACTIVE_RUNTIME_CONFIRMED", "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"}
+    assert _semantically_valid_combination(data, "stopped", "UNREACHABLE", "PROCESS_LOCK", "CONFIRMED_CURRENT", "HEALTHY", proof_predicates)
+    proof_matches = [case for case in close_cases if _case_matches(case, "stopped", "UNREACHABLE", "PROCESS_LOCK", "CONFIRMED_CURRENT", "HEALTHY", proof_predicates)]
+    assert [case["case_id"] for case in proof_matches] == ["silent_confirmed_inactive"]
+
+    assert not _semantically_valid_combination(data, "stopped", "UNREACHABLE", "CACHED_SNAPSHOT", "CONFIRMED_CURRENT", "HEALTHY", {"CORE_STATE_OBSERVATION_STALE"})
+    for intent_name, case_id in [("CLOSE_DESKTOP_SHELL", "unreachable_stale_snapshot"), ("CLOSE_DESKTOP_SHELL", "unreachable_no_observation"), ("HIDE_TO_BACKGROUND", "unreachable_stale_snapshot"), ("HIDE_TO_BACKGROUND", "unreachable_no_observation"), ("EXIT_TRAY_AGENT", "unreachable_stale_snapshot"), ("EXIT_TRAY_AGENT", "unreachable_no_observation")]:
+        case = next(case for case in intents[intent_name]["state_cases"] if case["case_id"] == case_id)
+        assert "crashed_restart_scheduled" not in case["core_lifecycle_pair_ids"]
+        assert "supervised_restart_in_progress" not in case["core_lifecycle_pair_ids"]
+    assert not _semantically_valid_combination(data, "stopped", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "HEALTHY", {"INDEPENDENT_OBSERVATION_PROOF_VALIDATED", "CORE_STATE_OBSERVATION_STALE"})
+    assert not _semantically_valid_combination(data, "healthy", "REACHABLE", "CORE_HANDSHAKE", "CONFIRMED_CURRENT", "HEALTHY", {"SUPERVISED_RESTART_PENDING"})
+
+def _matching_witness_predicate_sets(data: dict, case: dict, pair_id: str, reachability: str, observation_source: str, confidence: str, tray_health: str) -> list[set[str]]:
+    predicates = [predicate["predicate_id"] for predicate in data["state_predicates"]]
+    return [
+        active_predicates
+        for active_predicates in _powerset(predicates)
+        if _semantically_valid_combination(data, pair_id, reachability, observation_source, confidence, tray_health, active_predicates)
+        and _case_matches(case, pair_id, reachability, observation_source, confidence, tray_health, active_predicates)
+    ]
+
+
+def test_state_cases_have_no_dead_axis_variants() -> None:
+    data = load_contract()
+    witnessed_cases: set[tuple[str, str]] = set()
+    witnessed_axes: dict[tuple[str, str], dict[str, set[str]]] = {}
+    for intent in data["shutdown_intents"]:
+        for case in intent["state_cases"]:
+            if case["case_kind"] == "forbidden_catch_all":
+                continue
+            key = (intent["name"], case["case_id"])
+            witnessed_axes[key] = {"pairs": set(), "reachability": set(), "observations": set(), "confidence": set(), "tray": set()}
+            for pair_id in case["core_lifecycle_pair_ids"]:
+                for reachability in case["core_ipc_reachability_states"]:
+                    for observation_source in case["core_state_observation_sources"]:
+                        for confidence in case["core_state_confidence_states"]:
+                            for tray_health in case["tray_process_health_states"]:
+                                witnesses = _matching_witness_predicate_sets(data, case, pair_id, reachability, observation_source, confidence, tray_health)
+                                assert witnesses, (intent["name"], case["case_id"], pair_id, reachability, observation_source, confidence, tray_health)
+                                witnessed_cases.add(key)
+                                witnessed_axes[key]["pairs"].add(pair_id)
+                                witnessed_axes[key]["reachability"].add(reachability)
+                                witnessed_axes[key]["observations"].add(observation_source)
+                                witnessed_axes[key]["confidence"].add(confidence)
+                                witnessed_axes[key]["tray"].add(tray_health)
+            assert key in witnessed_cases
+            assert witnessed_axes[key]["pairs"] == set(case["core_lifecycle_pair_ids"])
+            assert witnessed_axes[key]["reachability"] == set(case["core_ipc_reachability_states"])
+            assert witnessed_axes[key]["observations"] == set(case["core_state_observation_sources"])
+            assert witnessed_axes[key]["confidence"] == set(case["core_state_confidence_states"])
+            assert witnessed_axes[key]["tray"] == set(case["tray_process_health_states"])
+
+
+def test_invalid_when_references_are_rejected() -> None:
+    base = load_contract()
+    replacements = {
+        "core_lifecycle_pair_id": "not_a_lifecycle_pair",
+        "core_ipc_reachability_state": "MAYBE_REACHABLE",
+        "core_state_observation_source": "TELEPATHY",
+        "core_state_confidence_state": "FRESHISH",
+        "tray_process_health_state": "MISSING_TRAY_DIMENSION",
+        "predicate": "MADE_UP_PREDICATE",
+    }
+    for axis, bad_value in replacements.items():
+        data = deepcopy(base)
+        data["state_axis_consistency_constraints"]["rules"].append({"rule_id": f"bad_{axis}", "when": {axis: bad_value}, "requires_predicates": []})
+        try:
+            _validate_constraint_references(data)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(axis)
+
+
+def test_stale_snapshot_and_no_observation_are_separate_generic_cases() -> None:
+    data = load_contract()
+    predicates_stale = {"RUNTIME_ACTIVITY_UNKNOWN", "CORE_STATE_OBSERVATION_STALE"}
+    predicates_none = {"RUNTIME_ACTIVITY_UNKNOWN"}
+    assert _semantically_valid_combination(data, "healthy", "UNREACHABLE", "NONE", "UNKNOWN", "HEALTHY", predicates_none)
+    assert _semantically_valid_combination(data, "healthy", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "HEALTHY", predicates_stale)
+    expected = {
+        "CLOSE_DESKTOP_SHELL": ("unreachable_no_observation", "unreachable_stale_snapshot"),
+        "HIDE_TO_BACKGROUND": ("unreachable_no_observation", "unreachable_stale_snapshot"),
+        "EXIT_TRAY_AGENT": ("unreachable_no_observation", "unreachable_stale_snapshot"),
+    }
+    for intent_name, (none_case, stale_case) in expected.items():
+        cases = intents_by_name(data)[intent_name]["state_cases"]
+        intent_none_predicates = predicates_none | ({"TRAY_PROCESS_CONFIRMED_RUNNING"} if intent_name == "HIDE_TO_BACKGROUND" else set())
+        intent_stale_predicates = predicates_stale | ({"TRAY_PROCESS_CONFIRMED_RUNNING"} if intent_name == "HIDE_TO_BACKGROUND" else set())
+        none_matches = [case["case_id"] for case in cases if _case_matches(case, "healthy", "UNREACHABLE", "NONE", "UNKNOWN", "HEALTHY", intent_none_predicates)]
+        stale_matches = [case["case_id"] for case in cases if _case_matches(case, "healthy", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "HEALTHY", intent_stale_predicates)]
+        assert none_matches == [none_case]
+        assert stale_matches == [stale_case]
+
+
+def test_tray_supervisor_current_is_separate_from_independent_proof() -> None:
+    data = load_contract()
+    tray_predicates = {"TRAY_PROCESS_CONFIRMED_RUNNING"}
+    assert _semantically_valid_combination(data, "crashed_unscheduled", "UNREACHABLE", "TRAY_SUPERVISOR", "CONFIRMED_CURRENT", "HEALTHY", tray_predicates)
+    assert not _semantically_valid_combination(data, "crashed_unscheduled", "UNREACHABLE", "TRAY_SUPERVISOR", "CONFIRMED_CURRENT", "HEALTHY", tray_predicates | {"INDEPENDENT_OBSERVATION_PROOF_VALIDATED"})
+    hide_cases = intents_by_name(data)["HIDE_TO_BACKGROUND"]["state_cases"]
+    matches = [case["case_id"] for case in hide_cases if _case_matches(case, "crashed_unscheduled", "UNREACHABLE", "TRAY_SUPERVISOR", "CONFIRMED_CURRENT", "HEALTHY", tray_predicates)]
+    assert matches == ["crashed_unscheduled_tray_supervisor"]
+
+
+def test_os_event_best_effort_paths_cover_unreachable_observations() -> None:
+    data = load_contract()
+    checks = [
+        ("NONE", "UNKNOWN", {"SUPERVISED_RESTART_PENDING"}, "os_event_no_observation"),
+        ("CACHED_SNAPSHOT", "STALE", {"SUPERVISED_RESTART_PENDING", "CORE_STATE_OBSERVATION_STALE"}, "os_event_cached_stale"),
+        ("PROCESS_LOCK", "CONFIRMED_CURRENT", {"SUPERVISED_RESTART_PENDING", "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"}, "os_event_independent_current"),
+    ]
+    for intent_name in ["OS_SESSION_LOGOFF", "OS_SHUTDOWN"]:
+        cases = intents_by_name(data)[intent_name]["state_cases"]
+        for source, confidence, predicates, expected_case in checks:
+            assert _semantically_valid_combination(data, "supervised_restart_in_progress", "UNREACHABLE", source, confidence, "STOPPED", predicates)
+            matches = [case for case in cases if _case_matches(case, "supervised_restart_in_progress", "UNREACHABLE", source, confidence, "STOPPED", predicates)]
+            assert [case["case_id"] for case in matches] == [expected_case]
+            assert matches[0]["allowed"] is True
+            assert matches[0]["case_kind"] == "normal"
+
+
+def test_closed_observation_axis_rejects_unsupported_source_confidence_pairs() -> None:
+    data = load_contract()
+    invalid = [
+        ("PROCESS_LOCK", "STALE", {"INDEPENDENT_OBSERVATION_PROOF_VALIDATED", "CORE_STATE_OBSERVATION_STALE"}),
+        ("PROCESS_LOCK", "UNKNOWN", {"INDEPENDENT_OBSERVATION_PROOF_VALIDATED"}),
+        ("CONNECTION_DESCRIPTOR", "STALE", {"INDEPENDENT_OBSERVATION_PROOF_VALIDATED", "CORE_STATE_OBSERVATION_STALE"}),
+        ("CONNECTION_DESCRIPTOR", "UNKNOWN", {"INDEPENDENT_OBSERVATION_PROOF_VALIDATED"}),
+        ("TRAY_SUPERVISOR", "STALE", {"TRAY_PROCESS_CONFIRMED_RUNNING", "CORE_STATE_OBSERVATION_STALE"}),
+        ("TRAY_SUPERVISOR", "UNKNOWN", {"TRAY_PROCESS_CONFIRMED_RUNNING"}),
+        ("CACHED_SNAPSHOT", "UNKNOWN", set()),
+        ("CACHED_SNAPSHOT", "CONFIRMED_CURRENT", {"INDEPENDENT_OBSERVATION_PROOF_VALIDATED"}),
+        ("NONE", "STALE", {"CORE_STATE_OBSERVATION_STALE"}),
+        ("NONE", "CONFIRMED_CURRENT", {"INDEPENDENT_OBSERVATION_PROOF_VALIDATED"}),
+    ]
+    for source, confidence, predicates in invalid:
+        assert not _semantically_valid_combination(data, "healthy", "UNREACHABLE", source, confidence, "HEALTHY", predicates), (source, confidence)
+
+
+def test_closed_observation_axis_accepts_only_canonical_pairs() -> None:
+    data = load_contract()
+    assert _semantically_valid_combination(data, "healthy", "UNREACHABLE", "PROCESS_LOCK", "CONFIRMED_CURRENT", "HEALTHY", {"ACTIVE_RUNTIME_PRESENT", "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"})
+    assert _semantically_valid_combination(data, "healthy", "UNREACHABLE", "CONNECTION_DESCRIPTOR", "CONFIRMED_CURRENT", "HEALTHY", {"ACTIVE_RUNTIME_PRESENT", "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"})
+    assert _semantically_valid_combination(data, "healthy", "UNREACHABLE", "TRAY_SUPERVISOR", "CONFIRMED_CURRENT", "HEALTHY", {"ACTIVE_RUNTIME_PRESENT", "TRAY_PROCESS_CONFIRMED_RUNNING"})
+    assert _semantically_valid_combination(data, "healthy", "UNREACHABLE", "CACHED_SNAPSHOT", "STALE", "HEALTHY", {"RUNTIME_ACTIVITY_UNKNOWN", "CORE_STATE_OBSERVATION_STALE"})
+    assert _semantically_valid_combination(data, "healthy", "UNREACHABLE", "NONE", "UNKNOWN", "HEALTHY", {"RUNTIME_ACTIVITY_UNKNOWN"})
+
+
+def test_close_desktop_shell_tray_supervisor_current_crash_paths() -> None:
+    data = load_contract()
+    cases = intents_by_name(data)["CLOSE_DESKTOP_SHELL"]["state_cases"]
+    checks = [
+        ("crashed_unscheduled", {"TRAY_PROCESS_CONFIRMED_RUNNING"}, "crashed_unscheduled_tray_supervisor"),
+        ("crashed_restart_exhausted", {"TRAY_PROCESS_CONFIRMED_RUNNING"}, "restart_exhausted_tray_supervisor"),
+    ]
+    for pair_id, predicates, expected_case in checks:
+        assert _semantically_valid_combination(data, pair_id, "UNREACHABLE", "TRAY_SUPERVISOR", "CONFIRMED_CURRENT", "HEALTHY", predicates)
+        matches = [case for case in cases if _case_matches(case, pair_id, "UNREACHABLE", "TRAY_SUPERVISOR", "CONFIRMED_CURRENT", "HEALTHY", predicates)]
+        assert [case["case_id"] for case in matches] == [expected_case]
+        assert matches[0]["allowed"] is True
+        assert matches[0]["requires_operator_acknowledgement"] is True
+
+
+def test_exit_tray_agent_tray_supervisor_current_paths() -> None:
+    data = load_contract()
+    cases = intents_by_name(data)["EXIT_TRAY_AGENT"]["state_cases"]
+    checks = [
+        ("crashed_unscheduled", {"TRAY_PROCESS_CONFIRMED_RUNNING"}, "crashed_unscheduled_tray_supervisor"),
+        ("crashed_restart_scheduled", {"TRAY_PROCESS_CONFIRMED_RUNNING", "SUPERVISED_RESTART_PENDING"}, "crashed_restart_scheduled_tray_supervisor"),
+        ("supervised_restart_in_progress", {"TRAY_PROCESS_CONFIRMED_RUNNING", "SUPERVISED_RESTART_PENDING"}, "restart_in_progress_tray_supervisor"),
+        ("crashed_restart_exhausted", {"TRAY_PROCESS_CONFIRMED_RUNNING"}, "restart_exhausted_tray_supervisor"),
+    ]
+    for pair_id, predicates, expected_case in checks:
+        assert _semantically_valid_combination(data, pair_id, "UNREACHABLE", "TRAY_SUPERVISOR", "CONFIRMED_CURRENT", "HEALTHY", predicates)
+        matches = [case for case in cases if _case_matches(case, pair_id, "UNREACHABLE", "TRAY_SUPERVISOR", "CONFIRMED_CURRENT", "HEALTHY", predicates)]
+        assert [case["case_id"] for case in matches] == [expected_case]
+        assert matches[0]["allowed"] is True
+        assert matches[0]["requires_operator_acknowledgement"] is True
+        assert matches[0]["requires_secondary_confirmation"] is True
+
+
+def _semantic_contexts(data: dict) -> list[tuple[str, str, str, str, str, set[str]]]:
+    predicates = [predicate["predicate_id"] for predicate in data["state_predicates"]]
+    contexts = []
+    for pair in data["valid_core_lifecycle_pairs"]:
+        for reachability in data["core_ipc_reachability_states"]:
+            for observation_source in data["core_state_observation_sources"]:
+                for confidence in data["core_state_confidence_states"]:
+                    for tray_health in data["process_health_states"]:
+                        for active_predicates in _powerset(predicates):
+                            if _semantically_valid_combination(data, pair["pair_id"], reachability, observation_source, confidence, tray_health, active_predicates):
+                                contexts.append((pair["pair_id"], reachability, observation_source, confidence, tray_health, active_predicates))
+    return contexts
+
+
+def test_os_event_best_effort_full_coverage() -> None:
+    data = load_contract()
+    contexts = _semantic_contexts(data)
+    for intent_name in ["OS_SESSION_LOGOFF", "OS_SHUTDOWN"]:
+        cases = intents_by_name(data)[intent_name]["state_cases"]
+        matched = unmatched = conflicts = 0
+        for pair_id, reachability, observation_source, confidence, tray_health, predicates in contexts:
+            matches = [case for case in cases if _case_matches(case, pair_id, reachability, observation_source, confidence, tray_health, predicates)]
+            if len(matches) == 1:
+                matched += 1
+            elif not matches:
+                unmatched += 1
+            else:
+                conflicts += 1
+        assert matched == len(contexts)
+        assert unmatched == 0
+        assert conflicts == 0
+
+
+def test_independent_observation_proof_required_checks_are_complete() -> None:
+    data = load_contract()
+    assert set(data["independent_observation_proof_contract"]["required_checks"]) == {"PID_VALIDATED", "START_NONCE_VALIDATED", "SOURCE_FRESHNESS_VALIDATED", "DEVICE_INSTALLATION_IDENTITY_MATCHED", "STATE_STORE_IDENTITY_MATCHED"}
+
+
+def test_state_case_axes_are_covered_by_intent_applicability() -> None:
+    data = load_contract()
+    pairs = {pair["pair_id"]: pair for pair in data["valid_core_lifecycle_pairs"]}
+    for intent in data["shutdown_intents"]:
+        applicability = intent["applicability"]
+        applicable_health = set(applicability["core_process_health_states"])
+        applicable_restart = set(applicability["core_supervision_restart_states"])
+        for case in intent["state_cases"]:
+            for pair_id in case["core_lifecycle_pair_ids"]:
+                pair = pairs[pair_id]
+                assert pair["core_process_health_state"] in applicable_health, (intent["name"], case["case_id"], pair_id)
+                assert pair["core_supervision_restart_state"] in applicable_restart, (intent["name"], case["case_id"], pair_id)
+            assert set(case["core_ipc_reachability_states"]) <= set(applicability["core_ipc_reachability_states"]), (intent["name"], case["case_id"])
+            assert set(case["core_state_observation_sources"]) <= set(applicability["core_state_observation_sources"]), (intent["name"], case["case_id"])
+            assert set(case["core_state_confidence_states"]) <= set(applicability["core_state_confidence_states"]), (intent["name"], case["case_id"])
+            assert set(case["tray_process_health_states"]) <= set(applicability["tray_process_health_states"]), (intent["name"], case["case_id"])
+    assert "TRAY_SUPERVISOR" in intents_by_name(data)["EXIT_TRAY_AGENT"]["applicability"]["core_state_observation_sources"]
+
+
+def test_exit_tray_agent_confirmation_policy_matches_state_cases() -> None:
+    data = load_contract()
+    exit_intent = intents_by_name(data)["EXIT_TRAY_AGENT"]
+    cases = {case["case_id"]: case for case in exit_intent["state_cases"]}
+    inactive = cases["inactive_core"]
+    assert inactive["requires_secondary_confirmation"] is False
+    assert set(inactive["core_lifecycle_pair_ids"]) == {"not_started", "stopped"}
+    assert inactive["core_ipc_reachability_states"] == ["UNREACHABLE"]
+    assert {"NO_ACTIVE_RUNTIME_CONFIRMED", "INDEPENDENT_OBSERVATION_PROOF_VALIDATED"} <= set(inactive["required_predicates"])
+    assert {"ACTIVE_RUNTIME_PRESENT", "RUNTIME_ACTIVITY_UNKNOWN", "SUPERVISED_RESTART_PENDING"} <= set(inactive["forbidden_predicates"])
+    assert [case_id for case_id, case in cases.items() if case["requires_secondary_confirmation"] is False] == ["inactive_core"]
+    for case_id, case in cases.items():
+        if case_id == "inactive_core" or case["case_kind"] != "normal":
+            continue
+        risky = (
+            "REACHABLE" in case["core_ipc_reachability_states"]
+            or "UNREACHABLE" in case["core_ipc_reachability_states"] and ("CACHED_SNAPSHOT" in case["core_state_observation_sources"] or "NONE" in case["core_state_observation_sources"])
+            or any(pair_id.startswith("crashed") for pair_id in case["core_lifecycle_pair_ids"])
+            or "crashed_restart_scheduled" in case["core_lifecycle_pair_ids"]
+            or "supervised_restart_in_progress" in case["core_lifecycle_pair_ids"]
+            or "crashed_restart_exhausted" in case["core_lifecycle_pair_ids"]
+            or "TRAY_SUPERVISOR" in case["core_state_observation_sources"]
+        )
+        if risky:
+            assert case["requires_secondary_confirmation"] is True, case_id
+    for case_id, case in cases.items():
+        if "TRAY_SUPERVISOR" in case["core_state_observation_sources"]:
+            reason = case["reason"]
+            assert "Core is not stopped by EXIT_TRAY_AGENT" in reason
+            assert "Core may restart without Tray icon, HUD, or notifications" in reason
+            assert "user can cancel" in reason
+    confirmation_conditions = "\n".join(exit_intent["confirmation_policy"]["conditions"])
+    applicability_conditions = "\n".join(exit_intent["applicability"]["conditions"])
+    combined_conditions = f"{confirmation_conditions}\n{applicability_conditions}"
+    unconditional_unreachable_text = "secondary confirmation required when Core IPC reachability is UNREACHABLE"
+    assert "no secondary confirmation only for inactive_core" in confirmation_conditions
+    assert "no secondary confirmation only for inactive_core" in applicability_conditions
+    assert unconditional_unreachable_text not in exit_intent["applicability"]["conditions"]
+    assert unconditional_unreachable_text not in applicability_conditions
+    assert "all UNREACHABLE cases except machine-confirmed inactive_core require secondary confirmation" in combined_conditions
 
 
 def _passes_global_pipeline(intent: dict, *, client_role: str, operator_authenticated: bool, authorization_context: bool) -> bool:
