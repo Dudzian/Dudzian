@@ -1,0 +1,2365 @@
+{
+  "schema_version": "cryptohunter.environment_and_product_capabilities.v1",
+  "m0_element": "M0.4",
+  "status": "under audit",
+  "baseline_commit": "c651b1176512ad445b048bf054a6320cc8e35fdf",
+  "execution_environments": [
+    {
+      "environment_id": "PAPER",
+      "external_side_effect_class": "LOCAL_SIMULATED_ONLY",
+      "credential_scope": "NONE",
+      "execution_adapter_class": "PaperSimulationAdapter",
+      "private_exchange_connection_policy": "FORBIDDEN",
+      "real_funds_possible": false,
+      "current_edition_selectable": true,
+      "current_edition_executable": true,
+      "endpoint_classes": [
+        "LOCAL_SIMULATION"
+      ]
+    },
+    {
+      "environment_id": "TESTNET",
+      "external_side_effect_class": "EXCHANGE_TESTNET_PRIVATE_SIDE_EFFECTS",
+      "credential_scope": "TESTNET",
+      "execution_adapter_class": "TestnetExchangeAdapter",
+      "private_exchange_connection_policy": "ALLOWED_AFTER_VALID_CAPABILITIES_AND_READINESS",
+      "real_funds_possible": false,
+      "current_edition_selectable": true,
+      "current_edition_executable": true,
+      "endpoint_classes": [
+        "PUBLIC_TESTNET",
+        "PRIVATE_TESTNET"
+      ]
+    },
+    {
+      "environment_id": "LIVE",
+      "external_side_effect_class": "REAL_FUNDS_PRODUCTION_SIDE_EFFECTS",
+      "credential_scope": "LIVE",
+      "execution_adapter_class": "LiveExchangeAdapter",
+      "private_exchange_connection_policy": "BLOCKED_BY_CURRENT_EDITION",
+      "real_funds_possible": true,
+      "current_edition_selectable": false,
+      "current_edition_executable": false,
+      "endpoint_classes": [
+        "PUBLIC_LIVE",
+        "PRIVATE_LIVE"
+      ]
+    }
+  ],
+  "forbidden_execution_environment_names": [
+    "DEMO",
+    "PREVIEW",
+    "SIMULATION",
+    "SANDBOX"
+  ],
+  "naming_policy": {
+    "demo_public_ux_exists": false,
+    "preview_allowed_only_as_historical_product_name_or_build_label": true
+  },
+  "current_product_edition": {
+    "edition_id": "CRYPTOHUNTER_TESTNET_EDITION",
+    "environment_capabilities": {
+      "PAPER": {
+        "visible": true,
+        "selectable": true,
+        "executable": true,
+        "locked": false
+      },
+      "TESTNET": {
+        "visible": true,
+        "selectable": true,
+        "executable": true,
+        "requires_readiness_gates": true,
+        "locked": false
+      },
+      "LIVE": {
+        "visible": true,
+        "selectable": false,
+        "executable": false,
+        "locked": true,
+        "activation_dialog_available": true,
+        "denial_code": "LIVE_BLOCKED_BY_EDITION"
+      }
+    }
+  },
+  "capability_trust_policy": {
+    "valid_private_testnet_requires_trust_state": "VALID",
+    "non_valid_trust_states": [
+      "MISSING",
+      "INVALID_SIGNATURE",
+      "EXPIRED",
+      "UNSUPPORTED_SCHEMA",
+      "REVOKED"
+    ],
+    "fallback_policy_id": "SAFE_LOCAL_ONLY",
+    "local_config_may_only_restrict": true,
+    "forbidden_capability_expanders": [
+      "operator",
+      "GUI",
+      "configuration_file",
+      "CLI",
+      "environment_variable",
+      "migration",
+      "last_successful_environment",
+      "IPC command"
+    ],
+    "live_allowed_in_current_edition": false,
+    "trust_state_registry": [
+      "VALID",
+      "MISSING",
+      "INVALID_SIGNATURE",
+      "EXPIRED",
+      "UNSUPPORTED_SCHEMA",
+      "REVOKED"
+    ]
+  },
+  "fail_closed_fallbacks": {
+    "SAFE_LOCAL_ONLY": {
+      "paper_local_simulation_may_remain_available": true,
+      "testnet_private_execution_allowed": false,
+      "live_allowed": false,
+      "read_or_decrypt_exchange_secrets": false,
+      "ui_shows_capability_integrity_error": true,
+      "core_external_side_effect_strategies_allowed": false,
+      "reconciliation_scope": "LOCAL_PERSISTED_DATA_ONLY_NO_NEW_PRIVATE_CONNECTIONS",
+      "audited": true
+    }
+  },
+  "independent_state_axes": [
+    {
+      "axis_id": "ProductCapabilities"
+    },
+    {
+      "axis_id": "requested_environment"
+    },
+    {
+      "axis_id": "active_environment",
+      "mutation_authority": "CoreHost only"
+    },
+    {
+      "axis_id": "last_successful_environment"
+    },
+    {
+      "axis_id": "LiveAccessGrant"
+    },
+    {
+      "axis_id": "operator authentication"
+    },
+    {
+      "axis_id": "kill_switch_state"
+    },
+    {
+      "axis_id": "environment_readiness"
+    },
+    {
+      "axis_id": "credential_profile"
+    }
+  ],
+  "invariants": [
+    "operator authentication does not create Live capability",
+    "LiveAccessGrant does not change ProductCapabilities",
+    "ProductCapabilities do not reset kill switch",
+    "changing active_environment does not reset kill switch",
+    "correct PIN does not bypass edition lock",
+    "last_successful_environment cannot launch an environment forbidden by current capabilities",
+    "requested_environment may differ from active_environment",
+    "clicking a mode does not change active_environment",
+    "active_environment changes only by CoreHost after all gates",
+    "DesktopShell does not apply runtime mutation itself"
+  ],
+  "live_enforcement_gates": [
+    {
+      "gate_id": "UI_MODE_SELECTOR",
+      "enforcing_component": "DesktopShell",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "LIVE_BLOCKED_BY_EDITION",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "LIVE_ACTIVATION_BLOCKED_BY_EDITION",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "selected_mode",
+        "mode_visibility",
+        "mode_locked_state"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "CONFIG_DESERIALIZATION",
+      "enforcing_component": "ConfigLoader",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "ENVIRONMENT_NOT_EXECUTABLE",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "CONFIG_ENVIRONMENT_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "serialized_requested_environment",
+        "config_schema_version"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "PERSISTED_STATE_RESTORE",
+      "enforcing_component": "CoreHost",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "ACTIVE_ENVIRONMENT_RESTORE_REJECTED",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "PERSISTED_ENVIRONMENT_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "persisted_active_environment",
+        "persisted_last_successful_environment",
+        "persisted_capabilities_identity"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "IPC_COMMAND_VALIDATION",
+      "enforcing_component": "Core IPC authority",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "ENVIRONMENT_NOT_EXECUTABLE",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "IPC_ENVIRONMENT_COMMAND_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "command_type",
+        "client_role",
+        "authorization_context"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "PRODUCT_CAPABILITY_POLICY",
+      "enforcing_component": "Core ProductCapabilityPolicy",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "LIVE_BLOCKED_BY_EDITION",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "LIVE_ACTIVATION_BLOCKED_BY_EDITION",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "capability_trust_state",
+        "capability_set",
+        "environment_capability"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "LIVE_ACCESS_GRANT_POLICY",
+      "enforcing_component": "Core LiveAccessGrantPolicy",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "LIVE_BLOCKED_BY_EDITION",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "LIVE_ACTIVATION_BLOCKED_BY_EDITION",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "live_access_grant_id_or_absence",
+        "live_access_grant_validation_state"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "CREDENTIAL_PROFILE_RESOLUTION",
+      "enforcing_component": "CredentialProfileResolver",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "CREDENTIAL_READ_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "CREDENTIAL_SCOPE_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "credential_profile_id",
+        "credential_scope",
+        "exchange_account_id"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "SECRET_READ_OR_DECRYPT",
+      "enforcing_component": "SecretAccessPolicy",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "CREDENTIAL_READ_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "CREDENTIAL_READ_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "credential_profile_id",
+        "credential_scope",
+        "secret_access_purpose"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "ENDPOINT_RESOLUTION",
+      "enforcing_component": "EndpointPolicy",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "ENDPOINT_CLASS_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "ENDPOINT_POLICY_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "requested_endpoint_class",
+        "exchange_capabilities",
+        "exchange_account_id"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "ADAPTER_FACTORY",
+      "enforcing_component": "AdapterFactory",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "ADAPTER_CAPABILITY_MISSING",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "ADAPTER_FACTORY_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "requested_adapter_class",
+        "exchange_capabilities",
+        "requested_endpoint_class"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "PRIVATE_CONNECTION_CREATION",
+      "enforcing_component": "ExchangeConnectionManager",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "PRIVATE_CONNECTION_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "PRIVATE_CONNECTION_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "exchange_account_id",
+        "credential_profile_id",
+        "resolved_endpoint_class"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "RUNTIME_ENVIRONMENT_ACTIVATION",
+      "enforcing_component": "CoreHost",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "ENVIRONMENT_NOT_EXECUTABLE",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "RUNTIME_ENVIRONMENT_ACTIVATION_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "environment_readiness_state",
+        "kill_switch_state",
+        "previous_active_environment"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "STRATEGY_ROUTE_BINDING",
+      "enforcing_component": "StrategyRouter",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "EXECUTION_ROUTE_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "EXECUTION_ROUTE_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "strategy_instance_id",
+        "execution_route_id",
+        "exchange_account_id"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "ORDER_INTENT_ACCEPTANCE",
+      "enforcing_component": "ExecutionPipeline",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "EXECUTION_ROUTE_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "ORDER_INTENT_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "order_intent_id",
+        "execution_route_id",
+        "intended_environment"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "EXECUTION_COMMAND_SUBMISSION",
+      "enforcing_component": "ExecutionPipeline",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "EXECUTION_ROUTE_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "EXECUTION_COMMAND_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "execution_command_id",
+        "order_id_or_client_order_id",
+        "intended_environment"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "RECONNECT",
+      "enforcing_component": "ReconnectSupervisor",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "RECONNECT_ENVIRONMENT_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "RECONNECT_ENVIRONMENT_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "previous_connection_environment",
+        "exchange_account_id",
+        "credential_scope",
+        "endpoint_class"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "RECOVERY",
+      "enforcing_component": "RecoveryPolicy",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "RECOVERY_ENVIRONMENT_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "RECOVERY_ENVIRONMENT_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "persisted_environment",
+        "persisted_execution_routes",
+        "recovery_checkpoint_id"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    },
+    {
+      "gate_id": "RECONCILIATION_WITH_EXTERNAL_VENUE",
+      "enforcing_component": "ReconciliationService",
+      "current_edition_result": "DENY_LIVE",
+      "denial_code": "PRIVATE_CONNECTION_FORBIDDEN",
+      "side_effects_forbidden_on_denial": [
+        "read_live_credentials",
+        "decrypt_live_secrets",
+        "resolve_public_live_endpoint",
+        "resolve_private_live_endpoint",
+        "create_live_adapter",
+        "open_private_live_connection",
+        "bind_live_execution_route",
+        "accept_live_order_intent",
+        "submit_live_order_command",
+        "set_active_environment_live",
+        "persist_last_successful_environment_live"
+      ],
+      "required_audit_event": "RECONCILIATION_ENVIRONMENT_REJECTED",
+      "common_required_inputs": [
+        "requested_environment",
+        "active_environment_before",
+        "product_capabilities_snapshot",
+        "edition_id",
+        "correlation_id"
+      ],
+      "gate_specific_required_inputs": [
+        "exchange_account_id",
+        "reconciliation_environment",
+        "credential_scope",
+        "endpoint_class"
+      ],
+      "direct_invocation_revalidates_own_gate": true,
+      "may_skip_own_validation_due_to_previous_gate": false
+    }
+  ],
+  "gate_order_rules": [
+    "requested_environment enum validation precedes edition environment capability lookup",
+    "operator authorization success does not bypass edition capability",
+    "current edition LIVE denies at edition environment capability gate",
+    "edition capability denial occurs before credential read, endpoint resolution, adapter creation and connection creation",
+    "active_environment is never transiently LIVE",
+    "UI dialog flow and Core activation flow have separate responsibilities",
+    "DesktopShell does not change active_environment"
+  ],
+  "credential_policy": {
+    "credential_scopes": [
+      "TESTNET",
+      "LIVE"
+    ],
+    "paper_private_exchange_credentials_required": false,
+    "current_edition_allowed_scopes": [
+      "TESTNET"
+    ],
+    "current_edition_forbidden_read_or_decrypt_scopes": [
+      "LIVE"
+    ],
+    "scope_mismatch_denial_code": "CREDENTIAL_SCOPE_MISMATCH",
+    "credential_metadata_contains_secret": false,
+    "secret_forbidden_destinations": [
+      "JSON contract",
+      "logs",
+      "audit reason",
+      "telemetry",
+      "exception text"
+    ],
+    "environment_scope_is_identity_part": true,
+    "scope_change_requires_new_profile_or_controlled_migration": true,
+    "withdrawal_permission_required_for_testnet_trading": false
+  },
+  "endpoint_policy": {
+    "endpoint_classes": [
+      "LOCAL_SIMULATION",
+      "PUBLIC_TESTNET",
+      "PRIVATE_TESTNET",
+      "PUBLIC_LIVE",
+      "PRIVATE_LIVE"
+    ],
+    "paper_execution_endpoint_class": "LOCAL_SIMULATION",
+    "testnet_allowed_endpoint_classes": [
+      "PUBLIC_TESTNET",
+      "PRIVATE_TESTNET"
+    ],
+    "testnet_to_live_fallback_allowed": false,
+    "live_endpoint_resolution_current_edition_allowed": false,
+    "public_live_market_data_implies_live_execution": false,
+    "MarketDataRoute_separate_from_ExecutionRoute": true
+  },
+  "ExchangeCapabilities": {
+    "fields": [
+      "supports_paper_adapter",
+      "supports_testnet_public",
+      "supports_testnet_private",
+      "supports_live_public",
+      "supports_live_private",
+      "supports_order_execution",
+      "supports_reconciliation",
+      "capability_evidence",
+      "last_verified_at_utc"
+    ],
+    "mandatory_exchange_id": null
+  },
+  "environment_readiness": {
+    "states": [
+      "NOT_CONFIGURED",
+      "CHECKING",
+      "READY",
+      "DEGRADED",
+      "BLOCKED",
+      "FAILED"
+    ],
+    "PAPER_READY_requires": [
+      "local persistence",
+      "active Paper account/ledger",
+      "simulated execution adapter",
+      "valid instrument universe",
+      "no external secrets"
+    ],
+    "TESTNET_READY_requires": [
+      "VALID ProductCapabilities",
+      "edition allows Testnet",
+      "configured Testnet ExchangeAccount",
+      "credential profile scope TESTNET",
+      "endpoint class TESTNET",
+      "adapter supports Testnet",
+      "connectivity check",
+      "private authentication check when needed",
+      "account identity reconciliation",
+      "instrument mapping readiness",
+      "kill switch does not block activation"
+    ],
+    "LIVE_current_edition": {
+      "state": "BLOCKED",
+      "reason": "LIVE_BLOCKED_BY_EDITION",
+      "credential_reads_allowed": false,
+      "live_connections_allowed": false
+    }
+  },
+  "persistence_and_recovery": {
+    "persistable_fields": [
+      "requested_environment",
+      "active_environment",
+      "last_successful_environment",
+      "environment_readiness_summary",
+      "selected_credential_profile_id",
+      "selected_exchange_account_ids",
+      "product_capabilities_metadata",
+      "denial_code",
+      "transition_correlation_id"
+    ],
+    "rules": [
+      "persisted LIVE from incompatible or future edition is not activated",
+      "last_successful_environment cannot bypass current ProductCapabilities",
+      "Core revalidates ProductCapabilities at startup",
+      "invalid capabilities use SAFE_LOCAL_ONLY",
+      "current edition never performs Live reconnect",
+      "Testnet reconnect revalidates endpoint and credential scope",
+      "Paper recovery cannot inherit private external execution route",
+      "kill switch remains separate persistent state and is not cleared by environment recovery",
+      "denied transition does not set active_environment=LIVE"
+    ]
+  },
+  "denial_codes": [
+    "LIVE_BLOCKED_BY_EDITION",
+    "PRODUCT_CAPABILITIES_MISSING",
+    "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+    "PRODUCT_CAPABILITIES_EXPIRED",
+    "PRODUCT_CAPABILITIES_REVOKED",
+    "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA",
+    "ENVIRONMENT_NOT_VISIBLE",
+    "ENVIRONMENT_NOT_SELECTABLE",
+    "ENVIRONMENT_NOT_EXECUTABLE",
+    "ENVIRONMENT_NOT_READY",
+    "CREDENTIAL_SCOPE_MISMATCH",
+    "CREDENTIAL_READ_FORBIDDEN",
+    "ENDPOINT_CLASS_FORBIDDEN",
+    "ADAPTER_CAPABILITY_MISSING",
+    "PRIVATE_CONNECTION_FORBIDDEN",
+    "ACTIVE_ENVIRONMENT_RESTORE_REJECTED",
+    "RECONNECT_ENVIRONMENT_FORBIDDEN",
+    "RECOVERY_ENVIRONMENT_FORBIDDEN",
+    "EXECUTION_ROUTE_FORBIDDEN"
+  ],
+  "audit_events": [
+    "PRODUCT_CAPABILITIES_VALIDATED",
+    "PRODUCT_CAPABILITIES_REJECTED",
+    "ENVIRONMENT_SWITCH_REQUESTED",
+    "ENVIRONMENT_SWITCH_ALLOWED",
+    "ENVIRONMENT_SWITCH_DENIED",
+    "LIVE_ACTIVATION_DIALOG_OPENED",
+    "LIVE_ACTIVATION_AUTH_SUCCEEDED",
+    "LIVE_ACTIVATION_AUTH_FAILED",
+    "LIVE_ACTIVATION_BLOCKED_BY_EDITION",
+    "ENVIRONMENT_READINESS_CHANGED",
+    "PERSISTED_ENVIRONMENT_REJECTED",
+    "CREDENTIAL_SCOPE_REJECTED",
+    "ENDPOINT_POLICY_REJECTED",
+    "ADAPTER_FACTORY_REJECTED",
+    "EXECUTION_ROUTE_REJECTED",
+    "CONFIG_ENVIRONMENT_REJECTED",
+    "IPC_ENVIRONMENT_COMMAND_REJECTED",
+    "CREDENTIAL_READ_REJECTED",
+    "PRIVATE_CONNECTION_REJECTED",
+    "RUNTIME_ENVIRONMENT_ACTIVATION_REJECTED",
+    "ORDER_INTENT_REJECTED",
+    "EXECUTION_COMMAND_REJECTED",
+    "RECONNECT_ENVIRONMENT_REJECTED",
+    "RECOVERY_ENVIRONMENT_REJECTED",
+    "RECONCILIATION_ENVIRONMENT_REJECTED",
+    "PRODUCT_CAPABILITIES_REVOCATION_CHECK_PASSED"
+  ],
+  "audit_payload_contract": {
+    "optional_fields": [
+      "operator_id"
+    ],
+    "result_fields": [
+      "result_code",
+      "denial_code"
+    ],
+    "forbidden_fields": [
+      "secret",
+      "api_secret",
+      "pin",
+      "password",
+      "biometric_template"
+    ],
+    "required_field_ids": [
+      "correlation_id",
+      "device_installation_id",
+      "requested_environment",
+      "active_environment_before",
+      "active_environment_after",
+      "edition_id",
+      "capabilities_id",
+      "capability_set_hash",
+      "utc_timestamp"
+    ]
+  },
+  "signature_contract": {
+    "private_keys_forbidden": true,
+    "public_verification_key_future_build_resource": true,
+    "custom_algorithm_forbidden": true,
+    "verification_before_use": true,
+    "unknown_algorithm_or_key_id_fail_closed": true,
+    "validated_result": "immutable capability snapshot used by Core",
+    "verification_authority": "Core policy authority, not GUI",
+    "recognized_algorithm_required_for_valid": true,
+    "recognized_key_id_required_for_valid": true,
+    "correct_payload_hash_required_for_valid": true,
+    "signed_payload_hash_covers": "capability_payload_schema_ref",
+    "signature_covers": "signature_input_schema_ref",
+    "signature_field_excluded_from_signed_payload": true,
+    "authority_bearing_field_change_invalidates_signature": true,
+    "capability_set_hash_computed_from_canonical_capability_set": true,
+    "capability_set_hash_in_signed_payload": true,
+    "valid_requires_capability_set_hash_match": true,
+    "feature_flags_signed": true,
+    "fail_closed_policy_signed": true,
+    "expiry_and_non_expiry_signed": true,
+    "revocation_reference_signed": true,
+    "trust_state_is_not_trusted_signed_document_field": true,
+    "trust_state_is_validation_result_of_envelope": true,
+    "missing_envelope_element_cannot_be_VALID": true,
+    "signature_schema_version_required_in_envelope": true,
+    "payload_without_signature_envelope_is_not_verified_ProductCapabilities_document": true,
+    "capability_payload_schema_ref": "capability_payload_schema",
+    "signature_header_schema_ref": "signature_header_schema",
+    "signed_document_envelope_schema_ref": "signed_document_envelope_schema",
+    "signature_input_schema_ref": "signature_input_schema",
+    "canonicalization_scheme_id": "RFC8785_JCS",
+    "text_encoding": "UTF-8",
+    "signed_payload_hash_algorithm_id": "SHA-256",
+    "capability_set_hash_algorithm_id": "SHA-256",
+    "hash_encoding": "LOWERCASE_HEX",
+    "signature_encoding": "BASE64URL_NO_PADDING",
+    "capability_set_canonicalization": "UNIQUE_LEXICOGRAPHICALLY_SORTED_STRING_ARRAY",
+    "capability_set_must_not_contain_duplicates": true,
+    "capability_set_sorted_before_hash": true,
+    "capability_set_hash_definition": "SHA-256 over RFC8785_JCS canonical bytes of the unique lexicographically sorted capability_set string array.",
+    "signed_payload_hash_definition": "SHA-256 over RFC8785_JCS canonical bytes of the complete capability_payload object.",
+    "hashes_are_64_lowercase_hex": true,
+    "payload_field_change_changes_signed_payload_hash": true,
+    "capability_set_change_changes_capability_set_hash_and_signed_payload_hash": true,
+    "signature_input_is_not_string_concatenation": true,
+    "signature_header_change_changes_signature_input": true,
+    "signed_payload_json_type_policy": {
+      "object": "ALLOWED",
+      "array": "ALLOWED",
+      "string": "ALLOWED",
+      "boolean": "ALLOWED",
+      "null": "ALLOWED",
+      "number": "FORBIDDEN_IN_CURRENT_SCHEMA",
+      "number_future_schema_policy": "Numbers require full RFC8785 number serialization, I-JSON interoperability, and explicit schema-version opt-in."
+    },
+    "signature_verification_registry_contract": {
+      "signature_algorithm_registry_ref": "trusted_build_runtime_signature_algorithm_registry",
+      "verification_key_registry_ref": "trusted_build_runtime_verification_key_registry",
+      "unknown_signature_algorithm_result": "INVALID_SIGNATURE",
+      "unknown_key_id_result": "INVALID_SIGNATURE",
+      "missing_algorithm_registry_result": "INVALID_SIGNATURE",
+      "missing_key_registry_result": "INVALID_SIGNATURE",
+      "registry_lookup_authority": "CorePolicyAuthority",
+      "GUI_may_modify_registry": false,
+      "config_cli_env_ipc_may_modify_registry": false,
+      "operator_authentication_may_add_algorithm_or_key": false,
+      "document_may_supply_trusted_key": false,
+      "key_id_is_reference_only": true,
+      "private_keys_forbidden": true,
+      "public_key_material_in_document_forbidden": true,
+      "diagnostic_reason_codes": [
+        "UNKNOWN_SIGNATURE_ALGORITHM",
+        "UNKNOWN_KEY_ID",
+        "MISSING_SIGNATURE_ALGORITHM_REGISTRY",
+        "MISSING_VERIFICATION_KEY_REGISTRY",
+        "REGISTRY_INPUT_DOCUMENT_INVALID",
+        "REGISTRY_REFERENCE_TYPE_INVALID",
+        "REGISTRY_CONTAINER_INVALID"
+      ],
+      "reason_code_to_trust_state": {
+        "UNKNOWN_SIGNATURE_ALGORITHM": "INVALID_SIGNATURE",
+        "UNKNOWN_KEY_ID": "INVALID_SIGNATURE",
+        "MISSING_SIGNATURE_ALGORITHM_REGISTRY": "INVALID_SIGNATURE",
+        "MISSING_VERIFICATION_KEY_REGISTRY": "INVALID_SIGNATURE",
+        "REGISTRY_INPUT_DOCUMENT_INVALID": "UNSUPPORTED_SCHEMA",
+        "REGISTRY_REFERENCE_TYPE_INVALID": "UNSUPPORTED_SCHEMA",
+        "REGISTRY_CONTAINER_INVALID": "UNSUPPORTED_SCHEMA"
+      },
+      "reason_code_to_denial_code": {
+        "UNKNOWN_SIGNATURE_ALGORITHM": "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+        "UNKNOWN_KEY_ID": "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+        "MISSING_SIGNATURE_ALGORITHM_REGISTRY": "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+        "MISSING_VERIFICATION_KEY_REGISTRY": "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+        "REGISTRY_INPUT_DOCUMENT_INVALID": "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA",
+        "REGISTRY_REFERENCE_TYPE_INVALID": "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA",
+        "REGISTRY_CONTAINER_INVALID": "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA"
+      },
+      "accepted_stage_result": "REGISTRY_ACCEPTED",
+      "rejected_stage_result": "REGISTRY_REJECTED",
+      "accepted_registry_result_does_not_create_trust_state_VALID": true
+    },
+    "signature_validation_pipeline_ref": "signature_validation_pipeline",
+    "capability_set_sort_order_id": "UTF16_CODE_UNIT_LEXICOGRAPHIC",
+    "capability_set_sort_rules": {
+      "sort_key": "UTF16_CODE_UNIT_SEQUENCE",
+      "locale_sensitive": false,
+      "python_code_point_sorted_without_key_allowed": false,
+      "unicode_normalization_allowed": false,
+      "duplicates_rejected": true,
+      "array_must_already_be_canonical": true,
+      "hash_uses_canonical_order": true
+    }
+  },
+  "cross_contract_references": {
+    "requires_LiveAccessGrant_from_M0_2": true,
+    "canonical_device_installation_id": true,
+    "installation_id_alias_allowed": false,
+    "m0_3_core_authority_compatible": true,
+    "active_environment_mutation_authority": "CoreHost",
+    "DesktopShell_runtime_mutation_allowed": false
+  },
+  "ProductCapabilities": {
+    "contract_schema": {
+      "description": "ProductCapabilities defines the signed capability payload schema; a payload without the signed document envelope is not a verified ProductCapabilities document.",
+      "capability_payload_schema_ref": "capability_payload_schema",
+      "signature_header_schema_ref": "signature_header_schema",
+      "signed_document_envelope_schema_ref": "signed_document_envelope_schema",
+      "signature_input_schema_ref": "signature_input_schema",
+      "trust_state_source": "VALIDATED_SNAPSHOT_ONLY"
+    },
+    "trust_state_registry": [
+      "VALID",
+      "MISSING",
+      "INVALID_SIGNATURE",
+      "EXPIRED",
+      "UNSUPPORTED_SCHEMA",
+      "REVOKED"
+    ],
+    "validated_snapshot_rules": {
+      "trust_state_VALID_is_validation_result": true,
+      "valid_requires_successful_signature_verification": true,
+      "valid_requires_recognized_algorithm_id": true,
+      "valid_requires_recognized_key_id": true,
+      "valid_requires_correct_payload_hash": true,
+      "valid_requires_unexpired_or_non_expiring_document": true,
+      "valid_requires_no_revocation": true,
+      "gui_may_set_trust_state": false,
+      "config_cli_env_ipc_may_set_trust_state": false,
+      "validated_snapshot_is_immutable": true,
+      "placeholder_values_forbidden_in_validated_snapshot": true
+    },
+    "current_edition_capability_policy": {
+      "edition_id": "CRYPTOHUNTER_TESTNET_EDITION",
+      "capability_set": [
+        "LIVE_VISIBLE_LOCKED_ONLY",
+        "PAPER_LOCAL_SIMULATION",
+        "TESTNET_PRIVATE_EXECUTION_AFTER_READINESS"
+      ],
+      "environment_capabilities": {
+        "PAPER": {
+          "private_execution_allowed": false,
+          "local_execution_allowed": true
+        },
+        "TESTNET": {
+          "private_execution_allowed_when_trust_state_valid": true
+        },
+        "LIVE": {
+          "private_execution_allowed": false,
+          "public_live_market_data_implies_execution": false
+        }
+      },
+      "feature_flags": {
+        "live_activation_dialog": true,
+        "live_execution": false,
+        "testnet_execution": true
+      },
+      "capability_set_hash_required": true,
+      "source": "signed_build_resource_after_validation",
+      "fail_closed_policy": "SAFE_LOCAL_ONLY",
+      "live_allowed_in_current_edition": false
+    },
+    "expiry_policy": {
+      "timestamp_format": "RFC3339_UTC",
+      "timestamp_profile_id": "RFC3339_UTC_ZULU_SECONDS",
+      "timezone_policy": "UTC_Z_REQUIRED",
+      "fractional_seconds_policy": "OPTIONAL_1_TO_9_DIGITS",
+      "leap_second_policy": "REJECT",
+      "legal_variants": {
+        "NON_EXPIRING": {
+          "non_expiring_type": "boolean",
+          "non_expiring_value": true,
+          "expires_at_utc_required": true,
+          "expires_at_utc_value": null,
+          "issued_at_utc": "VALID_TIMESTAMP_UTC_ZULU_SECONDS"
+        },
+        "EXPIRING": {
+          "non_expiring_type": "boolean",
+          "non_expiring_value": false,
+          "expires_at_utc_required": true,
+          "expires_at_utc_value": "NON_NULL_VALID_TIMESTAMP_UTC_ZULU_SECONDS",
+          "issued_at_utc": "VALID_TIMESTAMP_UTC_ZULU_SECONDS",
+          "expires_after_issued": true,
+          "current_utc_before_expires": true,
+          "current_utc_equal_or_after_expires_result": "EXPIRED"
+        }
+      },
+      "invalid_result_mapping": {
+        "malformed_timestamp": "UNSUPPORTED_SCHEMA",
+        "missing_non_expiring": "UNSUPPORTED_SCHEMA",
+        "missing_expires_at_utc": "UNSUPPORTED_SCHEMA",
+        "missing_issued_at_utc": "UNSUPPORTED_SCHEMA",
+        "non_boolean_non_expiring": "UNSUPPORTED_SCHEMA",
+        "non_expiring_with_non_null_expires_at_utc": "UNSUPPORTED_SCHEMA",
+        "expiring_with_null_expires_at_utc": "UNSUPPORTED_SCHEMA",
+        "expires_at_utc_not_after_issued_at_utc": "UNSUPPORTED_SCHEMA",
+        "current_utc_equal_or_after_expires_at_utc": "EXPIRED"
+      }
+    },
+    "document_schemas": {
+      "capability_payload_schema": {
+        "schema_id": "capability_payload_schema",
+        "required_fields": [
+          "schema_version",
+          "capabilities_id",
+          "edition_id",
+          "issued_at_utc",
+          "expires_at_utc",
+          "non_expiring",
+          "capability_set",
+          "environment_capabilities",
+          "feature_flags",
+          "capability_set_hash",
+          "source",
+          "fail_closed_policy",
+          "revocation_reference"
+        ],
+        "additional_authority_bearing_fields_policy": "REJECT_UNLESS_SCHEMA_VERSION_SUPPORTS_THE_FIELD",
+        "field_contracts": {
+          "schema_version": {
+            "type": "STRING",
+            "non_empty": true,
+            "allowed_values": [
+              "cryptohunter.product_capabilities.payload.v1"
+            ]
+          },
+          "capabilities_id": {
+            "type": "STRING",
+            "non_empty": true,
+            "stable_identifier_format": "CAPABILITIES_ID"
+          },
+          "edition_id": {
+            "type": "STRING",
+            "non_empty": true
+          },
+          "issued_at_utc": {
+            "type": "STRING",
+            "timestamp_profile_ref": "RFC3339_UTC_ZULU_SECONDS"
+          },
+          "expires_at_utc": {
+            "type": "STRING_OR_NULL",
+            "expiry_policy_controlled": true
+          },
+          "non_expiring": {
+            "type": "BOOLEAN"
+          },
+          "capability_set": {
+            "type": "ARRAY",
+            "item_type": "STRING",
+            "non_empty": true,
+            "unique": true,
+            "canonical_sort_order_ref": "UTF16_CODE_UNIT_LEXICOGRAPHIC"
+          },
+          "environment_capabilities": {
+            "type": "OBJECT",
+            "required_environment_keys": [
+              "PAPER",
+              "TESTNET",
+              "LIVE"
+            ],
+            "additional_environment_keys": "REJECT_CURRENT_SCHEMA",
+            "value_field_contract": {
+              "type": "OBJECT"
+            },
+            "nested_schema_refs": {
+              "PAPER": "paper_environment_capability_schema",
+              "TESTNET": "testnet_environment_capability_schema",
+              "LIVE": "live_environment_capability_schema"
+            }
+          },
+          "feature_flags": {
+            "type": "OBJECT",
+            "key_type": "STRING",
+            "value_type": "BOOLEAN",
+            "unknown_authority_bearing_flags": "REJECT_UNLESS_SCHEMA_VERSION_ALLOWS",
+            "required_flags": [
+              "live_activation_dialog",
+              "live_execution",
+              "testnet_execution"
+            ],
+            "allowed_flags": [
+              "live_activation_dialog",
+              "live_execution",
+              "testnet_execution"
+            ],
+            "current_edition_values": {
+              "live_activation_dialog": true,
+              "live_execution": false,
+              "testnet_execution": true
+            }
+          },
+          "capability_set_hash": {
+            "type": "STRING",
+            "format": "LOWERCASE_HEX",
+            "exact_length": 64
+          },
+          "source": {
+            "type": "STRING",
+            "non_empty": true
+          },
+          "fail_closed_policy": {
+            "type": "STRING",
+            "allowed_values": [
+              "SAFE_LOCAL_ONLY"
+            ]
+          },
+          "revocation_reference": {
+            "type": "STRING_OR_NULL",
+            "non_empty_when_string": true,
+            "format": "CAPABILITY_REVOCATION_REFERENCE_OR_NULL"
+          }
+        },
+        "nested_environment_capability_schema_refs": {
+          "PAPER": "paper_environment_capability_schema",
+          "TESTNET": "testnet_environment_capability_schema",
+          "LIVE": "live_environment_capability_schema"
+        },
+        "feature_flag_registry_ref": "current_schema_feature_flag_registry"
+      },
+      "signature_header_schema": {
+        "schema_id": "signature_header_schema",
+        "required_fields": [
+          "signature_schema_version",
+          "signature_algorithm_id",
+          "key_id"
+        ],
+        "algorithm_id_is_registry_reference": true,
+        "key_id_is_registry_reference": true,
+        "field_contracts": {
+          "signature_schema_version": {
+            "type": "STRING",
+            "non_empty": true,
+            "allowed_values": [
+              "cryptohunter.product_capabilities.signature.v1"
+            ]
+          },
+          "signature_algorithm_id": {
+            "type": "STRING",
+            "non_empty": true,
+            "registry_reference": true
+          },
+          "key_id": {
+            "type": "STRING",
+            "non_empty": true,
+            "registry_reference": true
+          }
+        }
+      },
+      "signed_document_envelope_schema": {
+        "schema_id": "signed_document_envelope_schema",
+        "required_fields": [
+          "capability_payload",
+          "signature_header",
+          "signed_payload_hash",
+          "signature"
+        ],
+        "trust_state_field_allowed_in_input": false,
+        "field_contracts": {
+          "capability_payload": {
+            "type": "OBJECT",
+            "schema_ref": "capability_payload_schema"
+          },
+          "signature_header": {
+            "type": "OBJECT",
+            "schema_ref": "signature_header_schema"
+          },
+          "signed_payload_hash": {
+            "type": "STRING",
+            "format": "LOWERCASE_HEX",
+            "exact_length": 64
+          },
+          "signature": {
+            "type": "STRING",
+            "format": "BASE64URL_NO_PADDING",
+            "non_empty": true
+          }
+        }
+      },
+      "signature_input_schema": {
+        "schema_id": "signature_input_schema",
+        "required_fields": [
+          "signature_header",
+          "signed_payload_hash"
+        ],
+        "canonical_object_shape": {
+          "signature_header": "<full_signature_header>",
+          "signed_payload_hash": "<signed_payload_hash>"
+        },
+        "field_contracts": {
+          "signature_input": {
+            "type": "OBJECT",
+            "additional_fields": "REJECT",
+            "exact_keys_ref": "signature_input_schema.required_fields"
+          },
+          "signature_header": {
+            "type": "OBJECT",
+            "schema_ref": "signature_header_schema"
+          },
+          "signed_payload_hash": {
+            "type": "STRING",
+            "format": "LOWERCASE_HEX",
+            "exact_length": 64
+          }
+        }
+      },
+      "paper_environment_capability_schema": {
+        "schema_id": "paper_environment_capability_schema",
+        "required_fields": [
+          "private_execution_allowed",
+          "local_execution_allowed"
+        ],
+        "field_contracts": {
+          "private_execution_allowed": {
+            "type": "BOOLEAN",
+            "current_edition_value": false
+          },
+          "local_execution_allowed": {
+            "type": "BOOLEAN",
+            "current_edition_value": true
+          }
+        },
+        "additional_fields": "REJECT"
+      },
+      "testnet_environment_capability_schema": {
+        "schema_id": "testnet_environment_capability_schema",
+        "required_fields": [
+          "private_execution_allowed_when_trust_state_valid"
+        ],
+        "field_contracts": {
+          "private_execution_allowed_when_trust_state_valid": {
+            "type": "BOOLEAN",
+            "current_edition_value": true
+          }
+        },
+        "additional_fields": "REJECT"
+      },
+      "live_environment_capability_schema": {
+        "schema_id": "live_environment_capability_schema",
+        "required_fields": [
+          "private_execution_allowed",
+          "public_live_market_data_implies_execution"
+        ],
+        "field_contracts": {
+          "private_execution_allowed": {
+            "type": "BOOLEAN",
+            "current_edition_value": false
+          },
+          "public_live_market_data_implies_execution": {
+            "type": "BOOLEAN",
+            "current_edition_value": false
+          }
+        },
+        "additional_fields": "REJECT"
+      },
+      "current_schema_feature_flag_registry": {
+        "schema_id": "current_schema_feature_flag_registry",
+        "schema_version": "cryptohunter.product_capabilities.payload.v1",
+        "required_flags": [
+          "live_activation_dialog",
+          "live_execution",
+          "testnet_execution"
+        ],
+        "current_edition_values": {
+          "live_activation_dialog": true,
+          "live_execution": false,
+          "testnet_execution": true
+        },
+        "value_type": "BOOLEAN",
+        "additional_flags": "REJECT"
+      }
+    }
+  },
+  "trust_state_outcomes": {
+    "VALID": {
+      "private_testnet_execution_decision": "PROCEED_TO_READINESS_GATES",
+      "live_execution_decision": "DENY",
+      "secret_read_decision": "PROCEED_TO_LATER_TESTNET_GATES",
+      "private_connection_decision": "PROCEED_TO_LATER_TESTNET_GATES",
+      "fallback_policy": null,
+      "denial_code": null,
+      "audit_event": "PRODUCT_CAPABILITIES_VALIDATED"
+    },
+    "MISSING": {
+      "private_testnet_execution_decision": "DENY",
+      "live_execution_decision": "DENY",
+      "secret_read_decision": "DENY",
+      "private_connection_decision": "DENY",
+      "fallback_policy": "SAFE_LOCAL_ONLY",
+      "denial_code": "PRODUCT_CAPABILITIES_MISSING",
+      "audit_event": "PRODUCT_CAPABILITIES_REJECTED"
+    },
+    "INVALID_SIGNATURE": {
+      "private_testnet_execution_decision": "DENY",
+      "live_execution_decision": "DENY",
+      "secret_read_decision": "DENY",
+      "private_connection_decision": "DENY",
+      "fallback_policy": "SAFE_LOCAL_ONLY",
+      "denial_code": "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+      "audit_event": "PRODUCT_CAPABILITIES_REJECTED"
+    },
+    "EXPIRED": {
+      "private_testnet_execution_decision": "DENY",
+      "live_execution_decision": "DENY",
+      "secret_read_decision": "DENY",
+      "private_connection_decision": "DENY",
+      "fallback_policy": "SAFE_LOCAL_ONLY",
+      "denial_code": "PRODUCT_CAPABILITIES_EXPIRED",
+      "audit_event": "PRODUCT_CAPABILITIES_REJECTED"
+    },
+    "UNSUPPORTED_SCHEMA": {
+      "private_testnet_execution_decision": "DENY",
+      "live_execution_decision": "DENY",
+      "secret_read_decision": "DENY",
+      "private_connection_decision": "DENY",
+      "fallback_policy": "SAFE_LOCAL_ONLY",
+      "denial_code": "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA",
+      "audit_event": "PRODUCT_CAPABILITIES_REJECTED"
+    },
+    "REVOKED": {
+      "private_testnet_execution_decision": "DENY",
+      "live_execution_decision": "DENY",
+      "secret_read_decision": "DENY",
+      "private_connection_decision": "DENY",
+      "fallback_policy": "SAFE_LOCAL_ONLY",
+      "denial_code": "PRODUCT_CAPABILITIES_REVOKED",
+      "audit_event": "PRODUCT_CAPABILITIES_REJECTED"
+    }
+  },
+  "live_gate_common_required_inputs": [
+    "requested_environment",
+    "active_environment_before",
+    "product_capabilities_snapshot",
+    "edition_id",
+    "correlation_id"
+  ],
+  "live_activation_dialog_flow": {
+    "flow_id": "live_activation_dialog_flow_current_edition",
+    "entry_step_id": "operator_selects_visible_locked_live",
+    "steps": [
+      {
+        "step_id": "operator_selects_visible_locked_live",
+        "actor": "operator",
+        "step_kind": "ACTION",
+        "transitions": [
+          {
+            "event": "SELECT",
+            "destination_step_id": "desktop_shell_opens_activation_dialog"
+          }
+        ]
+      },
+      {
+        "step_id": "desktop_shell_opens_activation_dialog",
+        "actor": "DesktopShell",
+        "step_kind": "ACTION",
+        "audit_event": "LIVE_ACTIVATION_DIALOG_OPENED",
+        "transitions": [
+          {
+            "event": "OPENED",
+            "destination_step_id": "operator_decision"
+          }
+        ]
+      },
+      {
+        "step_id": "operator_decision",
+        "actor": "operator",
+        "step_kind": "DECISION",
+        "transitions": [
+          {
+            "event": "CANCEL",
+            "destination_step_id": "cancelled_without_activation_request"
+          },
+          {
+            "event": "CONTINUE",
+            "destination_step_id": "dialog_requires_operator_authentication"
+          }
+        ]
+      },
+      {
+        "step_id": "cancelled_without_activation_request",
+        "actor": "DesktopShell",
+        "step_kind": "TERMINAL",
+        "terminal_outcome": "CANCELLED",
+        "sends_environment_activation_request": false,
+        "active_environment_changes": false,
+        "forbidden_side_effects": [
+          "credential_read",
+          "policy_capability_lookup",
+          "endpoint_resolution",
+          "adapter_creation",
+          "private_connection",
+          "execution"
+        ]
+      },
+      {
+        "step_id": "dialog_requires_operator_authentication",
+        "actor": "DesktopShell",
+        "step_kind": "ACTION",
+        "requires_operator_authentication": true,
+        "transitions": [
+          {
+            "event": "AUTH_REQUIRED",
+            "destination_step_id": "authentication_decision"
+          }
+        ]
+      },
+      {
+        "step_id": "authentication_decision",
+        "actor": "DesktopShell",
+        "step_kind": "DECISION",
+        "transitions": [
+          {
+            "event": "FAILED",
+            "destination_step_id": "authentication_failed"
+          },
+          {
+            "event": "SUCCEEDED",
+            "destination_step_id": "authentication_succeeded"
+          }
+        ]
+      },
+      {
+        "step_id": "authentication_failed",
+        "actor": "DesktopShell",
+        "step_kind": "TERMINAL",
+        "terminal_outcome": "AUTHENTICATION_FAILED",
+        "audit_event": "LIVE_ACTIVATION_AUTH_FAILED",
+        "sends_environment_activation_request": false,
+        "active_environment_changes": false,
+        "forbidden_side_effects": [
+          "policy_capability_lookup",
+          "credential_read",
+          "endpoint_resolution",
+          "adapter_creation",
+          "private_connection",
+          "execution"
+        ]
+      },
+      {
+        "step_id": "authentication_succeeded",
+        "actor": "DesktopShell",
+        "step_kind": "ACTION",
+        "audit_event": "LIVE_ACTIVATION_AUTH_SUCCEEDED",
+        "extends_ProductCapabilities": false,
+        "sends_environment_activation_request": true,
+        "request_kind": "authenticated_activation_attempt",
+        "transitions": [
+          {
+            "event": "AUTHENTICATED_ATTEMPT_CREATED",
+            "destination_step_id": "policy_authority_checks_current_edition_capability"
+          }
+        ]
+      },
+      {
+        "step_id": "policy_authority_checks_current_edition_capability",
+        "actor": "Core policy authority",
+        "step_kind": "ACTION",
+        "transitions": [
+          {
+            "event": "EDITION_CAPABILITY_CHECKED",
+            "destination_step_id": "current_edition_result_live_blocked_by_edition"
+          }
+        ]
+      },
+      {
+        "step_id": "current_edition_result_live_blocked_by_edition",
+        "actor": "Core policy authority",
+        "step_kind": "ACTION",
+        "denial_code": "LIVE_BLOCKED_BY_EDITION",
+        "transitions": [
+          {
+            "event": "DENIED",
+            "destination_step_id": "emit_live_activation_blocked_by_edition"
+          }
+        ]
+      },
+      {
+        "step_id": "emit_live_activation_blocked_by_edition",
+        "actor": "Core policy authority",
+        "step_kind": "ACTION",
+        "audit_event": "LIVE_ACTIVATION_BLOCKED_BY_EDITION",
+        "transitions": [
+          {
+            "event": "AUDITED",
+            "destination_step_id": "active_environment_remains_unchanged"
+          }
+        ]
+      },
+      {
+        "step_id": "active_environment_remains_unchanged",
+        "actor": "CoreHost",
+        "step_kind": "ACTION",
+        "active_environment_changes": false,
+        "sets_active_environment_live": false,
+        "transitions": [
+          {
+            "event": "STATE_UNCHANGED",
+            "destination_step_id": "forbid_live_external_side_effects"
+          }
+        ]
+      },
+      {
+        "step_id": "forbid_live_external_side_effects",
+        "actor": "Core policy authority",
+        "step_kind": "TERMINAL",
+        "terminal_outcome": "LIVE_BLOCKED_BY_EDITION",
+        "active_environment_changes": false,
+        "sets_active_environment_live": false,
+        "forbidden_side_effects": [
+          "credential_read",
+          "endpoint_resolution",
+          "adapter_creation",
+          "private_connection",
+          "execution"
+        ],
+        "required_prior_audit_event": "LIVE_ACTIVATION_BLOCKED_BY_EDITION"
+      }
+    ],
+    "terminal_outcomes": [
+      "CANCELLED",
+      "AUTHENTICATION_FAILED",
+      "LIVE_BLOCKED_BY_EDITION"
+    ]
+  },
+  "runtime_environment_activation_gate_order": {
+    "order": [
+      "validate_product_capabilities_schema_signature_trust",
+      "validate_requested_environment_enum",
+      "validate_operator_authorization_context_if_required",
+      "validate_edition_environment_capability",
+      "validate_live_access_grant_for_future_live_edition_only",
+      "validate_kill_switch_and_safety_state",
+      "validate_environment_readiness",
+      "validate_credential_scope",
+      "validate_endpoint_class",
+      "validate_adapter_capability",
+      "validate_connection_policy",
+      "core_commits_active_environment",
+      "bind_runtime_routes",
+      "per_order_risk_gates_remain_required"
+    ],
+    "rules": [
+      "requested_environment enum validation precedes edition environment capability lookup",
+      "operator authorization success does not bypass edition capability",
+      "current edition LIVE denies at edition environment capability gate",
+      "edition capability denial occurs before credential read, endpoint resolution, adapter creation and connection creation",
+      "active_environment is never transiently LIVE",
+      "UI dialog flow and Core activation flow have separate responsibilities",
+      "DesktopShell does not change active_environment"
+    ]
+  },
+  "live_gate_audit_event_map": {
+    "UI_MODE_SELECTOR": "LIVE_ACTIVATION_BLOCKED_BY_EDITION",
+    "CONFIG_DESERIALIZATION": "CONFIG_ENVIRONMENT_REJECTED",
+    "PERSISTED_STATE_RESTORE": "PERSISTED_ENVIRONMENT_REJECTED",
+    "IPC_COMMAND_VALIDATION": "IPC_ENVIRONMENT_COMMAND_REJECTED",
+    "PRODUCT_CAPABILITY_POLICY": "LIVE_ACTIVATION_BLOCKED_BY_EDITION",
+    "LIVE_ACCESS_GRANT_POLICY": "LIVE_ACTIVATION_BLOCKED_BY_EDITION",
+    "CREDENTIAL_PROFILE_RESOLUTION": "CREDENTIAL_SCOPE_REJECTED",
+    "SECRET_READ_OR_DECRYPT": "CREDENTIAL_READ_REJECTED",
+    "ENDPOINT_RESOLUTION": "ENDPOINT_POLICY_REJECTED",
+    "ADAPTER_FACTORY": "ADAPTER_FACTORY_REJECTED",
+    "PRIVATE_CONNECTION_CREATION": "PRIVATE_CONNECTION_REJECTED",
+    "RUNTIME_ENVIRONMENT_ACTIVATION": "RUNTIME_ENVIRONMENT_ACTIVATION_REJECTED",
+    "STRATEGY_ROUTE_BINDING": "EXECUTION_ROUTE_REJECTED",
+    "ORDER_INTENT_ACCEPTANCE": "ORDER_INTENT_REJECTED",
+    "EXECUTION_COMMAND_SUBMISSION": "EXECUTION_COMMAND_REJECTED",
+    "RECONNECT": "RECONNECT_ENVIRONMENT_REJECTED",
+    "RECOVERY": "RECOVERY_ENVIRONMENT_REJECTED",
+    "RECONCILIATION_WITH_EXTERNAL_VENUE": "RECONCILIATION_ENVIRONMENT_REJECTED"
+  },
+  "gate_execution_invariants": [
+    "NO_OR_BYPASS_BETWEEN_GATES",
+    "ALL_APPLICABLE_GATES_REQUIRED",
+    "EARLIER_DENIAL_FORBIDS_LATER_SIDE_EFFECTS",
+    "DIRECT_LAYER_INVOCATION_REVALIDATES_OWN_GATE",
+    "LATER_LAYERS_DO_NOT_ASSUME_EARLIER_VALIDATION",
+    "DENIED_ENVIRONMENT_NEVER_COMMITS_ACTIVE_ENVIRONMENT",
+    "CURRENT_EDITION_LIVE_DENIED_AT_EVERY_DEFENSIVE_GATE"
+  ],
+  "signature_validation_pipeline": {
+    "validation_stages": [
+      "DOCUMENT_STRUCTURE_VALIDATION",
+      "CANONICAL_HASH_VALIDATION",
+      "REGISTRY_POLICY_VALIDATION",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION",
+      "EXPIRY_AND_REVOCATION_VALIDATION",
+      "VALIDATED_SNAPSHOT_CREATION"
+    ],
+    "stage_results": [
+      "STRUCTURE_ACCEPTED",
+      "STRUCTURE_REJECTED",
+      "HASHES_ACCEPTED",
+      "HASHES_REJECTED",
+      "HASH_VALIDATION_NOT_REACHED",
+      "REGISTRY_ACCEPTED",
+      "REGISTRY_REJECTED",
+      "REGISTRY_VALIDATION_NOT_REACHED",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED",
+      "CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4",
+      "CRYPTOGRAPHIC_VERIFICATION_NOT_REACHED",
+      "EXPIRY_REVOCATION_ACCEPTED",
+      "EXPIRY_REVOCATION_REJECTED",
+      "EXPIRY_REVOCATION_NOT_REACHED",
+      "SNAPSHOT_CREATED",
+      "SNAPSHOT_NOT_CREATED"
+    ],
+    "m0_4_cryptographic_signature_verification": "CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4",
+    "valid_trust_state_requires_all_future_stages": true,
+    "structural_signature_fixture_may_create_valid_trust_state": false,
+    "stage_inputs": {
+      "DOCUMENT_STRUCTURE_VALIDATION": "raw_signed_document",
+      "CANONICAL_HASH_VALIDATION": "STRUCTURE_ACCEPTED document",
+      "REGISTRY_POLICY_VALIDATION": "HASHES_ACCEPTED document",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION": "REGISTRY_ACCEPTED document",
+      "EXPIRY_AND_REVOCATION_VALIDATION": "future cryptographic signature accepted document",
+      "VALIDATED_SNAPSHOT_CREATION": "all prior stages accepted"
+    },
+    "stage_outputs": {
+      "DOCUMENT_STRUCTURE_VALIDATION": [
+        "STRUCTURE_ACCEPTED",
+        "STRUCTURE_REJECTED"
+      ],
+      "CANONICAL_HASH_VALIDATION": [
+        "HASHES_ACCEPTED",
+        "HASHES_REJECTED",
+        "HASH_VALIDATION_NOT_REACHED"
+      ],
+      "REGISTRY_POLICY_VALIDATION": [
+        "REGISTRY_ACCEPTED",
+        "REGISTRY_REJECTED",
+        "REGISTRY_VALIDATION_NOT_REACHED"
+      ],
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION": [
+        "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED",
+        "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED",
+        "CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4",
+        "CRYPTOGRAPHIC_VERIFICATION_NOT_REACHED"
+      ],
+      "EXPIRY_AND_REVOCATION_VALIDATION": [
+        "EXPIRY_REVOCATION_ACCEPTED",
+        "EXPIRY_REVOCATION_REJECTED",
+        "EXPIRY_REVOCATION_NOT_REACHED"
+      ],
+      "VALIDATED_SNAPSHOT_CREATION": [
+        "SNAPSHOT_CREATED",
+        "SNAPSHOT_NOT_CREATED"
+      ]
+    },
+    "snapshot_created_requires_all_prior_stages": true,
+    "snapshot_created_reachable_in_m0_4": false,
+    "missing_real_signature_verification_forbids_valid_snapshot": true,
+    "test_functions_may_return_VALID_trust_state": false,
+    "stage_result_registry": {
+      "STRUCTURE_ACCEPTED": {
+        "availability": "M0_4"
+      },
+      "STRUCTURE_REJECTED": {
+        "availability": "M0_4"
+      },
+      "HASHES_ACCEPTED": {
+        "availability": "M0_4"
+      },
+      "HASHES_REJECTED": {
+        "availability": "M0_4"
+      },
+      "HASH_VALIDATION_NOT_REACHED": {
+        "availability": "M0_4"
+      },
+      "REGISTRY_ACCEPTED": {
+        "availability": "M0_4"
+      },
+      "REGISTRY_REJECTED": {
+        "availability": "M0_4"
+      },
+      "REGISTRY_VALIDATION_NOT_REACHED": {
+        "availability": "M0_4"
+      },
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED": {
+        "availability": "FUTURE_ONLY"
+      },
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED": {
+        "availability": "FUTURE_ONLY"
+      },
+      "CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4": {
+        "availability": "M0_4"
+      },
+      "CRYPTOGRAPHIC_VERIFICATION_NOT_REACHED": {
+        "availability": "M0_4"
+      },
+      "EXPIRY_REVOCATION_ACCEPTED": {
+        "availability": "FUTURE_ONLY"
+      },
+      "EXPIRY_REVOCATION_REJECTED": {
+        "availability": "M0_4"
+      },
+      "EXPIRY_REVOCATION_NOT_REACHED": {
+        "availability": "M0_4"
+      },
+      "SNAPSHOT_CREATED": {
+        "availability": "FUTURE_ONLY"
+      },
+      "SNAPSHOT_NOT_CREATED": {
+        "availability": "M0_4"
+      }
+    },
+    "raw_document_entrypoint": "validate_raw_document_structure",
+    "production_path_accepts_dict_directly": false,
+    "snapshot_prerequisites": [
+      "STRUCTURE_ACCEPTED",
+      "HASHES_ACCEPTED",
+      "REGISTRY_ACCEPTED",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED",
+      "EXPIRY_REVOCATION_ACCEPTED",
+      "complete_stage_evidence",
+      "direct_stage_chain",
+      "same_validation_context_id",
+      "same_document_fingerprint",
+      "same_capabilities_id",
+      "same_edition_id",
+      "same_signed_payload_hash",
+      "same_capability_set_hash",
+      "same_payload_schema_version",
+      "same_signature_schema_version",
+      "no_diagnostic_reason",
+      "no_mapped_non_valid_trust_state",
+      "no_denial_code",
+      "current_edition_policy_consistent",
+      "canonical_hashes_revalidated",
+      "final_document_unchanged",
+      "verified_stage_evidence_id_chain",
+      "crypto_acceptance_fixture_bound_to_registry_evidence",
+      "expiry_evidence_bound_to_crypto_evidence",
+      "evidence_ids_recalculated",
+      "no_fabricated_accepted_stage_evidence",
+      "stage_specific_private_issuer_attestation",
+      "private_predecessor_object_chain_verified",
+      "public_and_private_predecessor_links_match",
+      "serialized_evidence_cannot_preserve_issuer_attestation",
+      "future_crypto_private_fixture_attestation_verified",
+      "fixture_marker_is_diagnostic_not_authoritative",
+      "fully_rehashed_fabricated_chain_rejected",
+      "immutable_issued_stage_evidence",
+      "recursively_validated_predecessor_results",
+      "recursively_validated_predecessor_contexts",
+      "recursively_validated_predecessor_clean_metadata",
+      "stage_specific_issuer_only",
+      "no_generic_accepted_evidence_factory",
+      "direct_wrapper_construction_rejected",
+      "mutated_issued_predecessor_chain_rejected",
+      "issued_evidence_mapping_implementation_composition_not_dict_subclass",
+      "generic_sealer_disallowed",
+      "direct_attestation_constructor_disallowed",
+      "runtime_authority_objects_not_global",
+      "raw_stage_specific_issuers_not_global",
+      "closure_local_attestation_registry",
+      "public_mapping_digest_bound_to_attestation",
+      "object_attribute_tampering_fails_closed",
+      "input_public_dict_copied_before_issue",
+      "no_module_global_evidence_runtime",
+      "no_module_global_future_fixture_token",
+      "no_authority_bundle_factory_global",
+      "no_global_stage_issuer_methods",
+      "strong_current_evidence_ref_identity",
+      "numeric_object_id_not_attestation",
+      "future_fixture_authority_closure_local_unreturned",
+      "no_standalone_future_crypto_issuer_global",
+      "initializer_removed_from_globals_after_install",
+      "future_crypto_acceptance_only_inside_future_pipeline_closure",
+      "future_fixture_authority_not_runtime_argument_or_token"
+    ],
+    "normal_pipeline_allows_force_future_crypto": false,
+    "future_crypto_fixture": "closure-local in _run_future_contract_pipeline",
+    "future_crypto_fixture_availability": "TEST_FIXTURE_FUTURE_ONLY",
+    "future_crypto_pipeline": "_run_future_contract_pipeline",
+    "public_future_crypto_acceptance_producers_allowed": false
+  },
+  "raw_json_parse_policy": {
+    "text_encoding": "UTF-8",
+    "duplicate_object_member_names": "REJECT_BEFORE_CANONICALIZATION",
+    "non_finite_values": "REJECT",
+    "trailing_data": "REJECT",
+    "malformed_utf8": "REJECT",
+    "last_key_wins_allowed": false,
+    "applies_to": [
+      "signed_document_envelope",
+      "capability_payload",
+      "signature_header",
+      "all_nested_objects"
+    ],
+    "parse_error_stage_result": "STRUCTURE_REJECTED",
+    "canonicalization_after_parse_error_allowed": false,
+    "raw_entrypoint": "validate_raw_document_structure",
+    "dict_input_to_raw_entrypoint": "REJECT",
+    "last_key_wins_json_loads_result_is_verified_document": false,
+    "accepted_raw_document_types": [
+      "str",
+      "bytes"
+    ],
+    "unsupported_type_result": "STRUCTURE_REJECTED",
+    "unsupported_type_diagnostic_reason": "RAW_DOCUMENT_TYPE_NOT_SUPPORTED",
+    "diagnostic_reason_codes": [
+      "RAW_DOCUMENT_TYPE_NOT_SUPPORTED"
+    ],
+    "leading_json_whitespace": "ALLOW",
+    "trailing_json_whitespace": "ALLOW",
+    "trailing_non_whitespace_data": "REJECT",
+    "legal_surrounding_whitespace_codepoints": [
+      "U+0020",
+      "U+0009",
+      "U+000A",
+      "U+000D"
+    ],
+    "vertical_tab_as_surrounding_whitespace": "REJECT",
+    "form_feed_as_surrounding_whitespace": "REJECT",
+    "non_breaking_space_as_surrounding_whitespace": "REJECT",
+    "unicode_em_space_as_surrounding_whitespace": "REJECT",
+    "bom_before_document": "REJECT"
+  },
+  "capability_document_version_policy": {
+    "supported_payload_schema_versions": [
+      "cryptohunter.product_capabilities.payload.v1"
+    ],
+    "supported_signature_schema_versions": [
+      "cryptohunter.product_capabilities.signature.v1"
+    ],
+    "schema_version_registry_authority": "CorePolicyAuthority",
+    "unknown_payload_schema_result": "STRUCTURE_REJECTED",
+    "unknown_signature_schema_result": "STRUCTURE_REJECTED",
+    "diagnostic_reason_codes": [
+      "UNKNOWN_CAPABILITY_PAYLOAD_SCHEMA_VERSION",
+      "UNKNOWN_SIGNATURE_SCHEMA_VERSION",
+      "MISSING_SCHEMA_VERSION_REGISTRY"
+    ],
+    "mapped_trust_state": "UNSUPPORTED_SCHEMA",
+    "mapped_denial_code": "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA",
+    "required_audit_event": "PRODUCT_CAPABILITIES_REJECTED",
+    "payload_may_override_schema_registry": false,
+    "missing_registry_result": "STRUCTURE_REJECTED",
+    "missing_registry_diagnostic_reason": "MISSING_SCHEMA_VERSION_REGISTRY"
+  },
+  "capability_revocation_policy": {
+    "revocation_registry_ref": "trusted_build_runtime_capability_revocation_registry",
+    "lookup_authority": "CorePolicyAuthority",
+    "lookup_key": "revocation_reference_or_capabilities_id_global_lookup",
+    "statuses": [
+      "NOT_REVOKED",
+      "REVOKED",
+      "STATUS_UNKNOWN",
+      "REGISTRY_UNAVAILABLE"
+    ],
+    "operator_gui_config_cli_env_ipc_may_modify_registry": false,
+    "document_may_supply_trusted_revocation_status": false,
+    "lookup_required_before_VALIDATED_SNAPSHOT_CREATION": true,
+    "revocation_reference_semantics": {
+      "null": "NO_INDIVIDUAL_REFERENCE_GLOBAL_LOOKUP_STILL_REQUIRED",
+      "string_format": "caprev_[A-Za-z0-9_-]{8,64}",
+      "empty_string": "STRUCTURE_REJECTED",
+      "unknown_reference": "STATUS_UNKNOWN"
+    },
+    "status_mappings": {
+      "NOT_REVOKED": {
+        "stage_result": "EXPIRY_REVOCATION_ACCEPTED",
+        "mapped_trust_state": null,
+        "mapped_denial_code": null,
+        "audit_event": "PRODUCT_CAPABILITIES_REVOCATION_CHECK_PASSED"
+      },
+      "REVOKED": {
+        "stage_result": "EXPIRY_REVOCATION_REJECTED",
+        "mapped_trust_state": "REVOKED",
+        "mapped_denial_code": "PRODUCT_CAPABILITIES_REVOKED",
+        "audit_event": "PRODUCT_CAPABILITIES_REJECTED"
+      },
+      "STATUS_UNKNOWN": {
+        "stage_result": "EXPIRY_REVOCATION_REJECTED",
+        "mapped_trust_state": "INVALID_SIGNATURE",
+        "mapped_denial_code": "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+        "audit_event": "PRODUCT_CAPABILITIES_REJECTED",
+        "diagnostic_reason_code": "REVOCATION_STATUS_UNKNOWN"
+      },
+      "REGISTRY_UNAVAILABLE": {
+        "stage_result": "EXPIRY_REVOCATION_REJECTED",
+        "mapped_trust_state": "INVALID_SIGNATURE",
+        "mapped_denial_code": "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+        "audit_event": "PRODUCT_CAPABILITIES_REJECTED",
+        "diagnostic_reason_code": "REVOCATION_REGISTRY_UNAVAILABLE"
+      },
+      "INVALID_REVOCATION_REGISTRY_STATUS": {
+        "stage_result": "EXPIRY_REVOCATION_REJECTED",
+        "mapped_trust_state": "INVALID_SIGNATURE",
+        "mapped_denial_code": "PRODUCT_CAPABILITIES_INVALID_SIGNATURE",
+        "audit_event": "PRODUCT_CAPABILITIES_REJECTED",
+        "diagnostic_reason_code": "INVALID_REVOCATION_REGISTRY_STATUS"
+      }
+    },
+    "invalid_status_result": "INVALID_REVOCATION_REGISTRY_STATUS"
+  },
+  "current_edition_signed_payload_policy": {
+    "edition_id": "CRYPTOHUNTER_TESTNET_EDITION",
+    "capability_set": [
+      "LIVE_VISIBLE_LOCKED_ONLY",
+      "PAPER_LOCAL_SIMULATION",
+      "TESTNET_PRIVATE_EXECUTION_AFTER_READINESS"
+    ],
+    "environment_capabilities_ref": "ProductCapabilities.current_edition_capability_policy.environment_capabilities",
+    "feature_flags_ref": "ProductCapabilities.current_edition_capability_policy.feature_flags",
+    "fail_closed_policy": "SAFE_LOCAL_ONLY",
+    "edition_policy_registry_authority": "CorePolicyAuthority",
+    "document_may_supply_or_modify_edition_policy_registry": false,
+    "source": "signed_build_resource_after_validation",
+    "source_policy": "EXACT_MATCH"
+  },
+  "capability_id_registry": {
+    "registry_id": "cryptohunter.product_capabilities.capability_id_registry.v1",
+    "closed_registry": true,
+    "current_schema_allowed_capability_ids": [
+      "LIVE_VISIBLE_LOCKED_ONLY",
+      "PAPER_LOCAL_SIMULATION",
+      "TESTNET_PRIVATE_EXECUTION_AFTER_READINESS"
+    ],
+    "future_or_live_enabled_capability_ids_rejected_in_current_schema": [
+      "LIVE_PRIVATE_EXECUTION",
+      "LIVE_ORDER_EXECUTION",
+      "LIVE_UNLOCKED_EXECUTION"
+    ],
+    "document_may_extend_registry": false,
+    "sort_order_ref": "UTF16_CODE_UNIT_LEXICOGRAPHIC"
+  },
+  "validation_context_contract": {
+    "created_after": "STRUCTURE_ACCEPTED",
+    "created_from": "safe_raw_parse_result",
+    "successor_stage_checks": [
+      "same_validation_context_id",
+      "same_document_fingerprint",
+      "same_capabilities_id",
+      "same_edition_id",
+      "same_signed_payload_hash",
+      "same_capability_set_hash",
+      "same_payload_schema_version",
+      "same_signature_schema_version",
+      "valid_predecessor_stage_evidence_id",
+      "valid_recomputed_stage_evidence_id",
+      "clean_predecessor_metadata"
+    ],
+    "mismatch_diagnostic_reason_codes": [
+      "VALIDATION_CONTEXT_MISMATCH",
+      "DOCUMENT_IDENTITY_MISMATCH",
+      "PREVIOUS_STAGE_EVIDENCE_INVALID"
+    ],
+    "mismatch_stage_results": {
+      "CANONICAL_HASH_VALIDATION": "HASHES_REJECTED",
+      "REGISTRY_POLICY_VALIDATION": "REGISTRY_REJECTED",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION": "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED",
+      "EXPIRY_AND_REVOCATION_VALIDATION": "EXPIRY_REVOCATION_REJECTED",
+      "VALIDATED_SNAPSHOT_CREATION": "SNAPSHOT_NOT_CREATED"
+    },
+    "context_fields": [
+      "validation_context_id",
+      "document_fingerprint",
+      "capabilities_id",
+      "edition_id",
+      "signed_payload_hash",
+      "capability_set_hash",
+      "payload_schema_version",
+      "signature_schema_version"
+    ],
+    "stage_evidence_fields": [
+      "predecessor_stage_evidence_id",
+      "stage_evidence_id",
+      "evidence_schema_version",
+      "stage_id",
+      "stage_result",
+      "validation_context_id",
+      "capabilities_id",
+      "signed_payload_hash",
+      "document_fingerprint",
+      "edition_id",
+      "capability_set_hash",
+      "payload_schema_version",
+      "signature_schema_version",
+      "fixture_availability",
+      "diagnostic_reason_code",
+      "mapped_trust_state",
+      "mapped_denial_code"
+    ],
+    "document_fingerprint": "SHA-256 over RFC8785_JCS canonical bytes of complete structurally accepted signed-document envelope",
+    "document_fingerprint_algorithm": "SHA-256",
+    "document_fingerprint_canonicalization": "RFC8785_JCS"
+  },
+  "stage_evidence_chain_contract": {
+    "evidence_schema_version": "cryptohunter.stage_evidence.v1",
+    "evidence_id_algorithm": "SHA-256",
+    "evidence_id_canonicalization": "RFC8785_JCS",
+    "evidence_id_fields": [
+      "evidence_schema_version",
+      "stage_id",
+      "stage_result",
+      "predecessor_stage_evidence_id",
+      "validation_context_id",
+      "document_fingerprint",
+      "capabilities_id",
+      "edition_id",
+      "signed_payload_hash",
+      "capability_set_hash",
+      "payload_schema_version",
+      "signature_schema_version",
+      "fixture_availability",
+      "diagnostic_reason_code",
+      "mapped_trust_state",
+      "mapped_denial_code"
+    ],
+    "first_stage_predecessor": null,
+    "direct_predecessor_map": {
+      "DOCUMENT_STRUCTURE_VALIDATION": null,
+      "CANONICAL_HASH_VALIDATION": "DOCUMENT_STRUCTURE_VALIDATION",
+      "REGISTRY_POLICY_VALIDATION": "CANONICAL_HASH_VALIDATION",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION": "REGISTRY_POLICY_VALIDATION",
+      "EXPIRY_AND_REVOCATION_VALIDATION": "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION",
+      "VALIDATED_SNAPSHOT_CREATION": "EXPIRY_AND_REVOCATION_VALIDATION"
+    },
+    "accepted_stage_chain": [
+      "STRUCTURE_ACCEPTED",
+      "HASHES_ACCEPTED",
+      "REGISTRY_ACCEPTED",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED",
+      "EXPIRY_REVOCATION_ACCEPTED"
+    ],
+    "future_crypto_fixture_marker": "TEST_FIXTURE_FUTURE_ONLY",
+    "future_crypto_fixture_required_for_snapshot": true,
+    "evidence_id_recalculation_required": true,
+    "evidence_mutation_invalidates_evidence_id": true,
+    "evidence_id_provides_integrity_only": true,
+    "evidence_id_provides_producer_authenticity": false,
+    "accepted_stage_result_requires_stage_specific_issuer_attestation": true,
+    "generic_evidence_factory_may_issue_accepted_results": false,
+    "serialized_evidence_preserves_issuer_attestation": false,
+    "manual_hash_recalculation_creates_accepted_evidence": false,
+    "private_predecessor_object_chain_required": true,
+    "public_and_private_predecessor_links_must_match": true,
+    "issued_stage_evidence_is_immutable": true,
+    "full_recursive_predecessor_semantics_validation_required": true,
+    "generic_accepted_evidence_issuer_allowed": false,
+    "accepted_results_have_stage_specific_issuers": true,
+    "issuer_authority_may_not_be_passed_as_function_argument": true,
+    "direct_wrapper_construction_creates_attestation": false,
+    "private_name_prefix_is_not_security_boundary": true,
+    "issued_evidence_mapping_implementation": "COMPOSITION_NOT_DICT_SUBCLASS",
+    "issued_evidence_isinstance_dict": false,
+    "generic_sealer_allowed": false,
+    "direct_attestation_constructor_allowed": false,
+    "runtime_authority_objects_exposed_as_module_globals": false,
+    "raw_stage_specific_issuers_exposed_as_module_globals": false,
+    "attestation_registry_is_closure_local": true,
+    "public_mapping_digest_bound_to_attestation": true,
+    "object_attribute_tampering_fails_closed": true,
+    "arbitrary_in_process_code_execution_out_of_scope": true,
+    "production_authenticity_requires_real_cryptography": true,
+    "module_global_evidence_runtime_allowed": false,
+    "module_global_future_fixture_token_allowed": false,
+    "authority_bundle_factory_exposed_as_module_global": false,
+    "global_objects_may_expose_stage_issuer_methods": false,
+    "attestation_registry_binds_strong_evidence_object_reference": true,
+    "numeric_object_id_alone_is_sufficient_attestation": false,
+    "current_evidence_reference_must_match_by_identity": true,
+    "future_fixture_authority_is_closure_local_and_unreturned": true,
+    "standalone_future_crypto_issuer_global_allowed": false,
+    "global_initializer_removed_after_install": true,
+    "future_crypto_acceptance_only_inside_future_pipeline_closure": true,
+    "future_crypto_helper_accepting_registry_evidence_global_allowed": false,
+    "future_fixture_authority_is_not_materialized_as_runtime_argument_or_token": true
+  },
+  "stage_evidence_producer_attestation_contract": {
+    "evidence_id_provides_integrity_only": true,
+    "evidence_id_provides_producer_authenticity": false,
+    "accepted_evidence_requires_private_issuer": true,
+    "serialized_fields_cannot_create_issuer_attestation": true,
+    "public_marker_is_not_authority": true,
+    "snapshot_requires_expected_stage_issuer": true,
+    "issuer_attestation_is_not_document_supplied": true,
+    "issuer_attestation_is_not_configurable": true,
+    "issuer_attestation_is_not_part_of_public_api": true,
+    "issuer_token_serialized_in_evidence": false,
+    "predecessor_object_reference_serialized_in_evidence": false,
+    "future_crypto_fixture_marker_is_diagnostic_only": true,
+    "future_crypto_fixture_marker_covered_by_evidence_id": true,
+    "fixture_marker_without_private_attestation_rejected": true,
+    "private_attestation_without_correct_predecessor_rejected": true,
+    "issuer_id_registry": {
+      "DOCUMENT_STRUCTURE_VALIDATION": "PRIVATE_STRUCTURE_VALIDATOR_ISSUER_TOKEN",
+      "CANONICAL_HASH_VALIDATION": "PRIVATE_CANONICAL_HASH_VALIDATOR_ISSUER_TOKEN",
+      "REGISTRY_POLICY_VALIDATION": "PRIVATE_REGISTRY_VALIDATOR_ISSUER_TOKEN",
+      "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION": "PRIVATE_FUTURE_CRYPTO_FIXTURE_ISSUER_TOKEN",
+      "EXPIRY_AND_REVOCATION_VALIDATION": "PRIVATE_EXPIRY_REVOCATION_VALIDATOR_ISSUER_TOKEN",
+      "VALIDATED_SNAPSHOT_CREATION": "PRIVATE_SNAPSHOT_CREATOR_ISSUER_TOKEN"
+    },
+    "issued_stage_evidence_is_immutable": true,
+    "public_fields_mutation_after_issue_forbidden": true,
+    "private_provenance_mutation_after_issue_forbidden": true,
+    "full_recursive_predecessor_semantics_validation_required": true,
+    "predecessor_stage_result_validation_required": true,
+    "predecessor_clean_metadata_validation_required": true,
+    "predecessor_context_validation_required": true,
+    "generic_accepted_evidence_issuer_allowed": false,
+    "accepted_results_have_stage_specific_issuers": true,
+    "issuer_authority_may_not_be_passed_as_function_argument": true,
+    "direct_wrapper_construction_creates_attestation": false,
+    "private_name_prefix_is_not_security_boundary": true,
+    "issuer_token_values_exposed_in_json": false,
+    "issuer_id_registry_contains_contractual_identifiers_not_runtime_tokens": true,
+    "issued_evidence_mapping_implementation": "COMPOSITION_NOT_DICT_SUBCLASS",
+    "issued_evidence_isinstance_dict": false,
+    "generic_sealer_allowed": false,
+    "direct_attestation_constructor_allowed": false,
+    "runtime_authority_objects_exposed_as_module_globals": false,
+    "raw_stage_specific_issuers_exposed_as_module_globals": false,
+    "attestation_registry_is_closure_local": true,
+    "public_mapping_digest_bound_to_attestation": true,
+    "object_attribute_tampering_fails_closed": true,
+    "arbitrary_in_process_code_execution_out_of_scope": true,
+    "production_authenticity_requires_real_cryptography": true,
+    "module_global_evidence_runtime_allowed": false,
+    "module_global_future_fixture_token_allowed": false,
+    "authority_bundle_factory_exposed_as_module_global": false,
+    "global_objects_may_expose_stage_issuer_methods": false,
+    "attestation_registry_binds_strong_evidence_object_reference": true,
+    "numeric_object_id_alone_is_sufficient_attestation": false,
+    "current_evidence_reference_must_match_by_identity": true,
+    "future_fixture_authority_is_closure_local_and_unreturned": true,
+    "standalone_future_crypto_issuer_global_allowed": false,
+    "global_initializer_removed_after_install": true,
+    "future_crypto_acceptance_only_inside_future_pipeline_closure": true,
+    "future_crypto_helper_accepting_registry_evidence_global_allowed": false,
+    "future_fixture_authority_is_not_materialized_as_runtime_argument_or_token": true
+  },
+  "stage_evidence_threat_model": {
+    "in_scope": [
+      "input_documents",
+      "json_payloads",
+      "configuration",
+      "cli_arguments",
+      "environment_variables",
+      "ipc_messages",
+      "public_api_calls",
+      "evidence_copying_and_serialization",
+      "manual_evidence_id_recomputation",
+      "ordinary_object_construction_attempts"
+    ],
+    "out_of_scope": [
+      "arbitrary_execution_of_trusted_code_inside_process",
+      "debugger_modification_of_closure_cells",
+      "whole_module_monkeypatching",
+      "process_memory_modification"
+    ],
+    "test_interpreter_is_sandbox": false,
+    "test_interpreter_is_cryptographic_security_boundary": false,
+    "production_authenticity_requires_real_cryptography": true,
+    "production_authenticity_requires_process_or_module_boundaries": true,
+    "private_name_prefix_is_not_security_boundary": true
+  }
+}

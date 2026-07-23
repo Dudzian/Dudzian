@@ -44,7 +44,8 @@ def test_architecture_readme_is_m0_source_of_truth() -> None:
     main = MAIN_README.read_text(encoding="utf-8")
     assert "## Status M0.1 — closed" in arch
     assert "## Status M0.2 — closed" in arch
-    assert "## Status M0.3 — under audit" in arch
+    assert "## Status M0.3 — closed" in arch
+    assert "## Status M0.3 — under audit" not in arch
     assert "process_topology_and_lifecycle.md" in arch
     assert "process_topology_and_lifecycle.json" in arch
     assert "M0.14" in arch
