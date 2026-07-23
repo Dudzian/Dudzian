@@ -1961,10 +1961,21 @@
       "closure_local_attestation_registry",
       "public_mapping_digest_bound_to_attestation",
       "object_attribute_tampering_fails_closed",
-      "input_public_dict_copied_before_issue"
+      "input_public_dict_copied_before_issue",
+      "no_module_global_evidence_runtime",
+      "no_module_global_future_fixture_token",
+      "no_authority_bundle_factory_global",
+      "no_global_stage_issuer_methods",
+      "strong_current_evidence_ref_identity",
+      "numeric_object_id_not_attestation",
+      "future_fixture_authority_closure_local_unreturned",
+      "no_standalone_future_crypto_issuer_global",
+      "initializer_removed_from_globals_after_install",
+      "future_crypto_acceptance_only_inside_future_pipeline_closure",
+      "future_fixture_authority_not_runtime_argument_or_token"
     ],
     "normal_pipeline_allows_force_future_crypto": false,
-    "future_crypto_fixture": "_future_crypto_accepted_evidence",
+    "future_crypto_fixture": "closure-local in _run_future_contract_pipeline",
     "future_crypto_fixture_availability": "TEST_FIXTURE_FUTURE_ONLY",
     "future_crypto_pipeline": "_run_future_contract_pipeline",
     "public_future_crypto_acceptance_producers_allowed": false
@@ -2248,7 +2259,20 @@
     "public_mapping_digest_bound_to_attestation": true,
     "object_attribute_tampering_fails_closed": true,
     "arbitrary_in_process_code_execution_out_of_scope": true,
-    "production_authenticity_requires_real_cryptography": true
+    "production_authenticity_requires_real_cryptography": true,
+    "module_global_evidence_runtime_allowed": false,
+    "module_global_future_fixture_token_allowed": false,
+    "authority_bundle_factory_exposed_as_module_global": false,
+    "global_objects_may_expose_stage_issuer_methods": false,
+    "attestation_registry_binds_strong_evidence_object_reference": true,
+    "numeric_object_id_alone_is_sufficient_attestation": false,
+    "current_evidence_reference_must_match_by_identity": true,
+    "future_fixture_authority_is_closure_local_and_unreturned": true,
+    "standalone_future_crypto_issuer_global_allowed": false,
+    "global_initializer_removed_after_install": true,
+    "future_crypto_acceptance_only_inside_future_pipeline_closure": true,
+    "future_crypto_helper_accepting_registry_evidence_global_allowed": false,
+    "future_fixture_authority_is_not_materialized_as_runtime_argument_or_token": true
   },
   "stage_evidence_producer_attestation_contract": {
     "evidence_id_provides_integrity_only": true,
@@ -2298,7 +2322,20 @@
     "public_mapping_digest_bound_to_attestation": true,
     "object_attribute_tampering_fails_closed": true,
     "arbitrary_in_process_code_execution_out_of_scope": true,
-    "production_authenticity_requires_real_cryptography": true
+    "production_authenticity_requires_real_cryptography": true,
+    "module_global_evidence_runtime_allowed": false,
+    "module_global_future_fixture_token_allowed": false,
+    "authority_bundle_factory_exposed_as_module_global": false,
+    "global_objects_may_expose_stage_issuer_methods": false,
+    "attestation_registry_binds_strong_evidence_object_reference": true,
+    "numeric_object_id_alone_is_sufficient_attestation": false,
+    "current_evidence_reference_must_match_by_identity": true,
+    "future_fixture_authority_is_closure_local_and_unreturned": true,
+    "standalone_future_crypto_issuer_global_allowed": false,
+    "global_initializer_removed_after_install": true,
+    "future_crypto_acceptance_only_inside_future_pipeline_closure": true,
+    "future_crypto_helper_accepting_registry_evidence_global_allowed": false,
+    "future_fixture_authority_is_not_materialized_as_runtime_argument_or_token": true
   },
   "stage_evidence_threat_model": {
     "in_scope": [

@@ -161,7 +161,7 @@ The signed payload is bound to `CRYPTOHUNTER_TESTNET_EDITION`. Its `capability_s
 
 Each accepted structure result creates a document-bound validation context containing `validation_context_id`, `capabilities_id`, `edition_id`, `signed_payload_hash`, `capability_set_hash`, `payload_schema_version`, and `signature_schema_version`. Every subsequent stage evidence carries its `stage_id`, `stage_result`, validation context identity, document identity, diagnostics, mapped trust state, and mapped denial code. Later stages reject evidence from another document, another context, a different capability ID, or a different signed payload hash.
 
-The normal M0.4 pipeline has no `force_future_crypto` switch. Future cryptographic acceptance exists only as a private `TEST_FIXTURE_FUTURE_ONLY` evidence helper bound to one validation context for isolated future-contract tests. It is not part of the public M0.4 `run_pipeline` and cannot be reused across documents.
+The normal M0.4 pipeline has no `force_future_crypto` switch. Future cryptographic acceptance exists only inside the full `_run_future_contract_pipeline` closure after raw structure, hash and registry validation. There is no standalone future issuer and no fixture authority object is passed as a runtime argument.
 
 `SNAPSHOT_CREATED` checks all stage evidence globally: correct stage ownership, accepted prerequisite results, one shared validation context, one signed payload hash, no diagnostic reason, no mapped non-VALID trust state, no denial code, accepted expiry/revocation, future real cryptographic acceptance, and current-edition policy consistency. Any mismatch, trust mapping, denial, diagnostic, or M0.4 `NOT_IMPLEMENTED` crypto result fails closed to `SNAPSHOT_NOT_CREATED`.
 
@@ -179,7 +179,7 @@ Snapshot creation revalidates the final document, not only the edition id. It re
 
 The current source policy is exact: signed payloads use `signed_build_resource_after_validation`, matching `ProductCapabilities.current_edition_capability_policy.source` and `current_edition_signed_payload_policy.source`. Other source values are rejected by structure validation and final snapshot validation.
 
-There are no public future-crypto acceptance producers. `_future_crypto_accepted_evidence` is a private `TEST_FIXTURE_FUTURE_ONLY` helper that requires a complete validation context including a valid document fingerprint, and `_run_future_contract_pipeline` is private. The public M0.4 `run_pipeline` always reaches `CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4`, then `EXPIRY_REVOCATION_NOT_REACHED`, then `SNAPSHOT_NOT_CREATED`.
+There are no public or standalone future-crypto acceptance producers. `_future_crypto_accepted_evidence` does not exist after interpreter initialization; future acceptance occurs only inside the private `_run_future_contract_pipeline` closure after the earlier validators succeed. The public M0.4 `run_pipeline` always reaches `CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4`, then `EXPIRY_REVOCATION_NOT_REACHED`, then `SNAPSHOT_NOT_CREATED`.
 
 Strict surrounding JSON whitespace is limited to SPACE, TAB, LF, and CR. Vertical tab, form feed, non-breaking space, em space, a leading BOM, or a second document after legal whitespace are rejected before canonicalization.
 
@@ -201,12 +201,15 @@ requires the expiry/revocation evidence. Any mutation of an evidence field,
 predecessor ID, context field, diagnostic reason, mapped trust state, or denial
 code invalidates the chain and fails closed.
 
-The future cryptographic-acceptance fixture is isolated. No public function can
-produce arbitrary accepted stage results, and ordinary calls cannot manufacture
-`CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED`. The private fixture requires a
-module-local sentinel token and a complete accepted registry-stage evidence;
-its output is marked `TEST_FIXTURE_FUTURE_ONLY` and is usable only by isolated
-future-contract tests. The normal public M0.4 pipeline still ends with
+Future cryptographic acceptance is isolated inside the full
+`_run_future_contract_pipeline` closure. No public function can produce
+arbitrary accepted stage results, and ordinary calls cannot manufacture
+`CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED`. The future path first runs raw
+structure, hash, and registry validation, then lexically issues future crypto
+evidence through `issue_future_crypto(context, registry_evidence)`. No sentinel
+token, runtime authority object, or authority argument is involved.
+`fixture_availability=TEST_FIXTURE_FUTURE_ONLY` remains only a diagnostic marker
+covered by the evidence ID. The normal public M0.4 pipeline still ends with
 `CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4`, then
 `EXPIRY_REVOCATION_NOT_REACHED`, then `SNAPSHOT_NOT_CREATED`.
 
@@ -226,22 +229,30 @@ prove only that its public fields are internally consistent; it cannot prove
 that the structure, hash, registry, crypto fixture, expiry/revocation, or
 snapshot stage validator issued that evidence.
 
-Accepted stage evidence is therefore represented in tests by a private
-`_IssuedStageEvidence` wrapper carrying non-serialized issuer state:
-`_issuer_token`, `_producer_stage_id`, and `_predecessor_evidence_ref`. Each
-accepted stage has its own private issuer token. The generic `_stage_result`
-helper is retained only for rejected, not-reached, not-implemented, and
-not-created outputs; it cannot issue `STRUCTURE_ACCEPTED`, `HASHES_ACCEPTED`,
-`REGISTRY_ACCEPTED`, `CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED`,
-`EXPIRY_REVOCATION_ACCEPTED`, or `SNAPSHOT_CREATED`.
+Accepted stage evidence is therefore represented in tests by
+`_IssuedStageEvidence`, a read-only `Mapping` composition object rather than a
+`dict` subclass. It stores only a private copy of the public representation in
+`_public_fields`; it does not store an issuer token, does not store a producer
+stage ID, and does not store a predecessor reference as private attributes.
+
+Attestation and provenance live in the closure-local registry. Each registry
+record stores the exact strong `evidence_ref`, diagnostic `id(evidence)`,
+`stage_id`, `stage_result`, full validation context, exact `predecessor_ref`,
+and canonical `public_digest`. Validation requires
+`meta["evidence_ref"] is evidence`, matching canonical public digest, matching
+stage/result/context, the exact predecessor reference, matching public
+predecessor ID, and full recursive predecessor-chain validation. The generic
+`_stage_result` helper is retained only for rejected, not-reached,
+not-implemented, and not-created outputs; it cannot issue `STRUCTURE_ACCEPTED`,
+`HASHES_ACCEPTED`, `REGISTRY_ACCEPTED`,
+`CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED`, `EXPIRY_REVOCATION_ACCEPTED`,
+or `SNAPSHOT_CREATED`.
 
 `fixture_availability=TEST_FIXTURE_FUTURE_ONLY` remains a diagnostic marker and
 is included in the stage evidence schema and evidence-ID fields so any marker
 change invalidates integrity. It is not authority. Future crypto accepted
-evidence also requires the private future-fixture issuer token and a private
-reference to the exact accepted registry evidence object. Snapshot creation
-checks the private issuer token, producer stage, public predecessor ID, and
-private predecessor object reference for every accepted stage.
+evidence is recognized only when the closure-local future pipeline records it
+against the exact accepted registry evidence object.
 
 A plain `dict`, `dict(evidence)`, ordinary copy, JSON round-trip, manually
 copied public fields, or fully rehashed fabricated chain does not preserve
@@ -259,12 +270,13 @@ predecessor link cannot be edited in place and then rehashed into an accepted
 successor.
 
 Accepted evidence is no longer produced by a generic accepted-result factory.
-Each accepted result has one private stage-specific issuer function that knows
-its own issuer authority internally and does not accept `stage_result`,
-`issuer_token`, or `producer_stage_id` as parameters. Contractual issuer IDs in
-JSON are names for audit and tests only; runtime issuer objects are not
-published in the machine contract, and issuer authority is not passed through a
-public or generic helper API.
+Accepted results are issued only inside the stage validation closures after the
+real prerequisite checks succeed. Caller-supplied `stage_result`, issuer
+authority, fixture token, construction authority, `producer_stage_id`, or raw
+predecessor reference cannot create attestation. Contractual issuer IDs in JSON
+are names for audit and tests only; runtime authority objects are not published
+in the machine contract and are not passed through a public or generic helper
+API.
 
 Recursive chain validation checks the full semantics of every predecessor, not
 only wrapper shape and evidence hash. It verifies the exact accepted result for
@@ -291,12 +303,12 @@ mutators cannot target the issued object because it is not a `dict`, and ordinar
 mapping mutators are unavailable or fail closed.
 
 The generic sealer, raw stage-specific issuer functions, construction authority
-objects and runtime issuer token globals are not part of the module API.  Issuer
-authority is not accepted as a function argument and a direct wrapper constructor
-cannot create a trusted attestation.  The future-contract harness is the only
-isolated path that can exercise future crypto acceptance; it first runs the real
-structure, hash and registry validators and then binds future crypto evidence to
-the issued registry predecessor.
+objects, standalone future issuer and runtime authority globals are not part of
+the module API.  Issuer authority is not accepted as a function argument and a
+direct wrapper constructor cannot create a trusted attestation.  The
+future-contract harness is the only isolated path that can exercise future
+crypto acceptance; it first runs the real structure, hash and registry validators
+and then binds future crypto evidence to the issued registry predecessor.
 
 The closure-local registry binds object identity, canonical public-field digest,
 stage identifier, exact accepted result, document context and predecessor object
@@ -314,3 +326,44 @@ cells, whole-module monkeypatching or raw process-memory modification.  Producti
 authenticity still requires real cryptography and appropriate process/module
 boundaries; the architecture interpreter only models fail-closed provenance
 semantics for M0.4 tests.
+
+## M0.4 FINAL FIX — closure-local evidence authority boundary
+
+A module-global evidence runtime object is an issuer escape and is forbidden. The
+interpreter no longer exposes `_EVIDENCE_RUNTIME`, `_make_evidence_runtime`, a
+future-fixture token, an authority bundle, or any global object with callable
+stage-issuer methods such as `structure_validated`, `hashes_validated`,
+`registry_validated`, `future_fixture_validated`, `expiry_validated`,
+`snapshot_validated`, `seal`, `issue`, or `issue_accepted`.
+
+The final interpreter is initialized once into a shared closure. That closure owns
+the attestation registry, seal/issue functions, future-fixture authority, chain
+validator and snapshot issuer, but it returns no runtime object, token, issuer
+bundle or accepted-evidence factory. Only the validation functions and read-only
+helpers are assigned as module globals.
+
+Attestation is bound to the exact current evidence object. Each registry entry
+stores a strong `evidence_ref`, the exact `predecessor_ref`, the stage/result,
+full validation context and canonical public digest. Validation requires
+`meta["evidence_ref"] is evidence`; numeric `id()` values are diagnostic only and
+cannot substitute for object identity. Directly constructed wrappers, public
+copies with identical digests, deepcopy, JSON round-trips and `object.__setattr__`
+tampering remain fail-closed, while the isolated future harness still creates a
+future snapshot only through the full issued chain.
+
+## M0.4 FINAL CLOSURE FIX — no standalone future issuer
+
+Future crypto acceptance is no longer exposed as `_future_crypto_accepted_evidence`
+or any other standalone callable. It can occur only inside the closure-local
+implementation of `_run_future_contract_pipeline`, after that pipeline has run raw
+structure validation, canonical hash validation and registry policy validation.
+The same closure owns the future-fixture authority and never returns it.
+
+The one-time bootstrap removes itself from module globals after installing the
+final functions. After import, globals must not contain `_initialize_closure_local_interpreter`,
+`_future_crypto_accepted_evidence`, `_EVIDENCE_RUNTIME`, `_make_evidence_runtime`
+or `_FUTURE_CRYPTO_FIXTURE_TOKEN`, and no global object may expose callable issuer
+methods. This keeps normal M0.4 on the not-implemented crypto path while allowing
+only the isolated future-contract pipeline to reach a future `SNAPSHOT_CREATED`.
+
+The closure-local future fixture is an execution path, not a materialized authority token. `issue_future_crypto` has the data-only signature `issue_future_crypto(context, registry_evidence)` inside the closure; it does not accept `authority`, `fixture_token`, `issuer_token`, `construction_authority` or similar authority parameters.

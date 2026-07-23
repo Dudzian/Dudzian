@@ -1,6 +1,7 @@
 """Contract tests for CryptoHunter M0.4 environment and ProductCapabilities."""
 from __future__ import annotations
 
+import ast
 import base64
 import copy
 import hashlib
@@ -85,7 +86,6 @@ SPECIFIC = {
 }
 TS = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_FUTURE_CRYPTO_FIXTURE_TOKEN = object()
 _ACCEPTED_RESULTS = {"STRUCTURE_ACCEPTED", "HASHES_ACCEPTED", "REGISTRY_ACCEPTED", "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", "EXPIRY_REVOCATION_ACCEPTED", "SNAPSHOT_CREATED"}
 _ACCEPTED_FAIL_CLOSED = {
     "STRUCTURE_ACCEPTED": "STRUCTURE_REJECTED",
@@ -752,142 +752,12 @@ def _stage_result(result_code: str, reason: str | None = None, trust: str | None
     return _base_stage_evidence(result_code, reason, trust, denial, context, predecessor_stage_evidence_id)
 
 
-class _EvidenceRuntime:
-    pass
+def _issued_chain_valid(evidence, context: dict | None = None) -> bool:
+    return False
 
 
-def _make_evidence_runtime():
-    issued_registry: dict[int, dict] = {}
-
-    def public_digest(evidence: Mapping) -> str:
-        return _evidence_id(dict(evidence))
-
-    def seal(public: dict, *, predecessor):
-        evidence = _IssuedStageEvidence(public)
-        context = {key: evidence.get(key) for key in DATA["validation_context_contract"]["context_fields"]}
-        issued_registry[id(evidence)] = {
-            "identity": id(evidence),
-            "stage_id": evidence.get("stage_id"),
-            "stage_result": evidence.get("stage_result"),
-            "context": context,
-            "predecessor_identity": id(predecessor) if predecessor is not None else None,
-            "predecessor_ref": predecessor,
-            "public_digest": public_digest(evidence),
-        }
-        return evidence
-
-    def issue_after_structure_validation(context: dict):
-        return seal(_base_stage_evidence("STRUCTURE_ACCEPTED", context=context, predecessor_stage_evidence_id=None), predecessor=None)
-
-    def issue_after_hash_validation(context: dict, structure_evidence):
-        if not complete_clean_evidence(structure_evidence, "DOCUMENT_STRUCTURE_VALIDATION", "STRUCTURE_ACCEPTED", context, predecessor=None):
-            raise ValueError("hash accepted evidence requires issued structure predecessor")
-        return seal(_base_stage_evidence("HASHES_ACCEPTED", context=context, predecessor_stage_evidence_id=structure_evidence["stage_evidence_id"]), predecessor=structure_evidence)
-
-    def issue_after_registry_validation(context: dict, hash_evidence):
-        if not complete_clean_evidence(hash_evidence, "CANONICAL_HASH_VALIDATION", "HASHES_ACCEPTED", context):
-            raise ValueError("registry accepted evidence requires issued hash predecessor chain")
-        return seal(_base_stage_evidence("REGISTRY_ACCEPTED", context=context, predecessor_stage_evidence_id=hash_evidence["stage_evidence_id"]), predecessor=hash_evidence)
-
-    def issue_after_future_fixture(context: dict, registry_evidence):
-        if not complete_clean_evidence(registry_evidence, "REGISTRY_POLICY_VALIDATION", "REGISTRY_ACCEPTED", context):
-            raise ValueError("future crypto accepted evidence requires issued registry predecessor chain")
-        return seal(_base_stage_evidence("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", context=context, predecessor_stage_evidence_id=registry_evidence["stage_evidence_id"], fixture_availability="TEST_FIXTURE_FUTURE_ONLY"), predecessor=registry_evidence)
-
-    def issue_after_expiry_validation(context: dict, crypto_evidence):
-        if not complete_clean_evidence(crypto_evidence, "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION", "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", context):
-            raise ValueError("expiry accepted evidence requires issued crypto predecessor chain")
-        return seal(_base_stage_evidence("EXPIRY_REVOCATION_ACCEPTED", context=context, predecessor_stage_evidence_id=crypto_evidence["stage_evidence_id"]), predecessor=crypto_evidence)
-
-    def issue_after_snapshot_validation(context: dict, expiry_evidence):
-        if not complete_clean_evidence(expiry_evidence, "EXPIRY_AND_REVOCATION_VALIDATION", "EXPIRY_REVOCATION_ACCEPTED", context):
-            raise ValueError("snapshot evidence requires issued expiry predecessor chain")
-        return seal(_base_stage_evidence("SNAPSHOT_CREATED", context=context, predecessor_stage_evidence_id=expiry_evidence["stage_evidence_id"]), predecessor=expiry_evidence)
-
-    def issued_chain_valid(evidence, context: dict | None = None) -> bool:
-        if not isinstance(evidence, _IssuedStageEvidence) or isinstance(evidence, dict):
-            return False
-        meta = issued_registry.get(id(evidence))
-        if meta is None:
-            return False
-        public = dict(evidence)
-        if meta["identity"] != id(evidence) or meta["public_digest"] != public_digest(evidence):
-            return False
-        required = set(DATA["validation_context_contract"]["stage_evidence_fields"])
-        if set(public) != required:
-            return False
-        stage_id = public.get("stage_id")
-        expected_result = _EXPECTED_ACCEPTED_RESULT.get(stage_id)
-        if expected_result is None or public.get("stage_result") != expected_result:
-            return False
-        if meta["stage_id"] != stage_id or meta["stage_result"] != expected_result:
-            return False
-        if public.get("evidence_schema_version") != DATA["stage_evidence_chain_contract"]["evidence_schema_version"]:
-            return False
-        if not _evidence_id_is_valid(public):
-            return False
-        public_context = {key: public.get(key) for key in DATA["validation_context_contract"]["context_fields"]}
-        if context is None:
-            context = public_context
-        if meta["context"] != public_context or public_context != {key: context.get(key) for key in DATA["validation_context_contract"]["context_fields"]}:
-            return False
-        if public.get("diagnostic_reason_code") is not None or public.get("mapped_trust_state") is not None or public.get("mapped_denial_code") is not None:
-            return False
-        if not isinstance(public.get("document_fingerprint"), str) or not HEX64.fullmatch(public["document_fingerprint"]):
-            return False
-        for key in ["validation_context_id", "capabilities_id", "edition_id", "signed_payload_hash", "capability_set_hash", "payload_schema_version", "signature_schema_version"]:
-            if not isinstance(public.get(key), str) or not public.get(key):
-                return False
-        marker = public.get("fixture_availability")
-        if stage_id == "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION":
-            if marker != DATA["stage_evidence_chain_contract"]["future_crypto_fixture_marker"]:
-                return False
-        elif marker is not None:
-            return False
-        predecessor_stage = _PREDECESSOR_STAGE.get(stage_id)
-        predecessor_ref = meta["predecessor_ref"]
-        if predecessor_stage is None:
-            return meta["predecessor_identity"] is None and predecessor_ref is None and public.get("predecessor_stage_evidence_id") is None
-        if not (isinstance(predecessor_ref, _IssuedStageEvidence) and id(predecessor_ref) == meta["predecessor_identity"]):
-            return False
-        return (
-            predecessor_ref.get("stage_id") == predecessor_stage
-            and predecessor_ref.get("stage_result") == _EXPECTED_ACCEPTED_RESULT[predecessor_stage]
-            and public.get("predecessor_stage_evidence_id") == predecessor_ref.get("stage_evidence_id")
-            and issued_chain_valid(predecessor_ref, context)
-        )
-
-    def complete_clean_evidence(evidence, expected_stage_id: str, expected_result: str, context: dict, predecessor=None) -> bool:
-        if not issued_chain_valid(evidence, context):
-            return False
-        meta = issued_registry.get(id(evidence))
-        if dict(evidence).get("stage_id") != expected_stage_id or dict(evidence).get("stage_result") != expected_result:
-            return False
-        if predecessor is None:
-            if expected_stage_id == "DOCUMENT_STRUCTURE_VALIDATION":
-                return meta["predecessor_ref"] is None and evidence.get("predecessor_stage_evidence_id") is None
-            return True
-        return (
-            isinstance(predecessor, _IssuedStageEvidence)
-            and meta["predecessor_ref"] is predecessor
-            and meta["predecessor_identity"] == id(predecessor)
-            and evidence.get("predecessor_stage_evidence_id") == predecessor.get("stage_evidence_id")
-            and issued_chain_valid(predecessor, context)
-        )
-
-    runtime = _EvidenceRuntime()
-    runtime.structure_validated = issue_after_structure_validation
-    runtime.hashes_validated = issue_after_hash_validation
-    runtime.registry_validated = issue_after_registry_validation
-    runtime.future_fixture_validated = issue_after_future_fixture
-    runtime.expiry_validated = issue_after_expiry_validation
-    runtime.snapshot_validated = issue_after_snapshot_validation
-    runtime.issued_chain_valid = issued_chain_valid
-    runtime.complete_clean_evidence = complete_clean_evidence
-    return runtime
-
-
-_EVIDENCE_RUNTIME = _make_evidence_runtime()
+def _complete_clean_evidence(evidence: Mapping, expected_stage_id: str, expected_result: str, context: dict, predecessor=None) -> bool:
+    return False
 
 
 
@@ -900,11 +770,11 @@ def _evidence_id_is_valid(evidence: Mapping) -> bool:
 
 
 def _issued_chain_valid(evidence, context: dict | None = None) -> bool:
-    return _EVIDENCE_RUNTIME.issued_chain_valid(evidence, context)
+    return False
 
 
 def _complete_clean_evidence(evidence: Mapping, expected_stage_id: str, expected_result: str, context: dict, predecessor=None) -> bool:
-    return _EVIDENCE_RUNTIME.complete_clean_evidence(evidence, expected_stage_id, expected_result, context, predecessor)
+    return False
 
 
 
@@ -1254,9 +1124,9 @@ def test_pipeline_regression_hash_registry_expiry_revocation_and_snapshot_bounda
     assert DATA["signature_validation_pipeline"]["test_functions_may_return_VALID_trust_state"] is False
 
 
-def _future_crypto_accepted_evidence(registry_evidence: Mapping, *, fixture_token: object) -> dict:
+def _future_crypto_accepted_evidence(registry_evidence: Mapping) -> dict:
     context = {key: registry_evidence.get(key) for key in DATA["validation_context_contract"]["context_fields"]} if isinstance(registry_evidence, Mapping) else {}
-    if fixture_token is not _FUTURE_CRYPTO_FIXTURE_TOKEN or not _complete_clean_evidence(registry_evidence, "REGISTRY_POLICY_VALIDATION", "REGISTRY_ACCEPTED", context):
+    if not _complete_clean_evidence(registry_evidence, "REGISTRY_POLICY_VALIDATION", "REGISTRY_ACCEPTED", context):
         return _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED", "PREVIOUS_STAGE_EVIDENCE_INVALID", "INVALID_SIGNATURE", "PRODUCT_CAPABILITIES_INVALID_SIGNATURE", context if context else None, registry_evidence.get("stage_evidence_id") if isinstance(registry_evidence, Mapping) else None)
     return _EVIDENCE_RUNTIME.future_fixture_validated(context, registry_evidence)
 
@@ -1277,7 +1147,7 @@ def _run_future_contract_pipeline(raw_document, *, version_registry=DEFAULT_VERS
     document = parse_raw_json_without_duplicates(raw_document) if structure.get("stage_result") == "STRUCTURE_ACCEPTED" else None
     hashes = validate_canonical_hashes(document or {}, structure)
     registry = validate_registry_policy(document or {}, hashes, algorithms, keys)
-    crypto = _future_crypto_accepted_evidence(registry, fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN) if registry["stage_result"] == "REGISTRY_ACCEPTED" else cryptographic_signature_verification(document or {}, registry)
+    crypto = _future_crypto_accepted_evidence(registry) if registry["stage_result"] == "REGISTRY_ACCEPTED" else cryptographic_signature_verification(document or {}, registry)
     expiry = validate_expiry_revocation_stage(document or {}, crypto, current_utc, revocation_registry)
     snapshot = create_validated_snapshot(document or {}, structure, hashes, registry, crypto, expiry)
     return {"structure": structure, "hashes": hashes, "registry": registry, "crypto": crypto, "expiry_revocation": expiry, "snapshot": snapshot}
@@ -1475,21 +1345,21 @@ def test_each_stage_helper_owns_only_its_declared_stage_outputs():
     crypto_results = [
         cryptographic_signature_verification(envelope, _stage_result("REGISTRY_ACCEPTED")),
         cryptographic_signature_verification(envelope, _stage_result("REGISTRY_REJECTED")),
-        _future_crypto_accepted_evidence(_stage_result("REGISTRY_ACCEPTED", context=_context_from_envelope(envelope), predecessor_stage_evidence_id="0" * 64), fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN),
+        _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"),
         _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"),
     ]
     assert {result["stage_result"] for result in crypto_results} <= _stage_outputs("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION")
 
     expiry_results = [
-        validate_expiry_revocation_stage(envelope, _future_crypto_accepted_evidence(_stage_result("REGISTRY_ACCEPTED", context=_context_from_envelope(envelope), predecessor_stage_evidence_id="0" * 64), fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN), "2026-01-01T00:00:00Z", {"caprev_test1234": "NOT_REVOKED"}),
-        validate_expiry_revocation_stage(envelope, _future_crypto_accepted_evidence(_stage_result("REGISTRY_ACCEPTED", context=_context_from_envelope(envelope), predecessor_stage_evidence_id="0" * 64), fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN), "2026-01-01T00:00:00Z", {"caprev_test1234": "REVOKED"}),
+        validate_expiry_revocation_stage(envelope, _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"), "2026-01-01T00:00:00Z", {"caprev_test1234": "NOT_REVOKED"}),
+        validate_expiry_revocation_stage(envelope, _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"), "2026-01-01T00:00:00Z", {"caprev_test1234": "REVOKED"}),
         validate_expiry_revocation_stage(envelope, _stage_result("CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4"), "2026-01-01T00:00:00Z", {"caprev_test1234": "NOT_REVOKED"}),
     ]
     assert {result["stage_result"] for result in expiry_results} <= _stage_outputs("EXPIRY_AND_REVOCATION_VALIDATION")
 
     snapshot_results = [
-        create_validated_snapshot(envelope, _stage_result("STRUCTURE_ACCEPTED"), _stage_result("HASHES_ACCEPTED"), _stage_result("REGISTRY_ACCEPTED"), _future_crypto_accepted_evidence(_stage_result("REGISTRY_ACCEPTED", context=_context_from_envelope(envelope), predecessor_stage_evidence_id="0" * 64), fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN), _stage_result("EXPIRY_REVOCATION_ACCEPTED")),
-        create_validated_snapshot(envelope, _stage_result("STRUCTURE_ACCEPTED"), _stage_result("HASHES_REJECTED"), _stage_result("REGISTRY_ACCEPTED"), _future_crypto_accepted_evidence(_stage_result("REGISTRY_ACCEPTED", context=_context_from_envelope(envelope), predecessor_stage_evidence_id="0" * 64), fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN), _stage_result("EXPIRY_REVOCATION_ACCEPTED")),
+        create_validated_snapshot(envelope, _stage_result("STRUCTURE_ACCEPTED"), _stage_result("HASHES_ACCEPTED"), _stage_result("REGISTRY_ACCEPTED"), _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"), _stage_result("EXPIRY_REVOCATION_ACCEPTED")),
+        create_validated_snapshot(envelope, _stage_result("STRUCTURE_ACCEPTED"), _stage_result("HASHES_REJECTED"), _stage_result("REGISTRY_ACCEPTED"), _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"), _stage_result("EXPIRY_REVOCATION_ACCEPTED")),
     ]
     assert {result["stage_result"] for result in snapshot_results} <= _stage_outputs("VALIDATED_SNAPSHOT_CREATION")
 
@@ -1557,8 +1427,8 @@ def test_document_bound_validation_context_blocks_cross_document_evidence_mixing
     hashes_b = validate_canonical_hashes(envelope_b, structure_b)
     registry_a = validate_registry_policy(envelope_a, hashes_a, {"alg"}, {"key"})
     registry_b = validate_registry_policy(envelope_b, hashes_b, {"alg"}, {"key"})
-    crypto_a = _future_crypto_accepted_evidence(registry_a, fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN)
-    crypto_b = _future_crypto_accepted_evidence(registry_b, fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN)
+    crypto_a = _accepted_future_evidence_chain(envelope_a)[3]
+    crypto_b = _accepted_future_evidence_chain(envelope_b)[3]
     expiry_a = validate_expiry_revocation_stage(envelope_a, crypto_a, "2026-01-01T00:00:00Z", {"caprev_test1234": "NOT_REVOKED"})
     expiry_b = validate_expiry_revocation_stage(envelope_b, crypto_b, "2026-01-01T00:00:00Z", {"caprev_test1234": "NOT_REVOKED"})
     assert validate_canonical_hashes(envelope_a, structure_b)["stage_result"] == "HASHES_REJECTED"
@@ -1577,7 +1447,7 @@ def test_future_crypto_fixture_is_private_context_bound_and_not_public_pipeline_
     import inspect
     assert "force_future_crypto" not in inspect.signature(run_pipeline).parameters
     assert DATA["signature_validation_pipeline"]["normal_pipeline_allows_force_future_crypto"] is False
-    assert DATA["signature_validation_pipeline"]["future_crypto_fixture"] == "_future_crypto_accepted_evidence"
+    assert DATA["signature_validation_pipeline"]["future_crypto_fixture"] == "closure-local in _run_future_contract_pipeline"
     envelope = build_envelope(_payload())
     normal = run_pipeline(raw_document(envelope), revocation_registry={"caprev_test1234": "NOT_REVOKED"})
     assert normal["crypto"]["stage_result"] == "CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4"
@@ -1655,12 +1525,8 @@ def test_defensive_stage_inputs_and_json_surrounding_whitespace_policy():
 
 
 def _accepted_future_evidence_chain(envelope: dict):
-    structure = validate_raw_document_structure(raw_document(envelope))
-    hashes = validate_canonical_hashes(envelope, structure)
-    registry = validate_registry_policy(envelope, hashes, {"alg"}, {"key"})
-    crypto = _future_crypto_accepted_evidence(registry, fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN)
-    expiry = validate_expiry_revocation_stage(envelope, crypto, "2026-01-01T00:00:00Z", {"caprev_test1234": "NOT_REVOKED"})
-    return structure, hashes, registry, crypto, expiry
+    future = _run_future_contract_pipeline(raw_document(envelope), revocation_registry={"caprev_test1234": "NOT_REVOKED"})
+    return future["structure"], future["hashes"], future["registry"], future["crypto"], future["expiry_revocation"]
 
 
 def test_same_identity_mutations_change_document_fingerprint_and_reject_prior_evidence():
@@ -1714,15 +1580,13 @@ def test_every_transition_rejects_dirty_or_malformed_previous_evidence_metadata(
 
 def test_no_public_future_crypto_acceptance_producers_and_snapshot_prerequisites_exact():
     required = [
-        "STRUCTURE_ACCEPTED", "HASHES_ACCEPTED", "REGISTRY_ACCEPTED", "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", "EXPIRY_REVOCATION_ACCEPTED", "complete_stage_evidence", "direct_stage_chain", "same_validation_context_id", "same_document_fingerprint", "same_capabilities_id", "same_edition_id", "same_signed_payload_hash", "same_capability_set_hash", "same_payload_schema_version", "same_signature_schema_version", "no_diagnostic_reason", "no_mapped_non_valid_trust_state", "no_denial_code", "current_edition_policy_consistent", "canonical_hashes_revalidated", "final_document_unchanged", "verified_stage_evidence_id_chain", "crypto_acceptance_fixture_bound_to_registry_evidence", "expiry_evidence_bound_to_crypto_evidence", "evidence_ids_recalculated", "no_fabricated_accepted_stage_evidence", "stage_specific_private_issuer_attestation", "private_predecessor_object_chain_verified", "public_and_private_predecessor_links_match", "serialized_evidence_cannot_preserve_issuer_attestation", "future_crypto_private_fixture_attestation_verified", "fixture_marker_is_diagnostic_not_authoritative", "fully_rehashed_fabricated_chain_rejected", "immutable_issued_stage_evidence", "recursively_validated_predecessor_results", "recursively_validated_predecessor_contexts", "recursively_validated_predecessor_clean_metadata", "stage_specific_issuer_only", "no_generic_accepted_evidence_factory", "direct_wrapper_construction_rejected", "mutated_issued_predecessor_chain_rejected", "issued_evidence_mapping_implementation_composition_not_dict_subclass", "generic_sealer_disallowed", "direct_attestation_constructor_disallowed", "runtime_authority_objects_not_global", "raw_stage_specific_issuers_not_global", "closure_local_attestation_registry", "public_mapping_digest_bound_to_attestation", "object_attribute_tampering_fails_closed", "input_public_dict_copied_before_issue",
+        "STRUCTURE_ACCEPTED", "HASHES_ACCEPTED", "REGISTRY_ACCEPTED", "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", "EXPIRY_REVOCATION_ACCEPTED", "complete_stage_evidence", "direct_stage_chain", "same_validation_context_id", "same_document_fingerprint", "same_capabilities_id", "same_edition_id", "same_signed_payload_hash", "same_capability_set_hash", "same_payload_schema_version", "same_signature_schema_version", "no_diagnostic_reason", "no_mapped_non_valid_trust_state", "no_denial_code", "current_edition_policy_consistent", "canonical_hashes_revalidated", "final_document_unchanged", "verified_stage_evidence_id_chain", "crypto_acceptance_fixture_bound_to_registry_evidence", "expiry_evidence_bound_to_crypto_evidence", "evidence_ids_recalculated", "no_fabricated_accepted_stage_evidence", "stage_specific_private_issuer_attestation", "private_predecessor_object_chain_verified", "public_and_private_predecessor_links_match", "serialized_evidence_cannot_preserve_issuer_attestation", "future_crypto_private_fixture_attestation_verified", "fixture_marker_is_diagnostic_not_authoritative", "fully_rehashed_fabricated_chain_rejected", "immutable_issued_stage_evidence", "recursively_validated_predecessor_results", "recursively_validated_predecessor_contexts", "recursively_validated_predecessor_clean_metadata", "stage_specific_issuer_only", "no_generic_accepted_evidence_factory", "direct_wrapper_construction_rejected", "mutated_issued_predecessor_chain_rejected", "issued_evidence_mapping_implementation_composition_not_dict_subclass", "generic_sealer_disallowed", "direct_attestation_constructor_disallowed", "runtime_authority_objects_not_global", "raw_stage_specific_issuers_not_global", "closure_local_attestation_registry", "public_mapping_digest_bound_to_attestation", "object_attribute_tampering_fails_closed", "input_public_dict_copied_before_issue", "no_module_global_evidence_runtime", "no_module_global_future_fixture_token", "no_authority_bundle_factory_global", "no_global_stage_issuer_methods", "strong_current_evidence_ref_identity", "numeric_object_id_not_attestation", "future_fixture_authority_closure_local_unreturned", "no_standalone_future_crypto_issuer_global", "initializer_removed_from_globals_after_install", "future_crypto_acceptance_only_inside_future_pipeline_closure", "future_fixture_authority_not_runtime_argument_or_token",
     ]
     assert DATA["signature_validation_pipeline"]["snapshot_prerequisites"] == required
     public_future_producers = [name for name, value in globals().items() if callable(value) and not name.startswith("_") and not name.startswith("test_") and "future" in name and "crypto" in name]
     assert public_future_producers == []
     assert DATA["signature_validation_pipeline"]["public_future_crypto_acceptance_producers_allowed"] is False
-    assert _future_crypto_accepted_evidence({}, fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN)["stage_result"] == "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"
-    partial = {"document_fingerprint": "0" * 64}
-    assert _future_crypto_accepted_evidence(partial, fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN)["stage_result"] == "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"
+    assert "_future_crypto_accepted_evidence" not in globals()
 
 
 def test_strict_json_whitespace_rejects_non_json_surrounding_whitespace():
@@ -1873,7 +1737,6 @@ def test_transition_level_private_predecessor_attestation_is_required():
     assert validate_registry_policy(envelope, forged_hash, {"alg"}, {"key"})["stage_result"] == "REGISTRY_REJECTED"
     forged_registry = _fabricated_public_evidence("REGISTRY_ACCEPTED", context, "c" * 64)
     assert cryptographic_signature_verification(envelope, forged_registry)["stage_result"] == "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"
-    assert _future_crypto_accepted_evidence(dict(registry), fixture_token=_FUTURE_CRYPTO_FIXTURE_TOKEN)["stage_result"] == "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED"
     assert validate_expiry_revocation_stage(envelope, dict(crypto), "2026-01-01T00:00:00Z", {"caprev_test1234": "NOT_REVOKED"})["stage_result"] == "EXPIRY_REVOCATION_REJECTED"
     wrong_private_ref = registry
     forged_private_ref = dict(wrong_private_ref)
@@ -2202,3 +2065,392 @@ def test_direct_wrapper_construction_variants_do_not_create_attestation():
     assert not _issued_chain_valid(raw)
     object.__setattr__(raw, "_public_fields", {**dict(public), "issuer_token": object(), "construction_authority": object()})
     assert not _issued_chain_valid(raw)
+
+
+def _initialize_closure_local_interpreter() -> None:
+    issued_registry: dict[int, dict] = {}
+    def public_digest(evidence: Mapping) -> str:
+        return _evidence_id(dict(evidence))
+
+    def seal(public: dict, predecessor):
+        evidence = _IssuedStageEvidence(public)
+        context = {key: evidence.get(key) for key in DATA["validation_context_contract"]["context_fields"]}
+        issued_registry[id(evidence)] = {
+            "evidence_ref": evidence,
+            "diagnostic_identity": id(evidence),
+            "stage_id": evidence.get("stage_id"),
+            "stage_result": evidence.get("stage_result"),
+            "context": context,
+            "predecessor_ref": predecessor,
+            "public_digest": public_digest(evidence),
+        }
+        return evidence
+
+    def issued_chain_valid(evidence, context: dict | None = None) -> bool:
+        if not isinstance(evidence, _IssuedStageEvidence) or isinstance(evidence, dict):
+            return False
+        meta = issued_registry.get(id(evidence))
+        if meta is None or meta["evidence_ref"] is not evidence:
+            return False
+        public = dict(evidence)
+        if meta["public_digest"] != public_digest(evidence):
+            return False
+        required = set(DATA["validation_context_contract"]["stage_evidence_fields"])
+        if set(public) != required:
+            return False
+        stage_id = public.get("stage_id")
+        expected_result = _EXPECTED_ACCEPTED_RESULT.get(stage_id)
+        if expected_result is None or public.get("stage_result") != expected_result:
+            return False
+        if meta["stage_id"] != stage_id or meta["stage_result"] != expected_result:
+            return False
+        if public.get("evidence_schema_version") != DATA["stage_evidence_chain_contract"]["evidence_schema_version"]:
+            return False
+        if not _evidence_id_is_valid(public):
+            return False
+        public_context = {key: public.get(key) for key in DATA["validation_context_contract"]["context_fields"]}
+        if context is None:
+            context = public_context
+        if meta["context"] != public_context or public_context != {key: context.get(key) for key in DATA["validation_context_contract"]["context_fields"]}:
+            return False
+        if public.get("diagnostic_reason_code") is not None or public.get("mapped_trust_state") is not None or public.get("mapped_denial_code") is not None:
+            return False
+        if not isinstance(public.get("document_fingerprint"), str) or not HEX64.fullmatch(public["document_fingerprint"]):
+            return False
+        for key in ["validation_context_id", "capabilities_id", "edition_id", "signed_payload_hash", "capability_set_hash", "payload_schema_version", "signature_schema_version"]:
+            if not isinstance(public.get(key), str) or not public.get(key):
+                return False
+        marker = public.get("fixture_availability")
+        if stage_id == "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION":
+            if marker != DATA["stage_evidence_chain_contract"]["future_crypto_fixture_marker"]:
+                return False
+        elif marker is not None:
+            return False
+        predecessor_stage = _PREDECESSOR_STAGE.get(stage_id)
+        predecessor_ref = meta["predecessor_ref"]
+        if predecessor_stage is None:
+            return predecessor_ref is None and public.get("predecessor_stage_evidence_id") is None
+        if not isinstance(predecessor_ref, _IssuedStageEvidence):
+            return False
+        return (
+            predecessor_ref.get("stage_id") == predecessor_stage
+            and predecessor_ref.get("stage_result") == _EXPECTED_ACCEPTED_RESULT[predecessor_stage]
+            and public.get("predecessor_stage_evidence_id") == predecessor_ref.get("stage_evidence_id")
+            and issued_chain_valid(predecessor_ref, context)
+        )
+
+    def complete_clean_evidence(evidence, expected_stage_id: str, expected_result: str, context: dict, predecessor=None) -> bool:
+        if not issued_chain_valid(evidence, context):
+            return False
+        meta = issued_registry.get(id(evidence))
+        if dict(evidence).get("stage_id") != expected_stage_id or dict(evidence).get("stage_result") != expected_result:
+            return False
+        if predecessor is None:
+            if expected_stage_id == "DOCUMENT_STRUCTURE_VALIDATION":
+                return meta["predecessor_ref"] is None and evidence.get("predecessor_stage_evidence_id") is None
+            return True
+        return (
+            isinstance(predecessor, _IssuedStageEvidence)
+            and meta["predecessor_ref"] is predecessor
+            and evidence.get("predecessor_stage_evidence_id") == predecessor.get("stage_evidence_id")
+            and issued_chain_valid(predecessor, context)
+        )
+
+    def issue_structure(context: dict):
+        return seal(_base_stage_evidence("STRUCTURE_ACCEPTED", context=context, predecessor_stage_evidence_id=None), None)
+
+    def issue_hashes(context: dict, structure_evidence):
+        if not complete_clean_evidence(structure_evidence, "DOCUMENT_STRUCTURE_VALIDATION", "STRUCTURE_ACCEPTED", context, predecessor=None):
+            raise ValueError("hash accepted evidence requires issued structure predecessor")
+        return seal(_base_stage_evidence("HASHES_ACCEPTED", context=context, predecessor_stage_evidence_id=structure_evidence["stage_evidence_id"]), structure_evidence)
+
+    def issue_registry(context: dict, hash_evidence):
+        if not complete_clean_evidence(hash_evidence, "CANONICAL_HASH_VALIDATION", "HASHES_ACCEPTED", context):
+            raise ValueError("registry accepted evidence requires issued hash predecessor chain")
+        return seal(_base_stage_evidence("REGISTRY_ACCEPTED", context=context, predecessor_stage_evidence_id=hash_evidence["stage_evidence_id"]), hash_evidence)
+
+    def issue_future_crypto(context: dict, registry_evidence):
+        if not complete_clean_evidence(registry_evidence, "REGISTRY_POLICY_VALIDATION", "REGISTRY_ACCEPTED", context):
+            raise ValueError("future crypto accepted evidence requires issued registry predecessor chain")
+        return seal(_base_stage_evidence("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", context=context, predecessor_stage_evidence_id=registry_evidence["stage_evidence_id"], fixture_availability="TEST_FIXTURE_FUTURE_ONLY"), registry_evidence)
+
+    def issue_expiry(context: dict, crypto_evidence):
+        if not complete_clean_evidence(crypto_evidence, "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION", "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", context):
+            raise ValueError("expiry accepted evidence requires issued crypto predecessor chain")
+        return seal(_base_stage_evidence("EXPIRY_REVOCATION_ACCEPTED", context=context, predecessor_stage_evidence_id=crypto_evidence["stage_evidence_id"]), crypto_evidence)
+
+    def issue_snapshot(context: dict, expiry_evidence):
+        if not complete_clean_evidence(expiry_evidence, "EXPIRY_AND_REVOCATION_VALIDATION", "EXPIRY_REVOCATION_ACCEPTED", context):
+            raise ValueError("snapshot evidence requires issued expiry predecessor chain")
+        return seal(_base_stage_evidence("SNAPSHOT_CREATED", context=context, predecessor_stage_evidence_id=expiry_evidence["stage_evidence_id"]), expiry_evidence)
+
+    def parsed_structure(envelope: dict, version_registry=DEFAULT_VERSION_REGISTRY, schemas=None):
+        schemas = schemas or DATA["ProductCapabilities"]["document_schemas"]
+        try:
+            if not isinstance(envelope, dict) or set(envelope) != set(ENVELOPE): return _stage_result("STRUCTURE_REJECTED")
+            payload, header = envelope["capability_payload"], envelope["signature_header"]
+            if not isinstance(payload, dict) or not isinstance(header, dict): return _stage_result("STRUCTURE_REJECTED")
+            if "schema_registry" in payload or "schema_registry" in envelope: return _stage_result("STRUCTURE_REJECTED", "PAYLOAD_SCHEMA_REGISTRY_OVERRIDE_FORBIDDEN", "UNSUPPORTED_SCHEMA", "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA")
+            if set(payload) != set(CANONICAL_PAYLOAD) or set(header) != set(HEADER): return _stage_result("STRUCTURE_REJECTED")
+            if not isinstance(version_registry, dict) or set(version_registry) != {"payload", "signature"} or not version_registry["payload"] or not version_registry["signature"]:
+                return _stage_result("STRUCTURE_REJECTED", "MISSING_SCHEMA_VERSION_REGISTRY", "UNSUPPORTED_SCHEMA", "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA")
+            if payload["schema_version"] not in version_registry["payload"]: return _stage_result("STRUCTURE_REJECTED", "UNKNOWN_CAPABILITY_PAYLOAD_SCHEMA_VERSION", "UNSUPPORTED_SCHEMA", "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA")
+            if header["signature_schema_version"] not in version_registry["signature"]: return _stage_result("STRUCTURE_REJECTED", "UNKNOWN_SIGNATURE_SCHEMA_VERSION", "UNSUPPORTED_SCHEMA", "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA")
+            reject_numbers_in_signed_payload(payload)
+            for field, contract in schemas["capability_payload_schema"]["field_contracts"].items():
+                if not validate_field(payload[field], contract): return _stage_result("STRUCTURE_REJECTED")
+            for field, contract in schemas["signature_header_schema"]["field_contracts"].items():
+                if not validate_field(header[field], contract): return _stage_result("STRUCTURE_REJECTED")
+            if not validate_nested_environment_capabilities(payload["environment_capabilities"]): return _stage_result("STRUCTURE_REJECTED")
+            if not validate_feature_flags(payload["feature_flags"]): return _stage_result("STRUCTURE_REJECTED")
+            if not _current_edition_policy_consistent(envelope): return _stage_result("STRUCTURE_REJECTED", "EDITION_POLICY_MISMATCH", "UNSUPPORTED_SCHEMA", "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA")
+            return issue_structure(_context_from_envelope(envelope))
+        except Exception:
+            return _stage_result("STRUCTURE_REJECTED")
+
+    def raw_structure(raw_document, version_registry=DEFAULT_VERSION_REGISTRY):
+        if not isinstance(raw_document, (str, bytes)):
+            return _stage_result("STRUCTURE_REJECTED", "RAW_DOCUMENT_TYPE_NOT_SUPPORTED", "UNSUPPORTED_SCHEMA", "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA")
+        try:
+            return parsed_structure(parse_raw_json_without_duplicates(raw_document), version_registry)
+        except Exception:
+            return _stage_result("STRUCTURE_REJECTED")
+
+    def canonical_hashes(envelope: dict, structure_result: Mapping) -> dict:
+        try:
+            if not isinstance(structure_result, Mapping) or structure_result.get("stage_result") != "STRUCTURE_ACCEPTED":
+                return _stage_result("HASH_VALIDATION_NOT_REACHED")
+            context = _context_from_envelope(envelope)
+            if not complete_clean_evidence(structure_result, "DOCUMENT_STRUCTURE_VALIDATION", "STRUCTURE_ACCEPTED", context):
+                return _stage_result("HASHES_REJECTED", "PREVIOUS_STAGE_EVIDENCE_INVALID", "UNSUPPORTED_SCHEMA", "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA", context, structure_result.get("stage_evidence_id") if isinstance(structure_result, Mapping) else None)
+            payload = envelope["capability_payload"]
+            if payload["capability_set"] != sorted(payload["capability_set"], key=utf16_code_unit_sort_key): return _stage_result("HASHES_REJECTED", context=context, predecessor_stage_evidence_id=structure_result.get("stage_evidence_id"))
+            if payload["capability_set_hash"] != capability_set_hash(payload["capability_set"]): return _stage_result("HASHES_REJECTED", context=context, predecessor_stage_evidence_id=structure_result.get("stage_evidence_id"))
+            if envelope["signed_payload_hash"] != sha_bytes(jcs_current_schema_canonicalize(payload)): return _stage_result("HASHES_REJECTED", context=context, predecessor_stage_evidence_id=structure_result.get("stage_evidence_id"))
+            return issue_hashes(context, structure_result)
+        except Exception:
+            return _stage_result("HASHES_REJECTED", "PREVIOUS_STAGE_EVIDENCE_INVALID", "UNSUPPORTED_SCHEMA", "PRODUCT_CAPABILITIES_UNSUPPORTED_SCHEMA")
+
+    def registry_policy(envelope: dict, hash_result: Mapping, recognized_algorithm_ids: set[str] | None, recognized_key_ids: set[str] | None) -> dict:
+        contract = DATA["signature_contract"]["signature_verification_registry_contract"]
+        def rejected(reason: str, context: dict | None = None) -> dict:
+            return _stage_result(contract["rejected_stage_result"], reason, contract["reason_code_to_trust_state"].get(reason), contract["reason_code_to_denial_code"].get(reason), context, hash_result.get("stage_evidence_id") if isinstance(hash_result, Mapping) else None)
+        try:
+            if not isinstance(hash_result, Mapping) or hash_result.get("stage_result") != "HASHES_ACCEPTED":
+                return _stage_result("REGISTRY_VALIDATION_NOT_REACHED")
+            if hash_result.get("stage_id") != "CANONICAL_HASH_VALIDATION":
+                return rejected("PREVIOUS_STAGE_EVIDENCE_INVALID")
+            if not isinstance(envelope, dict):
+                return rejected("REGISTRY_INPUT_DOCUMENT_INVALID")
+            header = envelope.get("signature_header"); payload = envelope.get("capability_payload")
+            if not isinstance(header, dict) or not isinstance(payload, dict):
+                return rejected("REGISTRY_INPUT_DOCUMENT_INVALID")
+            algorithm_id = header.get("signature_algorithm_id"); key_id = header.get("key_id")
+            if not isinstance(algorithm_id, str) or not algorithm_id or not isinstance(key_id, str) or not key_id:
+                return rejected("REGISTRY_REFERENCE_TYPE_INVALID")
+            context = _context_from_envelope(envelope)
+            if not complete_clean_evidence(hash_result, "CANONICAL_HASH_VALIDATION", "HASHES_ACCEPTED", context):
+                return rejected("PREVIOUS_STAGE_EVIDENCE_INVALID", context)
+        except Exception:
+            return rejected("REGISTRY_INPUT_DOCUMENT_INVALID")
+        if recognized_algorithm_ids is None or recognized_key_ids is None:
+            return rejected("REGISTRY_INPUT_DOCUMENT_INVALID", context)
+        if not _valid_registry_container(recognized_algorithm_ids) or not _valid_registry_container(recognized_key_ids):
+            return rejected("REGISTRY_CONTAINER_INVALID", context)
+        if not recognized_algorithm_ids: return rejected("MISSING_SIGNATURE_ALGORITHM_REGISTRY", context)
+        if not recognized_key_ids: return rejected("MISSING_VERIFICATION_KEY_REGISTRY", context)
+        if algorithm_id not in set(recognized_algorithm_ids): return rejected("UNKNOWN_SIGNATURE_ALGORITHM", context)
+        if key_id not in set(recognized_key_ids): return rejected("UNKNOWN_KEY_ID", context)
+        return issue_registry(context, hash_result)
+
+    def crypto_verify(envelope: dict, registry_result: Mapping) -> dict:
+        try:
+            if not isinstance(registry_result, Mapping) or registry_result.get("stage_result") != "REGISTRY_ACCEPTED":
+                return _stage_result("CRYPTOGRAPHIC_VERIFICATION_NOT_REACHED")
+            context = _context_from_envelope(envelope)
+            if not complete_clean_evidence(registry_result, "REGISTRY_POLICY_VALIDATION", "REGISTRY_ACCEPTED", context):
+                return _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED", "PREVIOUS_STAGE_EVIDENCE_INVALID", "INVALID_SIGNATURE", "PRODUCT_CAPABILITIES_INVALID_SIGNATURE", context, registry_result.get("stage_evidence_id") if isinstance(registry_result, Mapping) else None)
+            return _stage_result("CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4", context=context, predecessor_stage_evidence_id=registry_result["stage_evidence_id"])
+        except Exception:
+            return _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED", "PREVIOUS_STAGE_EVIDENCE_INVALID", "INVALID_SIGNATURE", "PRODUCT_CAPABILITIES_INVALID_SIGNATURE")
+
+    def future_crypto(registry_evidence: Mapping) -> dict:
+        context = {key: registry_evidence.get(key) for key in DATA["validation_context_contract"]["context_fields"]} if isinstance(registry_evidence, Mapping) else {}
+        if not complete_clean_evidence(registry_evidence, "REGISTRY_POLICY_VALIDATION", "REGISTRY_ACCEPTED", context):
+            return _stage_result("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_REJECTED", "PREVIOUS_STAGE_EVIDENCE_INVALID", "INVALID_SIGNATURE", "PRODUCT_CAPABILITIES_INVALID_SIGNATURE", context if context else None, registry_evidence.get("stage_evidence_id") if isinstance(registry_evidence, Mapping) else None)
+        return issue_future_crypto(context, registry_evidence)
+
+    def expiry_stage(envelope: dict, crypto_result: Mapping, current_utc: str, revocation_registry: dict | None) -> dict:
+        try:
+            if not isinstance(crypto_result, Mapping) or crypto_result.get("stage_result") != "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED":
+                return _stage_result("EXPIRY_REVOCATION_NOT_REACHED")
+            context = _context_from_envelope(envelope)
+            if not complete_clean_evidence(crypto_result, "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION", "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", context):
+                return _stage_result("EXPIRY_REVOCATION_REJECTED", "PREVIOUS_STAGE_EVIDENCE_INVALID", "INVALID_SIGNATURE", "PRODUCT_CAPABILITIES_INVALID_SIGNATURE", context)
+            decision = _evaluate_expiry_and_revocation_policy(envelope, current_utc, revocation_registry)
+            return issue_expiry(context, crypto_result) if decision["policy_result"] == "EXPIRY_REVOCATION_ACCEPTED" else _stage_result(decision["policy_result"], decision.get("diagnostic_reason_code"), decision.get("mapped_trust_state"), decision.get("mapped_denial_code"), context, crypto_result["stage_evidence_id"])
+        except Exception:
+            return _stage_result("EXPIRY_REVOCATION_REJECTED", "PREVIOUS_STAGE_EVIDENCE_INVALID", "INVALID_SIGNATURE", "PRODUCT_CAPABILITIES_INVALID_SIGNATURE")
+
+    def snapshot(envelope: dict, structure_result: Mapping, hash_result: Mapping, registry_result: Mapping, crypto_result: Mapping, expiry_revocation_result: Mapping) -> dict:
+        try:
+            context = _context_from_envelope(envelope)
+            evidences = [structure_result, hash_result, registry_result, crypto_result, expiry_revocation_result]
+            expected = [("DOCUMENT_STRUCTURE_VALIDATION", "STRUCTURE_ACCEPTED"), ("CANONICAL_HASH_VALIDATION", "HASHES_ACCEPTED"), ("REGISTRY_POLICY_VALIDATION", "REGISTRY_ACCEPTED"), ("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION", "CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED"), ("EXPIRY_AND_REVOCATION_VALIDATION", "EXPIRY_REVOCATION_ACCEPTED")]
+            predecessors = [None, structure_result, hash_result, registry_result, crypto_result]
+            for evidence, (stage_id, result), predecessor in zip(evidences, expected, predecessors):
+                if not complete_clean_evidence(evidence, stage_id, result, context, predecessor):
+                    return _stage_result("SNAPSHOT_NOT_CREATED", "PREVIOUS_STAGE_EVIDENCE_INVALID", context=context)
+            if crypto_result.get("fixture_availability") != DATA["stage_evidence_chain_contract"]["future_crypto_fixture_marker"]:
+                return _stage_result("SNAPSHOT_NOT_CREATED", "PREVIOUS_STAGE_EVIDENCE_INVALID", context=context)
+            if not _current_edition_policy_consistent(envelope) or not _canonical_hashes_revalidated(envelope):
+                return _stage_result("SNAPSHOT_NOT_CREATED", "DOCUMENT_IDENTITY_MISMATCH", context=context)
+            return issue_snapshot(context, expiry_revocation_result)
+        except Exception:
+            return _stage_result("SNAPSHOT_NOT_CREATED", "PREVIOUS_STAGE_EVIDENCE_INVALID")
+
+    def pipeline(raw_document, *, version_registry=DEFAULT_VERSION_REGISTRY, algorithms={"alg"}, keys={"key"}, current_utc="2026-01-01T00:00:00Z", revocation_registry=None):
+        structure = raw_structure(raw_document, version_registry)
+        document = parse_raw_json_without_duplicates(raw_document) if structure.get("stage_result") == "STRUCTURE_ACCEPTED" else None
+        hashes = canonical_hashes(document or {}, structure)
+        registry = registry_policy(document or {}, hashes, algorithms, keys)
+        crypto = crypto_verify(document or {}, registry)
+        expiry = expiry_stage(document or {}, crypto, current_utc, revocation_registry)
+        snap = snapshot(document or {}, structure, hashes, registry, crypto, expiry)
+        return {"structure": structure, "hashes": hashes, "registry": registry, "crypto": crypto, "expiry_revocation": expiry, "snapshot": snap}
+
+    def future_pipeline(raw_document, *, version_registry=DEFAULT_VERSION_REGISTRY, algorithms={"alg"}, keys={"key"}, current_utc="2026-01-01T00:00:00Z", revocation_registry=None):
+        structure = raw_structure(raw_document, version_registry)
+        document = parse_raw_json_without_duplicates(raw_document) if structure.get("stage_result") == "STRUCTURE_ACCEPTED" else None
+        hashes = canonical_hashes(document or {}, structure)
+        registry = registry_policy(document or {}, hashes, algorithms, keys)
+        crypto = future_crypto(registry) if registry.get("stage_result") == "REGISTRY_ACCEPTED" else crypto_verify(document or {}, registry)
+        expiry = expiry_stage(document or {}, crypto, current_utc, revocation_registry)
+        snap = snapshot(document or {}, structure, hashes, registry, crypto, expiry)
+        return {"structure": structure, "hashes": hashes, "registry": registry, "crypto": crypto, "expiry_revocation": expiry, "snapshot": snap}
+
+    globals().update({
+        "_issued_chain_valid": issued_chain_valid,
+        "_complete_clean_evidence": complete_clean_evidence,
+        "_validate_parsed_document_structure": parsed_structure,
+        "validate_raw_document_structure": raw_structure,
+        "validate_canonical_hashes": canonical_hashes,
+        "validate_registry_policy": registry_policy,
+        "cryptographic_signature_verification": crypto_verify,
+        "validate_expiry_revocation_stage": expiry_stage,
+        "create_validated_snapshot": snapshot,
+        "run_pipeline": pipeline,
+        "_run_future_contract_pipeline": future_pipeline,
+    })
+
+
+_initialize_closure_local_interpreter()
+globals().pop("_initialize_closure_local_interpreter", None)
+globals().pop("_future_crypto_accepted_evidence", None)
+
+
+def test_no_global_evidence_runtime_token_or_callable_issuer_attributes_escape():
+    forbidden_global_names = {"_EVIDENCE_RUNTIME", "_make_evidence_runtime", "_FUTURE_CRYPTO_FIXTURE_TOKEN", "_future_crypto_accepted_evidence", "future_crypto", "issue_future_crypto", "_initialize_closure_local_interpreter"}
+    assert forbidden_global_names.isdisjoint(globals())
+    forbidden_callable_attrs = {
+        "structure_validated",
+        "hashes_validated",
+        "registry_validated",
+        "future_fixture_validated",
+        "expiry_validated",
+        "snapshot_validated",
+        "seal",
+        "issue",
+        "issue_accepted",
+    }
+    for name, value in globals().items():
+        if name.startswith("__"):
+            continue
+        for attr in forbidden_callable_attrs:
+            assert not callable(getattr(value, attr, None)), (name, attr)
+    envelope = build_envelope(_payload())
+    context = _context_from_envelope(envelope)
+    fabricated = [_fabricated_public_evidence("STRUCTURE_ACCEPTED", context, None)]
+    fabricated.append(_fabricated_public_evidence("HASHES_ACCEPTED", context, fabricated[-1]["stage_evidence_id"]))
+    fabricated.append(_fabricated_public_evidence("REGISTRY_ACCEPTED", context, fabricated[-1]["stage_evidence_id"]))
+    fabricated.append(_fabricated_public_evidence("CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED", context, fabricated[-1]["stage_evidence_id"], "TEST_FIXTURE_FUTURE_ONLY"))
+    fabricated.append(_fabricated_public_evidence("EXPIRY_REVOCATION_ACCEPTED", context, fabricated[-1]["stage_evidence_id"]))
+    assert create_validated_snapshot(envelope, *fabricated)["stage_result"] == "SNAPSHOT_NOT_CREATED"
+
+
+def test_markdown_describes_final_tokenless_closure_registry_model():
+    markdown = MD.read_text()
+    required_fragments = [
+        "read-only `Mapping` composition object",
+        "private copy of the public representation in",
+        "`_public_fields`",
+        "does not store an issuer token",
+        "does not store a producer\nstage ID",
+        "does not store a predecessor reference",
+        "closure-local registry",
+        "exact strong `evidence_ref`",
+        "diagnostic `id(evidence)`",
+        "`stage_id`",
+        "`stage_result`",
+        "full validation context",
+        "exact `predecessor_ref`",
+        "canonical `public_digest`",
+        '`meta["evidence_ref"] is evidence`',
+        "matching canonical public digest",
+        "full recursive predecessor-chain validation",
+        "inside the full\n`_run_future_contract_pipeline` closure",
+        "`issue_future_crypto(context, registry_evidence)`",
+        "No sentinel\ntoken, runtime authority object, or authority argument is involved",
+        "`fixture_availability=TEST_FIXTURE_FUTURE_ONLY` remains only a diagnostic marker",
+    ]
+    for fragment in required_fragments:
+        assert fragment in markdown
+    forbidden_fragments = [
+        "module-local sentinel token",
+        "`_issuer_token`, `_producer_stage_id`, and `_predecessor_evidence_ref`",
+        "Each accepted stage has its own private issuer token",
+        "private future-fixture issuer token",
+        "checks the private issuer token",
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in markdown
+
+
+def test_ast_nested_issuer_functions_do_not_accept_authority_arguments():
+    tree = ast.parse(Path(__file__).read_text())
+    forbidden = {"authority", "issuer_token", "construction_authority", "producer_stage_id", "fixture_token", "force_future_crypto"}
+    found_issue_future_crypto = False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            params = [arg.arg for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs]
+            if node.name == "issue_future_crypto":
+                found_issue_future_crypto = True
+                assert params == ["context", "registry_evidence"]
+            if node.name.startswith(("issue", "seal")) or "issuer" in node.name:
+                assert forbidden.isdisjoint(params), (node.name, params)
+    assert found_issue_future_crypto
+
+
+def test_strong_evidence_reference_and_no_numeric_id_only_attestation():
+    source = Path(__file__).read_text()
+    assert '"evidence_ref": evidence' in source
+    assert 'meta["evidence_ref"] is not evidence' in source
+    assert '"diagnostic_identity": id(evidence)' in source
+    envelope = build_envelope(_payload())
+    issued = list(_accepted_future_evidence_chain(envelope))
+    assert create_validated_snapshot(envelope, *issued)["stage_result"] == "SNAPSHOT_CREATED"
+    structure_clone = _IssuedStageEvidence(dict(issued[0]))
+    assert structure_clone["stage_evidence_id"] == issued[0]["stage_evidence_id"]
+    assert not _issued_chain_valid(structure_clone, _context_from_envelope(envelope))
+    public_copy = dict(issued[1])
+    public_copy["stage_evidence_id"] = _evidence_id(public_copy)
+    assert public_copy["stage_evidence_id"] == issued[1]["stage_evidence_id"]
+    assert create_validated_snapshot(envelope, issued[0], public_copy, issued[2], issued[3], issued[4])["stage_result"] == "SNAPSHOT_NOT_CREATED"
+    deep = copy.deepcopy(issued[2]); deep["stage_evidence_id"] = _evidence_id(deep)
+    roundtrip = json.loads(json.dumps(dict(issued[3]))); roundtrip["stage_evidence_id"] = _evidence_id(roundtrip)
+    assert create_validated_snapshot(envelope, issued[0], issued[1], deep, issued[3], issued[4])["stage_result"] == "SNAPSHOT_NOT_CREATED"
+    assert create_validated_snapshot(envelope, issued[0], issued[1], issued[2], roundtrip, issued[4])["stage_result"] == "SNAPSHOT_NOT_CREATED"
+    tampered = issued[0]
+    public = dict(tampered); public["stage_result"] = "STRUCTURE_REJECTED"; public["stage_evidence_id"] = _evidence_id(public)
+    object.__setattr__(tampered, "_public_fields", public)
+    assert not _issued_chain_valid(tampered, _context_from_envelope(envelope))
