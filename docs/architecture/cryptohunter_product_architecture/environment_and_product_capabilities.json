@@ -1,7 +1,7 @@
 {
   "schema_version": "cryptohunter.environment_and_product_capabilities.v1",
   "m0_element": "M0.4",
-  "status": "under audit",
+  "status": "closed",
   "baseline_commit": "c651b1176512ad445b048bf054a6320cc8e35fdf",
   "execution_environments": [
     {

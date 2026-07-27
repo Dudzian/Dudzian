@@ -1,0 +1,3004 @@
+{
+  "schema_version": "cryptohunter.exchange_accounts_and_instruments.v1",
+  "m0_element": "M0.5",
+  "status": "under audit",
+  "baseline_commit": "f59f9e732d9724279f1453b48c2d9b829610be42",
+  "scope": {
+    "defines": [
+      "build-time Exchange Registry",
+      "multi-exchange",
+      "ExchangeAccount",
+      "CredentialProfile",
+      "account identity",
+      "account capability snapshots",
+      "connection and authorization axes",
+      "Instrument",
+      "venue-specific instrument identity",
+      "instrument metadata",
+      "instrument catalog snapshots",
+      "symbol aliases and migrations",
+      "TradingUniverse",
+      "account and instrument lifecycle",
+      "denial codes",
+      "audit events",
+      "M0.2 M0.3 M0.4 relations"
+    ],
+    "does_not_define": [
+      "StrategyDefinition behavior",
+      "StrategyInstance behavior",
+      "MarketDataRoute",
+      "ExecutionRoute",
+      "routing selection",
+      "order intent",
+      "order lifecycle",
+      "idempotency",
+      "ledger",
+      "P&L",
+      "risk hierarchy",
+      "kill switch implementation",
+      "ExecutionLease implementation",
+      "secret storage",
+      "persistence engine",
+      "SaaS sync",
+      "GUI",
+      "runtime adapters",
+      "real exchange connections"
+    ]
+  },
+  "environment_registry": [
+    "PAPER",
+    "TESTNET",
+    "LIVE"
+  ],
+  "market_type_registry": [
+    "SPOT",
+    "MARGIN",
+    "PERPETUAL",
+    "DELIVERY_FUTURES",
+    "OPTIONS"
+  ],
+  "instrument_type_registry": [
+    "SPOT_PAIR",
+    "MARGIN_PAIR",
+    "PERPETUAL_CONTRACT",
+    "DELIVERY_FUTURE",
+    "OPTION"
+  ],
+  "allowed_market_instrument_type_pairs": {
+    "SPOT": [
+      "SPOT_PAIR"
+    ],
+    "MARGIN": [
+      "MARGIN_PAIR"
+    ],
+    "PERPETUAL": [
+      "PERPETUAL_CONTRACT"
+    ],
+    "DELIVERY_FUTURES": [
+      "DELIVERY_FUTURE"
+    ],
+    "OPTIONS": [
+      "OPTION"
+    ]
+  },
+  "exchange_registry_contract": {
+    "mandatory_exchange_id": null,
+    "closed_build_time_registry": true,
+    "implicit_default_exchange": false,
+    "hardcoded_primary_exchange": false,
+    "runtime_config_may_extend_registry": false,
+    "unknown_exchange_denial_code": "UNKNOWN_EXCHANGE_ID",
+    "exchange_id_policy": [
+      "stable venue identifier",
+      "not display name",
+      "not adapter class name",
+      "not user-chosen",
+      "not provided by config CLI env IPC",
+      "immutable after persistent data"
+    ],
+    "entry_fields": [
+      "exchange_id",
+      "display_name",
+      "adapter_family_id",
+      "supported_environments",
+      "supported_market_types",
+      "supported_instrument_types",
+      "capability_discovery_policy",
+      "instrument_catalog_discovery_policy",
+      "account_identity_discovery_policy",
+      "status",
+      "aliases"
+    ],
+    "entries": [
+      {
+        "exchange_id": "paper_simulated_venue",
+        "display_name": "Paper simulated venue",
+        "adapter_family_id": "paper_simulation_adapter_family",
+        "supported_environments": [
+          "PAPER"
+        ],
+        "supported_market_types": [
+          "SPOT",
+          "MARGIN",
+          "PERPETUAL",
+          "DELIVERY_FUTURES",
+          "OPTIONS"
+        ],
+        "supported_instrument_types": [
+          "SPOT_PAIR",
+          "MARGIN_PAIR",
+          "PERPETUAL_CONTRACT",
+          "DELIVERY_FUTURE",
+          "OPTION"
+        ],
+        "capability_discovery_policy": "STATIC_BUILD_TIME",
+        "instrument_catalog_discovery_policy": "LOCAL_CONTRACT_METADATA",
+        "account_identity_discovery_policy": "LOCAL_SIMULATED_IDENTITY",
+        "status": "ENABLED",
+        "aliases": [
+          "paper"
+        ]
+      },
+      {
+        "exchange_id": "generic_testnet_venue",
+        "display_name": "Generic testnet venue",
+        "adapter_family_id": "generic_testnet_adapter_family",
+        "supported_environments": [
+          "TESTNET"
+        ],
+        "supported_market_types": [
+          "SPOT",
+          "PERPETUAL"
+        ],
+        "supported_instrument_types": [
+          "SPOT_PAIR",
+          "PERPETUAL_CONTRACT"
+        ],
+        "capability_discovery_policy": "ADAPTER_SNAPSHOT_REQUIRED",
+        "instrument_catalog_discovery_policy": "ADAPTER_SNAPSHOT_REQUIRED",
+        "account_identity_discovery_policy": "PRIVATE_READINESS_CHECK_REQUIRED",
+        "status": "ENABLED",
+        "aliases": []
+      }
+    ],
+    "rules": [
+      "alias is migration-only not durable ID",
+      "display_name is not identity",
+      "adapter class is not identity",
+      "one exchange may support multiple market types",
+      "exchange capabilities do not imply account capabilities",
+      "ExchangeCapabilities do not extend ProductCapabilities"
+    ]
+  },
+  "exchange_account_contract": {
+    "entity": "ExchangeAccount",
+    "id_field": "exchange_account_id",
+    "id_prefix": "xacc",
+    "parent": "Portfolio",
+    "identity_fields": [
+      "exchange_account_id",
+      "portfolio_id",
+      "exchange_id",
+      "environment",
+      "market_type"
+    ],
+    "record_fields": [
+      "exchange_account_id",
+      "portfolio_id",
+      "exchange_id",
+      "environment",
+      "market_type",
+      "display_name",
+      "lifecycle_state",
+      "connection_state",
+      "execution_authorization",
+      "external_account_identity_state",
+      "external_account_reference",
+      "external_subaccount_reference",
+      "active_credential_profile_id",
+      "account_capability_snapshot_id",
+      "created_at_utc",
+      "retired_at_utc"
+    ],
+    "lifecycle_states": [
+      "DRAFT",
+      "ACTIVE",
+      "DISABLED",
+      "RETIRED"
+    ],
+    "connection_states": [
+      "DISCONNECTED",
+      "CONNECTING",
+      "SYNCHRONIZING",
+      "ONLINE",
+      "DEGRADED",
+      "BLOCKED"
+    ],
+    "execution_authorizations": [
+      "READ_ONLY",
+      "ORDER_ENTRY_ALLOWED",
+      "BLOCKED_BY_POLICY",
+      "BLOCKED_BY_KILL_SWITCH",
+      "BLOCKED_BY_LEASE",
+      "BLOCKED_BY_RECONCILIATION"
+    ],
+    "rules": [
+      "display_name is not identity",
+      "primary is legacy alias not durable ID or fallback",
+      "no implicit default account",
+      "every selection requires exchange_account_id",
+      "belongs to exactly one Portfolio",
+      "portfolio cannot change implicitly",
+      "exchange_id environment market_type changes require new ExchangeAccount",
+      "TESTNET and LIVE never share ExchangeAccount",
+      "different subaccounts are different ExchangeAccount",
+      "multiple accounts on same exchange allowed",
+      "external reference does not replace durable ID",
+      "identity mismatch blocks account",
+      "delete means RETIRED not hard delete",
+      "historical refs remain resolvable"
+    ],
+    "multi_account_collision_policy": [
+      "exchange_account_id is durable identity",
+      "same portfolio exchange environment market does not collide by itself",
+      "multiple unverified DRAFT accounts in same scope allowed",
+      "verified same venue account and subaccount cannot bind to two ACTIVE accounts",
+      "different subaccounts are distinct ExchangeAccount identities",
+      "verified venue identity is sourced only from trusted external_identity_snapshots_by_account_id",
+      "caller external_account_reference and external_subaccount_reference are metadata, never identity authority"
+    ],
+    "caller_mutable_patch_fields": [
+      "display_name",
+      "lifecycle_state",
+      "connection_state",
+      "execution_authorization",
+      "retired_at_utc"
+    ],
+    "external_identity_state_authority": "Core-owned VERIFY_EXTERNAL_IDENTITY only; never UPDATE mutable_patch",
+    "lifecycle_timestamp_policy": {
+      "DRAFT": "retired_at_utc null",
+      "ACTIVE": "retired_at_utc null",
+      "DISABLED": "retired_at_utc null",
+      "RETIRED": "valid retired_at_utc not before created_at_utc"
+    },
+    "credential_binding_authority": "BIND_CREDENTIAL_PROFILE only; generic UPDATE cannot set or clear active_credential_profile_id",
+    "capability_binding_authority": "Core-owned capability validation only; generic UPDATE cannot set account_capability_snapshot_id"
+  },
+  "credential_profile_contract": {
+    "entity": "CredentialProfile",
+    "id_field": "credential_profile_id",
+    "id_prefix": "cred",
+    "parent": "ExchangeAccount",
+    "saas_sync_candidate": false,
+    "fields": [
+      "credential_profile_id",
+      "exchange_account_id",
+      "exchange_id",
+      "environment_scope",
+      "credential_purpose",
+      "secure_store_reference",
+      "public_key_identifier",
+      "permission_snapshot",
+      "lifecycle_state",
+      "created_at_utc",
+      "rotated_from_credential_profile_id",
+      "retired_at_utc"
+    ],
+    "credential_purposes": [
+      "ACCOUNT_READ",
+      "ORDER_ENTRY",
+      "RECONCILIATION"
+    ],
+    "permission_registry": [
+      "READ_ACCOUNT",
+      "READ_ORDERS",
+      "PLACE_ORDERS",
+      "CANCEL_ORDERS",
+      "WITHDRAW",
+      "INTERNAL_TRANSFER"
+    ],
+    "forbidden_secret_material": [
+      "API secret",
+      "secret key",
+      "password",
+      "PIN",
+      "biometric template",
+      "private key",
+      "access token",
+      "session token",
+      "decrypted credential value",
+      "encrypted secret payload transported by this contract"
+    ],
+    "rules": [
+      "only metadata and secure-store references",
+      "exchange_account_id must match account",
+      "exchange_id must match account.exchange_id",
+      "environment_scope must match account.environment",
+      "TESTNET credential cannot bind to LIVE",
+      "LIVE credential cannot bind to TESTNET",
+      "PAPER does not require profile",
+      "no automatic sharing",
+      "rotation creates lineage and retires old profile",
+      "activation is explicit",
+      "credential labels are not authority",
+      "WITHDRAW forbidden",
+      "active withdrawal permission blocks readiness",
+      "INTERNAL_TRANSFER unused by M0.5 execution pipeline",
+      "missing PLACE_ORDERS forces READ_ONLY",
+      "permission snapshot does not extend ProductCapabilities",
+      "credentials alone do not create execution authorization"
+    ],
+    "lineage_rules": [
+      "traverse complete rotated_from chain",
+      "use visited set",
+      "every predecessor exists",
+      "self-cycle 2-node cycle and multi-node cycle fail closed",
+      "every predecessor has same account exchange environment",
+      "predecessors are RETIRED",
+      "current is ACTIVE",
+      "exactly one active profile per account"
+    ],
+    "active_profile_scope_policy": {
+      "field": "active_profile_ids_by_account_id",
+      "rule": "exactly one active profile for target account; profiles of other accounts do not conflict",
+      "applies_to_rotated_and_non_rotated": true
+    },
+    "full_record_validation": [
+      "exact closed schema and typed IDs",
+      "environment purpose lifecycle closed registries",
+      "saas_sync_candidate literal false",
+      "opaque secure-store:// reference only",
+      "unique known permissions",
+      "strict lifecycle timestamps",
+      "nullable non-empty public key and rotation IDs",
+      "forbidden secret payload absent"
+    ],
+    "secure_store_reference_grammar": {
+      "prefix": "secure-store://",
+      "locator": "non-empty opaque string",
+      "forbidden_characters": [
+        "whitespace",
+        "?",
+        "#",
+        "="
+      ],
+      "forbidden_payload_markers": [
+        "api_key",
+        "apikey",
+        "secret",
+        "password",
+        "token",
+        "private_key",
+        "credential_value",
+        "plaintext"
+      ]
+    },
+    "lineage_timestamp_algorithm": "track direct successor; require predecessor.created_at <= predecessor.retired_at <= successor.created_at; then successor = predecessor"
+  },
+  "external_account_identity_contract": {
+    "states": [
+      "UNVERIFIED",
+      "VERIFYING",
+      "VERIFIED",
+      "MISMATCH",
+      "UNAVAILABLE"
+    ],
+    "verified_identity_fields": [
+      "exchange_id",
+      "environment",
+      "market_type",
+      "venue_account_identifier",
+      "subaccount_identifier",
+      "account_type",
+      "observed_permission_set",
+      "verification_timestamp",
+      "adapter_version_source"
+    ],
+    "rules": [
+      "local exchange_account_id exists independently of venue ID",
+      "reconnect rechecks identity",
+      "mismatch sets connection_state BLOCKED",
+      "mismatch sets execution_authorization BLOCKED_BY_RECONCILIATION",
+      "missing venue identity is not VERIFIED",
+      "display name API key label email are insufficient"
+    ],
+    "trusted_identity_tuple": [
+      "exchange_id",
+      "environment",
+      "market_type",
+      "venue_account_identifier",
+      "subaccount_identifier"
+    ],
+    "trusted_identity_uniqueness": [
+      "exact comparison without trim or case-fold",
+      "same tuple cannot belong to two ACTIVE ExchangeAccount",
+      "different non-empty subaccounts are distinct",
+      "root account uses null subaccount",
+      "caller external references are not identity authority"
+    ],
+    "activation_readiness_policy": [
+      "account VERIFIED string is not authority",
+      "trusted snapshot resolved by exact exchange_account_id",
+      "full external identity validation required",
+      "trusted identity uniqueness required before universe activation",
+      "caller external references ignored as authority"
+    ]
+  },
+  "account_capability_snapshot_contract": {
+    "immutable": true,
+    "versioned": true,
+    "fields": [
+      "account_capability_snapshot_id",
+      "exchange_account_id",
+      "exchange_id",
+      "environment",
+      "market_type",
+      "version",
+      "previous_snapshot_id",
+      "status",
+      "observed_permission_set",
+      "supported_instrument_types",
+      "observed_at_utc",
+      "effective_at_utc",
+      "stale_after_utc",
+      "adapter_family_id",
+      "adapter_version",
+      "content_hash"
+    ],
+    "rules": [
+      "monotonic version",
+      "immutable snapshot",
+      "exact account exchange environment market binding",
+      "stale snapshot only restricts",
+      "does not extend M0.4 ProductCapabilities",
+      "unknown permission fail closed",
+      "unknown instrument capability fail closed"
+    ],
+    "statuses": [
+      "VALID",
+      "STALE",
+      "REJECTED"
+    ],
+    "content_hash_definition": {
+      "algorithm": "SHA-256",
+      "domain_separator": "cryptohunter.m0.5.account_capability_snapshot.v1",
+      "input_fields": [
+        "exchange_account_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "version",
+        "previous_snapshot_id",
+        "status",
+        "observed_permission_set",
+        "supported_instrument_types",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "adapter_family_id",
+        "adapter_version"
+      ],
+      "canonicalization": "JSON object with lexicographically sorted keys and sorted arrays where declared unordered",
+      "encoding": "UTF-8",
+      "digest_format": "lowercase hex"
+    },
+    "validator_policy": [
+      "exact typed record",
+      "canonical SHA-256 recalculation",
+      "continuous immutable lineage with visited set",
+      "map key equals record ID",
+      "exact account exchange environment market binding",
+      "STALE and REJECTED restrict only",
+      "never extends M0.4 ProductCapabilities",
+      "never enables LIVE or bypasses readiness"
+    ],
+    "execution_operability_policy": {
+      "ADAPTER_SNAPSHOT_REQUIRED": "bound VALID fresh snapshot required",
+      "STATIC_BUILD_TIME": "snapshot optional; if bound it must validate",
+      "activation_status": "VALID only",
+      "freshness": "now < stale_after_utc",
+      "STALE_REJECTED": "historically retained but ACCOUNT_READINESS_BLOCKED",
+      "product_capability_effect": "restrict only; never extends M0.4 or LIVE"
+    }
+  },
+  "instrument_contract": {
+    "entity": "Instrument",
+    "id_field": "instrument_id",
+    "id_prefix": "instr",
+    "parent": "Workspace",
+    "identity_dimensions": [
+      "exchange_id",
+      "environment",
+      "market_type",
+      "venue_symbol"
+    ],
+    "record_fields": [
+      "instrument_id",
+      "workspace_id",
+      "exchange_id",
+      "environment",
+      "market_type",
+      "instrument_type",
+      "venue_symbol",
+      "display_symbol",
+      "base_asset_reference",
+      "quote_asset_reference",
+      "settlement_asset_reference",
+      "trading_status",
+      "price_tick",
+      "quantity_step",
+      "min_quantity",
+      "max_quantity",
+      "min_notional",
+      "max_notional",
+      "contract_size",
+      "contract_value_currency",
+      "derivative_settlement_type",
+      "expiry_at_utc",
+      "strike_price",
+      "option_side",
+      "catalog_snapshot_id",
+      "metadata_version",
+      "observed_at_utc",
+      "effective_at_utc",
+      "stale_after_utc",
+      "source_adapter_family_id"
+    ],
+    "trading_statuses": [
+      "TRADING",
+      "HALTED",
+      "SUSPENDED",
+      "DELISTED",
+      "UNKNOWN"
+    ],
+    "rules": [
+      "venue_symbol is exact venue identifier",
+      "no case folding",
+      "no trimming collisions",
+      "no Unicode normalization",
+      "symbol string alone is not identity",
+      "same tuple resolves to one instrument_id",
+      "different tuple cannot share instrument_id",
+      "no global symbol lookup",
+      "display symbol not routing key",
+      "symbol change requires explicit alias lineage",
+      "delisted remains historically resolvable",
+      "no hard delete after historical use"
+    ],
+    "venue_symbol_policy": {
+      "field": "venue_symbol",
+      "caller_supplied_exact_copy_field_forbidden": "venue_symbol_exact",
+      "rules": [
+        "must be a non-empty string",
+        "leading whitespace rejected",
+        "trailing whitespace rejected",
+        "no upper lower case-fold transform",
+        "no trim",
+        "no Unicode normalization",
+        "exact byte/codepoint sequence preserved",
+        "uppercase not required",
+        "lowercase and mixed-case symbols allowed when exact venue identifiers"
+      ]
+    },
+    "metadata_vs_tradability": {
+      "metadata_valid_statuses": [
+        "TRADING",
+        "HALTED",
+        "SUSPENDED",
+        "DELISTED",
+        "UNKNOWN"
+      ],
+      "catalog_refresh_accepts_known_statuses": true,
+      "execution_activation_requires": "TRADING",
+      "non_trading_activation_denial": "INSTRUMENT_NOT_TRADABLE",
+      "historical_resolution_preserved": true
+    },
+    "trusted_history_contract": {
+      "context_field": "instrument_history_by_id",
+      "shape": "map instrument_id -> non-empty ordered list of full historical Instrument records",
+      "authority": "Core-owned trusted validation_context; never caller request payload",
+      "record_requirements": [
+        "exact full Instrument schema",
+        "map key equals record.instrument_id",
+        "positive non-boolean unique strictly increasing metadata_version",
+        "valid timestamps",
+        "historical non-TRADING statuses remain resolvable"
+      ],
+      "immutable_identity_tuple": [
+        "exchange_id",
+        "environment",
+        "market_type",
+        "venue_symbol"
+      ],
+      "comparison": "exact; no trim, case-fold, or Unicode normalization",
+      "mutable_historical_metadata": [
+        "display_symbol",
+        "trading_status"
+      ],
+      "required_for_direct_catalog_validation": true,
+      "missing_or_malformed_history": "fail-closed controlled denial without exception",
+      "history_identity_validation": "all historical records for one instrument_id have one exact immutable tuple; validated even without a current record",
+      "current_version_rule": "current metadata_version must be strictly greater than the maximum complete-history metadata_version",
+      "historical_freshness_policy": "historical structural validity checks timestamp ordering but does not require current now < stale_after_utc",
+      "identity_rewrite_policy": "M0.5 rejects every identity tuple rewrite fail-closed; alias/migration execution is deferred to a future explicit contract",
+      "identity_rewrite_denial": "INSTRUMENT_IDENTITY_COLLISION",
+      "shared_validator": "validate_instrument_history_map",
+      "used_by": [
+        "validate_context",
+        "validate_instrument_catalog_snapshot",
+        "ACTIVATE_TRADING_UNIVERSE catalog path"
+      ],
+      "version_denial": "INSTRUMENT_METADATA_INVALID",
+      "identity_denial": "INSTRUMENT_IDENTITY_COLLISION",
+      "version_order": "positive non-boolean integers, unique and strictly increasing in list order; current strictly greater than historical maximum"
+    }
+  },
+  "asset_reference_contract": {
+    "value_objects": [
+      "base_asset_code",
+      "quote_asset_code",
+      "settlement_asset_code"
+    ],
+    "fields": [
+      "venue_asset_code",
+      "canonical_display_code",
+      "asset_namespace",
+      "mapping_status"
+    ],
+    "mapping_statuses": [
+      "EXACT",
+      "EXPLICIT_ALIAS",
+      "AMBIGUOUS",
+      "UNKNOWN"
+    ],
+    "rules": [
+      "no durable Asset entity",
+      "canonical display code is not routing identity",
+      "alias scoped by exchange_id",
+      "no global aliases",
+      "AMBIGUOUS and UNKNOWN fail closed",
+      "no symbol parsing heuristics",
+      "asset references come from catalog metadata"
+    ]
+  },
+  "decimal_policy": {
+    "format": "canonical exact non-negative decimal string",
+    "regex": "^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+    "zero": "allowed only where explicitly meaningful; positive fields require value > 0",
+    "trailing_zero_policy": "fractional trailing zeros are noncanonical; integer zero is exactly \"0\"",
+    "forbidden": [
+      "float",
+      "int",
+      "scientific notation",
+      "NaN",
+      "Infinity",
+      "leading plus",
+      "negative zero",
+      "leading zero integer",
+      "leading decimal point",
+      "trailing decimal point",
+      "underscore",
+      "whitespace"
+    ],
+    "rules": [
+      "price_tick and quantity_step positive",
+      "contract_size positive when required",
+      "strike_price positive when required",
+      "min_quantity <= max_quantity",
+      "min_notional <= max_notional",
+      "max cannot be negative",
+      "null means no limit, never zero"
+    ]
+  },
+  "derivative_consistency_rules": {
+    "SPOT_PAIR": {
+      "settlement_asset_reference": "null_or_quote",
+      "contract_size": null,
+      "expiry_at_utc": null,
+      "strike_price": null,
+      "option_side": null
+    },
+    "MARGIN_PAIR": {
+      "settlement_asset_reference": "null_or_quote",
+      "contract_size": null,
+      "expiry_at_utc": null,
+      "strike_price": null,
+      "option_side": null
+    },
+    "PERPETUAL_CONTRACT": {
+      "contract_size": "required",
+      "settlement_asset_reference": "required",
+      "expiry_at_utc": null,
+      "strike_price": null,
+      "option_side": null,
+      "derivative_settlement_type": [
+        "LINEAR",
+        "INVERSE"
+      ]
+    },
+    "DELIVERY_FUTURE": {
+      "contract_size": "required",
+      "settlement_asset_reference": "required",
+      "expiry_at_utc": "required",
+      "strike_price": null,
+      "option_side": null
+    },
+    "OPTION": {
+      "contract_size": "required",
+      "settlement_asset_reference": "required",
+      "expiry_at_utc": "required",
+      "strike_price": "required",
+      "option_side": [
+        "CALL",
+        "PUT"
+      ]
+    }
+  },
+  "instrument_catalog_snapshot_contract": {
+    "fields": [
+      "catalog_snapshot_id",
+      "exchange_id",
+      "environment",
+      "market_type",
+      "adapter_family_id",
+      "adapter_version",
+      "observed_at_utc",
+      "effective_at_utc",
+      "stale_after_utc",
+      "instrument_ids",
+      "content_hash",
+      "previous_snapshot_id",
+      "status"
+    ],
+    "statuses": [
+      "VALID",
+      "PARTIAL",
+      "STALE",
+      "REJECTED"
+    ],
+    "rules": [
+      "immutable",
+      "instrument IDs unique",
+      "same exchange/environment/market_type",
+      "PARTIAL does not delete missing instruments",
+      "STALE forbids new execution",
+      "REJECTED cannot activate",
+      "refresh does not overwrite historical snapshot",
+      "missing in new snapshot is not automatic delisting",
+      "canonical instrument ordering",
+      "config GUI cannot mark VALID without Core validation",
+      "runtime adapter implementation outside M0.5",
+      "content hash follows deterministic_hash_contracts.catalog_snapshot_content_hash",
+      "adapter_family_id must match Exchange Registry entry",
+      "adapter_version must be non-empty string",
+      "instrument catalog_snapshot_id must match snapshot unless explicit draft-before-snapshot model is used",
+      "instrument source_adapter_family_id must match snapshot adapter_family_id",
+      "non-null previous_snapshot_id requires predecessor",
+      "previous snapshot scope must match",
+      "lineage self-reference and cycles forbidden",
+      "PARTIAL cannot be activated for execution",
+      "lineage traversal uses previous_catalogs_by_id map",
+      "lineage traversal uses visited set",
+      "self-cycle 2-node cycle and multi-node cycle fail closed",
+      "instrument catalog_snapshot_id must match snapshot"
+    ],
+    "content_hash_definition": {
+      "algorithm": "SHA-256",
+      "domain_separator": "cryptohunter.m0.5.instrument_catalog_snapshot.v1",
+      "input_fields": [
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "adapter_version",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "instrument_ids",
+        "previous_snapshot_id",
+        "status"
+      ],
+      "canonicalization": "JSON object with lexicographically sorted keys; instrument_ids sorted lexicographically before hashing",
+      "encoding": "UTF-8",
+      "digest_format": "lowercase hex",
+      "excluded_fields": [
+        "catalog_snapshot_id",
+        "content_hash"
+      ]
+    },
+    "scope_validation": [
+      "exchange exists and ENABLED",
+      "environment supported by exchange",
+      "market type supported by exchange",
+      "adapter family bound to registry",
+      "every member passes full Instrument validator"
+    ],
+    "activation_status_policy": {
+      "REFRESH_INSTRUMENT_CATALOG": [
+        "VALID",
+        "PARTIAL"
+      ],
+      "ACTIVATE_TRADING_UNIVERSE": [
+        "VALID"
+      ],
+      "PARTIAL_execution_activation_forbidden": true
+    },
+    "instrument_identity_index": {
+      "tuple": [
+        "exchange_id",
+        "environment",
+        "market_type",
+        "venue_symbol"
+      ],
+      "comparison": "exact bytes; no trim case-fold or Unicode normalization",
+      "tuple_to_id": "one tuple maps to one instrument_id",
+      "id_to_tuple": "one instrument_id maps to one tuple absent explicit alias migration",
+      "display_symbol_identity": false,
+      "collision_denial": "INSTRUMENT_IDENTITY_COLLISION"
+    },
+    "exact_member_resolution": {
+      "resolver": "resolve_catalog_member",
+      "current": "record.catalog_snapshot_id exactly equals catalog ID and scope/adapter match",
+      "history": "full record with exact instrument ID, catalog ID, scope and adapter; highest matching metadata_version selected deterministically",
+      "id_presence_only": "insufficient",
+      "historical_staleness": "structurally allowed but never grants current execution eligibility",
+      "catalog_membership_requirement": "instrument_id must occur exactly in a unique non-empty-string catalog.instrument_ids list; matching catalog_snapshot_id alone is insufficient",
+      "totality": "resolver returns null and never raises for malformed catalog, maps, history lists, records or metadata versions",
+      "history_selection_precondition": "matching metadata_version values are positive non-boolean integers before deterministic maximum selection",
+      "validation_order": "validate_instrument_history_map completes before any context catalog-member resolution",
+      "malformed_history": "invalidates complete trusted validation_context; never silently skipped",
+      "reverse_current_binding": "every instruments_by_id record must be listed in its referenced catalog.instrument_ids and resolver must return that exact current record; history cannot mask missing current membership",
+      "bidirectional_graph": "Catalog -> Instrument and Instrument -> Catalog are both mandatory",
+      "record_validation": "current and historical candidates pass full validate_instrument_record(require_fresh=false) before return",
+      "catalog_structure_validation": "closed required Catalog fields, non-empty registry scope/adapter IDs and unique member list precede comparison",
+      "direct_history_order": "metadata versions strictly increase in list order before maximum selection",
+      "malformed_unrelated_current": "invalidates complete trusted validation_context",
+      "historical_reverse_binding": "every full record in instrument_history_by_id exact-binds to an existing current/previous Catalog, occurs in that Catalog instrument_ids, and matches scope and adapter; dangling or unlisted unrelated history invalidates the whole context",
+      "current_history_version_relation": "before direct current resolution, current metadata_version is a positive non-boolean integer strictly greater than the complete historical maximum; equality, rollback, or malformed versions return null without historical fallback",
+      "direct_catalog_semantics": "direct membership validates the full structural Catalog contract, enabled exchange support, adapter, status, timestamp ordering, content hash, member list, and lineage when a predecessor is declared",
+      "decision_parity": "direct validators and dispatcher use the same trusted graph and produce the same fail-closed membership decision",
+      "catalog_total_preflight": "one total Catalog node validator validates every field type, closed schema, registry scope, adapter, status, timestamps, member IDs and canonical hash before hashing, lookup, visited-set insertion or lineage traversal",
+      "predecessor_node_parity": "every predecessor traversed by lineage passes the identical total Catalog node validator before cycle-safe traversal continues",
+      "target_history_closure": "complete history for the target instrument must exact-bind to trusted current/previous Catalog maps before current or historical resolution; valid current never masks dangling, unlisted or scope-mismatched history",
+      "source_catalog_member_closure": "direct universe membership resolves every member listed by each source Catalog, so any additional missing, malformed, dangling or scope-mismatched member blocks the whole source Catalog",
+      "non_json_totality": "non-JSON-serializable malformed values are rejected by typed preflight and never reach canonical serialization",
+      "complete_graph_parity": "direct, full-context and dispatcher decisions include target history binding, source Catalog member closure and malformed unrelated trusted records",
+      "complete_graph_validator": "validate_catalog_instrument_graph is shared by full context and direct universe membership and validates all current/previous Catalog plus current/history Instrument records before source selection",
+      "direct_totality": "direct membership preflights universe and every trusted map, key and record and returns false without exceptions for malformed values",
+      "full_history_parity": "the complete validate_instrument_history_map applies to target and unrelated history before direct membership, including non-empty lists, ordering, identity and current-version relation",
+      "unrelated_record_policy": "orphan or malformed unrelated current Instrument, malformed unrelated Catalog, unresolved member or malformed unrelated history invalidates direct membership",
+      "direct_catalog_id_disjointness": "current and previous Catalog durable ID sets are disjoint in direct and full paths",
+      "catalog_union_history": "history may exact-bind to a valid Catalog from either trusted current or previous map; all complete-graph resolver calls receive both maps",
+      "success_and_denial_parity": "direct, full-context and dispatcher parity covers fail-closed denials and valid multi-current-Catalog successes"
+    }
+  },
+  "instrument_symbol_alias_contract": {
+    "fields": [
+      "exchange_id",
+      "environment",
+      "market_type",
+      "legacy_symbol",
+      "target_instrument_id",
+      "valid_from_utc",
+      "valid_until_utc",
+      "migration_reason",
+      "source",
+      "ambiguity_state"
+    ],
+    "ambiguity_states": [
+      "UNAMBIGUOUS",
+      "AMBIGUOUS",
+      "REJECTED"
+    ],
+    "rules": [
+      "scoped by venue dimensions",
+      "not durable identity",
+      "cannot replace instrument_id",
+      "multiple active targets forbidden",
+      "AMBIGUOUS rejected",
+      "legacy symbol requires explicit migration",
+      "not used for new writes after migration",
+      "new data writes instrument_id",
+      "no automatic text-similarity mapping"
+    ]
+  },
+  "trading_universe_contract": {
+    "entity": "TradingUniverse",
+    "id_field": "trading_universe_id",
+    "id_prefix": "univ",
+    "parent": "ExchangeAccount",
+    "record_fields": [
+      "trading_universe_id",
+      "exchange_account_id",
+      "version",
+      "lifecycle_state",
+      "instrument_ids",
+      "created_at_utc",
+      "activated_at_utc",
+      "retired_at_utc",
+      "previous_version_id",
+      "source_catalog_snapshot_ids",
+      "content_hash",
+      "creation_reason"
+    ],
+    "lifecycle_states": [
+      "DRAFT",
+      "ACTIVE",
+      "RETIRED",
+      "REJECTED"
+    ],
+    "rules": [
+      "membership immutable per version",
+      "membership change creates new version",
+      "at most one ACTIVE version per scope when required",
+      "instrument IDs unique",
+      "ACTIVE non-empty",
+      "instrument matches account exchange_id environment market_type",
+      "instrument exists in validated catalog",
+      "DELISTED UNKNOWN excluded from new ACTIVE",
+      "historical version resolvable",
+      "no strategy or routing semantics",
+      "strategy assignment deferred to M0.6"
+    ],
+    "content_hash_definition": {
+      "algorithm": "SHA-256",
+      "domain_separator": "cryptohunter.m0.5.trading_universe.v1",
+      "input_fields": [
+        "exchange_account_id",
+        "version",
+        "lifecycle_state",
+        "instrument_ids",
+        "previous_version_id",
+        "source_catalog_snapshot_ids",
+        "creation_reason"
+      ],
+      "canonicalization": "JSON object with lexicographically sorted keys; instrument_ids and source_catalog_snapshot_ids sorted lexicographically before hashing",
+      "encoding": "UTF-8",
+      "digest_format": "lowercase hex",
+      "excluded_fields": [
+        "trading_universe_id",
+        "content_hash",
+        "created_at_utc",
+        "activated_at_utc",
+        "retired_at_utc"
+      ]
+    },
+    "source_catalog_membership_policy": [
+      "each instrument_id belongs to accepted source catalog instrument_ids",
+      "instrument catalog_snapshot_id is one of source_catalog_snapshot_ids",
+      "source catalogs validate with complete previous_catalogs_by_id lineage",
+      "global instrument presence alone never grants membership"
+    ],
+    "record_validation": [
+      "exact closed schema",
+      "non-empty IDs",
+      "version positive integer excluding boolean",
+      "known lifecycle state; RETIRED and REJECTED cannot activate",
+      "unique non-empty instrument_ids and source_catalog_snapshot_ids",
+      "strict nullable timestamps",
+      "canonical lowercase SHA-256 content_hash"
+    ],
+    "version_lineage": [
+      "version 1 requires null previous_version_id",
+      "version greater than 1 requires predecessor",
+      "map key equals predecessor trading_universe_id",
+      "same exchange_account_id",
+      "predecessor version exactly current minus one",
+      "full chain traversal with visited set",
+      "at most one ACTIVE per exchange_account_id scope"
+    ],
+    "idempotent_reactivation_policy": "same trading_universe_id is idempotent only when complete record is exactly equal; any version/hash/membership/account/lifecycle difference is conflict",
+    "single_activation_readiness_gate": {
+      "validator": "validate_account_activation_readiness",
+      "enforced_by": [
+        "validate_trading_universe_version",
+        "ACTIVATE_TRADING_UNIVERSE dispatcher handler"
+      ],
+      "missing_validation_context": "ACCOUNT_READINESS_BLOCKED",
+      "trusted_sources": [
+        "external_identity_snapshots_by_account_id",
+        "credential_profiles_by_id",
+        "active_profile_ids_by_account_id",
+        "account_capability_snapshots_by_id",
+        "readiness_by_account_id"
+      ],
+      "testnet_credential_requirement": "exact active account-bound profile with valid lineage and active-profile map binding",
+      "effective_permissions": "intersection of CredentialProfile, AccountCapabilitySnapshot, and trusted external identity permissions",
+      "authorization_policy": "READ_ACCOUNT required; ORDER_ENTRY_ALLOWED additionally requires PLACE_ORDERS in every trusted source; WITHDRAW in any source blocks",
+      "capability_instrument_policy": "bound VALID fresh snapshot restricts every universe instrument_type; empty supported list blocks non-empty universe",
+      "validation_context_authority": "sole authority; every direct argument is exact-equality bound to its trusted context record or collection",
+      "direct_argument_bindings": [
+        "account == accounts_by_id[universe.exchange_account_id]",
+        "universe == universes_by_id[trading_universe_id]",
+        "instruments == instruments_by_id",
+        "catalogs == catalogs_by_id",
+        "previous_universes_by_id exact equality",
+        "previous_catalogs_by_id exact equality",
+        "active_universes exact equality"
+      ],
+      "complete_gate_checks": [
+        "full closed validation_context",
+        "exact trusted account binding",
+        "validate_account",
+        "trusted identity validation and uniqueness",
+        "ACTIVE lifecycle",
+        "operation state matrix",
+        "literal account and context readiness",
+        "non-blocked connection and authorization",
+        "VALID fresh capability requirements",
+        "bound active CredentialProfile and lineage",
+        "effective permission intersection",
+        "LIVE denial"
+      ],
+      "withdrawal_denial_propagation": "WITHDRAWAL_PERMISSION_FORBIDDEN preserved for profile, capability, or identity and mapped to TRADING_UNIVERSE_REJECTED"
+    },
+    "multi_catalog_trusted_binding": {
+      "authority": "validation_context.catalogs_by_id full map",
+      "selection": "source_catalog_snapshot_ids selects only catalogs used for activation",
+      "unrelated_valid_catalogs": "allowed and do not extend membership",
+      "dispatcher_direct_parity": true,
+      "caller_catalog_authority": false
+    },
+    "active_conflict_source": "union of exact-bound active_universes and all ACTIVE records in universes_by_id, excluding target by exact trading_universe_id",
+    "trusted_context_membership_policy": {
+      "current": "account and every source catalog/current instrument resolve; every instrument belongs to a declared source catalog and its catalog_snapshot_id is in source IDs",
+      "previous": "account and current/previous catalogs resolve; exact current/history member resolver; no current freshness requirement",
+      "unrelated_catalog_membership": "never extends universe",
+      "malformed_unrelated_record": "invalidates complete trusted context",
+      "catalog_list_presence": "every universe instrument ID must be present in at least one declared source catalog.instrument_ids; record catalog_snapshot_id equality alone never grants membership"
+    }
+  },
+  "live_current_edition_policy": {
+    "all_live_operations_blocked": true,
+    "denial_code": "LIVE_BLOCKED_BY_EDITION",
+    "rules": [
+      "LIVE cannot activate",
+      "do not read or decrypt Live credentials",
+      "do not open Live connection",
+      "do not create working Live adapter",
+      "ORDER_ENTRY_ALLOWED forbidden for LIVE",
+      "active_environment cannot be LIVE",
+      "legacy Live records detected and quarantined without secrets",
+      "no Testnet-to-Live fallback",
+      "M0.5 does not weaken M0.4 18 Live gates"
+    ]
+  },
+  "denial_code_registry": [
+    "UNKNOWN_EXCHANGE_ID",
+    "EXCHANGE_DISABLED",
+    "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+    "MARKET_TYPE_UNSUPPORTED",
+    "INSTRUMENT_TYPE_UNSUPPORTED",
+    "EXCHANGE_ACCOUNT_NOT_FOUND",
+    "EXCHANGE_ACCOUNT_RETIRED",
+    "EXCHANGE_ACCOUNT_IDENTITY_IMMUTABLE",
+    "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+    "EXTERNAL_ACCOUNT_IDENTITY_UNAVAILABLE",
+    "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+    "CREDENTIAL_PROFILE_NOT_FOUND",
+    "CREDENTIAL_PROFILE_SCOPE_MISMATCH",
+    "CREDENTIAL_PROFILE_EXCHANGE_MISMATCH",
+    "CREDENTIAL_PROFILE_NOT_ACTIVE",
+    "WITHDRAWAL_PERMISSION_FORBIDDEN",
+    "ACCOUNT_READINESS_BLOCKED",
+    "INSTRUMENT_NOT_FOUND",
+    "INSTRUMENT_IDENTITY_COLLISION",
+    "INSTRUMENT_METADATA_INVALID",
+    "INSTRUMENT_METADATA_STALE",
+    "INSTRUMENT_NOT_TRADABLE",
+    "ASSET_MAPPING_UNKNOWN",
+    "ASSET_MAPPING_AMBIGUOUS",
+    "SYMBOL_ALIAS_AMBIGUOUS",
+    "CATALOG_SNAPSHOT_INVALID",
+    "CATALOG_SNAPSHOT_STALE",
+    "TRADING_UNIVERSE_INVALID",
+    "TRADING_UNIVERSE_VERSION_CONFLICT",
+    "TRADING_UNIVERSE_INSTRUMENT_SCOPE_MISMATCH",
+    "LIVE_BLOCKED_BY_EDITION",
+    "UNKNOWN_OPERATION",
+    "LIVE_RECORD_QUARANTINED",
+    "EXCHANGE_ACCOUNT_IDENTITY_COLLISION",
+    "CONTRACT_VALIDATION_MAPPING_ERROR"
+  ],
+  "audit_event_registry": [
+    "EXCHANGE_REGISTRY_VALIDATED",
+    "EXCHANGE_ACCOUNT_CREATED",
+    "EXCHANGE_ACCOUNT_UPDATED",
+    "EXCHANGE_ACCOUNT_DISABLED",
+    "EXCHANGE_ACCOUNT_RETIRED",
+    "EXTERNAL_ACCOUNT_IDENTITY_VERIFIED",
+    "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+    "CREDENTIAL_PROFILE_BOUND",
+    "CREDENTIAL_PROFILE_ROTATED",
+    "CREDENTIAL_PROFILE_REJECTED",
+    "WITHDRAWAL_PERMISSION_DETECTED",
+    "INSTRUMENT_CATALOG_REFRESHED",
+    "INSTRUMENT_CATALOG_REJECTED",
+    "INSTRUMENT_METADATA_CHANGED",
+    "INSTRUMENT_STATUS_CHANGED",
+    "SYMBOL_ALIAS_MIGRATION_APPLIED",
+    "TRADING_UNIVERSE_VERSION_CREATED",
+    "TRADING_UNIVERSE_ACTIVATED",
+    "TRADING_UNIVERSE_RETIRED",
+    "TRADING_UNIVERSE_REJECTED",
+    "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+    "EXCHANGE_ACCOUNT_CREATE_REJECTED",
+    "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+    "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+    "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+    "INSTRUMENT_RETIREMENT_REJECTED",
+    "TRADING_UNIVERSE_ACTIVATION_REJECTED",
+    "LEGACY_LIVE_RECORD_QUARANTINED",
+    "UNKNOWN_OPERATION_REJECTED",
+    "LEGACY_LIVE_RECORD_QUARANTINE_REJECTED",
+    "CONTRACT_VALIDATION_MAPPING_REJECTED"
+  ],
+  "audit_payload_contract": {
+    "required_fields": [
+      "event_name",
+      "occurred_at_utc",
+      "operation",
+      "outcome_class",
+      "identifiers",
+      "context",
+      "result",
+      "denial_code"
+    ],
+    "per_event_schemas": "audit_event_schemas",
+    "schema_cardinality": "exactly_one_schema_per_event_name",
+    "secret_fields_forbidden": true,
+    "success_and_denial_events_are_distinct": true,
+    "runtime_mapping_policy": [
+      "every runtime denial declared by operation",
+      "every denial has exact event mapping",
+      "event schema allows exact denial",
+      "UNKNOWN_OPERATION_REJECTED only for unknown operation",
+      "unmapped known denial becomes CONTRACT_VALIDATION_MAPPING_ERROR with dedicated event"
+    ]
+  },
+  "operation_validation_matrix": {
+    "CREATE_ACCOUNT": {
+      "required_inputs": [
+        "request_id",
+        "portfolio_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "external_account_reference",
+        "external_subaccount_reference",
+        "requested_lifecycle_state"
+      ],
+      "allowed_lifecycle_states": [
+        "DRAFT",
+        "DISABLED"
+      ],
+      "allowed_connection_states": [
+        "DISCONNECTED",
+        "BLOCKED"
+      ],
+      "allowed_authorization_states": [
+        "READ_ONLY",
+        "BLOCKED_BY_POLICY"
+      ],
+      "preconditions": [
+        "request ids are non-empty strings",
+        "exchange exists and is ENABLED",
+        "environment and market type supported",
+        "requested lifecycle is DRAFT or DISABLED",
+        "identity tuple does not collide",
+        "LIVE blocked",
+        "external references are null or strings"
+      ],
+      "denial_codes": [
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION",
+        "ACCOUNT_READINESS_BLOCKED",
+        "LIVE_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR"
+      ],
+      "success_audit_event": "EXCHANGE_ACCOUNT_CREATED",
+      "denial_event_by_code": {
+        "UNKNOWN_EXCHANGE_ID": "EXCHANGE_ACCOUNT_CREATE_REJECTED",
+        "EXCHANGE_DISABLED": "EXCHANGE_ACCOUNT_CREATE_REJECTED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED": "EXCHANGE_ACCOUNT_CREATE_REJECTED",
+        "MARKET_TYPE_UNSUPPORTED": "EXCHANGE_ACCOUNT_CREATE_REJECTED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION": "EXCHANGE_ACCOUNT_CREATE_REJECTED",
+        "ACCOUNT_READINESS_BLOCKED": "EXCHANGE_ACCOUNT_CREATE_REJECTED",
+        "LIVE_BLOCKED_BY_EDITION": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "persistent account creation",
+        "secret_read",
+        "endpoint_resolution",
+        "adapter_creation",
+        "private_connection"
+      ],
+      "validating_authority": "CoreHost"
+    },
+    "UPDATE_ACCOUNT": {
+      "required_inputs": [
+        "request_id",
+        "exchange_account_id",
+        "expected_identity_fields",
+        "mutable_patch"
+      ],
+      "allowed_lifecycle_states": [
+        "DRAFT",
+        "ACTIVE",
+        "DISABLED"
+      ],
+      "allowed_connection_states": [
+        "DISCONNECTED",
+        "CONNECTING",
+        "SYNCHRONIZING",
+        "ONLINE",
+        "DEGRADED",
+        "BLOCKED"
+      ],
+      "allowed_authorization_states": [
+        "READ_ONLY",
+        "ORDER_ENTRY_ALLOWED",
+        "BLOCKED_BY_POLICY",
+        "BLOCKED_BY_RECONCILIATION"
+      ],
+      "preconditions": [
+        "account exists by ID",
+        "record ID equals request ID",
+        "expected identity matches current record",
+        "patch contains mutable fields only",
+        "retired account rejected",
+        "mismatch blocked",
+        "LIVE blocked for normal update"
+      ],
+      "denial_codes": [
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "EXCHANGE_ACCOUNT_RETIRED",
+        "EXCHANGE_ACCOUNT_IDENTITY_IMMUTABLE",
+        "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+        "ACCOUNT_READINESS_BLOCKED",
+        "LIVE_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION"
+      ],
+      "success_audit_event": "EXCHANGE_ACCOUNT_UPDATED",
+      "denial_event_by_code": {
+        "EXCHANGE_ACCOUNT_NOT_FOUND": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "EXCHANGE_ACCOUNT_RETIRED": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "EXCHANGE_ACCOUNT_IDENTITY_IMMUTABLE": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH": "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+        "ACCOUNT_READINESS_BLOCKED": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "LIVE_BLOCKED_BY_EDITION": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED",
+        "UNKNOWN_EXCHANGE_ID": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "EXCHANGE_DISABLED": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "MARKET_TYPE_UNSUPPORTED": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION": "EXCHANGE_ACCOUNT_UPDATE_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "persistent account update",
+        "secret_read",
+        "endpoint_resolution",
+        "adapter_creation"
+      ],
+      "validating_authority": "CoreHost"
+    },
+    "BIND_CREDENTIAL_PROFILE": {
+      "required_inputs": [
+        "request_id",
+        "exchange_account_id",
+        "credential_profile_id",
+        "binding_intent"
+      ],
+      "allowed_lifecycle_states": [
+        "DRAFT",
+        "ACTIVE",
+        "DISABLED"
+      ],
+      "allowed_connection_states": [
+        "DISCONNECTED",
+        "BLOCKED"
+      ],
+      "allowed_authorization_states": [
+        "READ_ONLY",
+        "BLOCKED_BY_POLICY"
+      ],
+      "preconditions": [
+        "account and profile resolved by ID",
+        "request IDs match records",
+        "profile binds account",
+        "scope and exchange match",
+        "profile active",
+        "permissions valid",
+        "lineage valid",
+        "one active profile",
+        "LIVE blocked before secret read"
+      ],
+      "denial_codes": [
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "CREDENTIAL_PROFILE_NOT_FOUND",
+        "CREDENTIAL_PROFILE_NOT_ACTIVE",
+        "CREDENTIAL_PROFILE_SCOPE_MISMATCH",
+        "CREDENTIAL_PROFILE_EXCHANGE_MISMATCH",
+        "WITHDRAWAL_PERMISSION_FORBIDDEN",
+        "LIVE_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+        "ACCOUNT_READINESS_BLOCKED",
+        "EXCHANGE_ACCOUNT_RETIRED"
+      ],
+      "success_audit_event": "CREDENTIAL_PROFILE_BOUND",
+      "denial_event_by_code": {
+        "EXCHANGE_ACCOUNT_NOT_FOUND": "CREDENTIAL_PROFILE_REJECTED",
+        "CREDENTIAL_PROFILE_NOT_FOUND": "CREDENTIAL_PROFILE_REJECTED",
+        "CREDENTIAL_PROFILE_NOT_ACTIVE": "CREDENTIAL_PROFILE_REJECTED",
+        "CREDENTIAL_PROFILE_SCOPE_MISMATCH": "CREDENTIAL_PROFILE_REJECTED",
+        "CREDENTIAL_PROFILE_EXCHANGE_MISMATCH": "CREDENTIAL_PROFILE_REJECTED",
+        "WITHDRAWAL_PERMISSION_FORBIDDEN": "WITHDRAWAL_PERMISSION_DETECTED",
+        "LIVE_BLOCKED_BY_EDITION": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED",
+        "UNKNOWN_EXCHANGE_ID": "CREDENTIAL_PROFILE_REJECTED",
+        "EXCHANGE_DISABLED": "CREDENTIAL_PROFILE_REJECTED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED": "CREDENTIAL_PROFILE_REJECTED",
+        "MARKET_TYPE_UNSUPPORTED": "CREDENTIAL_PROFILE_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED": "CREDENTIAL_PROFILE_REJECTED",
+        "ACCOUNT_READINESS_BLOCKED": "CREDENTIAL_PROFILE_REJECTED",
+        "EXCHANGE_ACCOUNT_RETIRED": "CREDENTIAL_PROFILE_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "active credential binding",
+        "secret_read",
+        "secure_store_open",
+        "endpoint_resolution"
+      ],
+      "validating_authority": "CoreHost"
+    },
+    "VERIFY_EXTERNAL_IDENTITY": {
+      "required_inputs": [
+        "request_id",
+        "exchange_account_id",
+        "expected_adapter_version_source",
+        "reconnect"
+      ],
+      "allowed_lifecycle_states": [
+        "ACTIVE",
+        "DISABLED"
+      ],
+      "allowed_connection_states": [
+        "CONNECTING",
+        "SYNCHRONIZING",
+        "DISCONNECTED",
+        "BLOCKED"
+      ],
+      "allowed_authorization_states": [
+        "READ_ONLY",
+        "BLOCKED_BY_POLICY",
+        "BLOCKED_BY_RECONCILIATION"
+      ],
+      "preconditions": [
+        "account resolved by ID",
+        "trusted identity snapshot resolved only from validation_context external_identity_snapshots_by_account_id",
+        "expected adapter source matches trusted snapshot",
+        "external identity validator passes",
+        "reconnect has strict revalidated timestamp",
+        "LIVE blocked"
+      ],
+      "denial_codes": [
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNAVAILABLE",
+        "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+        "ACCOUNT_READINESS_BLOCKED",
+        "LIVE_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXCHANGE_ACCOUNT_RETIRED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION"
+      ],
+      "success_audit_event": "EXTERNAL_ACCOUNT_IDENTITY_VERIFIED",
+      "denial_event_by_code": {
+        "EXCHANGE_ACCOUNT_NOT_FOUND": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNAVAILABLE": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH": "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+        "ACCOUNT_READINESS_BLOCKED": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "LIVE_BLOCKED_BY_EDITION": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED",
+        "UNKNOWN_EXCHANGE_ID": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "EXCHANGE_DISABLED": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "MARKET_TYPE_UNSUPPORTED": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "EXCHANGE_ACCOUNT_RETIRED": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "mark identity verified",
+        "set connection online",
+        "allow order entry",
+        "secret_read"
+      ],
+      "validating_authority": "CoreHost"
+    },
+    "REFRESH_INSTRUMENT_CATALOG": {
+      "required_inputs": [
+        "request_id",
+        "catalog_snapshot_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "adapter_version"
+      ],
+      "allowed_lifecycle_states": [],
+      "allowed_connection_states": [
+        "DISCONNECTED",
+        "ONLINE",
+        "DEGRADED"
+      ],
+      "allowed_authorization_states": [],
+      "preconditions": [
+        "snapshot resolved by ID",
+        "request scope matches snapshot",
+        "adapter family version matches snapshot and registry",
+        "instruments resolved",
+        "previous lineage resolved",
+        "catalog validator passes",
+        "PARTIAL not activated for execution",
+        "LIVE blocked"
+      ],
+      "denial_codes": [
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "CATALOG_SNAPSHOT_INVALID",
+        "CATALOG_SNAPSHOT_STALE",
+        "INSTRUMENT_NOT_FOUND",
+        "LIVE_BLOCKED_BY_EDITION",
+        "INSTRUMENT_TYPE_UNSUPPORTED",
+        "INSTRUMENT_IDENTITY_COLLISION",
+        "INSTRUMENT_METADATA_INVALID",
+        "INSTRUMENT_METADATA_STALE",
+        "INSTRUMENT_NOT_TRADABLE",
+        "ASSET_MAPPING_UNKNOWN",
+        "ASSET_MAPPING_AMBIGUOUS",
+        "CONTRACT_VALIDATION_MAPPING_ERROR"
+      ],
+      "success_audit_event": "INSTRUMENT_CATALOG_REFRESHED",
+      "denial_event_by_code": {
+        "UNKNOWN_EXCHANGE_ID": "INSTRUMENT_CATALOG_REJECTED",
+        "EXCHANGE_DISABLED": "INSTRUMENT_CATALOG_REJECTED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED": "INSTRUMENT_CATALOG_REJECTED",
+        "MARKET_TYPE_UNSUPPORTED": "INSTRUMENT_CATALOG_REJECTED",
+        "CATALOG_SNAPSHOT_INVALID": "INSTRUMENT_CATALOG_REJECTED",
+        "CATALOG_SNAPSHOT_STALE": "INSTRUMENT_CATALOG_REJECTED",
+        "INSTRUMENT_NOT_FOUND": "INSTRUMENT_CATALOG_REJECTED",
+        "LIVE_BLOCKED_BY_EDITION": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+        "INSTRUMENT_TYPE_UNSUPPORTED": "INSTRUMENT_CATALOG_REJECTED",
+        "INSTRUMENT_IDENTITY_COLLISION": "INSTRUMENT_CATALOG_REJECTED",
+        "INSTRUMENT_METADATA_INVALID": "INSTRUMENT_CATALOG_REJECTED",
+        "INSTRUMENT_METADATA_STALE": "INSTRUMENT_CATALOG_REJECTED",
+        "INSTRUMENT_NOT_TRADABLE": "INSTRUMENT_CATALOG_REJECTED",
+        "ASSET_MAPPING_UNKNOWN": "INSTRUMENT_CATALOG_REJECTED",
+        "ASSET_MAPPING_AMBIGUOUS": "INSTRUMENT_CATALOG_REJECTED",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "activate catalog snapshot",
+        "delete missing instruments",
+        "endpoint_resolution",
+        "adapter_creation",
+        "private_connection"
+      ],
+      "validating_authority": "CoreHost"
+    },
+    "ACTIVATE_TRADING_UNIVERSE": {
+      "required_inputs": [
+        "request_id",
+        "trading_universe_id",
+        "exchange_account_id",
+        "source_catalog_snapshot_ids",
+        "content_hash"
+      ],
+      "allowed_lifecycle_states": [
+        "DRAFT",
+        "ACTIVE"
+      ],
+      "allowed_connection_states": [
+        "ONLINE",
+        "DEGRADED"
+      ],
+      "allowed_authorization_states": [
+        "READ_ONLY",
+        "ORDER_ENTRY_ALLOWED"
+      ],
+      "preconditions": [
+        "universe account catalogs instruments resolved by ID",
+        "request IDs and hash match records",
+        "source IDs exactly match universe",
+        "account readiness literal true",
+        "all catalogs validate VALID fresh",
+        "instruments tradable",
+        "LIVE blocked"
+      ],
+      "denial_codes": [
+        "TRADING_UNIVERSE_INVALID",
+        "TRADING_UNIVERSE_VERSION_CONFLICT",
+        "TRADING_UNIVERSE_INSTRUMENT_SCOPE_MISMATCH",
+        "INSTRUMENT_NOT_FOUND",
+        "INSTRUMENT_NOT_TRADABLE",
+        "INSTRUMENT_METADATA_STALE",
+        "CATALOG_SNAPSHOT_INVALID",
+        "CATALOG_SNAPSHOT_STALE",
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "EXCHANGE_ACCOUNT_RETIRED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+        "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+        "ACCOUNT_READINESS_BLOCKED",
+        "LIVE_BLOCKED_BY_EDITION",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "INSTRUMENT_TYPE_UNSUPPORTED",
+        "INSTRUMENT_IDENTITY_COLLISION",
+        "INSTRUMENT_METADATA_INVALID",
+        "ASSET_MAPPING_UNKNOWN",
+        "ASSET_MAPPING_AMBIGUOUS",
+        "CONTRACT_VALIDATION_MAPPING_ERROR",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION",
+        "WITHDRAWAL_PERMISSION_FORBIDDEN"
+      ],
+      "success_audit_event": "TRADING_UNIVERSE_ACTIVATED",
+      "denial_event_by_code": {
+        "TRADING_UNIVERSE_INVALID": "TRADING_UNIVERSE_REJECTED",
+        "TRADING_UNIVERSE_VERSION_CONFLICT": "TRADING_UNIVERSE_REJECTED",
+        "TRADING_UNIVERSE_INSTRUMENT_SCOPE_MISMATCH": "TRADING_UNIVERSE_REJECTED",
+        "INSTRUMENT_NOT_FOUND": "TRADING_UNIVERSE_REJECTED",
+        "INSTRUMENT_NOT_TRADABLE": "TRADING_UNIVERSE_REJECTED",
+        "INSTRUMENT_METADATA_STALE": "TRADING_UNIVERSE_REJECTED",
+        "CATALOG_SNAPSHOT_INVALID": "TRADING_UNIVERSE_REJECTED",
+        "CATALOG_SNAPSHOT_STALE": "TRADING_UNIVERSE_REJECTED",
+        "EXCHANGE_ACCOUNT_NOT_FOUND": "TRADING_UNIVERSE_REJECTED",
+        "EXCHANGE_ACCOUNT_RETIRED": "TRADING_UNIVERSE_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED": "TRADING_UNIVERSE_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH": "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+        "ACCOUNT_READINESS_BLOCKED": "TRADING_UNIVERSE_REJECTED",
+        "LIVE_BLOCKED_BY_EDITION": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+        "UNKNOWN_EXCHANGE_ID": "TRADING_UNIVERSE_REJECTED",
+        "EXCHANGE_DISABLED": "TRADING_UNIVERSE_REJECTED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED": "TRADING_UNIVERSE_REJECTED",
+        "MARKET_TYPE_UNSUPPORTED": "TRADING_UNIVERSE_REJECTED",
+        "INSTRUMENT_TYPE_UNSUPPORTED": "TRADING_UNIVERSE_REJECTED",
+        "INSTRUMENT_IDENTITY_COLLISION": "TRADING_UNIVERSE_REJECTED",
+        "INSTRUMENT_METADATA_INVALID": "TRADING_UNIVERSE_REJECTED",
+        "ASSET_MAPPING_UNKNOWN": "TRADING_UNIVERSE_REJECTED",
+        "ASSET_MAPPING_AMBIGUOUS": "TRADING_UNIVERSE_REJECTED",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION": "TRADING_UNIVERSE_REJECTED",
+        "WITHDRAWAL_PERMISSION_FORBIDDEN": "TRADING_UNIVERSE_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "activate universe",
+        "deactivate previous active universe",
+        "route strategy",
+        "submit orders",
+        "secret_read"
+      ],
+      "validating_authority": "CoreHost"
+    },
+    "RETIRE_ACCOUNT": {
+      "required_inputs": [
+        "request_id",
+        "exchange_account_id",
+        "retirement_reason"
+      ],
+      "allowed_lifecycle_states": [
+        "DRAFT",
+        "ACTIVE",
+        "DISABLED"
+      ],
+      "allowed_connection_states": [
+        "DISCONNECTED",
+        "BLOCKED"
+      ],
+      "allowed_authorization_states": [
+        "READ_ONLY",
+        "BLOCKED_BY_POLICY",
+        "BLOCKED_BY_RECONCILIATION"
+      ],
+      "preconditions": [
+        "account resolved by ID",
+        "not already retired",
+        "connection state allowed",
+        "no active private connection",
+        "historical references preserved",
+        "no hard delete",
+        "legacy Live retirement maintenance has no secret read"
+      ],
+      "denial_codes": [
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "EXCHANGE_ACCOUNT_RETIRED",
+        "ACCOUNT_READINESS_BLOCKED",
+        "LIVE_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED"
+      ],
+      "success_audit_event": "EXCHANGE_ACCOUNT_RETIRED",
+      "denial_event_by_code": {
+        "EXCHANGE_ACCOUNT_NOT_FOUND": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+        "EXCHANGE_ACCOUNT_RETIRED": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+        "ACCOUNT_READINESS_BLOCKED": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+        "LIVE_BLOCKED_BY_EDITION": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED",
+        "UNKNOWN_EXCHANGE_ID": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+        "EXCHANGE_DISABLED": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+        "MARKET_TYPE_UNSUPPORTED": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "hard_delete_account",
+        "erase_history",
+        "secret_read"
+      ],
+      "validating_authority": "CoreHost"
+    },
+    "RETIRE_INSTRUMENT": {
+      "required_inputs": [
+        "request_id",
+        "instrument_id",
+        "catalog_snapshot_id",
+        "retirement_reason"
+      ],
+      "allowed_lifecycle_states": [],
+      "allowed_connection_states": [],
+      "allowed_authorization_states": [],
+      "preconditions": [
+        "instrument resolved by ID",
+        "catalog resolved",
+        "catalog_snapshot_id matches",
+        "not in active universe",
+        "historical references preserved",
+        "no hard delete",
+        "no identity rewrite"
+      ],
+      "denial_codes": [
+        "INSTRUMENT_NOT_FOUND",
+        "INSTRUMENT_METADATA_INVALID",
+        "CATALOG_SNAPSHOT_INVALID",
+        "INSTRUMENT_NOT_TRADABLE",
+        "TRADING_UNIVERSE_INVALID",
+        "CONTRACT_VALIDATION_MAPPING_ERROR"
+      ],
+      "success_audit_event": "INSTRUMENT_STATUS_CHANGED",
+      "denial_event_by_code": {
+        "INSTRUMENT_NOT_FOUND": "INSTRUMENT_RETIREMENT_REJECTED",
+        "INSTRUMENT_METADATA_INVALID": "INSTRUMENT_RETIREMENT_REJECTED",
+        "CATALOG_SNAPSHOT_INVALID": "INSTRUMENT_RETIREMENT_REJECTED",
+        "INSTRUMENT_NOT_TRADABLE": "INSTRUMENT_RETIREMENT_REJECTED",
+        "TRADING_UNIVERSE_INVALID": "INSTRUMENT_RETIREMENT_REJECTED",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "hard_delete_instrument",
+        "rewrite_symbol_identity",
+        "remove_historical_references"
+      ],
+      "validating_authority": "CoreHost"
+    },
+    "QUARANTINE_LEGACY_LIVE_RECORD": {
+      "required_inputs": [
+        "request_id",
+        "exchange_account_id",
+        "legacy_record",
+        "target_lifecycle_state",
+        "target_connection_state",
+        "target_execution_authorization",
+        "quarantine_reason"
+      ],
+      "allowed_lifecycle_states": [
+        "DISABLED",
+        "RETIRED"
+      ],
+      "allowed_connection_states": [
+        "DISCONNECTED",
+        "BLOCKED"
+      ],
+      "allowed_authorization_states": [
+        "BLOCKED_BY_POLICY"
+      ],
+      "preconditions": [
+        "legacy_record literal true",
+        "account exists",
+        "account environment LIVE",
+        "account marked legacy",
+        "target lifecycle DISABLED or RETIRED",
+        "target connection DISCONNECTED or BLOCKED",
+        "target authorization BLOCKED_BY_POLICY",
+        "reason non-empty string",
+        "no secret endpoint adapter connection activation"
+      ],
+      "denial_codes": [
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "LIVE_RECORD_QUARANTINED",
+        "LIVE_BLOCKED_BY_EDITION",
+        "ACCOUNT_READINESS_BLOCKED",
+        "CONTRACT_VALIDATION_MAPPING_ERROR"
+      ],
+      "success_audit_event": "LEGACY_LIVE_RECORD_QUARANTINED",
+      "denial_event_by_code": {
+        "EXCHANGE_ACCOUNT_NOT_FOUND": "LEGACY_LIVE_RECORD_QUARANTINE_REJECTED",
+        "LIVE_RECORD_QUARANTINED": "LEGACY_LIVE_RECORD_QUARANTINE_REJECTED",
+        "LIVE_BLOCKED_BY_EDITION": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+        "ACCOUNT_READINESS_BLOCKED": "LEGACY_LIVE_RECORD_QUARANTINE_REJECTED",
+        "CONTRACT_VALIDATION_MAPPING_ERROR": "CONTRACT_VALIDATION_MAPPING_REJECTED"
+      },
+      "forbidden_side_effects_on_denial": [
+        "secret_read",
+        "endpoint_resolution",
+        "adapter_creation",
+        "private_connection",
+        "activation"
+      ],
+      "validating_authority": "CoreHost"
+    }
+  },
+  "cross_contract_invariants": {
+    "M0.2": {
+      "relations": [
+        "Portfolio->ExchangeAccount one-to-many",
+        "ExchangeAccount->CredentialProfile one-to-many",
+        "ExchangeAccount->TradingUniverse one-to-many-versioned",
+        "Workspace->Instrument one-to-many catalog",
+        "TradingUniverse->Instrument many-to-many membership"
+      ],
+      "durable_id_prefixes": {
+        "ExchangeAccount": "xacc",
+        "CredentialProfile": "cred",
+        "TradingUniverse": "univ",
+        "Instrument": "instr"
+      },
+      "instrument_identity_dimensions": [
+        "exchange_id",
+        "environment",
+        "market_type",
+        "venue_symbol"
+      ],
+      "primary_policy": "legacy alias not durable ID",
+      "symbol_string_policy": "legacy representation not identity"
+    },
+    "M0.3": [
+      "CoreHost applies mutations",
+      "DesktopShell and TrayAgent request only",
+      "Bootstrapper does not manage accounts or instruments",
+      "Core can run without DesktopShell",
+      "no exchange logic in GUI"
+    ],
+    "M0.4": [
+      "exact environments PAPER TESTNET LIVE",
+      "M0.5 does not extend ProductCapabilities",
+      "account capability does not extend edition capability",
+      "credential profile does not create Live capability",
+      "LiveAccessGrant does not change account environment",
+      "all current-edition Live operations blocked",
+      "SAFE_LOCAL_ONLY remains fail-closed fallback",
+      "no Testnet-to-Live fallback",
+      "no Live secret reads"
+    ]
+  },
+  "forbidden_implementation": [
+    "concrete exchange adapters",
+    "real endpoints",
+    "HTTP or WebSocket requests",
+    "API keys",
+    "secure-store implementation",
+    "database",
+    "production migrations",
+    "UI",
+    "strategy routing",
+    "order execution",
+    "Live support",
+    "new dependencies"
+  ],
+  "current_edition_account_operability_policy": {
+    "policy_id": "M0_5_CURRENT_EDITION_ACCOUNT_OPERABILITY",
+    "validating_authority": "CoreHost",
+    "live_operational_use_denial_code": "LIVE_BLOCKED_BY_EDITION",
+    "operational_lifecycle_states": [
+      "ACTIVE"
+    ],
+    "operational_connection_states": [
+      "CONNECTING",
+      "SYNCHRONIZING",
+      "ONLINE",
+      "DEGRADED"
+    ],
+    "operational_authorization_states": [
+      "ORDER_ENTRY_ALLOWED"
+    ],
+    "live_forbidden_states": {
+      "lifecycle_states": [
+        "ACTIVE"
+      ],
+      "connection_states": [
+        "CONNECTING",
+        "SYNCHRONIZING",
+        "ONLINE",
+        "DEGRADED"
+      ],
+      "execution_authorizations": [
+        "ORDER_ENTRY_ALLOWED"
+      ],
+      "credential_profile_lifecycle_states": [
+        "ACTIVE"
+      ]
+    },
+    "live_forbidden_side_effects": [
+      "secret_read",
+      "endpoint_resolution",
+      "adapter_creation",
+      "private_connection",
+      "instrument_catalog_refresh_via_live_adapter",
+      "trading_universe_activation_for_execution",
+      "testnet_to_live_fallback"
+    ],
+    "legacy_live_record_allowed_shape": {
+      "lifecycle_states": [
+        "DISABLED",
+        "RETIRED"
+      ],
+      "connection_states": [
+        "DISCONNECTED",
+        "BLOCKED"
+      ],
+      "execution_authorizations": [
+        "BLOCKED_BY_POLICY"
+      ],
+      "quarantine_state": "QUARANTINED_OR_BLOCKED",
+      "secret_read_allowed": false,
+      "maintenance_denial_code": "LIVE_RECORD_QUARANTINED",
+      "audit_event": "LEGACY_LIVE_RECORD_QUARANTINED"
+    },
+    "rules": [
+      "data record validation is separate from operational account use",
+      "any current-edition Live operational attempt fails closed",
+      "legacy Live records may be detected and quarantined only",
+      "TESTNET never falls back to LIVE"
+    ],
+    "maintenance_operations": [
+      "QUARANTINE_LEGACY_LIVE_RECORD",
+      "RETIRE_ACCOUNT"
+    ],
+    "normal_account_operations_block_live": [
+      "CREATE_ACCOUNT",
+      "UPDATE_ACCOUNT",
+      "BIND_CREDENTIAL_PROFILE",
+      "VERIFY_EXTERNAL_IDENTITY",
+      "REFRESH_INSTRUMENT_CATALOG",
+      "ACTIVATE_TRADING_UNIVERSE",
+      "USE_ACCOUNT"
+    ],
+    "default_success_fallthrough_forbidden": true
+  },
+  "timestamp_policy": {
+    "format": "RFC3339_UTC_ZULU_SECONDS_OPTIONAL_FRACTION",
+    "regex": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+    "timezone": "UTC Z only",
+    "rules": [
+      "parse timestamps semantically, not lexicographically",
+      "observed_at_utc <= effective_at_utc",
+      "effective_at_utc < stale_after_utc",
+      "now < stale_after_utc means fresh",
+      "now == stale_after_utc is stale",
+      "invalid dates fail closed"
+    ]
+  },
+  "deterministic_hash_contracts": {
+    "catalog_snapshot_content_hash": {
+      "algorithm": "SHA-256",
+      "domain_separator": "cryptohunter.m0.5.instrument_catalog_snapshot.v1",
+      "input_fields": [
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "adapter_version",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "instrument_ids",
+        "previous_snapshot_id",
+        "status"
+      ],
+      "canonicalization": "JSON object with lexicographically sorted keys; instrument_ids sorted lexicographically before hashing",
+      "encoding": "UTF-8",
+      "digest_format": "lowercase hex",
+      "excluded_fields": [
+        "catalog_snapshot_id",
+        "content_hash"
+      ]
+    },
+    "trading_universe_content_hash": {
+      "algorithm": "SHA-256",
+      "domain_separator": "cryptohunter.m0.5.trading_universe.v1",
+      "input_fields": [
+        "exchange_account_id",
+        "version",
+        "lifecycle_state",
+        "instrument_ids",
+        "previous_version_id",
+        "source_catalog_snapshot_ids",
+        "creation_reason"
+      ],
+      "canonicalization": "JSON object with lexicographically sorted keys; instrument_ids and source_catalog_snapshot_ids sorted lexicographically before hashing",
+      "encoding": "UTF-8",
+      "digest_format": "lowercase hex",
+      "excluded_fields": [
+        "trading_universe_id",
+        "content_hash",
+        "created_at_utc",
+        "activated_at_utc",
+        "retired_at_utc"
+      ]
+    }
+  },
+  "audit_event_schemas": [
+    {
+      "event_name": "EXCHANGE_REGISTRY_VALIDATED",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "CONTRACT_AUDIT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXCHANGE_ACCOUNT_CREATED",
+      "operation": "CREATE_ACCOUNT",
+      "operations": [
+        "CREATE_ACCOUNT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXCHANGE_ACCOUNT_UPDATED",
+      "operation": "UPDATE_ACCOUNT",
+      "operations": [
+        "UPDATE_ACCOUNT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXCHANGE_ACCOUNT_DISABLED",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "CONTRACT_AUDIT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXCHANGE_ACCOUNT_RETIRED",
+      "operation": "RETIRE_ACCOUNT",
+      "operations": [
+        "RETIRE_ACCOUNT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXTERNAL_ACCOUNT_IDENTITY_VERIFIED",
+      "operation": "VERIFY_EXTERNAL_IDENTITY",
+      "operations": [
+        "VERIFY_EXTERNAL_IDENTITY"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "ACTIVATE_TRADING_UNIVERSE",
+        "UPDATE_ACCOUNT",
+        "VERIFY_EXTERNAL_IDENTITY"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "EXTERNAL_ACCOUNT_IDENTITY_MISMATCH"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "CREDENTIAL_PROFILE_BOUND",
+      "operation": "BIND_CREDENTIAL_PROFILE",
+      "operations": [
+        "BIND_CREDENTIAL_PROFILE"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "CREDENTIAL_PROFILE_ROTATED",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "CONTRACT_AUDIT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "CREDENTIAL_PROFILE_REJECTED",
+      "operation": "BIND_CREDENTIAL_PROFILE",
+      "operations": [
+        "BIND_CREDENTIAL_PROFILE"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "CREDENTIAL_PROFILE_EXCHANGE_MISMATCH",
+        "CREDENTIAL_PROFILE_NOT_ACTIVE",
+        "CREDENTIAL_PROFILE_NOT_FOUND",
+        "CREDENTIAL_PROFILE_SCOPE_MISMATCH",
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+        "ACCOUNT_READINESS_BLOCKED",
+        "EXCHANGE_ACCOUNT_RETIRED"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "WITHDRAWAL_PERMISSION_DETECTED",
+      "operation": "BIND_CREDENTIAL_PROFILE",
+      "operations": [
+        "BIND_CREDENTIAL_PROFILE"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "WITHDRAWAL_PERMISSION_FORBIDDEN"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "INSTRUMENT_CATALOG_REFRESHED",
+      "operation": "REFRESH_INSTRUMENT_CATALOG",
+      "operations": [
+        "REFRESH_INSTRUMENT_CATALOG"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "INSTRUMENT_CATALOG_REJECTED",
+      "operation": "REFRESH_INSTRUMENT_CATALOG",
+      "operations": [
+        "REFRESH_INSTRUMENT_CATALOG"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "CATALOG_SNAPSHOT_INVALID",
+        "CATALOG_SNAPSHOT_STALE",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "INSTRUMENT_NOT_FOUND",
+        "MARKET_TYPE_UNSUPPORTED",
+        "UNKNOWN_EXCHANGE_ID",
+        "INSTRUMENT_TYPE_UNSUPPORTED",
+        "INSTRUMENT_IDENTITY_COLLISION",
+        "INSTRUMENT_METADATA_INVALID",
+        "INSTRUMENT_METADATA_STALE",
+        "INSTRUMENT_NOT_TRADABLE",
+        "ASSET_MAPPING_UNKNOWN",
+        "ASSET_MAPPING_AMBIGUOUS"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "INSTRUMENT_METADATA_CHANGED",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "CONTRACT_AUDIT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "INSTRUMENT_STATUS_CHANGED",
+      "operation": "RETIRE_INSTRUMENT",
+      "operations": [
+        "RETIRE_INSTRUMENT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "SYMBOL_ALIAS_MIGRATION_APPLIED",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "CONTRACT_AUDIT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "TRADING_UNIVERSE_VERSION_CREATED",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "CONTRACT_AUDIT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "TRADING_UNIVERSE_ACTIVATED",
+      "operation": "ACTIVATE_TRADING_UNIVERSE",
+      "operations": [
+        "ACTIVATE_TRADING_UNIVERSE"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "TRADING_UNIVERSE_RETIRED",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "CONTRACT_AUDIT"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "TRADING_UNIVERSE_REJECTED",
+      "operation": "ACTIVATE_TRADING_UNIVERSE",
+      "operations": [
+        "ACTIVATE_TRADING_UNIVERSE"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "ACCOUNT_READINESS_BLOCKED",
+        "CATALOG_SNAPSHOT_INVALID",
+        "CATALOG_SNAPSHOT_STALE",
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "EXCHANGE_ACCOUNT_RETIRED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+        "INSTRUMENT_METADATA_STALE",
+        "INSTRUMENT_NOT_FOUND",
+        "INSTRUMENT_NOT_TRADABLE",
+        "TRADING_UNIVERSE_INSTRUMENT_SCOPE_MISMATCH",
+        "TRADING_UNIVERSE_INVALID",
+        "TRADING_UNIVERSE_VERSION_CONFLICT",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "INSTRUMENT_TYPE_UNSUPPORTED",
+        "INSTRUMENT_IDENTITY_COLLISION",
+        "INSTRUMENT_METADATA_INVALID",
+        "ASSET_MAPPING_UNKNOWN",
+        "ASSET_MAPPING_AMBIGUOUS",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION",
+        "WITHDRAWAL_PERMISSION_FORBIDDEN"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "LIVE_ACCOUNT_OPERATION_BLOCKED_BY_EDITION",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "ACTIVATE_TRADING_UNIVERSE",
+        "BIND_CREDENTIAL_PROFILE",
+        "CREATE_ACCOUNT",
+        "QUARANTINE_LEGACY_LIVE_RECORD",
+        "REFRESH_INSTRUMENT_CATALOG",
+        "RETIRE_ACCOUNT",
+        "UPDATE_ACCOUNT",
+        "VERIFY_EXTERNAL_IDENTITY"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "LIVE_BLOCKED_BY_EDITION"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXCHANGE_ACCOUNT_CREATE_REJECTED",
+      "operation": "CREATE_ACCOUNT",
+      "operations": [
+        "CREATE_ACCOUNT"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "ACCOUNT_READINESS_BLOCKED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "UNKNOWN_EXCHANGE_ID"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXCHANGE_ACCOUNT_RETIREMENT_REJECTED",
+      "operation": "RETIRE_ACCOUNT",
+      "operations": [
+        "RETIRE_ACCOUNT"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "ACCOUNT_READINESS_BLOCKED",
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "EXCHANGE_ACCOUNT_RETIRED",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXCHANGE_ACCOUNT_UPDATE_REJECTED",
+      "operation": "UPDATE_ACCOUNT",
+      "operations": [
+        "UPDATE_ACCOUNT"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "ACCOUNT_READINESS_BLOCKED",
+        "EXCHANGE_ACCOUNT_IDENTITY_IMMUTABLE",
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "EXCHANGE_ACCOUNT_RETIRED",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "EXTERNAL_ACCOUNT_IDENTITY_VERIFICATION_REJECTED",
+      "operation": "VERIFY_EXTERNAL_IDENTITY",
+      "operations": [
+        "VERIFY_EXTERNAL_IDENTITY"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "ACCOUNT_READINESS_BLOCKED",
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNAVAILABLE",
+        "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED",
+        "UNKNOWN_EXCHANGE_ID",
+        "EXCHANGE_DISABLED",
+        "EXCHANGE_ENVIRONMENT_UNSUPPORTED",
+        "MARKET_TYPE_UNSUPPORTED",
+        "EXCHANGE_ACCOUNT_RETIRED",
+        "EXCHANGE_ACCOUNT_IDENTITY_COLLISION"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "INSTRUMENT_RETIREMENT_REJECTED",
+      "operation": "RETIRE_INSTRUMENT",
+      "operations": [
+        "RETIRE_INSTRUMENT"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "CATALOG_SNAPSHOT_INVALID",
+        "INSTRUMENT_METADATA_INVALID",
+        "INSTRUMENT_NOT_FOUND",
+        "INSTRUMENT_NOT_TRADABLE",
+        "TRADING_UNIVERSE_INVALID"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "TRADING_UNIVERSE_ACTIVATION_REJECTED",
+      "operation": "MULTI_OPERATION",
+      "operations": [
+        "CONTRACT_AUDIT"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "ACCOUNT_READINESS_BLOCKED"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "LEGACY_LIVE_RECORD_QUARANTINED",
+      "operation": "QUARANTINE_LEGACY_LIVE_RECORD",
+      "operations": [
+        "QUARANTINE_LEGACY_LIVE_RECORD"
+      ],
+      "outcome_class": "SUCCESS",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "SUCCESS"
+      ],
+      "denial_code": "nullable_must_be_null_on_success",
+      "allowed_denial_codes": [],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "UNKNOWN_OPERATION_REJECTED",
+      "operation": "UNKNOWN_OPERATION",
+      "operations": [
+        "UNKNOWN_OPERATION"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "UNKNOWN_OPERATION"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "LEGACY_LIVE_RECORD_QUARANTINE_REJECTED",
+      "operation": "QUARANTINE_LEGACY_LIVE_RECORD",
+      "operations": [
+        "QUARANTINE_LEGACY_LIVE_RECORD"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "workspace_id"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "ACCOUNT_READINESS_BLOCKED",
+        "EXCHANGE_ACCOUNT_NOT_FOUND",
+        "LIVE_RECORD_QUARANTINED"
+      ],
+      "secret_fields_forbidden": true
+    },
+    {
+      "event_name": "CONTRACT_VALIDATION_MAPPING_REJECTED",
+      "operation": "CONTRACT_VALIDATION",
+      "operations": [
+        "CREATE_ACCOUNT",
+        "UPDATE_ACCOUNT",
+        "BIND_CREDENTIAL_PROFILE",
+        "VERIFY_EXTERNAL_IDENTITY",
+        "REFRESH_INSTRUMENT_CATALOG",
+        "ACTIVATE_TRADING_UNIVERSE",
+        "RETIRE_ACCOUNT",
+        "RETIRE_INSTRUMENT",
+        "QUARANTINE_LEGACY_LIVE_RECORD"
+      ],
+      "outcome_class": "DENIAL",
+      "required_identifier_fields": [
+        "request_id",
+        "operation"
+      ],
+      "required_context_fields": [
+        "validating_authority",
+        "occurred_at_utc"
+      ],
+      "result_enum": [
+        "DENIED"
+      ],
+      "denial_code": "required",
+      "allowed_denial_codes": [
+        "CONTRACT_VALIDATION_MAPPING_ERROR"
+      ],
+      "secret_fields_forbidden": true
+    }
+  ],
+  "operation_dispatch_policy": {
+    "closed_operation_registry": [
+      "CREATE_ACCOUNT",
+      "UPDATE_ACCOUNT",
+      "BIND_CREDENTIAL_PROFILE",
+      "VERIFY_EXTERNAL_IDENTITY",
+      "REFRESH_INSTRUMENT_CATALOG",
+      "ACTIVATE_TRADING_UNIVERSE",
+      "RETIRE_ACCOUNT",
+      "RETIRE_INSTRUMENT",
+      "QUARANTINE_LEGACY_LIVE_RECORD"
+    ],
+    "unknown_operation_denial_code": "UNKNOWN_OPERATION",
+    "unknown_operation_audit_event": "UNKNOWN_OPERATION_REJECTED",
+    "default_success_fallthrough_forbidden": true,
+    "caller_controlled_result_fields_forbidden": [
+      "result",
+      "denial_code",
+      "success",
+      "allowed",
+      "force_denial",
+      "authority"
+    ],
+    "request_transport_shape": {
+      "id_fields_are_strings": [
+        "exchange_account_id",
+        "credential_profile_id",
+        "trading_universe_id",
+        "catalog_snapshot_id",
+        "instrument_id"
+      ],
+      "source_catalog_snapshot_ids": "unique list of string IDs",
+      "content_hash": "canonical lowercase sha256 hex string",
+      "patch": "closed mutable patch object only"
+    },
+    "trusted_validation_context_shape": [
+      "accounts_by_id",
+      "credential_profiles_by_id",
+      "external_identity_snapshots_by_account_id",
+      "universes_by_id",
+      "catalogs_by_id",
+      "instruments_by_id",
+      "previous_profiles_by_id",
+      "previous_catalogs_by_id",
+      "active_universes",
+      "active_profile_ids",
+      "readiness_by_account_id"
+    ],
+    "rules": [
+      "request carries transport IDs hashes lists only",
+      "trusted validation_context resolves records by ID",
+      "dispatcher validates exact request schema and field types",
+      "dispatcher checks resolved ID matches record",
+      "every registry operation has explicit handler",
+      "missing handler is fail-closed contract error",
+      "known denial never maps to UNKNOWN_OPERATION_REJECTED"
+    ],
+    "validation_context_closed_schema": {
+      "required_map_fields": [
+        "accounts_by_id",
+        "credential_profiles_by_id",
+        "external_identity_snapshots_by_account_id",
+        "universes_by_id",
+        "catalogs_by_id",
+        "instruments_by_id",
+        "previous_profiles_by_id",
+        "previous_catalogs_by_id",
+        "previous_universes_by_id",
+        "readiness_by_account_id",
+        "active_profile_ids_by_account_id",
+        "account_capability_snapshots_by_id",
+        "previous_account_capability_snapshots_by_id",
+        "instrument_history_by_id"
+      ],
+      "required_list_fields": [
+        "active_universes"
+      ],
+      "nested_type_validation_before_access": true,
+      "malformed_input_policy": "fail-closed without exceptions",
+      "map_key_record_identity": {
+        "accounts_by_id": "exchange_account_id",
+        "credential_profiles_by_id": "credential_profile_id",
+        "universes_by_id": "trading_universe_id",
+        "catalogs_by_id": "catalog_snapshot_id",
+        "instruments_by_id": "instrument_id",
+        "previous_profiles_by_id": "credential_profile_id",
+        "previous_catalogs_by_id": "catalog_snapshot_id",
+        "previous_universes_by_id": "trading_universe_id",
+        "external_identity_snapshots_by_account_id": "account-scoped binding to account identity dimensions",
+        "account_capability_snapshots_by_id": "account_capability_snapshot_id",
+        "previous_account_capability_snapshots_by_id": "account_capability_snapshot_id",
+        "instrument_history_by_id": "instrument_id -> ordered non-empty list of full Instrument records whose instrument_id equals the key"
+      },
+      "exact_top_level_fields": true,
+      "full_structural_validation": {
+        "all_trusted_records_validated_even_when_unrelated": true,
+        "maps": [
+          "accounts_by_id",
+          "credential_profiles_by_id",
+          "external_identity_snapshots_by_account_id",
+          "universes_by_id",
+          "catalogs_by_id",
+          "instruments_by_id",
+          "previous_profiles_by_id",
+          "previous_catalogs_by_id",
+          "previous_universes_by_id",
+          "account_capability_snapshots_by_id",
+          "previous_account_capability_snapshots_by_id",
+          "instrument_history_by_id"
+        ],
+        "lists_and_bindings": [
+          "active_universes",
+          "readiness_by_account_id",
+          "active_profile_ids_by_account_id"
+        ],
+        "structure_not_operability": "UNVERIFIED identity, DISABLED account, STALE catalog and stale historical Instrument may be structurally valid but cannot grant activation readiness",
+        "malformed_policy": "fail-closed without exception"
+      },
+      "active_index_consistency": {
+        "credential_profiles": "group all current profiles by exchange_account_id; at most one ACTIVE; exact equality with account.active_credential_profile_id and active_profile_ids_by_account_id; previous profiles RETIRED only",
+        "trading_universes": "active_universes entries unique, ACTIVE and exact-bound to universes_by_id; conflicts scan union with every ACTIVE universes_by_id record",
+        "hidden_active_records": "fail-closed"
+      },
+      "disjoint_durable_id_spaces": [
+        [
+          "credential_profiles_by_id",
+          "previous_profiles_by_id"
+        ],
+        [
+          "catalogs_by_id",
+          "previous_catalogs_by_id"
+        ],
+        [
+          "universes_by_id",
+          "previous_universes_by_id"
+        ],
+        [
+          "account_capability_snapshots_by_id",
+          "previous_account_capability_snapshots_by_id"
+        ]
+      ],
+      "referential_integrity": {
+        "profiles": "account exists and exchange/environment scope matches",
+        "instruments": "catalog exists in current or previous maps and scope/adapter match",
+        "catalogs": "every member resolves in current instruments or trusted history",
+        "universes": "account, source catalogs and instruments resolve with matching scope",
+        "capabilities": "account exists and current/previous IDs are disjoint",
+        "active_indexes": "all references exist and exact-bind; hidden conflicts forbidden"
+      },
+      "account_owned_bindings": {
+        "active_credential_profile_id": "null forbids ACTIVE profile/index; non-null exact-binds one current ACTIVE profile and one-element active index with account/exchange/environment scope",
+        "account_capability_snapshot_id": "null means no current binding; non-null resolves current map only and exact-binds account/exchange/environment/market with full lineage",
+        "unrelated_dangling_reference": "invalidates complete trusted context"
+      },
+      "shared_referential_graph_validators": {
+        "account_owned": "validate_account_owned_bindings",
+        "profile_account": "validate_profile_account_binding",
+        "capability_account": "validate_capability_account_binding",
+        "catalog_member": "resolve_catalog_member",
+        "universe_membership": "validate_universe_source_membership"
+      }
+    },
+    "request_type_policy": {
+      "reconnect": "literal boolean; True requires strict revalidated_at_utc",
+      "external_account_reference": "null or non-empty string",
+      "external_subaccount_reference": "null or non-empty string",
+      "all_fields": "operation-specific exact types before dispatch"
+    },
+    "operation_state_matrix_enforcement": {
+      "helper": "single fail-closed helper",
+      "axes": [
+        "allowed_lifecycle_states",
+        "allowed_connection_states",
+        "allowed_authorization_states"
+      ],
+      "empty_axis_semantics": "operation does not use axis",
+      "timing": "before success and side effects"
+    },
+    "trusted_identity_snapshot_policy": {
+      "request_contains_snapshot": false,
+      "source": "validation_context.external_identity_snapshots_by_account_id",
+      "request_authority_fields_forbidden": [
+        "identity_snapshot",
+        "state",
+        "observed_permission_set",
+        "venue_account_identifier",
+        "adapter_version_source"
+      ],
+      "expected_adapter_version_source": "comparison only, never authority"
+    },
+    "operation_specific_type_validation": {
+      "before_handler": true,
+      "string_fields": "non-empty exact strings",
+      "object_fields": [
+        "expected_identity_fields",
+        "mutable_patch"
+      ],
+      "literal_boolean_fields": [
+        "legacy_record",
+        "reconnect"
+      ],
+      "malformed_policy": "controlled operation denial without exception"
+    },
+    "trusted_argument_binding": {
+      "authority": "validation_context only",
+      "direct_validator_arguments": "untrusted comparison inputs, never authority",
+      "mismatch_policy": "fail-closed controlled denial without exception",
+      "global_or_hidden_authority_forbidden": true
+    },
+    "lineage_map_type_policy": {
+      "required_type": "exact dict",
+      "falsey_coercion_forbidden": true,
+      "rejected_values": [
+        "null unless explicitly optional",
+        "false",
+        "0",
+        "empty string",
+        "list",
+        "tuple",
+        "set"
+      ],
+      "empty_dict": "valid only for first version without predecessor"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # CryptoHunter M0.4 — Environment and ProductCapabilities Contract
 
-Status: `under audit`
+Status: `closed`
 
 This document explains the M0.4 machine contract in `environment_and_product_capabilities.json`. The JSON is the source of truth; this Markdown describes intent, invariants and safety boundaries only. M0.4 does not implement runtime adapters, exchange I/O, secret storage, order execution, IPC, QML, persistence, recovery or cryptography.
 
