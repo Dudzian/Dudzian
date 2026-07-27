@@ -474,9 +474,9 @@ def gates():
 
 
 def test_scope_and_basic_contract():
-    assert DOC.exists() and MD.exists() and DATA["status"] == "under audit"
+    assert DOC.exists() and MD.exists() and DATA["status"] == "closed"
     assert "environment_and_product_capabilities" not in MAIN.read_text()
-    assert "## Status M0.4 — under audit" in ARCH.read_text()
+    assert "## Status M0.4 — closed" in ARCH.read_text()
     assert [env["environment_id"] for env in DATA["execution_environments"]] == ["PAPER", "TESTNET", "LIVE"]
 
 

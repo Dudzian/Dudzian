@@ -33,14 +33,25 @@ M0.3 definiuje kontrakt topologii procesów i lifecycle’u aplikacji: role Core
 
 
 
-## Status M0.4 — under audit
+## Status M0.4 — closed
 
-M0.4 definiuje kontrakt środowisk wykonawczych, ProductCapabilities, fail-closed fallback, capability trust, credential/endpoint policy, readiness, recovery oraz wielowarstwową blokadę Live. M0.4 pozostaje under audit i nie implementuje runtime, adapterów, sekretów, endpointów, IPC, QML ani wykonywania zleceń.
+M0.4 definiuje kontrakt środowisk wykonawczych, ProductCapabilities, fail-closed fallback, capability trust, credential/endpoint policy, readiness, recovery oraz wielowarstwową blokadę Live. M0.4 jest zamkniętym kontraktem i nie implementuje runtime, adapterów, sekretów, endpointów, IPC, QML ani wykonywania zleceń.
 
 ## Artefakty M0.4
 
 - [environment_and_product_capabilities.md](environment_and_product_capabilities.md) — opisowy kontrakt środowisk i ProductCapabilities M0.4.
 - [environment_and_product_capabilities.json](environment_and_product_capabilities.json) — maszynowo walidowany kontrakt środowisk i ProductCapabilities M0.4.
+
+
+
+## Status M0.5 — under audit
+
+M0.5 definiuje kontrakt multi-exchange: build-time Exchange Registry, ExchangeAccount, CredentialProfile, Instrument, katalog instrumentów, aliasy symboli, TradingUniverse, denial codes, audit events oraz zgodność z M0.2–M0.4. M0.5 pozostaje under audit i nie implementuje runtime, adapterów giełdowych, endpointów, sekretów, routingu, strategii ani wykonywania zleceń.
+
+## Artefakty M0.5
+
+- [exchange_accounts_and_instruments.md](exchange_accounts_and_instruments.md) — opisowy kontrakt kont giełdowych i instrumentów M0.5.
+- [exchange_accounts_and_instruments.json](exchange_accounts_and_instruments.json) — maszynowo walidowany kontrakt kont giełdowych i instrumentów M0.5.
 
 ## Planowane elementy M0.1–M0.14
 
