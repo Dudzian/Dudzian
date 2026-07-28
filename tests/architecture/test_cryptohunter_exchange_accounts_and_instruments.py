@@ -1657,7 +1657,9 @@ def request_for(operation, **overrides):
 
 def test_status_and_documentation_sync():
     assert M04["status"] == "closed" and "Status: `closed`" in M04_MD.read_text() and "Status M0.4 — closed" in ARCH.read_text()
-    assert DATA["status"] == "under audit" and "Status: `under audit`" in MD.read_text()
+    assert DATA["status"] == "closed"
+    assert "Status: `closed`" in MD.read_text()
+    assert "Status M0.5 — closed" in ARCH.read_text()
     assert "request carries transport IDs hashes lists only" in json.dumps(DATA["operation_dispatch_policy"])
 
 
@@ -1867,7 +1869,7 @@ def test_json_markdown_sync_for_final_fix():
     md = MD.read_text()
     for phrase in ["transportowe IDs", "trusted validation context", "brak default-success", "pełny handler", "visited set", "literal bool readiness", "nested fail-closed"]:
         assert phrase in md
-    assert DATA["status"] == "under audit"
+    assert DATA["status"] == "closed"
 
 
 def test_malformed_nested_context_fails_closed_for_all_handlers():

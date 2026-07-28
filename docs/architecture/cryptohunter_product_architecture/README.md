@@ -44,9 +44,9 @@ M0.4 definiuje kontrakt środowisk wykonawczych, ProductCapabilities, fail-close
 
 
 
-## Status M0.5 — under audit
+## Status M0.5 — closed
 
-M0.5 definiuje kontrakt multi-exchange: build-time Exchange Registry, ExchangeAccount, CredentialProfile, Instrument, katalog instrumentów, aliasy symboli, TradingUniverse, denial codes, audit events oraz zgodność z M0.2–M0.4. M0.5 pozostaje under audit i nie implementuje runtime, adapterów giełdowych, endpointów, sekretów, routingu, strategii ani wykonywania zleceń.
+M0.5 definiuje kontrakt multi-exchange: build-time Exchange Registry, ExchangeAccount, CredentialProfile, Instrument, katalog instrumentów, aliasy symboli, TradingUniverse, denial codes, audit events oraz zgodność z M0.2–M0.4. M0.5 jest zamkniętym kontraktem i nie implementuje runtime, adapterów giełdowych, endpointów, sekretów, routingu, strategii ani wykonywania zleceń.
 
 ## Artefakty M0.5
 
