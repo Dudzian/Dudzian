@@ -6,7 +6,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-INVENTORY = ROOT / "docs" / "architecture" / "cryptohunter_product_architecture" / "current_state_inventory.json"
+INVENTORY = (
+    ROOT
+    / "docs"
+    / "architecture"
+    / "cryptohunter_product_architecture"
+    / "current_state_inventory.json"
+)
 ALLOWED_STATUSES = [
     "IMPLEMENTED",
     "PARTIAL",
