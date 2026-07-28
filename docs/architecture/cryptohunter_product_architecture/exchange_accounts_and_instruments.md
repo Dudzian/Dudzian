@@ -1,6 +1,6 @@
 # CryptoHunter M0.5 — Exchange Accounts and Instruments Contract
 
-Status: `under audit`
+Status: `closed`
 
 Ten dokument opisuje maszynowy kontrakt `exchange_accounts_and_instruments.json`. JSON jest źródłem prawdy. M0.5 jest kontraktem architektonicznym: nie wdraża runtime, adapterów giełdowych, endpointów, sekretów, routingu strategii ani order execution.
 
@@ -101,7 +101,7 @@ Każdy handler najpierw waliduje zamknięty `validation_context`: wszystkie wyma
 
 Snapshot katalogu przechodzi walidację registry scope (enabled exchange, wspierane environment i market type), adapter binding, timestamp/hash/lineage oraz pełny validator każdego Instrument. Aktywacja TradingUniverse przekazuje pełne `previous_catalogs_by_id`; członkostwo wymaga obecności instrumentu w jednym z jawnie wskazanych i zaakceptowanych source catalogs oraz zgodnego `catalog_snapshot_id`. Sama obecność w globalnej mapie instrumentów nie wystarcza.
 
-Runtime audit mapping nie ma fallbacku do niepowiązanego eventu. Każdy denial znanej operacji musi być zadeklarowany w matrix, mieć własne mapowanie i schema dopuszczający dokładnie ten kod. Niespójność samego kontraktu jest raportowana jako `CONTRACT_VALIDATION_MAPPING_ERROR` przez dedykowane `CONTRACT_VALIDATION_MAPPING_REJECTED`; `UNKNOWN_OPERATION_REJECTED` pozostaje wyłącznie dla nieznanego operation ID. Status M0.5 pozostaje `under audit`.
+Runtime audit mapping nie ma fallbacku do niepowiązanego eventu. Każdy denial znanej operacji musi być zadeklarowany w matrix, mieć własne mapowanie i schema dopuszczający dokładnie ten kod. Niespójność samego kontraktu jest raportowana jako `CONTRACT_VALIDATION_MAPPING_ERROR` przez dedykowane `CONTRACT_VALIDATION_MAPPING_REJECTED`; `UNKNOWN_OPERATION_REJECTED` pozostaje wyłącznie dla nieznanego operation ID. M0.5 jest zamkniętym kontraktem.
 
 ## Final invariants: TradingUniverse, state matrix i identity lineage
 
@@ -109,7 +109,7 @@ TradingUniverse przechodzi pełną walidację zamkniętego rekordu przed katalog
 
 Jeden wspólny fail-closed helper egzekwuje niepuste osie `allowed_lifecycle_states`, `allowed_connection_states` i `allowed_authorization_states` przed sukcesem operacji. Pusta lista oznacza, że operacja nie korzysta z osi. Każda mapa context ma własny kontrakt `key == record ID`; lookup jest ponownie wiązany z ID requestu.
 
-Credential lineage i catalog lineage wymagają pełnego predecessor record, zgodności map key z rekordem, poprawnych timestampów/hashów/adaptera oraz pełnego cycle detection. Aktywne credentials są scoped przez `active_profile_ids_by_account_id`; dokładnie jeden profil docelowego konta jest wymagany również bez rotacji, a profile innych kont nie powodują konfliktu. Status M0.5 pozostaje `under audit`.
+Credential lineage i catalog lineage wymagają pełnego predecessor record, zgodności map key z rekordem, poprawnych timestampów/hashów/adaptera oraz pełnego cycle detection. Aktywne credentials są scoped przez `active_profile_ids_by_account_id`; dokładnie jeden profil docelowego konta jest wymagany również bez rotacji, a profile innych kont nie powodują konfliktu. M0.5 jest zamkniętym kontraktem.
 
 ## Trust boundary i finalne invariants
 
@@ -117,13 +117,13 @@ Credential lineage i catalog lineage wymagają pełnego predecessor record, zgod
 
 Katalog `PARTIAL` może zostać zachowany lub obsłużony przez refresh, ale aktywacja TradingUniverse wymaga dokładnie `VALID`. UPDATE egzekwuje state matrix na wynikowym rekordzie. Instrument, CredentialProfile oraz wszystkie historyczne predecessors przechodzą pełne, typowane, fail-closed validatory; lineage universe przelicza canonical hash, a ten sam aktywny durable universe ID jest idempotentny wyłącznie dla dokładnie identycznego rekordu.
 
-`validation_context` ma dokładnie zamknięty zestaw pól bez caller authority i secret payloads. Multi-account policy nie utożsamia kont po samym portfolio/exchange/environment/market: wiele DRAFT i różne subkonta są dozwolone, natomiast zweryfikowana identyczna venue account + subaccount identity nie może należeć do dwóch ACTIVE ExchangeAccount. Status M0.5 pozostaje `under audit`.
+`validation_context` ma dokładnie zamknięty zestaw pól bez caller authority i secret payloads. Multi-account policy nie utożsamia kont po samym portfolio/exchange/environment/market: wiele DRAFT i różne subkonta są dozwolone, natomiast zweryfikowana identyczna venue account + subaccount identity nie może należeć do dwóch ACTIVE ExchangeAccount. M0.5 jest zamkniętym kontraktem.
 
 ## Authority i fail-closed final gaps
 
 `UPDATE_ACCOUNT.mutable_patch` nie zawiera `external_account_identity_state`; tylko Core-owned VERIFY może zmieniać tę oś. Trusted venue identity jest exact tuple `(exchange_id, environment, market_type, venue_account_identifier, subaccount_identifier)` pobieranym wyłącznie z context. Caller `external_account_reference` i `external_subaccount_reference` nie są authority. Ten sam tuple nie może należeć do dwóch ACTIVE accounts; różne niepuste subkonta są odrębne, a root używa `null`.
 
-Refresh akceptuje pełnie zwalidowane `VALID` i `PARTIAL`, natomiast aktywacja universe nadal wymaga `VALID`. Każdy request przechodzi operation-specific exact type validation przed handlerem. Secure-store reference ma gramatykę `secure-store://` + niepusty opaque locator, bez whitespace, query, fragmentu, `=` i markerów payloadu. Lifecycle timestamps kont i profili są monotoniczne i zależne od stanu. Status M0.5 pozostaje `under audit`.
+Refresh akceptuje pełnie zwalidowane `VALID` i `PARTIAL`, natomiast aktywacja universe nadal wymaga `VALID`. Każdy request przechodzi operation-specific exact type validation przed handlerem. Secure-store reference ma gramatykę `secure-store://` + niepusty opaque locator, bez whitespace, query, fragmentu, `=` i markerów payloadu. Lifecycle timestamps kont i profili są monotoniczne i zależne od stanu. M0.5 jest zamkniętym kontraktem.
 
 ## Trusted bindings i metadata lifecycle
 
@@ -131,7 +131,7 @@ Generic UPDATE zmienia wyłącznie `display_name`, lifecycle, connection, author
 
 AccountCapabilitySnapshot ma pełny typed validator, canonical hash, strict scope/timestamps, ciągłe immutable lineage z `visited set` oraz map-key binding. Mapy `account_capability_snapshots_by_id` i `previous_account_capability_snapshots_by_id` należą do exact context. STALE/REJECTED tylko ograniczają, nigdy nie rozszerzają ProductCapabilities ani Live.
 
-Poprawność metadata Instrument jest oddzielona od tradability: katalog zachowuje poprawne TRADING/HALTED/SUSPENDED/DELISTED/UNKNOWN, ale aktywacja universe wymaga TRADING. Credential lineage porównuje każdą bezpośrednią krawędź przez jawny `successor`: `predecessor.created <= predecessor.retired <= successor.created`. Status M0.5 pozostaje `under audit`.
+Poprawność metadata Instrument jest oddzielona od tradability: katalog zachowuje poprawne TRADING/HALTED/SUSPENDED/DELISTED/UNKNOWN, ale aktywacja universe wymaga TRADING. Credential lineage porównuje każdą bezpośrednią krawędź przez jawny `successor`: `predecessor.created <= predecessor.retired <= successor.created`. M0.5 jest zamkniętym kontraktem.
 
 ## Trusted readiness, capability operability i Instrument identity
 
@@ -139,7 +139,7 @@ Aktywacja TradingUniverse nie ufa stringowi `account.external_account_identity_s
 
 Dla giełdy `ADAPTER_SNAPSHOT_REQUIRED` aktywacja wymaga przypiętego AccountCapabilitySnapshot o statusie `VALID`, pełnym lineage i `now < stale_after_utc`. `STALE` i `REJECTED` są historycznie zachowywalne, lecz dają `ACCOUNT_READINESS_BLOCKED`. `STATIC_BUILD_TIME` PAPER nie wymaga prywatnego snapshotu; jawnie przypięty snapshot nadal musi być prawidłowy. Capability zawsze tylko ogranicza i nigdy nie tworzy Live.
 
-Katalog buduje dwukierunkowy exact index Instrument identity `(exchange_id, environment, market_type, venue_symbol)`: jeden tuple → jedno `instrument_id` i jedno ID → jeden tuple bez jawnej migracji aliasu. Nie ma trim, case-fold ani Unicode normalization; `display_symbol` nie uczestniczy w identity. Metadata/tradability split pozostaje zachowany. Status M0.5: `under audit`.
+Katalog buduje dwukierunkowy exact index Instrument identity `(exchange_id, environment, market_type, venue_symbol)`: jeden tuple → jedno `instrument_id` i jedno ID → jeden tuple bez jawnej migracji aliasu. Nie ma trim, case-fold ani Unicode normalization; `display_symbol` nie uczestniczy w identity. Metadata/tradability split pozostaje zachowany. Status M0.5: `closed`; M0.5 jest zamkniętym kontraktem.
 
 ## Jedna bramka aktywacji i zaufana historia Instrument
 
@@ -165,7 +165,7 @@ Aktywacja przekazuje pełną trusted mapę `validation_context.catalogs_by_id`; 
 
 Jeden `validate_instrument_history_map` obsługuje `validate_context`, direct catalog validation i ścieżkę aktywacji. Exact identity rewrite daje `INSTRUMENT_IDENTITY_COLLISION`; malformed, duplicate, out-of-order, rollback albo `current.metadata_version <= historical max` daje `INSTRUMENT_METADATA_INVALID`. Historyczne rekordy używają `require_fresh=False`, zachowując pełne invariants strukturalne bez przyznawania execution eligibility.
 
-Full closed `validation_context` waliduje strukturalnie każdy rekord każdej trusted mapy, także niezwiązany z bieżącym targetem. Structural validity pozostaje oddzielona od operability: `UNVERIFIED`, `DISABLED`, historyczny `STALE` katalog lub stale historyczny Instrument mogą być przechowywalne, lecz nie przyznają readiness. Malformed unrelated record kończy cały request fail-closed bez wyjątku. Status M0.5 pozostaje `under audit`.
+Full closed `validation_context` waliduje strukturalnie każdy rekord każdej trusted mapy, także niezwiązany z bieżącym targetem. Structural validity pozostaje oddzielona od operability: `UNVERIFIED`, `DISABLED`, historyczny `STALE` katalog lub stale historyczny Instrument mogą być przechowywalne, lecz nie przyznają readiness. Malformed unrelated record kończy cały request fail-closed bez wyjątku. M0.5 jest zamkniętym kontraktem.
 
 ## Active indexes, durable ID spaces i trusted references
 
@@ -173,7 +173,7 @@ Full closed `validation_context` waliduje strukturalnie każdy rekord każdej tr
 
 Current i previous mapy CredentialProfile, Catalog, TradingUniverse oraz AccountCapabilitySnapshot mają rozłączne przestrzenie durable ID. Trusted context egzekwuje referencje profile→account, instrument→catalog, catalog→current/history member, universe→account/source catalogs/instruments, capability→account oraz exact active indexes. Historyczne rekordy zachowują structural validity bez wymagania execution freshness.
 
-Każda obowiązkowa lineage map wymaga exact `dict`; falsey coercion jest zabronione. `False`, `0`, pusty string, list, tuple i set są odmową, natomiast jawne `{}` jest poprawne wyłącznie dla pierwszej wersji bez poprzednika. Status M0.5 pozostaje `under audit`.
+Każda obowiązkowa lineage map wymaga exact `dict`; falsey coercion jest zabronione. `False`, `0`, pusty string, list, tuple i set są odmową, natomiast jawne `{}` jest poprawne wyłącznie dla pierwszej wersji bez poprzednika. M0.5 jest zamkniętym kontraktem.
 
 ## Pełny trusted reference graph i exact membership
 
@@ -181,34 +181,34 @@ Każde konto przechodzi `validate_account_owned_bindings`: null profile pointer 
 
 Wspólny `resolve_catalog_member` potwierdza membership wyłącznie pełnym rekordem przypisanym do exact `catalog_snapshot_id`, scope i adapter family. Sama obecność ID w current/history nie wystarcza; history wybiera deterministycznie najwyższą pasującą `metadata_version`, zachowując structural stale metadata bez przyznawania execution eligibility.
 
-`validate_universe_source_membership` stosuje tę samą politykę do current i previous universe: konto i source catalogs muszą istnieć, a każdy instrument musi być członkiem co najmniej jednego zadeklarowanego source catalog. Globalny lub niezadeklarowany katalog nie rozszerza membership. Wspólne graph helpery są używane przez full `validate_context` i wszystkie direct/dispatcher paths, więc unrelated dangling record blokuje sukces fail-closed. Status M0.5 pozostaje `under audit`.
+`validate_universe_source_membership` stosuje tę samą politykę do current i previous universe: konto i source catalogs muszą istnieć, a każdy instrument musi być członkiem co najmniej jednego zadeklarowanego source catalog. Globalny lub niezadeklarowany katalog nie rozszerza membership. Wspólne graph helpery są używane przez full `validate_context` i wszystkie direct/dispatcher paths, więc unrelated dangling record blokuje sukces fail-closed. M0.5 jest zamkniętym kontraktem.
 
 ## Exact `catalog.instrument_ids` i totalny resolver
 
 Exact Catalog membership wymaga również, aby sprawdzany `instrument_id` występował w unikalnej liście niepustych ID `catalog.instrument_ids`. Sama zgodność `record.catalog_snapshot_id == catalog.catalog_snapshot_id`, scope i adapter family nie potwierdza członkostwa. Reguła obowiązuje current/history Instrument, current/previous TradingUniverse, full context, direct validators i dispatcher paths.
 
-`resolve_catalog_member` jest totalny: malformed katalog, mapa, lista historii, rekord lub `metadata_version` zwraca `None` bez wyjątku. Deterministyczne wybranie najwyższej wersji następuje dopiero po potwierdzeniu dodatnich integerów z wykluczeniem bool. Full `validate_context` uruchamia `validate_instrument_history_map` przed jakimkolwiek history member resolution; malformed trusted history unieważnia cały context i nie może zostać cicho pominięta. M0.5 pozostaje `under audit`.
+`resolve_catalog_member` jest totalny: malformed katalog, mapa, lista historii, rekord lub `metadata_version` zwraca `None` bez wyjątku. Deterministyczne wybranie najwyższej wersji następuje dopiero po potwierdzeniu dodatnich integerów z wykluczeniem bool. Full `validate_context` uruchamia `validate_instrument_history_map` przed jakimkolwiek history member resolution; malformed trusted history unieważnia cały context i nie może zostać cicho pominięta. M0.5 jest zamkniętym kontraktem.
 
 ## Dwukierunkowy Catalog graph i pełna totalność resolvera
 
 Każdy current Instrument z `instruments_by_id` musi być listed memberem katalogu wskazanego przez własny `catalog_snapshot_id`; graph validation jest obowiązkowo dwukierunkowa: Catalog → Instrument oraz Instrument → Catalog. Resolver musi zwrócić dokładnie current record, więc rekord historyczny nie może maskować brakującego current membership. Malformed unrelated current Instrument unieważnia cały trusted context.
 
-Przed zwróceniem current lub historical membera resolver sprawdza closed strukturę katalogu oraz pełny `validate_instrument_record(require_fresh=False)`. Historia wymaga dodatnich, niebooleanowych i ściśle rosnących `metadata_version` również w direct resolver path; out-of-order, duplicate, mixed types, malformed schema, obce ID lub identity rewrite zwracają `None` bez wyjątku. M0.5 pozostaje `under audit`.
+Przed zwróceniem current lub historical membera resolver sprawdza closed strukturę katalogu oraz pełny `validate_instrument_record(require_fresh=False)`. Historia wymaga dodatnich, niebooleanowych i ściśle rosnących `metadata_version` również w direct resolver path; out-of-order, duplicate, mixed types, malformed schema, obce ID lub identity rewrite zwracają `None` bez wyjątku. M0.5 jest zamkniętym kontraktem.
 
 ## Historyczny Instrument graph i parytet direct resolvera
 
 Odwrotny binding `Instrument → Catalog` obejmuje każdy current rekord oraz każdy pełny rekord z `instrument_history_by_id`. Każdy historyczny `catalog_snapshot_id` jest obowiązkową trusted reference do current albo previous Catalog; historyczny rekord musi występować w `catalog.instrument_ids` i exact-matchować exchange, environment, market oraz adapter family. Dangling, unlisted lub scope-mismatched historia — także niezwiązana z targetem operacji — unieważnia cały trusted context.
 
-Direct resolver przed zwróceniem membera waliduje semantycznie pełny source Catalog: closed schema, enabled Exchange Registry scope, status, adapter/version, timestamp ordering, canonical content hash, unikalną listę członków oraz lineage, gdy zadeklarowano predecessor. Dla current Instrument wymaga również `current.metadata_version > max(all historical metadata_version)`; equality, rollback i malformed version zwracają `None` bez historycznego fallbacku. Direct i dispatcher paths wydają identyczną fail-closed decyzję dla tego samego trusted graph. Status M0.5 pozostaje `under audit`.
+Direct resolver przed zwróceniem membera waliduje semantycznie pełny source Catalog: closed schema, enabled Exchange Registry scope, status, adapter/version, timestamp ordering, canonical content hash, unikalną listę członków oraz lineage, gdy zadeklarowano predecessor. Dla current Instrument wymaga również `current.metadata_version > max(all historical metadata_version)`; equality, rollback i malformed version zwracają `None` bez historycznego fallbacku. Direct i dispatcher paths wydają identyczną fail-closed decyzję dla tego samego trusted graph. M0.5 jest zamkniętym kontraktem.
 
 ## Totalny Catalog node i kompletne direct graph closure
 
 Jeden totalny Catalog node preflight sprawdza closed schema i bezpieczne typy wszystkich pól, registry scope, adapter/version, status, timestamp ordering, unikalne `instrument_ids` oraz canonical SHA-256 przed hashowaniem, lookupem, użyciem visited set albo traversal lineage. Wartości malformed i non-JSON-serializable zwracają kontrolowane `False`/`None` bez wyjątku. Każdy predecessor przechodzi identyczny node validator, a lineage zachowuje cycle detection.
 
-Direct resolution waliduje pełny binding historii target Instrument do trusted current/previous Catalog graph przed zwróceniem current candidate. Direct universe membership dodatkowo domyka każdy source Catalog przez rozwiązanie wszystkich jego `instrument_ids`; dodatkowy missing, malformed, dangling lub scope-mismatched member blokuje sukces. Direct, full-context i dispatcher mają tę samą decyzję dla dangling/unlisted historii, niepełnego member closure i malformed unrelated trusted records. Status M0.5 pozostaje `under audit`.
+Direct resolution waliduje pełny binding historii target Instrument do trusted current/previous Catalog graph przed zwróceniem current candidate. Direct universe membership dodatkowo domyka każdy source Catalog przez rozwiązanie wszystkich jego `instrument_ids`; dodatkowy missing, malformed, dangling lub scope-mismatched member blokuje sukces. Direct, full-context i dispatcher mają tę samą decyzję dla dangling/unlisted historii, niepełnego member closure i malformed unrelated trusted records. M0.5 jest zamkniętym kontraktem.
 
 ## Jeden complete Catalog/Instrument graph validator
 
 `validate_catalog_instrument_graph` jest wspólną bramką dla full context i direct TradingUniverse membership. Totalnie preflightuje wszystkie current/previous Catalog maps, current Instrument oraz pełne target i unrelated `instrument_history_by_id`; egzekwuje rozłączne Catalog ID spaces, map-key binding, pełny history validator, odwrotne Instrument→Catalog binding i closure każdego członka każdego katalogu. Orphan lub malformed unrelated current Instrument, malformed unrelated Catalog, unresolved member i pusta, out-of-order, rewritten albo rollback history blokują direct membership bez wyjątku.
 
-Historia może exact-bindować się do katalogu z trusted current albo previous mapy. Wszystkie complete-graph resolver calls otrzymują obie mapy, dzięki czemu drugi poprawny current Catalog jest widoczny identycznie dla direct, full-context i dispatcher paths. Parytet obejmuje zarówno kontrolowane odmowy, jak i prawidłowe sukcesy. Status M0.5 pozostaje `under audit`.
+Historia może exact-bindować się do katalogu z trusted current albo previous mapy. Wszystkie complete-graph resolver calls otrzymują obie mapy, dzięki czemu drugi poprawny current Catalog jest widoczny identycznie dla direct, full-context i dispatcher paths. Parytet obejmuje zarówno kontrolowane odmowy, jak i prawidłowe sukcesy. M0.5 jest zamkniętym kontraktem.

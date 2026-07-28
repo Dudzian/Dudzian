@@ -1,7 +1,7 @@
 {
   "schema_version": "cryptohunter.exchange_accounts_and_instruments.v1",
   "m0_element": "M0.5",
-  "status": "under audit",
+  "status": "closed",
   "baseline_commit": "f59f9e732d9724279f1453b48c2d9b829610be42",
   "scope": {
     "defines": [
