@@ -7,23 +7,59 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DOC = ROOT / "docs/architecture/cryptohunter_product_architecture/canonical_domain_vocabulary.json"
 DATA = json.loads(DOC.read_text(encoding="utf-8"))
-UUIDV7_REGEX = r"^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+UUIDV7_REGEX = (
+    r"^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
 
 REQUIRED_ENTITY_FIELDS = {
-    "canonical_name", "id_field", "id_prefix", "purpose", "parent", "lifecycle_scope",
-    "persistence", "saas_sync_candidate", "secret_policy", "relationships", "legacy_names",
+    "canonical_name",
+    "id_field",
+    "id_prefix",
+    "purpose",
+    "parent",
+    "lifecycle_scope",
+    "persistence",
+    "saas_sync_candidate",
+    "secret_policy",
+    "relationships",
+    "legacy_names",
 }
 REQUIRED_AXES = {
-    "product_capability", "live_access_grant", "active_trading_environment", "runtime_state",
-    "kill_switch_state", "operator_interface_authentication", "exchange_account_connection_state",
+    "product_capability",
+    "live_access_grant",
+    "active_trading_environment",
+    "runtime_state",
+    "kill_switch_state",
+    "operator_interface_authentication",
+    "exchange_account_connection_state",
     "execution_authorization",
 }
 REQUIRED_ENTITIES = {
-    "CryptoHunterAccount", "DeviceInstallation", "OperatorIdentity", "LiveAccessGrant", "Workspace",
-    "Portfolio", "ExchangeAccount", "CredentialProfile", "TradingUniverse", "Instrument",
-    "StrategyDefinition", "StrategyInstance", "MarketDataRoute", "ExecutionRoute", "RiskPolicy",
-    "RiskBudget", "ExecutionLease", "Signal", "Decision", "OrderIntent", "Order", "Fill",
-    "LedgerEntry", "RuntimeSession", "AuditEvent",
+    "CryptoHunterAccount",
+    "DeviceInstallation",
+    "OperatorIdentity",
+    "LiveAccessGrant",
+    "Workspace",
+    "Portfolio",
+    "ExchangeAccount",
+    "CredentialProfile",
+    "TradingUniverse",
+    "Instrument",
+    "StrategyDefinition",
+    "StrategyInstance",
+    "MarketDataRoute",
+    "ExecutionRoute",
+    "RiskPolicy",
+    "RiskBudget",
+    "ExecutionLease",
+    "Signal",
+    "Decision",
+    "OrderIntent",
+    "Order",
+    "Fill",
+    "LedgerEntry",
+    "RuntimeSession",
+    "AuditEvent",
 }
 
 
@@ -82,7 +118,10 @@ def test_corrected_ownership_and_cardinality() -> None:
     assert entities["Instrument"]["parent"] == "Workspace"
     assert rels[("TradingUniverse", "Instrument")] == "many_to_many_membership"
     assert entities["Instrument"]["identity_dimensions"] == [
-        "exchange_id", "environment", "market_type", "venue_symbol"
+        "exchange_id",
+        "environment",
+        "market_type",
+        "venue_symbol",
     ]
     assert entities["StrategyInstance"]["parent"] == "Workspace"
     assert rels[("StrategyDefinition", "StrategyInstance")] == "one_to_many_reference"
@@ -108,8 +147,18 @@ def test_live_access_grant_and_ledger_model() -> None:
 
     ledger = entities["LedgerEntry"]
     source_types = set(ledger["allowed_source_event_types"])
-    assert {"fill", "fee", "funding", "deposit", "withdrawal", "internal_transfer", "reconciliation_correction"} <= source_types
-    assert {"exchange_account_id", "strategy_instance_id", "order_id", "fill_id"} <= set(ledger["optional_references"])
+    assert {
+        "fill",
+        "fee",
+        "funding",
+        "deposit",
+        "withdrawal",
+        "internal_transfer",
+        "reconciliation_correction",
+    } <= source_types
+    assert {"exchange_account_id", "strategy_instance_id", "order_id", "fill_id"} <= set(
+        ledger["optional_references"]
+    )
     assert ("LedgerEntry", "AuditEvent") not in rels
     assert rels[("Portfolio", "LedgerEntry")] == "one_to_many"
     assert rels[("Fill", "LedgerEntry")] == "one_to_many_possible_source"
@@ -120,10 +169,17 @@ def test_decision_sources_and_manual_lifecycle() -> None:
     rels = _relationships()
     decision = entities["Decision"]
     assert set(decision["decision_source_types"]) == {
-        "strategy_signal", "operator_action", "risk_system", "recovery_policy", "reconciliation_import"
+        "strategy_signal",
+        "operator_action",
+        "risk_system",
+        "recovery_policy",
+        "reconciliation_import",
     }
     assert set(decision["optional_source_references"]) == {
-        "signal_id", "operator_id", "runtime_session_id", "source_event_id"
+        "signal_id",
+        "operator_id",
+        "runtime_session_id",
+        "source_event_id",
     }
     assert rels[("OperatorIdentity", "Decision")] == "one_to_many_possible_source"
     assert rels[("Decision", "OrderIntent")] == "one_to_many"
@@ -145,13 +201,27 @@ def test_audit_event_can_exist_without_runtime_session() -> None:
         (r["from"], r["to"], r["cardinality"]) for r in DATA["relationships"]
     }
     assert set(audit["optional_references"]) == {
-        "runtime_session_id", "operator_id", "workspace_id", "exchange_account_id",
-        "order_id", "ledger_entry_id"
+        "runtime_session_id",
+        "operator_id",
+        "workspace_id",
+        "exchange_account_id",
+        "order_id",
+        "ledger_entry_id",
     }
     assert set(audit["audit_event_categories"]) == {
-        "authentication", "authorization", "configuration", "credential_management",
-        "device_management", "licensing", "live_activation", "runtime", "trading",
-        "risk", "recovery", "update", "security"
+        "authentication",
+        "authorization",
+        "configuration",
+        "credential_management",
+        "device_management",
+        "licensing",
+        "live_activation",
+        "runtime",
+        "trading",
+        "risk",
+        "recovery",
+        "update",
+        "security",
     }
     blob = "\n".join(DATA["invariants"]).lower()
     assert "auditevent may exist without runtimesession" in blob
@@ -185,17 +255,28 @@ def test_parent_and_local_relationship_references_are_valid() -> None:
             assert (parent, entity["canonical_name"]) in rels
         for local in entity["relationships"]:
             assert len(local) == 3
-            assert tuple(local) in {(a, b, c) for (a, b), c in rels.items()} or local[-1] == "derived"
+            assert (
+                tuple(local) in {(a, b, c) for (a, b), c in rels.items()} or local[-1] == "derived"
+            )
 
 
 def test_required_legacy_rules_and_invariants() -> None:
-    terms = {c["term"] for c in DATA["legacy_conflicts"]} | {a["term"] for a in DATA["deprecated_environment_aliases"]}
+    terms = {c["term"] for c in DATA["legacy_conflicts"]} | {
+        a["term"] for a in DATA["deprecated_environment_aliases"]
+    }
     assert {"demo", "sandbox", "production/prod", "primary"} <= terms
     blob = "\n".join(DATA["invariants"]).lower()
     for phrase in (
-        "live", "kill switch", "gui", "core", "executionlease", "at most one executionlease",
-        "order cannot be created without a source orderintent", "provenance",
-        "exactly one explicit source/provenance", "auditevent may exist without runtimesession",
+        "live",
+        "kill switch",
+        "gui",
+        "core",
+        "executionlease",
+        "at most one executionlease",
+        "order cannot be created without a source orderintent",
+        "provenance",
+        "exactly one explicit source/provenance",
+        "auditevent may exist without runtimesession",
     ):
         assert phrase in blob
 
