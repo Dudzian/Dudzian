@@ -53,6 +53,15 @@ M0.5 definiuje kontrakt multi-exchange: build-time Exchange Registry, ExchangeAc
 - [exchange_accounts_and_instruments.md](exchange_accounts_and_instruments.md) — opisowy kontrakt kont giełdowych i instrumentów M0.5.
 - [exchange_accounts_and_instruments.json](exchange_accounts_and_instruments.json) — maszynowo walidowany kontrakt kont giełdowych i instrumentów M0.5.
 
+## Status M0.6 — closed
+
+M0.6 jest zamkniętym kontraktem architektonicznym definiującym StrategyDefinition, StrategyInstance, MarketDataRoute i ExecutionRoute, trusted validation context, readiness, kompatybilność oraz deterministyczny fail-closed routing. Jest kontraktem architektury bez runtime, adapterów, endpointów, sekretów ani wykonywania zleceń.
+
+## Artefakty M0.6
+
+- [strategy_market_data_and_execution_routing.md](strategy_market_data_and_execution_routing.md) — opisowy kontrakt strategii i routingu M0.6.
+- [strategy_market_data_and_execution_routing.json](strategy_market_data_and_execution_routing.json) — maszynowo walidowany kontrakt strategii i routingu M0.6, będący źródłem prawdy.
+
 ## Planowane elementy M0.1–M0.14
 
 1. M0.1 — current-state audit/inventory
