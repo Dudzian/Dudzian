@@ -270,7 +270,7 @@ def _quantile_from_histogram(state: HistogramState, quantile: float) -> float | 
     target = max(1, math.ceil(state.count * quantile))
     cumulative = 0
     for boundary in sorted(
-        state.counts, key=lambda value: (math.inf if math.isinf(value) else value)
+        state.counts, key=lambda value: math.inf if math.isinf(value) else value
     ):
         if math.isinf(boundary):
             return None

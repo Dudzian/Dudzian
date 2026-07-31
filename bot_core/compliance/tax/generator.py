@@ -720,7 +720,7 @@ class TaxReportGenerator:
             )
             for key, data in summary.items()
         ]
-        return sorted(breakdown, key=lambda item: (item.venue or ""))
+        return sorted(breakdown, key=lambda item: item.venue or "")
 
     def _compute_period_breakdown(
         self,

@@ -1,0 +1,2105 @@
+{
+  "schema_version": "1.0.0",
+  "m0_element": "M0.6 — Strategy, Market Data and Execution Routing",
+  "status": "under audit",
+  "authority": "CoreHost",
+  "source_of_truth": "this JSON; Markdown is descriptive",
+  "scope": {
+    "contract_only": true,
+    "forbidden": [
+      "runtime",
+      "exchange adapters",
+      "endpoint URLs",
+      "network",
+      "storage",
+      "IPC",
+      "QML",
+      "secrets",
+      "credential payloads",
+      "order execution",
+      "submit/cancel/replace/order lifecycle"
+    ],
+    "next_milestone": "M0.7 not started"
+  },
+  "entity_registry": {
+    "StrategyDefinition": {
+      "id_field": "strategy_definition_id",
+      "id_prefix": "sdef",
+      "identity": "lowercase canonical UUIDv7 with exact prefix; names and symbols are not identity",
+      "fields": [
+        "strategy_definition_id",
+        "workspace_id",
+        "strategy_type_id",
+        "definition_version",
+        "configuration",
+        "canonical_content_hash",
+        "hash_domain_separator",
+        "lifecycle_state"
+      ]
+    },
+    "StrategyInstance": {
+      "id_field": "strategy_instance_id",
+      "id_prefix": "sinst",
+      "identity": "lowercase canonical UUIDv7 with exact prefix; names and symbols are not identity",
+      "fields": [
+        "strategy_instance_id",
+        "workspace_id",
+        "portfolio_id",
+        "strategy_definition_id",
+        "strategy_definition_version",
+        "exchange_account_id",
+        "trading_universe_id",
+        "market_data_route_id",
+        "execution_route_id",
+        "lifecycle_state"
+      ]
+    },
+    "MarketDataRoute": {
+      "id_field": "market_data_route_id",
+      "id_prefix": "mdr",
+      "identity": "lowercase canonical UUIDv7 with exact prefix; names and symbols are not identity",
+      "fields": [
+        "market_data_route_id",
+        "workspace_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "endpoint_class",
+        "data_scope",
+        "instrument_ids",
+        "channel_types",
+        "snapshot_stream_semantics",
+        "sequence_policy",
+        "freshness_policy",
+        "reconnect_policy",
+        "route_status"
+      ]
+    },
+    "ExecutionRoute": {
+      "id_field": "execution_route_id",
+      "id_prefix": "xroute",
+      "identity": "lowercase canonical UUIDv7 with exact prefix; names and symbols are not identity",
+      "fields": [
+        "execution_route_id",
+        "workspace_id",
+        "exchange_account_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "endpoint_class",
+        "supported_instrument_types",
+        "route_status",
+        "route_capability_ceiling",
+        "authorization_dependencies"
+      ]
+    },
+    "RouteReadiness": {
+      "id_field": "route_id",
+      "id_prefix": "mdr or xroute",
+      "identity": "non-durable Core-owned projection keyed by exact route_id",
+      "fields": [
+        "route_id",
+        "route_kind",
+        "readiness_state",
+        "observed_at",
+        "metadata_version",
+        "sequence_state"
+      ]
+    }
+  },
+  "id_policy": {
+    "format": "<exact_prefix>_<lowercase-canonical-uuidv7>",
+    "foreign_ids_resolve_exact_entity": true,
+    "display_name_or_symbol_is_identity": false
+  },
+  "strategy_definition_contract": {
+    "lifecycle_states": [
+      "DRAFT",
+      "ACTIVE",
+      "RETIRED"
+    ],
+    "transitions": {
+      "DRAFT": [
+        "ACTIVE"
+      ],
+      "ACTIVE": [
+        "RETIRED"
+      ],
+      "RETIRED": []
+    },
+    "hash": {
+      "algorithm": "SHA-256",
+      "domain_separator": "cryptohunter.strategy-definition.v1\\0",
+      "input": "domain separator bytes + canonical configuration UTF-8",
+      "canonical_configuration": {
+        "sort_keys": true,
+        "whitespace_independent": true,
+        "floats_forbidden": true,
+        "nan_and_infinity_forbidden": true,
+        "bool_is_integer": false,
+        "nested_objects_closed": true
+      },
+      "recompute_every_trusted_validation": true
+    },
+    "versioning": {
+      "current_map": "strategy_definitions_by_id keyed by strategy_definition_id",
+      "history_map": "previous_strategy_definitions_by_version_key",
+      "history_key": "<strategy_definition_id>@<definition_version>",
+      "history_exact_range": "1..current-1 without gaps or duplicates",
+      "resolver": "resolve_strategy_definition_exact_version",
+      "immutable_pinning": true,
+      "implicit_upgrade": false,
+      "new_instance_requires_current_active_version": true,
+      "existing_instance_may_remain_pinned_to_prior_active_version": true,
+      "later_version_does_not_invalidate_pin": true,
+      "retired_exact_version_new_activation_forbidden": true
+    },
+    "workspace_policy": "Every create request workspace_id must exist; otherwise WORKSPACE_NOT_FOUND."
+  },
+  "strategy_instance_contract": {
+    "lifecycle_states": [
+      "DRAFT",
+      "BOUND",
+      "ACTIVE",
+      "INACTIVE",
+      "RETIRED"
+    ],
+    "initial": "DRAFT",
+    "transitions": {
+      "DRAFT": [
+        "BOUND",
+        "RETIRED"
+      ],
+      "BOUND": [
+        "ACTIVE",
+        "RETIRED"
+      ],
+      "ACTIVE": [
+        "INACTIVE"
+      ],
+      "INACTIVE": [
+        "ACTIVE",
+        "RETIRED"
+      ],
+      "RETIRED": []
+    },
+    "first_bind_policy": "Each route starts null and is independently first-bound once; a non-null binding is immutable; second binding makes BOUND; rebind requires a new StrategyInstance.",
+    "no_implicit": [
+      "route",
+      "account",
+      "exchange",
+      "universe"
+    ],
+    "exclusive_lifecycle_operations": {
+      "BOUND": "derived only from completing both first binds",
+      "ACTIVE": "ACTIVATE_STRATEGY_INSTANCE",
+      "INACTIVE": "DEACTIVATE_STRATEGY_INSTANCE",
+      "RETIRED": "RETIRE_STRATEGY_INSTANCE"
+    },
+    "persisted_definition_policy": "Exact pinned definition may be ACTIVE or RETIRED, never DRAFT; activation requires ACTIVE.",
+    "terminal_lifecycle_policy": {
+      "ACTIVATE": {
+        "DRAFT": "STRATEGY_INSTANCE_BINDING_MISMATCH",
+        "BOUND": "CONTINUE",
+        "ACTIVE": "STRATEGY_INSTANCE_BINDING_MISMATCH",
+        "INACTIVE": "CONTINUE",
+        "RETIRED": "RETIRED_RESOURCE_FORBIDDEN"
+      },
+      "DEACTIVATE": {
+        "ACTIVE": "CONTINUE",
+        "RETIRED": "RETIRED_RESOURCE_FORBIDDEN",
+        "DRAFT_BOUND_INACTIVE": "STRATEGY_INSTANCE_BINDING_MISMATCH"
+      },
+      "shared_preflight_callable": "validate_strategy_instance_lifecycle_preflight"
+    }
+  },
+  "market_data_route_contract": {
+    "fields": [
+      "market_data_route_id",
+      "workspace_id",
+      "exchange_id",
+      "environment",
+      "market_type",
+      "adapter_family_id",
+      "endpoint_class",
+      "data_scope",
+      "instrument_ids",
+      "channel_types",
+      "snapshot_stream_semantics",
+      "sequence_policy",
+      "freshness_policy",
+      "reconnect_policy",
+      "route_status"
+    ],
+    "data_scopes": [
+      "PUBLIC",
+      "PRIVATE"
+    ],
+    "channel_types": [
+      "TRADES",
+      "ORDER_BOOK",
+      "TICKER",
+      "CANDLES",
+      "PRIVATE_ORDERS",
+      "PRIVATE_BALANCES"
+    ],
+    "private_channels_require_private_scope": true,
+    "snapshot_stream_semantics": "declared exactly",
+    "sequence_policy": "monotonic; gaps deny",
+    "freshness_policy": "deterministic maximum age evaluated with validation_time_utc",
+    "route_lifecycle_separate_from_readiness": true,
+    "endpoint_access_policy": "data_scope must exactly equal endpoint access_scope; PUBLIC forbids PRIVATE_* channels."
+  },
+  "execution_route_contract": {
+    "fields": [
+      "execution_route_id",
+      "workspace_id",
+      "exchange_account_id",
+      "exchange_id",
+      "environment",
+      "market_type",
+      "adapter_family_id",
+      "endpoint_class",
+      "supported_instrument_types",
+      "route_status",
+      "route_capability_ceiling",
+      "authorization_dependencies"
+    ],
+    "separate_from_market_data_route": true,
+    "public_market_data_grants_execution_authority": false,
+    "execution_readiness_max_age_seconds": 30
+  },
+  "route_readiness_contract": {
+    "states": [
+      "UNKNOWN",
+      "NOT_READY",
+      "READY",
+      "STALE"
+    ],
+    "source": "Core-owned route_readiness_by_id only",
+    "persisted_route_field_forbidden": true,
+    "clock": "Core-owned validation_time_utc; system clock forbidden",
+    "market_implies_execution": false,
+    "future_observed_at_forbidden": true,
+    "orphan_forbidden": true,
+    "route_kind_exact": true,
+    "freshness_boundary": "age <= max_age_seconds is fresh",
+    "identity": "non-durable Core-owned projection keyed by exact mdr or xroute route_id",
+    "lifecycle_preflight": {
+      "DRAFT": "STRATEGY_INSTANCE_BINDING_MISMATCH",
+      "BOUND": "CONTINUE",
+      "ACTIVE": "CONTINUE",
+      "INACTIVE": "CONTINUE",
+      "RETIRED": "RETIRED_RESOURCE_FORBIDDEN"
+    }
+  },
+  "endpoint_class_registry": {
+    "PAPER_PUBLIC_DATA": {
+      "environment": "PAPER",
+      "access_scope": "PUBLIC",
+      "allowed_route_kinds": [
+        "MARKET_DATA"
+      ]
+    },
+    "PAPER_SIMULATION": {
+      "environment": "PAPER",
+      "access_scope": "LOCAL_SIMULATION",
+      "allowed_route_kinds": [
+        "EXECUTION"
+      ]
+    },
+    "TESTNET_PUBLIC_DATA": {
+      "environment": "TESTNET",
+      "access_scope": "PUBLIC",
+      "allowed_route_kinds": [
+        "MARKET_DATA"
+      ]
+    },
+    "TESTNET_PRIVATE_DATA": {
+      "environment": "TESTNET",
+      "access_scope": "PRIVATE",
+      "allowed_route_kinds": [
+        "MARKET_DATA",
+        "EXECUTION"
+      ]
+    },
+    "LIVE_PUBLIC_DATA": {
+      "environment": "LIVE",
+      "access_scope": "PUBLIC",
+      "allowed_route_kinds": [
+        "MARKET_DATA"
+      ]
+    },
+    "LIVE_PRIVATE_DATA": {
+      "environment": "LIVE",
+      "access_scope": "PRIVATE",
+      "allowed_route_kinds": [
+        "MARKET_DATA",
+        "EXECUTION"
+      ]
+    }
+  },
+  "endpoint_policy": {
+    "implicit_selection": false,
+    "cross_environment_fallback": false,
+    "testnet_to_live": false,
+    "paper_to_testnet_or_live": false,
+    "public_endpoint_private_execution": false,
+    "private_channel_public_route": false,
+    "urls_forbidden": true
+  },
+  "environment_policy": {
+    "PAPER": {
+      "execution": "local simulation only",
+      "private_exchange_execution": false,
+      "credential_required": false,
+      "active_credential_profile_id_may_be_null": true,
+      "product_capabilities": "must satisfy M0.4"
+    },
+    "TESTNET": {
+      "active_account": true,
+      "exact_capabilities": true,
+      "valid_account_capability_snapshot": true,
+      "active_credential_profile": true,
+      "credential_purpose": "ORDER_ENTRY",
+      "permission": "PLACE_ORDERS",
+      "exact_environment_account_exchange": true,
+      "live_fallback": false
+    },
+    "LIVE": {
+      "execution": "forbidden in current edition",
+      "visibility_may_be_described": true
+    }
+  },
+  "authorization_dependencies_by_environment": {
+    "PAPER": [
+      "PRODUCT_CAPABILITIES"
+    ],
+    "TESTNET": [
+      "ACCOUNT_ACTIVE",
+      "ACCOUNT_CAPABILITY_SNAPSHOT_VALID",
+      "CREDENTIAL_PROFILE_ACTIVE",
+      "ORDER_ENTRY_PURPOSE",
+      "PLACE_ORDERS_PERMISSION",
+      "PRODUCT_CAPABILITIES"
+    ],
+    "LIVE": [
+      "CURRENT_EDITION_LIVE_EXECUTION_FORBIDDEN"
+    ]
+  },
+  "authorization_dependency_policy": {
+    "single_authority": "authorization_dependencies_by_environment",
+    "exact_set_equality": true,
+    "used_by": [
+      "BIND_EXECUTION_ROUTE",
+      "VALIDATE_ROUTE_READINESS",
+      "ACTIVATE_STRATEGY_INSTANCE",
+      "tests",
+      "Markdown"
+    ],
+    "bind_checks_declaration_not_current_operability": true
+  },
+  "trusted_validation_context": {
+    "map_fields": {
+      "strategy_definitions_by_id": "StrategyDefinition",
+      "previous_strategy_definitions_by_version_key": "StrategyDefinition",
+      "strategy_instances_by_id": "StrategyInstance",
+      "market_data_routes_by_id": "MarketDataRoute",
+      "execution_routes_by_id": "ExecutionRoute",
+      "accounts_by_id": "ExchangeAccountProjection",
+      "universes_by_id": "TradingUniverseProjection",
+      "instruments_by_id": "InstrumentProjection",
+      "catalogs_by_id": "InstrumentCatalogProjection",
+      "account_capability_snapshots_by_id": "AccountCapabilitySnapshotProjection",
+      "credential_profiles_by_id": "CredentialProfileProjection",
+      "product_capabilities_by_environment": "ProductCapabilitiesProjection",
+      "route_readiness_by_id": "RouteReadiness",
+      "portfolios_by_id": "PortfolioProjection"
+    },
+    "scalar_fields": {
+      "validation_time_utc": "timestamp"
+    },
+    "array_fields": {
+      "workspace_ids": {
+        "item_type": "id",
+        "id_prefix": "ws",
+        "unique": true,
+        "empty_allowed": false
+      },
+      "active_strategy_instances": {
+        "item_type": "id",
+        "id_prefix": "sinst",
+        "unique": true,
+        "empty_allowed": true,
+        "semantics": "exact IDs whose persisted lifecycle_state is ACTIVE"
+      }
+    },
+    "exact_top_level": true,
+    "validation_stages": [
+      "exact top-level context",
+      "all record schemas and map-key bindings",
+      "StrategyDefinition lineage and hashes",
+      "global referential integrity",
+      "derived cross-record invariants"
+    ]
+  },
+  "validation_order": [
+    "exact request validation",
+    "exact top-level context",
+    "validation of every record",
+    "global referential integrity",
+    "operation-specific lookup",
+    "lifecycle, routing and authority",
+    "immutable planned outcome",
+    "dispatcher denial membership"
+  ],
+  "referential_integrity": {
+    "persisted_dangling_reference": "TRUSTED_CONTEXT_INVALID",
+    "request_only_missing_resource": "operation-specific denial",
+    "strategy_instance": [
+      "exact definition version",
+      "Workspace",
+      "Portfolio",
+      "ExchangeAccount",
+      "universe belongs to exact account",
+      "non-null routes exist",
+      "market route exact workspace/exchange/environment/market_type",
+      "execution route exact workspace/account/exchange/environment/market_type"
+    ],
+    "universe_instrument_catalog": [
+      "every instrument and source catalog exists",
+      "source catalog set exactly equals catalogs used by universe instruments",
+      "instrument belongs to exact catalog",
+      "catalog back-references exact instrument",
+      "exchange/environment/market_type equal account",
+      "Instrument.source_adapter_family_id == Catalog.adapter_family_id"
+    ],
+    "bound_execution_adapter": "ExecutionRoute.adapter_family_id == Instrument.source_adapter_family_id == Catalog.adapter_family_id; persisted mismatch is TRUSTED_CONTEXT_INVALID",
+    "unbound_execution_candidate": "adapter mismatch during bind is ROUTE_ADAPTER_MISMATCH",
+    "account_snapshot": [
+      "VALID, STALE, and REJECTED are structurally canonical; TESTNET authorization evaluates operability",
+      "exact snapshot ID/account/exchange/environment/market_type",
+      "source hash equals attestation",
+      "temporal invariants use validation_time_utc"
+    ],
+    "route_readiness": [
+      "existing route",
+      "exact kind",
+      "no orphan"
+    ],
+    "definition_lineage_immutability": [
+      "workspace_id",
+      "strategy_type_id",
+      "hash_domain_separator"
+    ],
+    "all_routes_validated_independently": true
+  },
+  "credential_map_policy": {
+    "contents": "only actively selected profiles",
+    "maximum_per_account": 1,
+    "binding": [
+      "exact account",
+      "exact exchange",
+      "exact environment"
+    ],
+    "lifecycle": "ACTIVE",
+    "TESTNET": [
+      "purpose ORDER_ENTRY",
+      "permission PLACE_ORDERS"
+    ],
+    "PAPER": "null selection and empty map permitted",
+    "lifecycle_requirement": "Every selected mapped profile is ACTIVE."
+  },
+  "operation_registry": {
+    "CREATE_STRATEGY_DEFINITION": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_definition_id",
+          "workspace_id",
+          "strategy_type_id",
+          "definition_version",
+          "configuration"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_definition_id": "id",
+          "workspace_id": "id",
+          "strategy_type_id": "string",
+          "definition_version": "integer",
+          "configuration": "object"
+        },
+        "constants": {
+          "operation": "CREATE_STRATEGY_DEFINITION",
+          "authority": "CoreHost",
+          "intent": "PLAN_CREATE"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {
+          "configuration": {
+            "exact_fields": [
+              "lookback",
+              "enabled"
+            ],
+            "field_types": {
+              "lookback": "integer",
+              "enabled": "boolean"
+            },
+            "nullable_fields": []
+          }
+        },
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned create_strategy_definition",
+      "allowed_denials_ref": "allowed_denials_by_operation.CREATE_STRATEGY_DEFINITION",
+      "success_event_ref": "success_event_by_operation.CREATE_STRATEGY_DEFINITION",
+      "denial_event_ref": "denial_event_by_operation.CREATE_STRATEGY_DEFINITION",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "MUTATION_PLAN_ONLY"
+    },
+    "ACTIVATE_STRATEGY_DEFINITION": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_definition_id",
+          "definition_version"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_definition_id": "id",
+          "definition_version": "integer"
+        },
+        "constants": {
+          "operation": "ACTIVATE_STRATEGY_DEFINITION",
+          "authority": "CoreHost",
+          "intent": "PLAN_ACTIVATE"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned activate_strategy_definition",
+      "allowed_denials_ref": "allowed_denials_by_operation.ACTIVATE_STRATEGY_DEFINITION",
+      "success_event_ref": "success_event_by_operation.ACTIVATE_STRATEGY_DEFINITION",
+      "denial_event_ref": "denial_event_by_operation.ACTIVATE_STRATEGY_DEFINITION",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "MUTATION_PLAN_ONLY"
+    },
+    "RETIRE_STRATEGY_DEFINITION": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_definition_id",
+          "definition_version"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_definition_id": "id",
+          "definition_version": "integer"
+        },
+        "constants": {
+          "operation": "RETIRE_STRATEGY_DEFINITION",
+          "authority": "CoreHost",
+          "intent": "PLAN_RETIRE"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned retire_strategy_definition",
+      "allowed_denials_ref": "allowed_denials_by_operation.RETIRE_STRATEGY_DEFINITION",
+      "success_event_ref": "success_event_by_operation.RETIRE_STRATEGY_DEFINITION",
+      "denial_event_ref": "denial_event_by_operation.RETIRE_STRATEGY_DEFINITION",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "MUTATION_PLAN_ONLY"
+    },
+    "CREATE_STRATEGY_INSTANCE": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_instance_id",
+          "workspace_id",
+          "portfolio_id",
+          "strategy_definition_id",
+          "strategy_definition_version",
+          "exchange_account_id",
+          "trading_universe_id",
+          "market_data_route_id",
+          "execution_route_id",
+          "lifecycle_state"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_instance_id": "id",
+          "workspace_id": "id",
+          "portfolio_id": "id",
+          "strategy_definition_id": "id",
+          "strategy_definition_version": "integer",
+          "exchange_account_id": "id",
+          "trading_universe_id": "id",
+          "market_data_route_id": "id",
+          "execution_route_id": "id",
+          "lifecycle_state": "string"
+        },
+        "constants": {
+          "operation": "CREATE_STRATEGY_INSTANCE",
+          "authority": "CoreHost",
+          "intent": "PLAN_CREATE",
+          "lifecycle_state": "DRAFT"
+        },
+        "nullable_fields": [
+          "market_data_route_id",
+          "execution_route_id"
+        ],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned create_strategy_instance",
+      "allowed_denials_ref": "allowed_denials_by_operation.CREATE_STRATEGY_INSTANCE",
+      "success_event_ref": "success_event_by_operation.CREATE_STRATEGY_INSTANCE",
+      "denial_event_ref": "denial_event_by_operation.CREATE_STRATEGY_INSTANCE",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "MUTATION_PLAN_ONLY"
+    },
+    "BIND_MARKET_DATA_ROUTE": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_instance_id",
+          "market_data_route_id"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_instance_id": "id",
+          "market_data_route_id": "id"
+        },
+        "constants": {
+          "operation": "BIND_MARKET_DATA_ROUTE",
+          "authority": "CoreHost",
+          "intent": "PLAN_FIRST_BIND"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned bind_market_data_route",
+      "allowed_denials_ref": "allowed_denials_by_operation.BIND_MARKET_DATA_ROUTE",
+      "success_event_ref": "success_event_by_operation.BIND_MARKET_DATA_ROUTE",
+      "denial_event_ref": "denial_event_by_operation.BIND_MARKET_DATA_ROUTE",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "MUTATION_PLAN_ONLY"
+    },
+    "BIND_EXECUTION_ROUTE": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_instance_id",
+          "execution_route_id"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_instance_id": "id",
+          "execution_route_id": "id"
+        },
+        "constants": {
+          "operation": "BIND_EXECUTION_ROUTE",
+          "authority": "CoreHost",
+          "intent": "PLAN_FIRST_BIND"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned bind_execution_route",
+      "allowed_denials_ref": "allowed_denials_by_operation.BIND_EXECUTION_ROUTE",
+      "success_event_ref": "success_event_by_operation.BIND_EXECUTION_ROUTE",
+      "denial_event_ref": "denial_event_by_operation.BIND_EXECUTION_ROUTE",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "MUTATION_PLAN_ONLY"
+    },
+    "VALIDATE_ROUTE_READINESS": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_instance_id"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_instance_id": "id"
+        },
+        "constants": {
+          "operation": "VALIDATE_ROUTE_READINESS",
+          "authority": "CoreHost",
+          "intent": "VALIDATE_ONLY"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned validate_route_readiness",
+      "allowed_denials_ref": "allowed_denials_by_operation.VALIDATE_ROUTE_READINESS",
+      "success_event_ref": "success_event_by_operation.VALIDATE_ROUTE_READINESS",
+      "denial_event_ref": "denial_event_by_operation.VALIDATE_ROUTE_READINESS",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "VALIDATE_ONLY"
+    },
+    "ACTIVATE_STRATEGY_INSTANCE": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_instance_id"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_instance_id": "id"
+        },
+        "constants": {
+          "operation": "ACTIVATE_STRATEGY_INSTANCE",
+          "authority": "CoreHost",
+          "intent": "ACTIVATE"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned activate_strategy_instance",
+      "allowed_denials_ref": "allowed_denials_by_operation.ACTIVATE_STRATEGY_INSTANCE",
+      "success_event_ref": "success_event_by_operation.ACTIVATE_STRATEGY_INSTANCE",
+      "denial_event_ref": "denial_event_by_operation.ACTIVATE_STRATEGY_INSTANCE",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "ACTIVATE"
+    },
+    "DEACTIVATE_STRATEGY_INSTANCE": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_instance_id"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_instance_id": "id"
+        },
+        "constants": {
+          "operation": "DEACTIVATE_STRATEGY_INSTANCE",
+          "authority": "CoreHost",
+          "intent": "PLAN_DEACTIVATE"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned deactivate_strategy_instance",
+      "allowed_denials_ref": "allowed_denials_by_operation.DEACTIVATE_STRATEGY_INSTANCE",
+      "success_event_ref": "success_event_by_operation.DEACTIVATE_STRATEGY_INSTANCE",
+      "denial_event_ref": "denial_event_by_operation.DEACTIVATE_STRATEGY_INSTANCE",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "MUTATION_PLAN_ONLY"
+    },
+    "RETIRE_STRATEGY_INSTANCE": {
+      "request_schema": {
+        "request_fields": [
+          "operation",
+          "request_id",
+          "authority",
+          "intent",
+          "strategy_instance_id"
+        ],
+        "request_types": {
+          "operation": "string",
+          "request_id": "id",
+          "authority": "string",
+          "intent": "string",
+          "strategy_instance_id": "id"
+        },
+        "constants": {
+          "operation": "RETIRE_STRATEGY_INSTANCE",
+          "authority": "CoreHost",
+          "intent": "PLAN_RETIRE"
+        },
+        "nullable_fields": [],
+        "nested_schemas": {},
+        "closed": true
+      },
+      "authority": "CoreHost",
+      "default_success": false,
+      "success_transition": "immutable planned retire_strategy_instance",
+      "allowed_denials_ref": "allowed_denials_by_operation.RETIRE_STRATEGY_INSTANCE",
+      "success_event_ref": "success_event_by_operation.RETIRE_STRATEGY_INSTANCE",
+      "denial_event_ref": "denial_event_by_operation.RETIRE_STRATEGY_INSTANCE",
+      "storage_mutation": false,
+      "planned_result_immutable": true,
+      "intent": "MUTATION_PLAN_ONLY"
+    }
+  },
+  "forbidden_operations": [
+    "SUBMIT_ORDER",
+    "CREATE_ORDER",
+    "CANCEL_ORDER",
+    "REPLACE_ORDER",
+    "EXECUTE_TRADE"
+  ],
+  "denial_code_registry": [
+    "ACCOUNT_READINESS_BLOCKED",
+    "CAPABILITY_SNAPSHOT_BLOCKED",
+    "CONTRACT_INCONSISTENT",
+    "ENDPOINT_FALLBACK_FORBIDDEN",
+    "EXECUTION_ROUTE_NOT_FOUND",
+    "EXECUTION_ROUTE_NOT_READY",
+    "INSTRUMENT_SCOPE_MISMATCH",
+    "LIVE_EXECUTION_FORBIDDEN",
+    "MARKET_DATA_FRESHNESS_BLOCKED",
+    "MARKET_DATA_ROUTE_NOT_FOUND",
+    "MARKET_DATA_ROUTE_NOT_READY",
+    "MARKET_DATA_SEQUENCE_INVALID",
+    "PRODUCT_CAPABILITIES_BLOCKED",
+    "REQUEST_SCHEMA_INVALID",
+    "RETIRED_RESOURCE_FORBIDDEN",
+    "ROUTE_ADAPTER_MISMATCH",
+    "ROUTE_CAPABILITY_BLOCKED",
+    "ROUTE_SCOPE_MISMATCH",
+    "STRATEGY_DEFINITION_ID_COLLISION",
+    "STRATEGY_DEFINITION_NOT_FOUND",
+    "STRATEGY_DEFINITION_STATE_CONFLICT",
+    "STRATEGY_DEFINITION_VERSION_MISMATCH",
+    "STRATEGY_INSTANCE_BINDING_MISMATCH",
+    "STRATEGY_INSTANCE_ID_COLLISION",
+    "STRATEGY_INSTANCE_NOT_FOUND",
+    "TRADING_UNIVERSE_INVALID",
+    "TRUSTED_CONTEXT_INVALID",
+    "UNKNOWN_OPERATION",
+    "WORKSPACE_NOT_FOUND"
+  ],
+  "denial_semantics": {
+    "CONTRACT_INCONSISTENT": "corrupt machine contract only; never ordinary request, context, lifecycle, binding, readiness, or capability failure",
+    "UNKNOWN_OPERATION": "operation name is outside closed registry"
+  },
+  "validator_denial_registry": {
+    "validate_request": {
+      "denials": [
+        "REQUEST_SCHEMA_INVALID"
+      ],
+      "callable_required": true
+    },
+    "validate_context": {
+      "denials": [
+        "TRUSTED_CONTEXT_INVALID"
+      ],
+      "callable_required": true
+    },
+    "validate_definition_create": {
+      "denials": [
+        "STRATEGY_DEFINITION_ID_COLLISION",
+        "STRATEGY_DEFINITION_VERSION_MISMATCH",
+        "WORKSPACE_NOT_FOUND"
+      ],
+      "callable_required": true
+    },
+    "validate_definition_lifecycle": {
+      "denials": [
+        "STRATEGY_DEFINITION_NOT_FOUND",
+        "STRATEGY_DEFINITION_VERSION_MISMATCH",
+        "RETIRED_RESOURCE_FORBIDDEN",
+        "STRATEGY_DEFINITION_STATE_CONFLICT"
+      ],
+      "callable_required": true
+    },
+    "validate_instance_create": {
+      "denials": [
+        "STRATEGY_INSTANCE_ID_COLLISION",
+        "STRATEGY_DEFINITION_NOT_FOUND",
+        "STRATEGY_DEFINITION_VERSION_MISMATCH",
+        "RETIRED_RESOURCE_FORBIDDEN",
+        "TRADING_UNIVERSE_INVALID",
+        "STRATEGY_INSTANCE_BINDING_MISMATCH",
+        "STRATEGY_DEFINITION_STATE_CONFLICT"
+      ],
+      "callable_required": true
+    },
+    "validate_market_bind": {
+      "denials": [
+        "STRATEGY_INSTANCE_NOT_FOUND",
+        "STRATEGY_INSTANCE_BINDING_MISMATCH",
+        "MARKET_DATA_ROUTE_NOT_FOUND",
+        "ROUTE_SCOPE_MISMATCH",
+        "ENDPOINT_FALLBACK_FORBIDDEN",
+        "INSTRUMENT_SCOPE_MISMATCH",
+        "RETIRED_RESOURCE_FORBIDDEN"
+      ],
+      "callable_required": true
+    },
+    "validate_execution_bind": {
+      "denials": [
+        "STRATEGY_INSTANCE_NOT_FOUND",
+        "STRATEGY_INSTANCE_BINDING_MISMATCH",
+        "EXECUTION_ROUTE_NOT_FOUND",
+        "ROUTE_SCOPE_MISMATCH",
+        "ROUTE_ADAPTER_MISMATCH",
+        "ROUTE_CAPABILITY_BLOCKED",
+        "ENDPOINT_FALLBACK_FORBIDDEN",
+        "LIVE_EXECUTION_FORBIDDEN",
+        "RETIRED_RESOURCE_FORBIDDEN"
+      ],
+      "callable_required": true
+    },
+    "validate_route_readiness_operation": {
+      "denials": [
+        "STRATEGY_INSTANCE_NOT_FOUND",
+        "MARKET_DATA_ROUTE_NOT_READY",
+        "EXECUTION_ROUTE_NOT_READY",
+        "MARKET_DATA_FRESHNESS_BLOCKED",
+        "MARKET_DATA_SEQUENCE_INVALID",
+        "ROUTE_CAPABILITY_BLOCKED",
+        "INSTRUMENT_SCOPE_MISMATCH"
+      ],
+      "callable_required": true
+    },
+    "validate_activation": {
+      "denials": [
+        "RETIRED_RESOURCE_FORBIDDEN",
+        "ACCOUNT_READINESS_BLOCKED",
+        "TRADING_UNIVERSE_INVALID",
+        "INSTRUMENT_SCOPE_MISMATCH",
+        "MARKET_DATA_ROUTE_NOT_READY",
+        "EXECUTION_ROUTE_NOT_READY",
+        "MARKET_DATA_FRESHNESS_BLOCKED",
+        "MARKET_DATA_SEQUENCE_INVALID",
+        "ROUTE_CAPABILITY_BLOCKED",
+        "CAPABILITY_SNAPSHOT_BLOCKED",
+        "PRODUCT_CAPABILITIES_BLOCKED",
+        "LIVE_EXECUTION_FORBIDDEN"
+      ],
+      "callable_required": true
+    },
+    "validate_deactivation": {
+      "denials": [],
+      "callable_required": true
+    },
+    "validate_retirement": {
+      "denials": [
+        "STRATEGY_INSTANCE_NOT_FOUND",
+        "STRATEGY_INSTANCE_BINDING_MISMATCH",
+        "RETIRED_RESOURCE_FORBIDDEN"
+      ],
+      "callable_required": true
+    },
+    "validate_authorization_operability": {
+      "denials": [
+        "ACCOUNT_READINESS_BLOCKED",
+        "CAPABILITY_SNAPSHOT_BLOCKED",
+        "PRODUCT_CAPABILITIES_BLOCKED",
+        "LIVE_EXECUTION_FORBIDDEN",
+        "ROUTE_CAPABILITY_BLOCKED"
+      ],
+      "callable_required": true
+    },
+    "validate_readiness_lifecycle": {
+      "denials": [
+        "STRATEGY_INSTANCE_NOT_FOUND",
+        "STRATEGY_INSTANCE_BINDING_MISMATCH",
+        "RETIRED_RESOURCE_FORBIDDEN"
+      ],
+      "callable_required": true
+    },
+    "validate_strategy_instance_lifecycle_preflight": {
+      "denials": [
+        "STRATEGY_INSTANCE_NOT_FOUND",
+        "STRATEGY_INSTANCE_BINDING_MISMATCH",
+        "RETIRED_RESOURCE_FORBIDDEN"
+      ],
+      "callable_required": true
+    }
+  },
+  "operation_validator_call_graph": {
+    "CREATE_STRATEGY_DEFINITION": [
+      "validate_request",
+      "validate_context",
+      "validate_definition_create"
+    ],
+    "ACTIVATE_STRATEGY_DEFINITION": [
+      "validate_request",
+      "validate_context",
+      "validate_definition_lifecycle"
+    ],
+    "RETIRE_STRATEGY_DEFINITION": [
+      "validate_request",
+      "validate_context",
+      "validate_definition_lifecycle"
+    ],
+    "CREATE_STRATEGY_INSTANCE": [
+      "validate_request",
+      "validate_context",
+      "validate_instance_create"
+    ],
+    "BIND_MARKET_DATA_ROUTE": [
+      "validate_request",
+      "validate_context",
+      "validate_market_bind"
+    ],
+    "BIND_EXECUTION_ROUTE": [
+      "validate_request",
+      "validate_context",
+      "validate_execution_bind"
+    ],
+    "VALIDATE_ROUTE_READINESS": [
+      "validate_request",
+      "validate_context",
+      "validate_readiness_lifecycle",
+      "validate_authorization_operability",
+      "validate_route_readiness_operation"
+    ],
+    "ACTIVATE_STRATEGY_INSTANCE": [
+      "validate_request",
+      "validate_context",
+      "validate_strategy_instance_lifecycle_preflight",
+      "validate_authorization_operability",
+      "validate_activation"
+    ],
+    "DEACTIVATE_STRATEGY_INSTANCE": [
+      "validate_request",
+      "validate_context",
+      "validate_strategy_instance_lifecycle_preflight",
+      "validate_deactivation"
+    ],
+    "RETIRE_STRATEGY_INSTANCE": [
+      "validate_request",
+      "validate_context",
+      "validate_retirement"
+    ]
+  },
+  "allowed_denials_by_operation": {
+    "CREATE_STRATEGY_DEFINITION": [
+      "CONTRACT_INCONSISTENT",
+      "REQUEST_SCHEMA_INVALID",
+      "STRATEGY_DEFINITION_ID_COLLISION",
+      "STRATEGY_DEFINITION_VERSION_MISMATCH",
+      "TRUSTED_CONTEXT_INVALID",
+      "WORKSPACE_NOT_FOUND"
+    ],
+    "ACTIVATE_STRATEGY_DEFINITION": [
+      "CONTRACT_INCONSISTENT",
+      "REQUEST_SCHEMA_INVALID",
+      "RETIRED_RESOURCE_FORBIDDEN",
+      "STRATEGY_DEFINITION_NOT_FOUND",
+      "STRATEGY_DEFINITION_VERSION_MISMATCH",
+      "TRUSTED_CONTEXT_INVALID",
+      "STRATEGY_DEFINITION_STATE_CONFLICT"
+    ],
+    "RETIRE_STRATEGY_DEFINITION": [
+      "CONTRACT_INCONSISTENT",
+      "REQUEST_SCHEMA_INVALID",
+      "RETIRED_RESOURCE_FORBIDDEN",
+      "STRATEGY_DEFINITION_NOT_FOUND",
+      "STRATEGY_DEFINITION_VERSION_MISMATCH",
+      "TRUSTED_CONTEXT_INVALID",
+      "STRATEGY_DEFINITION_STATE_CONFLICT"
+    ],
+    "CREATE_STRATEGY_INSTANCE": [
+      "CONTRACT_INCONSISTENT",
+      "REQUEST_SCHEMA_INVALID",
+      "RETIRED_RESOURCE_FORBIDDEN",
+      "STRATEGY_DEFINITION_NOT_FOUND",
+      "STRATEGY_DEFINITION_VERSION_MISMATCH",
+      "STRATEGY_INSTANCE_ID_COLLISION",
+      "TRADING_UNIVERSE_INVALID",
+      "TRUSTED_CONTEXT_INVALID",
+      "STRATEGY_INSTANCE_BINDING_MISMATCH",
+      "STRATEGY_DEFINITION_STATE_CONFLICT"
+    ],
+    "BIND_MARKET_DATA_ROUTE": [
+      "CONTRACT_INCONSISTENT",
+      "ENDPOINT_FALLBACK_FORBIDDEN",
+      "INSTRUMENT_SCOPE_MISMATCH",
+      "MARKET_DATA_ROUTE_NOT_FOUND",
+      "REQUEST_SCHEMA_INVALID",
+      "ROUTE_SCOPE_MISMATCH",
+      "STRATEGY_INSTANCE_BINDING_MISMATCH",
+      "STRATEGY_INSTANCE_NOT_FOUND",
+      "TRUSTED_CONTEXT_INVALID",
+      "RETIRED_RESOURCE_FORBIDDEN"
+    ],
+    "BIND_EXECUTION_ROUTE": [
+      "CONTRACT_INCONSISTENT",
+      "ENDPOINT_FALLBACK_FORBIDDEN",
+      "EXECUTION_ROUTE_NOT_FOUND",
+      "LIVE_EXECUTION_FORBIDDEN",
+      "REQUEST_SCHEMA_INVALID",
+      "ROUTE_ADAPTER_MISMATCH",
+      "ROUTE_CAPABILITY_BLOCKED",
+      "ROUTE_SCOPE_MISMATCH",
+      "STRATEGY_INSTANCE_BINDING_MISMATCH",
+      "STRATEGY_INSTANCE_NOT_FOUND",
+      "TRUSTED_CONTEXT_INVALID",
+      "RETIRED_RESOURCE_FORBIDDEN"
+    ],
+    "VALIDATE_ROUTE_READINESS": [
+      "CONTRACT_INCONSISTENT",
+      "EXECUTION_ROUTE_NOT_READY",
+      "MARKET_DATA_FRESHNESS_BLOCKED",
+      "MARKET_DATA_ROUTE_NOT_READY",
+      "MARKET_DATA_SEQUENCE_INVALID",
+      "REQUEST_SCHEMA_INVALID",
+      "STRATEGY_INSTANCE_NOT_FOUND",
+      "TRUSTED_CONTEXT_INVALID",
+      "ROUTE_CAPABILITY_BLOCKED",
+      "INSTRUMENT_SCOPE_MISMATCH",
+      "ACCOUNT_READINESS_BLOCKED",
+      "CAPABILITY_SNAPSHOT_BLOCKED",
+      "PRODUCT_CAPABILITIES_BLOCKED",
+      "LIVE_EXECUTION_FORBIDDEN",
+      "STRATEGY_INSTANCE_BINDING_MISMATCH",
+      "RETIRED_RESOURCE_FORBIDDEN"
+    ],
+    "ACTIVATE_STRATEGY_INSTANCE": [
+      "ACCOUNT_READINESS_BLOCKED",
+      "CAPABILITY_SNAPSHOT_BLOCKED",
+      "CONTRACT_INCONSISTENT",
+      "EXECUTION_ROUTE_NOT_READY",
+      "INSTRUMENT_SCOPE_MISMATCH",
+      "LIVE_EXECUTION_FORBIDDEN",
+      "MARKET_DATA_FRESHNESS_BLOCKED",
+      "MARKET_DATA_ROUTE_NOT_READY",
+      "MARKET_DATA_SEQUENCE_INVALID",
+      "PRODUCT_CAPABILITIES_BLOCKED",
+      "REQUEST_SCHEMA_INVALID",
+      "RETIRED_RESOURCE_FORBIDDEN",
+      "ROUTE_CAPABILITY_BLOCKED",
+      "STRATEGY_INSTANCE_NOT_FOUND",
+      "TRADING_UNIVERSE_INVALID",
+      "TRUSTED_CONTEXT_INVALID",
+      "STRATEGY_INSTANCE_BINDING_MISMATCH"
+    ],
+    "DEACTIVATE_STRATEGY_INSTANCE": [
+      "CONTRACT_INCONSISTENT",
+      "REQUEST_SCHEMA_INVALID",
+      "STRATEGY_INSTANCE_BINDING_MISMATCH",
+      "STRATEGY_INSTANCE_NOT_FOUND",
+      "TRUSTED_CONTEXT_INVALID",
+      "RETIRED_RESOURCE_FORBIDDEN"
+    ],
+    "RETIRE_STRATEGY_INSTANCE": [
+      "CONTRACT_INCONSISTENT",
+      "REQUEST_SCHEMA_INVALID",
+      "RETIRED_RESOURCE_FORBIDDEN",
+      "STRATEGY_INSTANCE_BINDING_MISMATCH",
+      "STRATEGY_INSTANCE_NOT_FOUND",
+      "TRUSTED_CONTEXT_INVALID"
+    ]
+  },
+  "success_event_by_operation": {
+    "CREATE_STRATEGY_DEFINITION": "STRATEGY_ROUTING_CREATE_STRATEGY_DEFINITION_SUCCEEDED",
+    "ACTIVATE_STRATEGY_DEFINITION": "STRATEGY_ROUTING_ACTIVATE_STRATEGY_DEFINITION_SUCCEEDED",
+    "RETIRE_STRATEGY_DEFINITION": "STRATEGY_ROUTING_RETIRE_STRATEGY_DEFINITION_SUCCEEDED",
+    "CREATE_STRATEGY_INSTANCE": "STRATEGY_ROUTING_CREATE_STRATEGY_INSTANCE_SUCCEEDED",
+    "BIND_MARKET_DATA_ROUTE": "STRATEGY_ROUTING_BIND_MARKET_DATA_ROUTE_SUCCEEDED",
+    "BIND_EXECUTION_ROUTE": "STRATEGY_ROUTING_BIND_EXECUTION_ROUTE_SUCCEEDED",
+    "VALIDATE_ROUTE_READINESS": "STRATEGY_ROUTING_VALIDATE_ROUTE_READINESS_SUCCEEDED",
+    "ACTIVATE_STRATEGY_INSTANCE": "STRATEGY_ROUTING_ACTIVATE_STRATEGY_INSTANCE_SUCCEEDED",
+    "DEACTIVATE_STRATEGY_INSTANCE": "STRATEGY_ROUTING_DEACTIVATE_STRATEGY_INSTANCE_SUCCEEDED",
+    "RETIRE_STRATEGY_INSTANCE": "STRATEGY_ROUTING_RETIRE_STRATEGY_INSTANCE_SUCCEEDED"
+  },
+  "denial_event_by_operation": {
+    "CREATE_STRATEGY_DEFINITION": "STRATEGY_ROUTING_CREATE_STRATEGY_DEFINITION_DENIED",
+    "ACTIVATE_STRATEGY_DEFINITION": "STRATEGY_ROUTING_ACTIVATE_STRATEGY_DEFINITION_DENIED",
+    "RETIRE_STRATEGY_DEFINITION": "STRATEGY_ROUTING_RETIRE_STRATEGY_DEFINITION_DENIED",
+    "CREATE_STRATEGY_INSTANCE": "STRATEGY_ROUTING_CREATE_STRATEGY_INSTANCE_DENIED",
+    "BIND_MARKET_DATA_ROUTE": "STRATEGY_ROUTING_BIND_MARKET_DATA_ROUTE_DENIED",
+    "BIND_EXECUTION_ROUTE": "STRATEGY_ROUTING_BIND_EXECUTION_ROUTE_DENIED",
+    "VALIDATE_ROUTE_READINESS": "STRATEGY_ROUTING_VALIDATE_ROUTE_READINESS_DENIED",
+    "ACTIVATE_STRATEGY_INSTANCE": "STRATEGY_ROUTING_ACTIVATE_STRATEGY_INSTANCE_DENIED",
+    "DEACTIVATE_STRATEGY_INSTANCE": "STRATEGY_ROUTING_DEACTIVATE_STRATEGY_INSTANCE_DENIED",
+    "RETIRE_STRATEGY_INSTANCE": "STRATEGY_ROUTING_RETIRE_STRATEGY_INSTANCE_DENIED"
+  },
+  "audit_event_contract": {
+    "exact_fields": [
+      "event_type",
+      "operation",
+      "outcome",
+      "denial_code",
+      "request_id",
+      "strategy_definition_id",
+      "strategy_instance_id",
+      "route_id",
+      "exchange_account_id",
+      "occurred_at"
+    ],
+    "closed": true,
+    "safe_ids_only": true,
+    "secrets": false,
+    "endpoint_url": false,
+    "credential_material": false,
+    "special_events": {
+      "UNKNOWN_OPERATION": "STRATEGY_ROUTING_UNKNOWN_OPERATION_DENIED",
+      "CONTRACT_INCONSISTENT": "STRATEGY_ROUTING_CONTRACT_INCONSISTENT"
+    }
+  },
+  "dispatch_policy": {
+    "validation_precedence": "validation_order",
+    "full_context_before_operation_preflight": true,
+    "immutable_planned_outcome": true,
+    "dispatcher_checks_denial_membership": true,
+    "unknown_operation": "UNKNOWN_OPERATION",
+    "registry_fault": "CONTRACT_INCONSISTENT",
+    "no_context_mutation": true,
+    "interface": "dispatcher(operation, request, context) -> immutable MappingProxyType decision; expected denial is never an input",
+    "execution_order": [
+      "validate_request",
+      "validate_context",
+      "operation validator from operation_validator_call_graph",
+      "immutable planned outcome",
+      "denial membership"
+    ],
+    "planned_outcome_validation": "required after operation validator success; inconsistent plans deny CONTRACT_INCONSISTENT",
+    "deep_immutability": "decisions recursively freeze dicts as mapping proxies and lists as tuples"
+  },
+  "reachability_contract": {
+    "case_per_operation_denial_pair": true,
+    "request_and_context_cases_may_start_invalid": [
+      "REQUEST_SCHEMA_INVALID",
+      "TRUSTED_CONTEXT_INVALID"
+    ],
+    "all_other_cases_start_with_valid_trusted_context": true,
+    "direct_validator_dispatcher_parity": true,
+    "graph_equality": "union validator denials == allowed denials - CONTRACT_INCONSISTENT",
+    "dead_codes_forbidden": true
+  },
+  "cross_contract_references": {
+    "M0.2": "canonical entities and durable IDs",
+    "M0.3": "CoreHost authority",
+    "M0.4": "environment and ProductCapabilities fail-closed boundaries",
+    "M0.5": "accounts, snapshots, credentials, instruments, catalogs, universes; no weakening"
+  },
+  "record_schemas": {
+    "StrategyDefinition": {
+      "exact_fields": [
+        "strategy_definition_id",
+        "workspace_id",
+        "strategy_type_id",
+        "definition_version",
+        "configuration",
+        "canonical_content_hash",
+        "hash_domain_separator",
+        "lifecycle_state"
+      ],
+      "field_types": {
+        "strategy_definition_id": "id",
+        "workspace_id": "id",
+        "strategy_type_id": "string",
+        "definition_version": "integer",
+        "configuration": "object",
+        "canonical_content_hash": "sha256",
+        "hash_domain_separator": "string",
+        "lifecycle_state": "enum"
+      },
+      "id_field": "strategy_definition_id",
+      "id_prefix": "sdef",
+      "enum_registry": {
+        "lifecycle_state": [
+          "DRAFT",
+          "ACTIVE",
+          "RETIRED"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {},
+      "nested_schemas": {
+        "configuration": {
+          "exact_fields": [
+            "lookback",
+            "enabled"
+          ],
+          "field_types": {
+            "lookback": "integer",
+            "enabled": "boolean"
+          },
+          "nullable_fields": []
+        }
+      },
+      "entity_references": {
+        "workspace_id": "Workspace"
+      }
+    },
+    "StrategyInstance": {
+      "exact_fields": [
+        "strategy_instance_id",
+        "workspace_id",
+        "portfolio_id",
+        "strategy_definition_id",
+        "strategy_definition_version",
+        "exchange_account_id",
+        "trading_universe_id",
+        "market_data_route_id",
+        "execution_route_id",
+        "lifecycle_state"
+      ],
+      "field_types": {
+        "strategy_instance_id": "id",
+        "workspace_id": "id",
+        "portfolio_id": "id",
+        "strategy_definition_id": "id",
+        "strategy_definition_version": "integer",
+        "exchange_account_id": "id",
+        "trading_universe_id": "id",
+        "market_data_route_id": "id",
+        "execution_route_id": "id",
+        "lifecycle_state": "enum"
+      },
+      "id_field": "strategy_instance_id",
+      "id_prefix": "sinst",
+      "enum_registry": {
+        "lifecycle_state": [
+          "DRAFT",
+          "BOUND",
+          "ACTIVE",
+          "INACTIVE",
+          "RETIRED"
+        ]
+      },
+      "nullable_fields": [
+        "market_data_route_id",
+        "execution_route_id"
+      ],
+      "array_policy": {},
+      "nested_schemas": {},
+      "entity_references": {
+        "workspace_id": "Workspace",
+        "portfolio_id": "Portfolio",
+        "strategy_definition_id": "StrategyDefinition",
+        "exchange_account_id": "ExchangeAccountProjection",
+        "trading_universe_id": "TradingUniverseProjection",
+        "market_data_route_id": "MarketDataRoute",
+        "execution_route_id": "ExecutionRoute"
+      }
+    },
+    "MarketDataRoute": {
+      "exact_fields": [
+        "market_data_route_id",
+        "workspace_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "endpoint_class",
+        "data_scope",
+        "instrument_ids",
+        "channel_types",
+        "snapshot_stream_semantics",
+        "sequence_policy",
+        "freshness_policy",
+        "reconnect_policy",
+        "route_status"
+      ],
+      "field_types": {
+        "market_data_route_id": "id",
+        "workspace_id": "id",
+        "exchange_id": "string",
+        "environment": "enum",
+        "market_type": "enum",
+        "adapter_family_id": "string",
+        "endpoint_class": "enum",
+        "data_scope": "enum",
+        "instrument_ids": "array[id]",
+        "channel_types": "array[enum]",
+        "snapshot_stream_semantics": "enum",
+        "sequence_policy": "enum",
+        "freshness_policy": "object",
+        "reconnect_policy": "enum",
+        "route_status": "enum"
+      },
+      "id_field": "market_data_route_id",
+      "id_prefix": "mdr",
+      "enum_registry": {
+        "environment": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ],
+        "market_type": [
+          "SPOT"
+        ],
+        "endpoint_class": [
+          "PAPER_PUBLIC_DATA",
+          "PAPER_SIMULATION",
+          "TESTNET_PUBLIC_DATA",
+          "TESTNET_PRIVATE_DATA",
+          "LIVE_PUBLIC_DATA",
+          "LIVE_PRIVATE_DATA"
+        ],
+        "data_scope": [
+          "PUBLIC",
+          "PRIVATE"
+        ],
+        "snapshot_stream_semantics": [
+          "SNAPSHOT_THEN_STREAM"
+        ],
+        "sequence_policy": [
+          "MONOTONIC_NO_GAPS"
+        ],
+        "reconnect_policy": [
+          "RESNAPSHOT"
+        ],
+        "route_status": [
+          "ACTIVE",
+          "DISABLED"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {
+        "instrument_ids": {
+          "unique": true,
+          "empty_allowed": false
+        },
+        "channel_types": {
+          "unique": true,
+          "empty_allowed": false,
+          "item_registry": "market_data_channel_types"
+        }
+      },
+      "nested_schemas": {
+        "freshness_policy": {
+          "exact_fields": [
+            "max_age_seconds"
+          ],
+          "field_types": {
+            "max_age_seconds": "integer"
+          },
+          "nullable_fields": []
+        }
+      },
+      "entity_references": {
+        "workspace_id": "Workspace",
+        "instrument_ids": "InstrumentProjection"
+      }
+    },
+    "ExecutionRoute": {
+      "exact_fields": [
+        "execution_route_id",
+        "workspace_id",
+        "exchange_account_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "endpoint_class",
+        "supported_instrument_types",
+        "route_status",
+        "route_capability_ceiling",
+        "authorization_dependencies"
+      ],
+      "field_types": {
+        "execution_route_id": "id",
+        "workspace_id": "id",
+        "exchange_account_id": "id",
+        "exchange_id": "string",
+        "environment": "enum",
+        "market_type": "enum",
+        "adapter_family_id": "string",
+        "endpoint_class": "enum",
+        "supported_instrument_types": "array[enum]",
+        "route_status": "enum",
+        "route_capability_ceiling": "array[enum]",
+        "authorization_dependencies": "array[enum]"
+      },
+      "id_field": "execution_route_id",
+      "id_prefix": "xroute",
+      "enum_registry": {
+        "environment": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ],
+        "market_type": [
+          "SPOT"
+        ],
+        "endpoint_class": [
+          "PAPER_PUBLIC_DATA",
+          "PAPER_SIMULATION",
+          "TESTNET_PUBLIC_DATA",
+          "TESTNET_PRIVATE_DATA",
+          "LIVE_PUBLIC_DATA",
+          "LIVE_PRIVATE_DATA"
+        ],
+        "route_status": [
+          "ACTIVE",
+          "DISABLED"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {
+        "supported_instrument_types": {
+          "unique": true,
+          "empty_allowed": false,
+          "item_registry": "instrument_types"
+        },
+        "route_capability_ceiling": {
+          "unique": true,
+          "empty_allowed": false,
+          "item_registry": "route_capabilities"
+        },
+        "authorization_dependencies": {
+          "unique": true,
+          "empty_allowed": false,
+          "item_registry": "authorization_dependency_names"
+        }
+      },
+      "nested_schemas": {},
+      "entity_references": {
+        "workspace_id": "Workspace",
+        "exchange_account_id": "ExchangeAccountProjection"
+      }
+    },
+    "RouteReadiness": {
+      "exact_fields": [
+        "route_id",
+        "route_kind",
+        "readiness_state",
+        "observed_at",
+        "metadata_version",
+        "sequence_state"
+      ],
+      "field_types": {
+        "route_id": "id",
+        "route_kind": "enum",
+        "readiness_state": "enum",
+        "observed_at": "timestamp",
+        "metadata_version": "integer",
+        "sequence_state": "enum"
+      },
+      "id_field": "route_id",
+      "id_prefix": null,
+      "enum_registry": {
+        "route_kind": [
+          "MARKET_DATA",
+          "EXECUTION"
+        ],
+        "readiness_state": [
+          "UNKNOWN",
+          "NOT_READY",
+          "READY",
+          "STALE"
+        ],
+        "sequence_state": [
+          "CONTIGUOUS",
+          "GAP",
+          "NOT_APPLICABLE"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {},
+      "nested_schemas": {},
+      "entity_references": {}
+    },
+    "ExchangeAccountProjection": {
+      "exact_fields": [
+        "exchange_account_id",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "lifecycle_state",
+        "capability_snapshot_id",
+        "active_credential_profile_id"
+      ],
+      "field_types": {
+        "exchange_account_id": "id",
+        "workspace_id": "id",
+        "portfolio_id": "id",
+        "exchange_id": "string",
+        "environment": "enum",
+        "market_type": "enum",
+        "lifecycle_state": "enum",
+        "capability_snapshot_id": "id",
+        "active_credential_profile_id": "id"
+      },
+      "id_field": "exchange_account_id",
+      "id_prefix": "xacc",
+      "enum_registry": {
+        "environment": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ],
+        "market_type": [
+          "SPOT"
+        ]
+      },
+      "nullable_fields": [
+        "active_credential_profile_id"
+      ],
+      "array_policy": {},
+      "nested_schemas": {},
+      "entity_references": {
+        "workspace_id": "Workspace",
+        "portfolio_id": "Portfolio",
+        "capability_snapshot_id": "AccountCapabilitySnapshotProjection",
+        "active_credential_profile_id": "CredentialProfileProjection"
+      },
+      "enum_registry_ref": {
+        "lifecycle_state": "m05_account_lifecycle_states"
+      }
+    },
+    "TradingUniverseProjection": {
+      "exact_fields": [
+        "trading_universe_id",
+        "exchange_account_id",
+        "instrument_ids",
+        "source_catalog_ids",
+        "lifecycle_state"
+      ],
+      "field_types": {
+        "trading_universe_id": "id",
+        "exchange_account_id": "id",
+        "instrument_ids": "array[id]",
+        "source_catalog_ids": "array[id]",
+        "lifecycle_state": "enum"
+      },
+      "id_field": "trading_universe_id",
+      "id_prefix": "univ",
+      "enum_registry": {},
+      "nullable_fields": [],
+      "array_policy": {
+        "instrument_ids": {
+          "unique": true,
+          "empty_allowed": false
+        },
+        "source_catalog_ids": {
+          "unique": true,
+          "empty_allowed": false
+        }
+      },
+      "nested_schemas": {},
+      "entity_references": {
+        "exchange_account_id": "ExchangeAccountProjection",
+        "instrument_ids": "InstrumentProjection",
+        "source_catalog_ids": "InstrumentCatalogProjection"
+      },
+      "enum_registry_ref": {
+        "lifecycle_state": "m05_universe_lifecycle_states"
+      }
+    },
+    "InstrumentProjection": {
+      "exact_fields": [
+        "instrument_id",
+        "catalog_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "instrument_type",
+        "source_adapter_family_id",
+        "trading_status"
+      ],
+      "field_types": {
+        "instrument_id": "id",
+        "catalog_id": "id",
+        "exchange_id": "string",
+        "environment": "enum",
+        "market_type": "enum",
+        "instrument_type": "enum",
+        "source_adapter_family_id": "string",
+        "trading_status": "enum"
+      },
+      "id_field": "instrument_id",
+      "id_prefix": "instr",
+      "enum_registry": {
+        "environment": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ],
+        "market_type": [
+          "SPOT"
+        ],
+        "instrument_type": [
+          "SPOT_PAIR"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {},
+      "nested_schemas": {},
+      "entity_references": {
+        "catalog_id": "InstrumentCatalogProjection"
+      },
+      "enum_registry_ref": {
+        "trading_status": "m05_instrument_trading_statuses"
+      }
+    },
+    "InstrumentCatalogProjection": {
+      "exact_fields": [
+        "catalog_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "instrument_ids",
+        "observed_at_utc",
+        "effective_at_utc",
+        "status",
+        "stale_after_utc"
+      ],
+      "field_types": {
+        "catalog_id": "id",
+        "exchange_id": "string",
+        "environment": "enum",
+        "market_type": "enum",
+        "adapter_family_id": "string",
+        "instrument_ids": "array[id]",
+        "status": "enum",
+        "stale_after_utc": "timestamp",
+        "observed_at_utc": "timestamp",
+        "effective_at_utc": "timestamp"
+      },
+      "id_field": "catalog_id",
+      "id_prefix": "icat",
+      "enum_registry": {
+        "environment": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ],
+        "market_type": [
+          "SPOT"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {
+        "instrument_ids": {
+          "unique": true,
+          "empty_allowed": false
+        }
+      },
+      "nested_schemas": {},
+      "entity_references": {
+        "instrument_ids": "InstrumentProjection"
+      },
+      "enum_registry_ref": {
+        "status": "m05_catalog_statuses"
+      }
+    },
+    "AccountCapabilitySnapshotProjection": {
+      "exact_fields": [
+        "snapshot_id",
+        "exchange_account_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "status",
+        "capabilities",
+        "observed_at",
+        "source_payload_hash",
+        "attested_payload_hash"
+      ],
+      "field_types": {
+        "snapshot_id": "id",
+        "exchange_account_id": "id",
+        "exchange_id": "string",
+        "environment": "enum",
+        "market_type": "enum",
+        "status": "enum",
+        "capabilities": "array[enum]",
+        "observed_at": "timestamp",
+        "source_payload_hash": "sha256",
+        "attested_payload_hash": "sha256"
+      },
+      "id_field": "snapshot_id",
+      "id_prefix": "capsnap",
+      "enum_registry": {
+        "environment": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ],
+        "market_type": [
+          "SPOT"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {
+        "capabilities": {
+          "unique": true,
+          "empty_allowed": false,
+          "item_registry_ref": "m05_capabilities"
+        }
+      },
+      "nested_schemas": {},
+      "entity_references": {
+        "exchange_account_id": "ExchangeAccountProjection"
+      },
+      "enum_registry_ref": {
+        "status": "m05_snapshot_statuses"
+      }
+    },
+    "CredentialProfileProjection": {
+      "exact_fields": [
+        "credential_profile_id",
+        "exchange_account_id",
+        "exchange_id",
+        "environment",
+        "lifecycle_state",
+        "purpose",
+        "permissions"
+      ],
+      "field_types": {
+        "credential_profile_id": "id",
+        "exchange_account_id": "id",
+        "exchange_id": "string",
+        "environment": "enum",
+        "lifecycle_state": "enum",
+        "purpose": "enum",
+        "permissions": "array[enum]"
+      },
+      "id_field": "credential_profile_id",
+      "id_prefix": "cred",
+      "enum_registry": {
+        "environment": [
+          "TESTNET",
+          "LIVE"
+        ],
+        "lifecycle_state": [
+          "ACTIVE",
+          "RETIRED"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {
+        "permissions": {
+          "unique": true,
+          "empty_allowed": false,
+          "item_registry_ref": "m05_permissions"
+        }
+      },
+      "nested_schemas": {},
+      "entity_references": {
+        "exchange_account_id": "ExchangeAccountProjection"
+      },
+      "enum_registry_ref": {
+        "purpose": "m05_credential_purposes"
+      }
+    },
+    "ProductCapabilitiesProjection": {
+      "exact_fields": [
+        "environment",
+        "execution_enabled",
+        "allowed_operations",
+        "edition"
+      ],
+      "field_types": {
+        "environment": "enum",
+        "execution_enabled": "boolean",
+        "allowed_operations": "array[enum]",
+        "edition": "string"
+      },
+      "id_field": "environment",
+      "id_prefix": null,
+      "enum_registry": {
+        "environment": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "nullable_fields": [],
+      "array_policy": {
+        "allowed_operations": {
+          "unique": true,
+          "empty_allowed": true,
+          "item_registry_ref": "m04_product_capabilities"
+        }
+      },
+      "nested_schemas": {},
+      "entity_references": {}
+    },
+    "PortfolioProjection": {
+      "exact_fields": [
+        "portfolio_id",
+        "workspace_id"
+      ],
+      "field_types": {
+        "portfolio_id": "id",
+        "workspace_id": "id"
+      },
+      "id_field": "portfolio_id",
+      "id_prefix": "port",
+      "enum_registry": {},
+      "nullable_fields": [],
+      "array_policy": {},
+      "nested_schemas": {},
+      "entity_references": {
+        "workspace_id": "Workspace"
+      }
+    }
+  },
+  "id_prefix_registry": {
+    "workspace_id": "ws",
+    "portfolio_id": "port",
+    "strategy_definition_id": "sdef",
+    "strategy_instance_id": "sinst",
+    "exchange_account_id": "xacc",
+    "trading_universe_id": "univ",
+    "market_data_route_id": "mdr",
+    "execution_route_id": "xroute",
+    "instrument_id": "instr",
+    "catalog_id": "icat",
+    "snapshot_id": "capsnap",
+    "credential_profile_id": "cred",
+    "request_id": "req"
+  },
+  "array_enum_registries": {
+    "market_data_channel_types": [
+      "TRADES",
+      "ORDER_BOOK",
+      "TICKER",
+      "CANDLES",
+      "PRIVATE_ORDERS",
+      "PRIVATE_BALANCES"
+    ],
+    "instrument_types": [
+      "SPOT_PAIR"
+    ],
+    "route_capabilities": [
+      "PLACE_ORDERS",
+      "READ_MARKET_DATA"
+    ],
+    "authorization_dependency_names": [
+      "ACCOUNT_ACTIVE",
+      "ACCOUNT_CAPABILITY_SNAPSHOT_VALID",
+      "CREDENTIAL_PROFILE_ACTIVE",
+      "CURRENT_EDITION_LIVE_EXECUTION_FORBIDDEN",
+      "ORDER_ENTRY_PURPOSE",
+      "PLACE_ORDERS_PERMISSION",
+      "PRODUCT_CAPABILITIES"
+    ]
+  },
+  "account_capability_snapshot_policy": {
+    "max_age_seconds_by_environment": {
+      "TESTNET": 300
+    },
+    "freshness_boundary": "age_seconds <= max_age_seconds is fresh",
+    "authorization_dependency_environments": [
+      "TESTNET"
+    ]
+  },
+  "canonical_array_enum_registry_refs": {
+    "m05_capabilities": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract/permission_registry"
+    },
+    "m05_permissions": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract/permission_registry"
+    },
+    "m04_product_capabilities": {
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/capability_id_registry/current_schema_allowed_capability_ids",
+      "scope_semantics": "M0.4 defines a global closed capability ID registry and separately environment capability booleans; extra canonical IDs grant no M0.6 authority and the environment-required ID remains mandatory"
+    }
+  },
+  "canonical_scalar_enum_registry_refs": {
+    "m05_account_lifecycle_states": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_account_contract/lifecycle_states"
+    },
+    "m05_universe_lifecycle_states": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/trading_universe_contract/lifecycle_states"
+    },
+    "m05_snapshot_statuses": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/account_capability_snapshot_contract/statuses"
+    },
+    "m05_credential_purposes": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract/credential_purposes"
+    },
+    "m05_instrument_trading_statuses": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/trading_statuses"
+    },
+    "m05_catalog_statuses": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_catalog_snapshot_contract/statuses"
+    }
+  }
+}

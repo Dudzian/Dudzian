@@ -181,7 +181,7 @@ class ExchangeAdapterExecutionService(ExecutionService):
     backoff_base: float = 0.25
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     clock: Callable[[], datetime] = field(
-        default_factory=lambda: (lambda: datetime.now(timezone.utc))
+        default_factory=lambda: lambda: datetime.now(timezone.utc)
     )
 
     def _resolve_adapter(self) -> ExchangeAdapter:
