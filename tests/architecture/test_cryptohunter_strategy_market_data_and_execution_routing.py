@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
 
@@ -111,22 +112,44 @@ def parse_time(value):
     return parsed
 
 
+CANONICAL_SOURCES = {
+    "environment_and_product_capabilities.json": M04_CONTRACT,
+    "exchange_accounts_and_instruments.json": M05_CONTRACT,
+}
+
+
+def resolve_canonical_pointer(reference, expected_type):
+    if type(reference) is not dict or not {"contract", "json_pointer"} <= set(reference):
+        raise TypeError("canonical reference")
+    source = CANONICAL_SOURCES.get(reference["contract"])
+    pointer = reference["json_pointer"]
+    if source is None or type(pointer) is not str or not pointer.startswith("/"):
+        raise KeyError("canonical reference")
+    value = source
+    for encoded in pointer[1:].split("/"):
+        if re.search(r"~(?![01])", encoded):
+            raise ValueError("invalid JSON Pointer escape")
+        part = encoded.replace("~1", "/").replace("~0", "~")
+        if type(value) is not dict or part not in value:
+            raise KeyError(part)
+        value = value[part]
+    if type(value) is not expected_type:
+        raise TypeError("canonical pointer result")
+    return value
+
+
+def canonical_fingerprint(value):
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def resolve_canonical_registry(reference_name):
     references = {
         **CONTRACT["canonical_array_enum_registry_refs"],
         **CONTRACT["canonical_scalar_enum_registry_refs"],
     }
     reference = references[reference_name]
-    sources = {
-        "environment_and_product_capabilities.json": M04_CONTRACT,
-        "exchange_accounts_and_instruments.json": M05_CONTRACT,
-    }
-    value = sources[reference["contract"]]
-    pointer = reference["json_pointer"]
-    if type(pointer) is not str or not pointer.startswith("/"):
-        raise KeyError(reference_name)
-    for part in pointer[1:].split("/"):
-        value = value[part.replace("~1", "/").replace("~0", "~")]
+    value = resolve_canonical_pointer(reference, list)
     if (
         type(value) is not list
         or not value
@@ -135,6 +158,177 @@ def resolve_canonical_registry(reference_name):
     ):
         raise TypeError(reference_name)
     return tuple(value)
+
+
+def canonical_exchange_entries():
+    reference = CONTRACT["canonical_cross_contract_registry_refs"]["m05_exchange_registry_entries"]
+    entries = resolve_canonical_pointer(reference, list)
+    if canonical_fingerprint(entries) != reference["content_fingerprint_sha256"]:
+        raise ValueError("exchange registry fingerprint")
+    required = {
+        "exchange_id",
+        "display_name",
+        "adapter_family_id",
+        "supported_environments",
+        "supported_market_types",
+        "supported_instrument_types",
+        "capability_discovery_policy",
+        "instrument_catalog_discovery_policy",
+        "account_identity_discovery_policy",
+        "status",
+        "aliases",
+    }
+
+    def closed_values(pointer):
+        values = resolve_canonical_pointer(
+            {
+                "contract": "exchange_accounts_and_instruments.json",
+                "json_pointer": pointer,
+            },
+            list,
+        )
+        if any(type(item) is not str or not item for item in values):
+            raise TypeError("closed registry")
+        return set(values)
+
+    environments = closed_values("/environment_registry")
+    market_types = closed_values("/market_type_registry")
+    instrument_types = closed_values("/instrument_type_registry")
+    identities = []
+    for entry in entries:
+        if type(entry) is not dict or set(entry) != required:
+            raise TypeError("exchange registry entry")
+        identities.append(entry["exchange_id"])
+        arrays = (
+            (entry["supported_environments"], environments),
+            (entry["supported_market_types"], market_types),
+            (entry["supported_instrument_types"], instrument_types),
+        )
+        aliases = entry["aliases"]
+        policies = (
+            entry["capability_discovery_policy"],
+            entry["instrument_catalog_discovery_policy"],
+            entry["account_identity_discovery_policy"],
+        )
+        allowed_policies = {
+            value
+            for item in M05_CONTRACT["exchange_registry_contract"]["entries"]
+            for value in (
+                item["capability_discovery_policy"],
+                item["instrument_catalog_discovery_policy"],
+                item["account_identity_discovery_policy"],
+            )
+        }
+        if (
+            type(entry["exchange_id"]) is not str
+            or not entry["exchange_id"]
+            or type(entry["display_name"]) is not str
+            or not entry["display_name"]
+            or type(entry["adapter_family_id"]) is not str
+            or not entry["adapter_family_id"]
+            or entry["status"] != "ENABLED"
+            or type(aliases) is not list
+            or len(aliases) != len(set(aliases))
+            or any(type(alias) is not str or not alias for alias in aliases)
+            or any(type(policy) is not str or policy not in allowed_policies for policy in policies)
+            or any(
+                type(values) is not list
+                or not values
+                or len(values) != len(set(values))
+                or not set(values) <= registry
+                for values, registry in arrays
+            )
+        ):
+            raise TypeError("exchange registry entry")
+    if len(identities) != len(set(identities)):
+        raise TypeError("duplicate exchange registry identity")
+    return entries
+
+
+def resolve_hash_definition(reference_name):
+    reference = CONTRACT["canonical_hash_definition_refs"][reference_name]
+    value = resolve_canonical_pointer(reference, dict)
+    if canonical_fingerprint(value) != reference["content_fingerprint_sha256"]:
+        raise ValueError(reference_name)
+    required = {
+        "algorithm",
+        "domain_separator",
+        "input_fields",
+        "canonicalization",
+        "encoding",
+        "digest_format",
+    }
+    if (
+        not isinstance(value, dict)
+        or set(value) not in {frozenset(required), frozenset(required | {"excluded_fields"})}
+        or value["algorithm"] != "SHA-256"
+    ):
+        raise TypeError(reference_name)
+    return value
+
+
+def canonical_m05_hash(reference_name, record):
+    definition = resolve_hash_definition(reference_name)
+    canonical = {field: record[field] for field in definition["input_fields"]}
+    for field in (
+        "instrument_ids",
+        "source_catalog_snapshot_ids",
+        "observed_permission_set",
+        "supported_instrument_types",
+    ):
+        if isinstance(canonical.get(field), list):
+            canonical[field] = sorted(canonical[field])
+    raw = (
+        definition["domain_separator"]
+        + "\n"
+        + json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def rehash_m05_projections(context):
+    for record in context["universes_by_id"].values():
+        record["content_hash"] = canonical_m05_hash("trading_universe", record)
+    for record in context["catalogs_by_id"].values():
+        record["content_hash"] = canonical_m05_hash("instrument_catalog_snapshot", record)
+    for record in context["account_capability_snapshots_by_id"].values():
+        record["content_hash"] = canonical_m05_hash("account_capability_snapshot", record)
+    return context
+
+
+def exchange_entry_for_environment(environment):
+    return next(
+        entry
+        for entry in canonical_exchange_entries()
+        if entry["status"] == "ENABLED" and environment in entry["supported_environments"]
+    )
+
+
+def record_matches_exchange_registry(record):
+    entry = next(
+        (
+            item
+            for item in canonical_exchange_entries()
+            if item["exchange_id"] == record["exchange_id"]
+        ),
+        None,
+    )
+    if (
+        entry is None
+        or entry["status"] != "ENABLED"
+        or record.get("environment", record.get("environment_scope"))
+        not in entry["supported_environments"]
+        or (
+            "market_type" in record and record["market_type"] not in entry["supported_market_types"]
+        )
+        or (
+            "instrument_type" in record
+            and record["instrument_type"] not in entry["supported_instrument_types"]
+        )
+    ):
+        return False
+    adapter = record.get("adapter_family_id", record.get("source_adapter_family_id"))
+    return adapter is None or adapter == entry["adapter_family_id"]
 
 
 def validate_typed(value, type_name, field, schema):
@@ -233,10 +427,324 @@ def resolve_strategy_definition_exact_version(context, definition_id, version):
     return context["previous_strategy_definitions_by_version_key"].get(f"{definition_id}@{version}")
 
 
+def validate_hash_lineage(current, previous, *, id_field, predecessor_field, hash_reference, scope):
+    nodes = {**previous, **current}
+    if set(previous) & set(current):
+        return False
+    for key, record in nodes.items():
+        if record[id_field] != key or record["content_hash"] != canonical_m05_hash(
+            hash_reference, record
+        ):
+            return False
+        predecessor_id = record[predecessor_field]
+        if "version" in record:
+            if record["version"] == 1 and predecessor_id is not None:
+                return False
+            if record["version"] > 1 and predecessor_id is None:
+                return False
+        visited = {key}
+        cursor = record
+        while cursor[predecessor_field] is not None:
+            predecessor_id = cursor[predecessor_field]
+            if predecessor_id in visited or predecessor_id not in previous:
+                return False
+            visited.add(predecessor_id)
+            predecessor = previous[predecessor_id]
+            if any(predecessor[field] != cursor[field] for field in scope):
+                return False
+            if "version" in cursor and predecessor["version"] != cursor["version"] - 1:
+                return False
+            cursor = predecessor
+    return True
+
+
+def valid_projection_times(record, validation_time):
+    try:
+        observed = parse_time(record["observed_at_utc"])
+        effective = parse_time(record["effective_at_utc"])
+        stale_after = parse_time(record["stale_after_utc"])
+    except ValueError:
+        return False
+    return (
+        observed <= effective < stale_after
+        and observed <= validation_time
+        and effective <= validation_time
+    )
+
+
+def validate_instrument_record(context, record, validation_time):
+    catalogs = {**context["previous_catalogs_by_id"], **context["catalogs_by_id"]}
+    catalog = catalogs.get(record.get("catalog_snapshot_id"))
+    decimal = re.compile(M05_CONTRACT["decimal_policy"]["regex"] + r"\Z")
+    asset_fields = set(M05_CONTRACT["asset_reference_contract"]["fields"])
+
+    def valid_asset(value):
+        return (
+            type(value) is dict
+            and set(value) == asset_fields
+            and all(type(value[field]) is str and value[field] for field in asset_fields)
+            and value["asset_namespace"] == record["exchange_id"]
+            and value["mapping_status"] in {"EXACT", "EXPLICIT_ALIAS"}
+        )
+
+    return bool(
+        validate_record("InstrumentProjection", record)
+        and record_matches_exchange_registry(record)
+        and record["workspace_id"] in context["workspace_ids"]
+        and record["venue_symbol"].strip() == record["venue_symbol"]
+        and catalog
+        and record["instrument_id"] in catalog["instrument_ids"]
+        and all(
+            record[field] == catalog[field]
+            for field in ("exchange_id", "environment", "market_type")
+        )
+        and record["source_adapter_family_id"] == catalog["adapter_family_id"]
+        and valid_projection_times(record, validation_time)
+        and all(
+            valid_asset(record[field])
+            for field in ("base_asset_reference", "quote_asset_reference")
+        )
+        and all(
+            type(record[field]) is str
+            and decimal.fullmatch(record[field])
+            and Decimal(record[field]) > 0
+            for field in ("price_tick", "quantity_step")
+        )
+        and (
+            record["instrument_type"] not in {"SPOT_PAIR", "MARGIN_PAIR"}
+            or all(
+                record[field] is None
+                for field in (
+                    "contract_size",
+                    "contract_value_currency",
+                    "derivative_settlement_type",
+                    "expiry_at_utc",
+                    "strike_price",
+                    "option_side",
+                )
+            )
+        )
+    )
+
+
+def validate_instrument_history_map(context, validation_time):
+    for instrument_id, records in context["instrument_history_by_id"].items():
+        if not is_id(instrument_id, "instr") or type(records) is not list or not records:
+            return False
+        if any(
+            type(record) is not dict or not validate_record("InstrumentProjection", record)
+            for record in records
+        ):
+            return False
+        versions = [record["metadata_version"] for record in records]
+        if len(versions) != len(records) or versions != sorted(set(versions)):
+            return False
+        identities = set()
+        for record in records:
+            if record.get("instrument_id") != instrument_id or not validate_instrument_record(
+                context, record, validation_time
+            ):
+                return False
+            identities.add(
+                tuple(
+                    record[field]
+                    for field in ("exchange_id", "environment", "market_type", "venue_symbol")
+                )
+            )
+        current = context["instruments_by_id"].get(instrument_id)
+        if (
+            len(identities) != 1
+            or current
+            and (
+                tuple(
+                    current[field]
+                    for field in ("exchange_id", "environment", "market_type", "venue_symbol")
+                )
+                not in identities
+                or current["metadata_version"] <= max(versions)
+            )
+        ):
+            return False
+    return True
+
+
+def validate_snapshot_record(context, record, validation_time):
+    account = context["accounts_by_id"].get(record["exchange_account_id"])
+    entry = next(
+        (
+            item
+            for item in canonical_exchange_entries()
+            if item["exchange_id"] == record["exchange_id"]
+        ),
+        None,
+    )
+    types = set(record["supported_instrument_types"])
+    return bool(
+        account
+        and entry
+        and record_matches_exchange_registry(record)
+        and all(
+            record[field] == account[field]
+            for field in ("exchange_id", "environment", "market_type")
+        )
+        and record["adapter_family_id"] == entry["adapter_family_id"]
+        and set(record["observed_permission_set"])
+        <= set(resolve_canonical_registry("m05_permissions"))
+        and types <= set(resolve_canonical_registry("m05_instrument_types"))
+        and types
+        <= set(M05_CONTRACT["allowed_market_instrument_type_pairs"].get(record["market_type"], []))
+        and types <= set(entry["supported_instrument_types"])
+        and valid_projection_times(record, validation_time)
+    )
+
+
+def validate_catalog_record(context, record, validation_time, *, historical):
+    if not record_matches_exchange_registry(record) or not valid_projection_times(
+        record, validation_time
+    ):
+        return False
+    for instrument_id in record["instrument_ids"]:
+        instrument = (
+            next(
+                (
+                    item
+                    for item in context["instrument_history_by_id"].get(instrument_id, [])
+                    if item["catalog_snapshot_id"] == record["catalog_snapshot_id"]
+                ),
+                None,
+            )
+            if historical
+            else context["instruments_by_id"].get(instrument_id)
+        )
+        if (
+            not instrument
+            or any(
+                instrument[field] != record[field]
+                for field in ("exchange_id", "environment", "market_type")
+            )
+            or instrument["source_adapter_family_id"] != record["adapter_family_id"]
+        ):
+            return False
+        if instrument["catalog_snapshot_id"] != record["catalog_snapshot_id"]:
+            return False
+    return True
+
+
+def validate_universe_record(context, record, *, historical):
+    account = context["accounts_by_id"].get(record["exchange_account_id"])
+    lifecycle = record["lifecycle_state"]
+    if (
+        not account
+        or (
+            lifecycle == "ACTIVE"
+            and (record["activated_at_utc"] is None or record["retired_at_utc"] is not None)
+        )
+        or (lifecycle == "RETIRED" and record["retired_at_utc"] is None)
+        or (historical and lifecycle == "DRAFT")
+    ):
+        return False
+    sources = set(record["source_catalog_snapshot_ids"])
+    instruments = []
+    for instrument_id in record["instrument_ids"]:
+        candidates = [context["instruments_by_id"].get(instrument_id)]
+        if historical:
+            candidates += context["instrument_history_by_id"].get(instrument_id, [])
+        instruments.append(
+            next(
+                (item for item in candidates if item and item["catalog_snapshot_id"] in sources),
+                None,
+            )
+        )
+    catalogs = {**context["previous_catalogs_by_id"], **context["catalogs_by_id"]}
+    if any(item is None for item in instruments) or any(
+        catalog_id not in catalogs for catalog_id in record["source_catalog_snapshot_ids"]
+    ):
+        return False
+    for instrument in instruments:
+        if any(
+            instrument[field] != account[field]
+            for field in ("exchange_id", "environment", "market_type")
+        ):
+            return False
+    return set(record["source_catalog_snapshot_ids"]) == {
+        item["catalog_snapshot_id"] for item in instruments
+    }
+
+
+def validate_credential_record(context, record, *, historical):
+    account = context["accounts_by_id"].get(record["exchange_account_id"])
+    if not account or not record_matches_exchange_registry(record):
+        return False
+    secure_ref = record["secure_store_reference"]
+    if (
+        record["exchange_id"] != account["exchange_id"]
+        or record["environment_scope"] != account["environment"]
+        or (historical and record["lifecycle_state"] != "RETIRED")
+        or (historical and record["retired_at_utc"] is None)
+        or (
+            not historical
+            and record["lifecycle_state"] == "ACTIVE"
+            and record["retired_at_utc"] is not None
+        )
+        or type(secure_ref) is not str
+        or not re.fullmatch(r"secure-store://[^\s?#=]+", secure_ref)
+        or any(
+            marker in secure_ref.lower()
+            for marker in M05_CONTRACT["credential_profile_contract"][
+                "secure_store_reference_grammar"
+            ]["forbidden_payload_markers"]
+        )
+        or record["saas_sync_candidate"] is not False
+    ):
+        return False
+    return True
+
+
+def validate_all_canonical_projections(context, validation_time):
+    if not validate_instrument_history_map(context, validation_time) or any(
+        not validate_instrument_record(context, record, validation_time)
+        for record in context["instruments_by_id"].values()
+    ):
+        return False
+    for map_name in (
+        "account_capability_snapshots_by_id",
+        "previous_account_capability_snapshots_by_id",
+    ):
+        if any(
+            not validate_snapshot_record(context, record, validation_time)
+            for record in context[map_name].values()
+        ):
+            return False
+    for map_name, historical in (("catalogs_by_id", False), ("previous_catalogs_by_id", True)):
+        if any(
+            not validate_catalog_record(context, record, validation_time, historical=historical)
+            for record in context[map_name].values()
+        ):
+            return False
+    for map_name, historical in (("universes_by_id", False), ("previous_universes_by_id", True)):
+        if any(
+            not validate_universe_record(context, record, historical=historical)
+            for record in context[map_name].values()
+        ):
+            return False
+    for map_name, historical in (
+        ("credential_profiles_by_id", False),
+        ("previous_credential_profiles_by_id", True),
+    ):
+        if any(
+            not validate_credential_record(context, record, historical=historical)
+            for record in context[map_name].values()
+        ):
+            return False
+    return True
+
+
 def validate_references(context):
     definitions = context["strategy_definitions_by_id"]
     history = context["previous_strategy_definitions_by_version_key"]
     validation_time = parse_time(context["validation_time_utc"])
+    if not validate_all_canonical_projections(context, validation_time):
+        return False
     for did, current in definitions.items():
         expected = {f"{did}@{version}" for version in range(1, current["definition_version"])}
         actual = {key for key in history if key.startswith(f"{did}@")}
@@ -257,10 +765,64 @@ def validate_references(context):
             return False
     if any(key.rsplit("@", 1)[0] not in definitions for key in history):
         return False
+    if not validate_hash_lineage(
+        context["account_capability_snapshots_by_id"],
+        context["previous_account_capability_snapshots_by_id"],
+        id_field="account_capability_snapshot_id",
+        predecessor_field="previous_snapshot_id",
+        hash_reference="account_capability_snapshot",
+        scope=("exchange_account_id", "exchange_id", "environment", "market_type"),
+    ):
+        return False
+    if not validate_hash_lineage(
+        context["catalogs_by_id"],
+        context["previous_catalogs_by_id"],
+        id_field="catalog_snapshot_id",
+        predecessor_field="previous_snapshot_id",
+        hash_reference="instrument_catalog_snapshot",
+        scope=("exchange_id", "environment", "market_type", "adapter_family_id"),
+    ):
+        return False
+    if not validate_hash_lineage(
+        context["universes_by_id"],
+        context["previous_universes_by_id"],
+        id_field="trading_universe_id",
+        predecessor_field="previous_version_id",
+        hash_reference="trading_universe",
+        scope=("exchange_account_id",),
+    ):
+        return False
+    exchange_bound_maps = (
+        "accounts_by_id",
+        "instruments_by_id",
+        "catalogs_by_id",
+        "account_capability_snapshots_by_id",
+        "credential_profiles_by_id",
+        "market_data_routes_by_id",
+        "execution_routes_by_id",
+    )
+    if any(
+        not record_matches_exchange_registry(record)
+        for map_name in exchange_bound_maps
+        for record in context[map_name].values()
+    ):
+        return False
     for instrument in context["instruments_by_id"].values():
-        catalog = context["catalogs_by_id"].get(instrument["catalog_id"])
+        catalog = context["catalogs_by_id"].get(instrument["catalog_snapshot_id"])
+        try:
+            observed = parse_time(instrument["observed_at_utc"])
+            effective = parse_time(instrument["effective_at_utc"])
+            stale_after = parse_time(instrument["stale_after_utc"])
+        except ValueError:
+            return False
         if (
-            not catalog
+            instrument["workspace_id"] not in context["workspace_ids"]
+            or type(instrument["metadata_version"]) is not int
+            or instrument["metadata_version"] < 1
+            or not observed <= effective < stale_after
+            or observed > validation_time
+            or effective > validation_time
+            or not catalog
             or instrument["instrument_id"] not in catalog["instrument_ids"]
             or any(
                 instrument[field] != catalog[field]
@@ -283,7 +845,7 @@ def validate_references(context):
             instrument = context["instruments_by_id"].get(iid)
             if (
                 not instrument
-                or instrument["catalog_id"] != cid
+                or instrument["catalog_snapshot_id"] != cid
                 or instrument["source_adapter_family_id"] != catalog["adapter_family_id"]
                 or any(
                     instrument[field] != catalog[field]
@@ -296,15 +858,20 @@ def validate_references(context):
         instruments = [context["instruments_by_id"].get(iid) for iid in universe["instrument_ids"]]
         if not account or any(item is None for item in instruments):
             return False
-        if set(universe["source_catalog_ids"]) != {item["catalog_id"] for item in instruments}:
+        if set(universe["source_catalog_snapshot_ids"]) != {
+            item["catalog_snapshot_id"] for item in instruments
+        }:
             return False
         for item in instruments:
-            catalog = context["catalogs_by_id"].get(item["catalog_id"])
+            catalog = context["catalogs_by_id"].get(item["catalog_snapshot_id"])
             if not catalog or item["instrument_id"] not in catalog["instrument_ids"]:
                 return False
-            if any(
-                item[field] != account[field]
-                for field in ("exchange_id", "environment", "market_type")
+            if (
+                any(
+                    item[field] != account[field]
+                    for field in ("exchange_id", "environment", "market_type")
+                )
+                or item["workspace_id"] != account["workspace_id"]
             ):
                 return False
     for account in context["accounts_by_id"].values():
@@ -312,25 +879,46 @@ def validate_references(context):
             return False
         portfolio = context["portfolios_by_id"].get(account["portfolio_id"])
         snapshot = context["account_capability_snapshots_by_id"].get(
-            account["capability_snapshot_id"]
+            account["account_capability_snapshot_id"]
+        )
+        exchange_entry = next(
+            entry
+            for entry in canonical_exchange_entries()
+            if entry["exchange_id"] == account["exchange_id"]
+        )
+        snapshot_required = (
+            exchange_entry["capability_discovery_policy"] == "ADAPTER_SNAPSHOT_REQUIRED"
         )
         product = context["product_capabilities_by_environment"].get(account["environment"])
         if (
             not portfolio
             or portfolio["workspace_id"] != account["workspace_id"]
-            or not snapshot
+            or (snapshot_required and not snapshot)
             or not product
             or product["environment"] != account["environment"]
         ):
             return False
-        if snapshot["exchange_account_id"] != account["exchange_account_id"] or any(
-            snapshot[field] != account[field]
-            for field in ("exchange_id", "environment", "market_type")
+        if snapshot and (
+            snapshot["exchange_account_id"] != account["exchange_account_id"]
+            or any(
+                snapshot[field] != account[field]
+                for field in ("exchange_id", "environment", "market_type")
+            )
         ):
             return False
-        if snapshot["source_payload_hash"] != snapshot["attested_payload_hash"]:
+        if snapshot is None:
+            continue
+        try:
+            observed = parse_time(snapshot["observed_at_utc"])
+            effective = parse_time(snapshot["effective_at_utc"])
+            stale_after = parse_time(snapshot["stale_after_utc"])
+        except ValueError:
             return False
-        if parse_time(snapshot["observed_at"]) > validation_time:
+        if (
+            not observed <= effective < stale_after
+            or observed > validation_time
+            or effective > validation_time
+        ):
             return False
         credential_id = account["active_credential_profile_id"]
         if credential_id is not None:
@@ -339,21 +927,31 @@ def validate_references(context):
                 not credential
                 or credential["lifecycle_state"] != "ACTIVE"
                 or credential["exchange_account_id"] != account["exchange_account_id"]
-                or any(
-                    credential[field] != account[field] for field in ("exchange_id", "environment")
-                )
+                or credential["exchange_id"] != account["exchange_id"]
+                or credential["environment_scope"] != account["environment"]
             ):
                 return False
     for snapshot in context["account_capability_snapshots_by_id"].values():
         account = context["accounts_by_id"].get(snapshot["exchange_account_id"])
+        instrument_types = set(snapshot["supported_instrument_types"])
+        registry_types = set(resolve_canonical_registry("m05_instrument_types"))
+        allowed_for_market = set(
+            M05_CONTRACT["allowed_market_instrument_type_pairs"].get(snapshot["market_type"], [])
+        )
+        exchange_entry = next(
+            entry
+            for entry in canonical_exchange_entries()
+            if entry["exchange_id"] == snapshot["exchange_id"]
+        )
         if (
             not account
             or any(
                 snapshot[field] != account[field]
                 for field in ("exchange_id", "environment", "market_type")
             )
-            or snapshot["source_payload_hash"] != snapshot["attested_payload_hash"]
-            or parse_time(snapshot["observed_at"]) > validation_time
+            or not instrument_types <= registry_types
+            or not instrument_types <= allowed_for_market
+            or not instrument_types <= set(exchange_entry["supported_instrument_types"])
         ):
             return False
     if any(
@@ -370,6 +968,66 @@ def validate_references(context):
         item["active_credential_profile_id"] for item in selected
     }:
         return False
+    previous_credentials = context["previous_credential_profiles_by_id"]
+    reached_credentials = set()
+    for credential in context["credential_profiles_by_id"].values():
+        visited = {credential["credential_profile_id"]}
+        cursor = credential
+        while cursor["rotated_from_credential_profile_id"] is not None:
+            predecessor_id = cursor["rotated_from_credential_profile_id"]
+            if predecessor_id in visited or predecessor_id not in previous_credentials:
+                return False
+            visited.add(predecessor_id)
+            reached_credentials.add(predecessor_id)
+            predecessor = previous_credentials[predecessor_id]
+            if (
+                predecessor["lifecycle_state"] != "RETIRED"
+                or predecessor["exchange_account_id"] != credential["exchange_account_id"]
+                or predecessor["exchange_id"] != credential["exchange_id"]
+                or predecessor["environment_scope"] != credential["environment_scope"]
+                or parse_time(predecessor["created_at_utc"])
+                > parse_time(predecessor["retired_at_utc"])
+                or parse_time(predecessor["retired_at_utc"]) > parse_time(cursor["created_at_utc"])
+            ):
+                return False
+            cursor = predecessor
+    if reached_credentials != set(previous_credentials):
+        return False
+    identity_tuples = set()
+    for account_id, identity in context["external_identity_snapshots_by_account_id"].items():
+        account = context["accounts_by_id"].get(account_id)
+        entry = next(
+            (
+                item
+                for item in canonical_exchange_entries()
+                if item["exchange_id"] == identity["exchange_id"]
+            ),
+            None,
+        )
+        adapter_source = identity["adapter_version_source"]
+        if (
+            not account
+            or not entry
+            or any(
+                identity[field] != account[field]
+                for field in ("exchange_id", "environment", "market_type")
+            )
+            or parse_time(identity["verification_timestamp"]) > validation_time
+            or type(adapter_source) is not str
+            or not re.fullmatch(rf"{re.escape(entry['adapter_family_id'])}/[^/\s]+", adapter_source)
+        ):
+            return False
+        identity_tuple = (
+            identity["exchange_id"],
+            identity["environment"],
+            identity["market_type"],
+            identity["venue_account_identifier"],
+            identity["subaccount_identifier"],
+            identity["account_type"],
+        )
+        if identity_tuple in identity_tuples:
+            return False
+        identity_tuples.add(identity_tuple)
     for route in context["market_data_routes_by_id"].values():
         endpoint = CONTRACT["endpoint_class_registry"].get(route["endpoint_class"])
         instruments = [context["instruments_by_id"].get(iid) for iid in route["instrument_ids"]]
@@ -387,7 +1045,7 @@ def validate_references(context):
         ):
             return False
         for instrument in instruments:
-            catalog = context["catalogs_by_id"].get(instrument["catalog_id"])
+            catalog = context["catalogs_by_id"].get(instrument["catalog_snapshot_id"])
             if (
                 not catalog
                 or any(
@@ -396,6 +1054,7 @@ def validate_references(context):
                 )
                 or route["adapter_family_id"] != instrument["source_adapter_family_id"]
                 or route["adapter_family_id"] != catalog["adapter_family_id"]
+                or instrument["workspace_id"] != route["workspace_id"]
             ):
                 return False
     for route in context["execution_routes_by_id"].values():
@@ -430,6 +1089,13 @@ def validate_references(context):
             or universe["exchange_account_id"] != account["exchange_account_id"]
             or definition["workspace_id"] != instance["workspace_id"]
             or definition["lifecycle_state"] == "DRAFT"
+        ):
+            return False
+        instruments = [context["instruments_by_id"][iid] for iid in universe["instrument_ids"]]
+        if any(
+            instrument["workspace_id"] != instance["workspace_id"]
+            or instrument["workspace_id"] != account["workspace_id"]
+            for instrument in instruments
         ):
             return False
         market = (
@@ -472,12 +1138,24 @@ def validate_references(context):
             )
         ):
             return False
+        if market and any(
+            instrument["workspace_id"] != market["workspace_id"] for instrument in instruments
+        ):
+            return False
+        if execution and any(
+            instrument["workspace_id"] != execution["workspace_id"] for instrument in instruments
+        ):
+            return False
         if execution:
             for iid in universe["instrument_ids"]:
                 instrument = context["instruments_by_id"][iid]
-                catalog = context["catalogs_by_id"][instrument["catalog_id"]]
+                catalog = context["catalogs_by_id"][instrument["catalog_snapshot_id"]]
                 if (
-                    execution["adapter_family_id"] != instrument["source_adapter_family_id"]
+                    instrument["workspace_id"] != instance["workspace_id"]
+                    or instrument["workspace_id"] != account["workspace_id"]
+                    or (market and instrument["workspace_id"] != market["workspace_id"])
+                    or instrument["workspace_id"] != execution["workspace_id"]
+                    or execution["adapter_family_id"] != instrument["source_adapter_family_id"]
                     or execution["adapter_family_id"] != catalog["adapter_family_id"]
                 ):
                     return False
@@ -506,7 +1184,12 @@ def validate_references(context):
 
 def validate_context(_request, context, operation):
     spec = CONTRACT["trusted_validation_context"]
-    expected = set(spec["map_fields"]) | set(spec["scalar_fields"]) | set(spec["array_fields"])
+    expected = (
+        set(spec["map_fields"])
+        | set(spec["history_map_fields"])
+        | set(spec["scalar_fields"])
+        | set(spec["array_fields"])
+    )
     if type(context) is not dict or set(context) != expected:
         return deny(operation, "TRUSTED_CONTEXT_INVALID")
     for field, schema_name in spec["map_fields"].items():
@@ -522,8 +1205,13 @@ def validate_context(_request, context, operation):
                 expected_key = f"{record['strategy_definition_id']}@{record['definition_version']}"
             if field == "product_capabilities_by_environment":
                 expected_key = record["environment"]
+            if field == "external_identity_snapshots_by_account_id":
+                expected_key = key if key in context["accounts_by_id"] else None
             if key != expected_key:
                 return deny(operation, "TRUSTED_CONTEXT_INVALID")
+    for field in spec["history_map_fields"]:
+        if type(context[field]) is not dict:
+            return deny(operation, "TRUSTED_CONTEXT_INVALID")
     try:
         parse_time(context["validation_time_utc"])
     except ValueError:
@@ -537,10 +1225,7 @@ def validate_context(_request, context, operation):
             or not all(is_id(item, policy["id_prefix"]) for item in value)
         ):
             return deny(operation, "TRUSTED_CONTEXT_INVALID")
-    try:
-        if not validate_references(context):
-            return deny(operation, "TRUSTED_CONTEXT_INVALID")
-    except (KeyError, TypeError, ValueError):
+    if not validate_references(context):
         return deny(operation, "TRUSTED_CONTEXT_INVALID")
     return None
 
@@ -759,27 +1444,16 @@ def validate_execution_bind(request, context, operation):
     if not route:
         return deny(operation, "EXECUTION_ROUTE_NOT_FOUND")
     account = context["accounts_by_id"][item["exchange_account_id"]]
-    if route["environment"] != account["environment"] or not endpoint_ok(
-        route, account, "EXECUTION"
-    ):
-        return deny(operation, "ENDPOINT_FALLBACK_FORBIDDEN")
     if (
         route["exchange_account_id"] != account["exchange_account_id"]
         or route["workspace_id"] != item["workspace_id"]
         or any(route[f] != account[f] for f in ("exchange_id", "market_type"))
     ):
         return deny(operation, "ROUTE_SCOPE_MISMATCH")
-    if account["environment"] == "LIVE":
-        return deny(operation, "LIVE_EXECUTION_FORBIDDEN")
     expected = CONTRACT["authorization_dependencies_by_environment"][account["environment"]]
     if set(route["authorization_dependencies"]) != set(expected):
         return deny(operation, "ROUTE_CAPABILITY_BLOCKED")
     universe = context["universes_by_id"][item["trading_universe_id"]]
-    if any(
-        context["instruments_by_id"][iid]["source_adapter_family_id"] != route["adapter_family_id"]
-        for iid in universe["instrument_ids"]
-    ):
-        return deny(operation, "ROUTE_ADAPTER_MISMATCH")
     return success(
         operation,
         {
@@ -850,8 +1524,6 @@ def validate_authorization_operability(request, context, operation):
         return item
     account = context["accounts_by_id"][item["exchange_account_id"]]
     product = context["product_capabilities_by_environment"][account["environment"]]
-    if account["environment"] == "LIVE":
-        return deny(operation, "LIVE_EXECUTION_FORBIDDEN")
     required_product_capability = {
         "PAPER": "PAPER_LOCAL_SIMULATION",
         "TESTNET": "TESTNET_PRIVATE_EXECUTION_AFTER_READINESS",
@@ -863,32 +1535,124 @@ def validate_authorization_operability(request, context, operation):
         return deny(operation, "PRODUCT_CAPABILITIES_BLOCKED")
     if account["environment"] == "PAPER":
         return None
-    if account["lifecycle_state"] != "ACTIVE":
+    policy = M05_CONTRACT["current_edition_account_operability_policy"]
+    if (
+        account["lifecycle_state"] not in policy["operational_lifecycle_states"]
+        or account["connection_state"] not in policy["operational_connection_states"]
+        or account["execution_authorization"] not in policy["operational_authorization_states"]
+    ):
         return deny(operation, "ACCOUNT_READINESS_BLOCKED")
     route = context["execution_routes_by_id"][item["execution_route_id"]]
-    snapshot = context["account_capability_snapshots_by_id"][account["capability_snapshot_id"]]
+    snapshot = context["account_capability_snapshots_by_id"][
+        account["account_capability_snapshot_id"]
+    ]
     max_age = CONTRACT["account_capability_snapshot_policy"]["max_age_seconds_by_environment"][
         "TESTNET"
     ]
     age = (
-        parse_time(context["validation_time_utc"]) - parse_time(snapshot["observed_at"])
+        parse_time(context["validation_time_utc"]) - parse_time(snapshot["observed_at_utc"])
     ).total_seconds()
     if (
         snapshot["status"] != "VALID"
         or age > max_age
-        or "PLACE_ORDERS" not in snapshot["capabilities"]
+        or parse_time(context["validation_time_utc"]) >= parse_time(snapshot["stale_after_utc"])
     ):
         return deny(operation, "CAPABILITY_SNAPSHOT_BLOCKED")
     credential = context["credential_profiles_by_id"].get(account["active_credential_profile_id"])
+    identity = context["external_identity_snapshots_by_account_id"].get(
+        account["exchange_account_id"]
+    )
+    identities = list(context["external_identity_snapshots_by_account_id"].values())
+    identity_tuple = (
+        (
+            identity.get("exchange_id"),
+            identity.get("environment"),
+            identity.get("market_type"),
+            identity.get("venue_account_identifier"),
+            identity.get("subaccount_identifier"),
+        )
+        if identity
+        else None
+    )
+    identity_collision = (
+        identity_tuple is not None
+        and sum(
+            (
+                candidate["exchange_id"],
+                candidate["environment"],
+                candidate["market_type"],
+                candidate["venue_account_identifier"],
+                candidate["subaccount_identifier"],
+            )
+            == identity_tuple
+            for candidate in identities
+        )
+        != 1
+    )
+    if (
+        not identity
+        or account["external_account_identity_state"] != "VERIFIED"
+        or identity["state"] != "VERIFIED"
+        or any(
+            identity[field] != account[field]
+            for field in ("exchange_id", "environment", "market_type")
+        )
+        or identity_collision
+    ):
+        return deny(operation, "ACCOUNT_READINESS_BLOCKED")
+    required_permissions = {"READ_ACCOUNT", "PLACE_ORDERS"}
+    permission_sources = (
+        set(snapshot["observed_permission_set"]),
+        set(credential["permission_snapshot"]) if credential else set(),
+        set(identity["observed_permission_set"]),
+    )
     if (
         not credential
         or credential["lifecycle_state"] != "ACTIVE"
-        or credential["purpose"] != "ORDER_ENTRY"
-        or "PLACE_ORDERS" not in credential["permissions"]
+        or credential["credential_purpose"] != "ORDER_ENTRY"
+        or any(not required_permissions <= permissions for permissions in permission_sources)
+        or any("WITHDRAW" in permissions for permissions in permission_sources)
     ):
         return deny(operation, "ACCOUNT_READINESS_BLOCKED")
     if "PLACE_ORDERS" not in route["route_capability_ceiling"]:
         return deny(operation, "ROUTE_CAPABILITY_BLOCKED")
+    return None
+
+
+def validate_strategy_execution_operability(request, context, operation):
+    item = instance_lookup(operation, request, context)
+    if isinstance(item, MappingProxyType):
+        return item
+    account = context["accounts_by_id"][item["exchange_account_id"]]
+    universe = context["universes_by_id"][item["trading_universe_id"]]
+    if universe["lifecycle_state"] != "ACTIVE":
+        return deny(operation, "TRADING_UNIVERSE_INVALID")
+    instruments = [context["instruments_by_id"][iid] for iid in universe["instrument_ids"]]
+    catalogs = [
+        context["catalogs_by_id"][catalog_snapshot_id]
+        for catalog_snapshot_id in {instrument["catalog_snapshot_id"] for instrument in instruments}
+    ]
+    validation_time = parse_time(context["validation_time_utc"])
+    if any(
+        catalog["status"] != "VALID" or validation_time >= parse_time(catalog["stale_after_utc"])
+        for catalog in catalogs
+    ):
+        return deny(operation, "TRADING_UNIVERSE_INVALID")
+    if any(
+        instrument["workspace_id"] != item["workspace_id"]
+        or instrument["trading_status"] != "TRADING"
+        or validation_time >= parse_time(instrument["stale_after_utc"])
+        for instrument in instruments
+    ):
+        return deny(operation, "INSTRUMENT_SCOPE_MISMATCH")
+    if account["environment"] == "TESTNET":
+        snapshot = context["account_capability_snapshots_by_id"][
+            account["account_capability_snapshot_id"]
+        ]
+        if not {instrument["instrument_type"] for instrument in instruments}.issubset(
+            snapshot["supported_instrument_types"]
+        ):
+            return deny(operation, "CAPABILITY_SNAPSHOT_BLOCKED")
     return None
 
 
@@ -945,25 +1709,6 @@ def validate_activation(request, context, operation):
         return deny(operation, "STRATEGY_DEFINITION_VERSION_MISMATCH")
     if definition["lifecycle_state"] == "RETIRED":
         return deny(operation, "RETIRED_RESOURCE_FORBIDDEN")
-    account = context["accounts_by_id"][item["exchange_account_id"]]
-    universe = context["universes_by_id"][item["trading_universe_id"]]
-    if universe["lifecycle_state"] != "ACTIVE":
-        return deny(operation, "TRADING_UNIVERSE_INVALID")
-    catalogs = {
-        context["instruments_by_id"][iid]["catalog_id"] for iid in universe["instrument_ids"]
-    }
-    validation_time = parse_time(context["validation_time_utc"])
-    if any(
-        context["catalogs_by_id"][catalog_id]["status"] != "VALID"
-        or validation_time >= parse_time(context["catalogs_by_id"][catalog_id]["stale_after_utc"])
-        for catalog_id in catalogs
-    ):
-        return deny(operation, "TRADING_UNIVERSE_INVALID")
-    if any(
-        context["instruments_by_id"][iid]["trading_status"] != "TRADING"
-        for iid in universe["instrument_ids"]
-    ):
-        return deny(operation, "INSTRUMENT_SCOPE_MISMATCH")
     blocked = bound_route_operability_denial(item, context, operation) or readiness_denial(
         item, context, operation
     )
@@ -1106,7 +1851,7 @@ def planned_outcome_is_valid(operation, request, context, result):
     return False
 
 
-def dispatcher(operation, request, context):
+def execute_validator_call_graph(operation, request, context):
     try:
         if operation not in REQUESTS:
             return deny(operation, "UNKNOWN_OPERATION")
@@ -1124,20 +1869,41 @@ def dispatcher(operation, request, context):
                 ):
                     return deny(operation, "CONTRACT_INCONSISTENT")
                 return result
-    except (KeyError, TypeError, IndexError, ValueError):
+    except (AssertionError, KeyError, StopIteration, TypeError, IndexError, ValueError):
         return deny(operation, "CONTRACT_INCONSISTENT")
     return deny(operation, "CONTRACT_INCONSISTENT")
 
 
+def dispatcher(operation, request, context):
+    return execute_validator_call_graph(operation, request, context)
+
+
 def run_direct_call_graph(operation, request, context):
-    for name in CONTRACT["operation_validator_call_graph"][operation]:
-        result = VALIDATORS[name](request, context, operation)
-        if result is not None:
-            return result
-    return deny(operation, "CONTRACT_INCONSISTENT")
+    return execute_validator_call_graph(operation, request, context)
+
+
+def apply_planned_transition_and_validate(operation, context, result):
+    updated = copy.deepcopy(context)
+    transition = copy.deepcopy(dict(result["planned_transition"]))
+    if operation == "CREATE_STRATEGY_INSTANCE":
+        transition.pop("entity")
+        updated["strategy_instances_by_id"][transition["strategy_instance_id"]] = transition
+    elif operation in {"BIND_MARKET_DATA_ROUTE", "BIND_EXECUTION_ROUTE"}:
+        instance = updated["strategy_instances_by_id"][transition["strategy_instance_id"]]
+        instance[transition["bind"]] = transition["value"]
+        instance["lifecycle_state"] = transition["resulting_state"]
+    else:
+        raise ValueError(operation)
+    assert validate_context({}, updated, operation) is None
+    return updated
 
 
 def fixture_context(environment="TESTNET", instance_state="BOUND"):
+    if environment == "LIVE":
+        raise ValueError("M0.5 has no ENABLED LIVE Exchange Registry entry")
+    exchange = exchange_entry_for_environment(environment)
+    exchange_id = exchange["exchange_id"]
+    adapter_family_id = exchange["adapter_family_id"]
     config = {"lookback": 20, "enabled": True}
     now = "2026-01-01T00:00:00Z"
     h = "a" * 64
@@ -1157,22 +1923,57 @@ def fixture_context(environment="TESTNET", instance_state="BOUND"):
         "exchange_account_id": IDS["xacc"],
         "workspace_id": IDS["ws"],
         "portfolio_id": IDS["port"],
-        "exchange_id": "BINANCE",
+        "exchange_id": exchange_id,
         "environment": environment,
         "market_type": "SPOT",
         "lifecycle_state": "ACTIVE",
-        "capability_snapshot_id": IDS["capsnap"],
+        "connection_state": "ONLINE",
+        "execution_authorization": "ORDER_ENTRY_ALLOWED",
+        "external_account_identity_state": "VERIFIED",
+        "account_capability_snapshot_id": IDS["capsnap"],
         "active_credential_profile_id": IDS["cred"] if environment == "TESTNET" else None,
     }
     instrument = {
         "instrument_id": IDS["instr"],
-        "catalog_id": IDS["icat"],
-        "exchange_id": "BINANCE",
+        "workspace_id": IDS["ws"],
+        "catalog_snapshot_id": IDS["icat"],
+        "exchange_id": exchange_id,
         "environment": environment,
         "market_type": "SPOT",
         "instrument_type": "SPOT_PAIR",
-        "source_adapter_family_id": "binance-v1",
+        "venue_symbol": "BTCUSDT",
+        "display_symbol": "BTC/USDT",
+        "base_asset_reference": {
+            "asset_namespace": exchange_id,
+            "venue_asset_code": "BTC",
+            "canonical_display_code": "BTC",
+            "mapping_status": "EXACT",
+        },
+        "quote_asset_reference": {
+            "asset_namespace": exchange_id,
+            "venue_asset_code": "USDT",
+            "canonical_display_code": "USDT",
+            "mapping_status": "EXACT",
+        },
+        "settlement_asset_reference": None,
+        "source_adapter_family_id": adapter_family_id,
         "trading_status": "TRADING",
+        "price_tick": "0.01",
+        "quantity_step": "0.0001",
+        "min_quantity": "0.0001",
+        "max_quantity": "100",
+        "min_notional": "5",
+        "max_notional": None,
+        "contract_size": None,
+        "contract_value_currency": None,
+        "derivative_settlement_type": None,
+        "expiry_at_utc": None,
+        "strike_price": None,
+        "option_side": None,
+        "metadata_version": 1,
+        "observed_at_utc": "2025-12-31T23:59:00Z",
+        "effective_at_utc": "2025-12-31T23:59:30Z",
+        "stale_after_utc": "2026-01-01T00:05:00Z",
     }
     market_endpoint = {
         "PAPER": "PAPER_PUBLIC_DATA",
@@ -1187,10 +1988,10 @@ def fixture_context(environment="TESTNET", instance_state="BOUND"):
     market = {
         "market_data_route_id": IDS["mdr"],
         "workspace_id": IDS["ws"],
-        "exchange_id": "BINANCE",
+        "exchange_id": exchange_id,
         "environment": environment,
         "market_type": "SPOT",
-        "adapter_family_id": "binance-v1",
+        "adapter_family_id": adapter_family_id,
         "endpoint_class": market_endpoint,
         "data_scope": "PUBLIC",
         "instrument_ids": [IDS["instr"]],
@@ -1205,10 +2006,10 @@ def fixture_context(environment="TESTNET", instance_state="BOUND"):
         "execution_route_id": IDS["xroute"],
         "workspace_id": IDS["ws"],
         "exchange_account_id": IDS["xacc"],
-        "exchange_id": "BINANCE",
+        "exchange_id": exchange_id,
         "environment": environment,
         "market_type": "SPOT",
-        "adapter_family_id": "binance-v1",
+        "adapter_family_id": adapter_family_id,
         "endpoint_class": execution_endpoint,
         "supported_instrument_types": ["SPOT_PAIR"],
         "route_status": "ACTIVE",
@@ -1232,13 +2033,19 @@ def fixture_context(environment="TESTNET", instance_state="BOUND"):
     credential = {
         "credential_profile_id": IDS["cred"],
         "exchange_account_id": IDS["xacc"],
-        "exchange_id": "BINANCE",
-        "environment": "TESTNET",
+        "exchange_id": exchange_id,
+        "environment_scope": "TESTNET",
         "lifecycle_state": "ACTIVE",
-        "purpose": "ORDER_ENTRY",
-        "permissions": ["PLACE_ORDERS"],
+        "credential_purpose": "ORDER_ENTRY",
+        "secure_store_reference": "secure-store://testnet/order-entry",
+        "public_key_identifier": None,
+        "saas_sync_candidate": False,
+        "permission_snapshot": ["READ_ACCOUNT", "PLACE_ORDERS"],
+        "created_at_utc": "2025-12-31T23:58:00Z",
+        "rotated_from_credential_profile_id": None,
+        "retired_at_utc": None,
     }
-    return {
+    context = {
         "strategy_definitions_by_id": {IDS["sdef"]: definition},
         "previous_strategy_definitions_by_version_key": {},
         "strategy_instances_by_id": {IDS["sinst"]: instance},
@@ -1250,37 +2057,54 @@ def fixture_context(environment="TESTNET", instance_state="BOUND"):
                 "trading_universe_id": IDS["univ"],
                 "exchange_account_id": IDS["xacc"],
                 "instrument_ids": [IDS["instr"]],
-                "source_catalog_ids": [IDS["icat"]],
+                "source_catalog_snapshot_ids": [IDS["icat"]],
                 "lifecycle_state": "ACTIVE",
+                "version": 1,
+                "created_at_utc": "2025-12-31T23:58:00Z",
+                "activated_at_utc": "2025-12-31T23:59:00Z",
+                "retired_at_utc": None,
+                "previous_version_id": None,
+                "content_hash": h,
+                "creation_reason": "INITIAL_SELECTION",
             }
         },
         "instruments_by_id": {IDS["instr"]: instrument},
+        "instrument_history_by_id": {},
         "catalogs_by_id": {
             IDS["icat"]: {
-                "catalog_id": IDS["icat"],
-                "exchange_id": "BINANCE",
+                "catalog_snapshot_id": IDS["icat"],
+                "exchange_id": exchange_id,
                 "environment": environment,
                 "market_type": "SPOT",
-                "adapter_family_id": "binance-v1",
+                "adapter_family_id": adapter_family_id,
                 "instrument_ids": [IDS["instr"]],
                 "observed_at_utc": "2025-12-31T23:59:00Z",
                 "effective_at_utc": "2025-12-31T23:59:30Z",
                 "status": "VALID",
                 "stale_after_utc": "2026-01-01T00:05:00Z",
+                "adapter_version": "1.0.0",
+                "content_hash": h,
+                "previous_snapshot_id": None,
             }
         },
         "account_capability_snapshots_by_id": {
             IDS["capsnap"]: {
-                "snapshot_id": IDS["capsnap"],
+                "account_capability_snapshot_id": IDS["capsnap"],
                 "exchange_account_id": IDS["xacc"],
-                "exchange_id": "BINANCE",
+                "exchange_id": exchange_id,
                 "environment": environment,
                 "market_type": "SPOT",
                 "status": "VALID",
-                "capabilities": ["PLACE_ORDERS"],
-                "observed_at": now,
-                "source_payload_hash": h,
-                "attested_payload_hash": h,
+                "observed_permission_set": ["READ_ACCOUNT", "PLACE_ORDERS"],
+                "supported_instrument_types": ["SPOT_PAIR"],
+                "version": 1,
+                "previous_snapshot_id": None,
+                "observed_at_utc": "2025-12-31T23:59:00Z",
+                "effective_at_utc": "2025-12-31T23:59:30Z",
+                "stale_after_utc": "2026-01-01T00:05:00Z",
+                "adapter_family_id": adapter_family_id,
+                "adapter_version": "1.0.0",
+                "content_hash": h,
             }
         },
         "credential_profiles_by_id": {IDS["cred"]: credential} if environment == "TESTNET" else {},
@@ -1320,7 +2144,38 @@ def fixture_context(environment="TESTNET", instance_state="BOUND"):
         "validation_time_utc": now,
         "workspace_ids": [IDS["ws"]],
         "active_strategy_instances": [IDS["sinst"]] if instance_state == "ACTIVE" else [],
+        "previous_account_capability_snapshots_by_id": {},
+        "previous_catalogs_by_id": {},
+        "previous_universes_by_id": {},
+        "previous_credential_profiles_by_id": {},
+        "external_identity_snapshots_by_account_id": {
+            IDS["xacc"]: {
+                "state": "VERIFIED",
+                "exchange_id": exchange_id,
+                "environment": environment,
+                "market_type": "SPOT",
+                "venue_account_identifier": "venue-account-1",
+                "subaccount_identifier": None,
+                "account_type": "SPOT",
+                "observed_permission_set": ["READ_ACCOUNT", "PLACE_ORDERS"],
+                "verification_timestamp": now,
+                "adapter_version_source": f"{adapter_family_id}/1.0.0",
+            }
+        },
     }
+    context["universes_by_id"][IDS["univ"]]["content_hash"] = canonical_m05_hash(
+        "trading_universe", context["universes_by_id"][IDS["univ"]]
+    )
+    context["catalogs_by_id"][IDS["icat"]]["content_hash"] = canonical_m05_hash(
+        "instrument_catalog_snapshot", context["catalogs_by_id"][IDS["icat"]]
+    )
+    context["account_capability_snapshots_by_id"][IDS["capsnap"]]["content_hash"] = (
+        canonical_m05_hash(
+            "account_capability_snapshot",
+            context["account_capability_snapshots_by_id"][IDS["capsnap"]],
+        )
+    )
+    return context
 
 
 def request_for(operation):
@@ -1483,69 +2338,36 @@ def make_reachability_case(operation, denial):
             else context["execution_routes_by_id"][IDS["xroute"]]
         )
         if operation == "BIND_MARKET_DATA_ROUTE":
-            route["workspace_id"] = f"ws_{UUID7}0f"
-            context["workspace_ids"].append(route["workspace_id"])
+            workspace_id, iid, cid = f"ws_{UUID7}0f", f"instr_{UUID7}0f", f"icat_{UUID7}0f"
+            instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
+            catalog = copy.deepcopy(context["catalogs_by_id"][IDS["icat"]])
+            instrument.update(instrument_id=iid, workspace_id=workspace_id, catalog_snapshot_id=cid)
+            catalog.update(catalog_snapshot_id=cid, instrument_ids=[iid])
+            context["instruments_by_id"][iid] = instrument
+            context["catalogs_by_id"][cid] = catalog
+            context["workspace_ids"].append(workspace_id)
+            route.update(workspace_id=workspace_id, instrument_ids=[iid])
         else:
             account = copy.deepcopy(context["accounts_by_id"][IDS["xacc"]])
-            account_id, snapshot_id = f"xacc_{UUID7}0f", f"capsnap_{UUID7}0f"
+            account_id, account_capability_snapshot_id = f"xacc_{UUID7}0f", f"capsnap_{UUID7}0f"
             account.update(
                 exchange_account_id=account_id,
-                capability_snapshot_id=snapshot_id,
+                account_capability_snapshot_id=account_capability_snapshot_id,
                 active_credential_profile_id=f"cred_{UUID7}0f",
             )
             snapshot = copy.deepcopy(context["account_capability_snapshots_by_id"][IDS["capsnap"]])
-            snapshot.update(snapshot_id=snapshot_id, exchange_account_id=account_id)
+            snapshot.update(
+                account_capability_snapshot_id=account_capability_snapshot_id,
+                exchange_account_id=account_id,
+            )
             credential = copy.deepcopy(context["credential_profiles_by_id"][IDS["cred"]])
             credential.update(
                 credential_profile_id=f"cred_{UUID7}0f", exchange_account_id=account_id
             )
             context["accounts_by_id"][account_id] = account
-            context["account_capability_snapshots_by_id"][snapshot_id] = snapshot
+            context["account_capability_snapshots_by_id"][account_capability_snapshot_id] = snapshot
             context["credential_profiles_by_id"][credential["credential_profile_id"]] = credential
             route.update(exchange_account_id=account_id)
-    elif denial == "ENDPOINT_FALLBACK_FORBIDDEN":
-        route = (
-            context["market_data_routes_by_id"][IDS["mdr"]]
-            if operation == "BIND_MARKET_DATA_ROUTE"
-            else context["execution_routes_by_id"][IDS["xroute"]]
-        )
-        if operation == "BIND_MARKET_DATA_ROUTE":
-            iid, cid = f"instr_{UUID7}0f", f"icat_{UUID7}0f"
-            instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
-            catalog = copy.deepcopy(context["catalogs_by_id"][IDS["icat"]])
-            instrument.update(instrument_id=iid, catalog_id=cid, environment="LIVE")
-            catalog.update(catalog_id=cid, instrument_ids=[iid], environment="LIVE")
-            context["instruments_by_id"][iid] = instrument
-            context["catalogs_by_id"][cid] = catalog
-            route.update(
-                environment="LIVE", endpoint_class="LIVE_PUBLIC_DATA", instrument_ids=[iid]
-            )
-        else:
-            account = copy.deepcopy(context["accounts_by_id"][IDS["xacc"]])
-            account_id, snapshot_id = f"xacc_{UUID7}0f", f"capsnap_{UUID7}0f"
-            account.update(
-                exchange_account_id=account_id,
-                capability_snapshot_id=snapshot_id,
-                active_credential_profile_id=None,
-                environment="PAPER",
-            )
-            snapshot = copy.deepcopy(context["account_capability_snapshots_by_id"][IDS["capsnap"]])
-            snapshot.update(
-                snapshot_id=snapshot_id, exchange_account_id=account_id, environment="PAPER"
-            )
-            context["accounts_by_id"][account_id] = account
-            context["account_capability_snapshots_by_id"][snapshot_id] = snapshot
-            context["product_capabilities_by_environment"]["PAPER"] = fixture_context("PAPER")[
-                "product_capabilities_by_environment"
-            ]["PAPER"]
-            route.update(
-                exchange_account_id=account_id,
-                environment="PAPER",
-                endpoint_class="PAPER_SIMULATION",
-                authorization_dependencies=CONTRACT["authorization_dependencies_by_environment"][
-                    "PAPER"
-                ],
-            )
     elif denial == "INSTRUMENT_SCOPE_MISMATCH":
         if operation == "BIND_MARKET_DATA_ROUTE":
             iid = f"instr_{UUID7}0f"
@@ -1563,19 +2385,10 @@ def make_reachability_case(operation, denial):
             context["market_data_routes_by_id"][IDS["mdr"]]["instrument_ids"] = [iid]
         else:
             context["instruments_by_id"][IDS["instr"]]["trading_status"] = "HALTED"
-    elif denial == "ROUTE_ADAPTER_MISMATCH":
-        context["execution_routes_by_id"][IDS["xroute"]]["adapter_family_id"] = "other-v1"
     elif denial == "ROUTE_CAPABILITY_BLOCKED":
         context["execution_routes_by_id"][IDS["xroute"]]["authorization_dependencies"] = [
             "PRODUCT_CAPABILITIES"
         ]
-    elif denial == "LIVE_EXECUTION_FORBIDDEN":
-        context = fixture_context("LIVE")
-        request = request_for(operation)
-        if operation == "BIND_EXECUTION_ROUTE":
-            context["strategy_instances_by_id"][IDS["sinst"]].update(
-                execution_route_id=None, lifecycle_state="DRAFT"
-            )
     elif denial in {"MARKET_DATA_ROUTE_NOT_READY", "EXECUTION_ROUTE_NOT_READY"}:
         context["route_readiness_by_id"].pop(
             IDS["mdr"] if denial.startswith("MARKET") else IDS["xroute"]
@@ -1590,6 +2403,8 @@ def make_reachability_case(operation, denial):
         context["account_capability_snapshots_by_id"][IDS["capsnap"]]["status"] = "REJECTED"
     elif denial == "PRODUCT_CAPABILITIES_BLOCKED":
         context["product_capabilities_by_environment"]["TESTNET"]["execution_enabled"] = False
+    if denial != "TRUSTED_CONTEXT_INVALID":
+        rehash_m05_projections(context)
     return request, context
 
 
@@ -1836,7 +2651,7 @@ def test_hash_lineage_adapter_snapshot_credential_and_readiness_mutations_are_re
         )
     )
     mutations.append(
-        lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(environment="LIVE")
+        lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(environment_scope="LIVE")
     )
     mutations.append(
         lambda c: c["route_readiness_by_id"][IDS["mdr"]].update(route_kind="EXECUTION")
@@ -1862,8 +2677,12 @@ def test_activation_credential_permission_and_retirement_mutations():
         "TRUSTED_CONTEXT_INVALID"
     )
     for mutation in [
-        lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(permissions=["READ_ACCOUNT"]),
-        lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(purpose="ACCOUNT_READ"),
+        lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(
+            permission_snapshot=["READ_ACCOUNT"]
+        ),
+        lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(
+            credential_purpose="ACCOUNT_READ"
+        ),
     ]:
         context = fixture_context()
         mutation(context)
@@ -2018,7 +2837,7 @@ def test_reverse_integrity_covers_unrelated_records():
 
     def missing_catalog(context):
         instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
-        instrument.update(instrument_id=f"instr_{UUID7}0f", catalog_id=f"icat_{UUID7}0f")
+        instrument.update(instrument_id=f"instr_{UUID7}0f", catalog_snapshot_id=f"icat_{UUID7}0f")
         context["instruments_by_id"][instrument["instrument_id"]] = instrument
 
     def missing_back_reference(context):
@@ -2028,8 +2847,13 @@ def test_reverse_integrity_covers_unrelated_records():
 
     def orphan_snapshot(context):
         snapshot = copy.deepcopy(context["account_capability_snapshots_by_id"][IDS["capsnap"]])
-        snapshot.update(snapshot_id=f"capsnap_{UUID7}0f", exchange_account_id=f"xacc_{UUID7}0f")
-        context["account_capability_snapshots_by_id"][snapshot["snapshot_id"]] = snapshot
+        snapshot.update(
+            account_capability_snapshot_id=f"capsnap_{UUID7}0f",
+            exchange_account_id=f"xacc_{UUID7}0f",
+        )
+        context["account_capability_snapshots_by_id"][
+            snapshot["account_capability_snapshot_id"]
+        ] = snapshot
 
     def orphan_portfolio(context):
         context["portfolios_by_id"][f"port_{UUID7}0f"] = {
@@ -2050,8 +2874,10 @@ def test_paper_authorization_ignores_snapshot_and_credentials():
     context["accounts_by_id"][IDS["xacc"]]["lifecycle_state"] = "DISABLED"
     snapshot = context["account_capability_snapshots_by_id"][IDS["capsnap"]]
     snapshot.update(
-        status="REJECTED", observed_at="2020-01-01T00:00:00Z", capabilities=["READ_ACCOUNT"]
+        status="REJECTED",
+        observed_permission_set=["READ_ACCOUNT"],
     )
+    rehash_m05_projections(context)
     assert dispatcher("VALIDATE_ROUTE_READINESS", request_for("VALIDATE_ROUTE_READINESS"), context)[
         "allowed"
     ]
@@ -2187,15 +3013,15 @@ def test_create_plans_are_complete_and_deeply_immutable():
         ),
         (
             lambda c: c["account_capability_snapshots_by_id"][IDS["capsnap"]].update(
-                observed_at="2025-12-31T23:00:00Z"
+                observed_at_utc="2025-12-31T23:00:00Z"
             ),
             "CAPABILITY_SNAPSHOT_BLOCKED",
         ),
         (
             lambda c: c["account_capability_snapshots_by_id"][IDS["capsnap"]].update(
-                capabilities=["READ_ACCOUNT"]
+                observed_permission_set=["READ_ACCOUNT"]
             ),
-            "CAPABILITY_SNAPSHOT_BLOCKED",
+            "ACCOUNT_READINESS_BLOCKED",
         ),
         (
             lambda c: c["product_capabilities_by_environment"]["TESTNET"].update(
@@ -2217,12 +3043,14 @@ def test_create_plans_are_complete_and_deeply_immutable():
             "ACCOUNT_READINESS_BLOCKED",
         ),
         (
-            lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(purpose="ACCOUNT_READ"),
+            lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(
+                credential_purpose="ACCOUNT_READ"
+            ),
             "ACCOUNT_READINESS_BLOCKED",
         ),
         (
             lambda c: c["credential_profiles_by_id"][IDS["cred"]].update(
-                permissions=["READ_ACCOUNT"]
+                permission_snapshot=["READ_ACCOUNT"]
             ),
             "ACCOUNT_READINESS_BLOCKED",
         ),
@@ -2237,6 +3065,7 @@ def test_create_plans_are_complete_and_deeply_immutable():
 def test_testnet_authorization_operability_is_shared_by_readiness(mutation, expected):
     context = fixture_context()
     mutation(context)
+    rehash_m05_projections(context)
     assert validate_context({}, context, "VALIDATE_ROUTE_READINESS") is None
     result = dispatcher(
         "VALIDATE_ROUTE_READINESS", request_for("VALIDATE_ROUTE_READINESS"), context
@@ -2245,12 +3074,23 @@ def test_testnet_authorization_operability_is_shared_by_readiness(mutation, expe
     assert result["denial_code"] != "CONTRACT_INCONSISTENT"
 
 
-def test_live_execution_readiness_is_forbidden():
-    context = fixture_context("LIVE")
-    result = dispatcher(
-        "VALIDATE_ROUTE_READINESS", request_for("VALIDATE_ROUTE_READINESS"), context
+def test_live_execution_is_a_cross_milestone_registry_blocker():
+    assert not any(
+        entry["status"] == "ENABLED" and "LIVE" in entry["supported_environments"]
+        for entry in canonical_exchange_entries()
     )
-    assert result["denial_code"] == "LIVE_EXECUTION_FORBIDDEN"
+    assert CONTRACT["live_exchange_registry_audit"] == {
+        "live_enabled_entry_present": False,
+        "ordinary_live_execution_denial_reachable": False,
+        "runtime": False,
+        "reachable": False,
+        "cross_milestone_blocked": True,
+        "cross_milestone_blocker": (
+            "M0.5 closed Exchange Registry has no ENABLED entry supporting LIVE; persisted LIVE "
+            "context fails TRUSTED_CONTEXT_INVALID before operation authority and "
+            "LIVE_EXECUTION_FORBIDDEN is not an ordinary M0.6 reachability case"
+        ),
+    }
 
 
 def test_special_audit_events_cover_machine_contract_faults():
@@ -2297,10 +3137,10 @@ def test_denial_registry_has_no_dead_ordinary_codes():
         (
             "account_capability_snapshots_by_id",
             "capsnap",
-            "capabilities",
+            "observed_permission_set",
             "ALIEN_CAPABILITY",
         ),
-        ("credential_profiles_by_id", "cred", "permissions", "ALIEN_PERMISSION"),
+        ("credential_profiles_by_id", "cred", "permission_snapshot", "ALIEN_PERMISSION"),
         (
             "product_capabilities_by_environment",
             "TESTNET",
@@ -2321,13 +3161,14 @@ def test_projection_arrays_reject_values_outside_canonical_contracts(
 
 def test_projection_arrays_accept_multiple_canonical_values():
     context = fixture_context()
-    context["account_capability_snapshots_by_id"][IDS["capsnap"]]["capabilities"].append(
-        "READ_ACCOUNT"
+    context["account_capability_snapshots_by_id"][IDS["capsnap"]]["observed_permission_set"].append(
+        "READ_ORDERS"
     )
-    context["credential_profiles_by_id"][IDS["cred"]]["permissions"].append("READ_ORDERS")
+    context["credential_profiles_by_id"][IDS["cred"]]["permission_snapshot"].append("READ_ORDERS")
     context["product_capabilities_by_environment"]["TESTNET"]["allowed_operations"].extend(
         ["PAPER_LOCAL_SIMULATION", "LIVE_VISIBLE_LOCKED_ONLY"]
     )
+    rehash_m05_projections(context)
     assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
 
 
@@ -2425,6 +3266,7 @@ def test_activation_terminal_denial_prevents_authorization_execution(state):
 def test_snapshot_structure_is_distinct_from_testnet_operability():
     rejected = fixture_context()
     rejected["account_capability_snapshots_by_id"][IDS["capsnap"]]["status"] = "REJECTED"
+    rehash_m05_projections(rejected)
     assert validate_context({}, rejected, "ACTIVATE_STRATEGY_INSTANCE") is None
     assert (
         dispatcher(
@@ -2447,6 +3289,7 @@ def test_snapshot_structure_is_distinct_from_testnet_operability():
     for mutation in structural_mutations:
         context = fixture_context()
         mutation(context)
+        rehash_m05_projections(context)
         assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE")["denial_code"] == (
             "TRUSTED_CONTEXT_INVALID"
         )
@@ -2595,7 +3438,7 @@ SCALAR_ENUM_CASES = [
     ),
     (
         "CredentialProfileProjection",
-        "purpose",
+        "credential_purpose",
         "credential_profiles_by_id",
         IDS["cred"],
         ("ACCOUNT_READ", "ORDER_ENTRY", "RECONCILIATION"),
@@ -2628,6 +3471,14 @@ def test_canonical_m05_scalar_values_are_structurally_valid(
     for value in values:
         context = fixture_context()
         context[map_name][record_id][field] = value
+        if schema_name == "TradingUniverseProjection":
+            universe = context[map_name][record_id]
+            if value == "ACTIVE":
+                universe["activated_at_utc"] = "2025-01-01T00:02:00Z"
+                universe["retired_at_utc"] = None
+            elif value == "RETIRED":
+                universe["retired_at_utc"] = "2025-01-01T00:03:00Z"
+        rehash_m05_projections(context)
         assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
 
 
@@ -2638,8 +3489,8 @@ def test_canonical_m05_scalar_values_are_structurally_valid(
         ("universes_by_id", IDS["univ"], "lifecycle_state", "ALIEN"),
         ("account_capability_snapshots_by_id", IDS["capsnap"], "status", "INVALID"),
         ("account_capability_snapshots_by_id", IDS["capsnap"], "status", "ALIEN"),
-        ("credential_profiles_by_id", IDS["cred"], "purpose", "MARKET_DATA"),
-        ("credential_profiles_by_id", IDS["cred"], "purpose", "ALIEN"),
+        ("credential_profiles_by_id", IDS["cred"], "credential_purpose", "MARKET_DATA"),
+        ("credential_profiles_by_id", IDS["cred"], "credential_purpose", "ALIEN"),
         ("instruments_by_id", IDS["instr"], "trading_status", "ACTIVE"),
         ("instruments_by_id", IDS["instr"], "trading_status", "RETIRED"),
         ("instruments_by_id", IDS["instr"], "trading_status", "ALIEN"),
@@ -2673,6 +3524,9 @@ def test_canonical_inactive_testnet_account_states_block_operability(state):
 def test_canonical_inactive_universe_states_are_operation_denials(state):
     context = fixture_context()
     context["universes_by_id"][IDS["univ"]]["lifecycle_state"] = state
+    if state == "RETIRED":
+        context["universes_by_id"][IDS["univ"]]["retired_at_utc"] = "2025-01-01T00:03:00Z"
+    rehash_m05_projections(context)
     assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
     result = dispatcher(
         "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
@@ -2684,6 +3538,7 @@ def test_canonical_inactive_universe_states_are_operation_denials(state):
 def test_canonical_inoperable_snapshot_statuses_block_testnet(status):
     context = fixture_context()
     context["account_capability_snapshots_by_id"][IDS["capsnap"]]["status"] = status
+    rehash_m05_projections(context)
     assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
     result = dispatcher(
         "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
@@ -2691,10 +3546,10 @@ def test_canonical_inoperable_snapshot_statuses_block_testnet(status):
     assert result["denial_code"] == "CAPABILITY_SNAPSHOT_BLOCKED"
 
 
-@pytest.mark.parametrize("purpose", ["ACCOUNT_READ", "RECONCILIATION"])
-def test_canonical_non_order_entry_purposes_block_testnet(purpose):
+@pytest.mark.parametrize("credential_purpose", ["ACCOUNT_READ", "RECONCILIATION"])
+def test_canonical_non_order_entry_purposes_block_testnet(credential_purpose):
     context = fixture_context()
-    context["credential_profiles_by_id"][IDS["cred"]]["purpose"] = purpose
+    context["credential_profiles_by_id"][IDS["cred"]]["credential_purpose"] = credential_purpose
     assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
     result = dispatcher(
         "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
@@ -2805,10 +3660,23 @@ def test_all_m05_scalar_projection_bindings_use_canonical_references_only():
         ("ExchangeAccountProjection", "lifecycle_state"): "m05_account_lifecycle_states",
         ("TradingUniverseProjection", "lifecycle_state"): "m05_universe_lifecycle_states",
         ("AccountCapabilitySnapshotProjection", "status"): "m05_snapshot_statuses",
-        ("CredentialProfileProjection", "purpose"): "m05_credential_purposes",
+        ("CredentialProfileProjection", "credential_purpose"): "m05_credential_purposes",
         ("InstrumentProjection", "trading_status"): "m05_instrument_trading_statuses",
         ("InstrumentCatalogProjection", "status"): "m05_catalog_statuses",
     }
+    expected.update(
+        {
+            ("ExchangeAccountProjection", "connection_state"): "m05_connection_states",
+            (
+                "ExchangeAccountProjection",
+                "execution_authorization",
+            ): "m05_execution_authorizations",
+            (
+                "ExchangeAccountProjection",
+                "external_account_identity_state",
+            ): "m05_external_identity_states",
+        }
+    )
     assert set(CONTRACT["canonical_scalar_enum_registry_refs"]) == set(expected.values())
     for (schema_name, field), reference_name in expected.items():
         schema = SCHEMAS[schema_name]
@@ -2845,6 +3713,7 @@ def test_trading_instrument_and_fresh_valid_catalog_allow_activation():
 def test_canonical_nonoperational_catalog_statuses_are_domain_denials(status):
     context = fixture_context()
     context["catalogs_by_id"][IDS["icat"]]["status"] = status
+    rehash_m05_projections(context)
     assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
     result = dispatcher(
         "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
@@ -2856,11 +3725,228 @@ def test_canonical_nonoperational_catalog_statuses_are_domain_denials(status):
 def test_expired_valid_catalog_is_structural_but_not_operational():
     context = fixture_context()
     context["catalogs_by_id"][IDS["icat"]]["stale_after_utc"] = "2025-12-31T23:59:59Z"
+    rehash_m05_projections(context)
     assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
     result = dispatcher(
         "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
     )
     assert result["denial_code"] == "TRADING_UNIVERSE_INVALID"
+
+
+@pytest.mark.parametrize("operation", ["VALIDATE_ROUTE_READINESS", "ACTIVATE_STRATEGY_INSTANCE"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("workspace_id", f"ws_{UUID7}0f"),
+        ("metadata_version", False),
+        ("metadata_version", 0),
+        ("observed_at_utc", "2026-01-01T00:00:01Z"),
+        ("effective_at_utc", "2026-01-01T00:00:01Z"),
+        ("observed_at_utc", "2025-12-31T23:59:31Z"),
+        ("stale_after_utc", "2025-12-31T23:59:30Z"),
+    ],
+)
+def test_instrument_structural_authority_failures_are_context_invalid(operation, field, value):
+    context = fixture_context()
+    context["instruments_by_id"][IDS["instr"]][field] = value
+    result = dispatcher(operation, request_for(operation), context)
+    assert not result["allowed"]
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+    assert result["denial_code"] != "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize("operation", ["VALIDATE_ROUTE_READINESS", "ACTIVATE_STRATEGY_INSTANCE"])
+@pytest.mark.parametrize("status", ["HALTED", "SUSPENDED", "DELISTED", "UNKNOWN"])
+def test_instrument_operability_is_shared_by_readiness_and_activation(operation, status):
+    context = fixture_context()
+    context["instruments_by_id"][IDS["instr"]]["trading_status"] = status
+    result = dispatcher(operation, request_for(operation), context)
+    assert result["denial_code"] == "INSTRUMENT_SCOPE_MISMATCH"
+    assert result["denial_code"] != "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize("operation", ["VALIDATE_ROUTE_READINESS", "ACTIVATE_STRATEGY_INSTANCE"])
+def test_instrument_freshness_boundary_is_exclusive(operation):
+    context = fixture_context()
+    context["instruments_by_id"][IDS["instr"]]["stale_after_utc"] = context["validation_time_utc"]
+    assert validate_context({}, context, operation) is None
+    result = dispatcher(operation, request_for(operation), context)
+    assert result["denial_code"] == "INSTRUMENT_SCOPE_MISMATCH"
+
+
+@pytest.mark.parametrize("operation", ["VALIDATE_ROUTE_READINESS", "ACTIVATE_STRATEGY_INSTANCE"])
+def test_testnet_snapshot_must_authorize_every_universe_instrument_type(operation):
+    context = fixture_context()
+    assert dispatcher(operation, request_for(operation), context)["allowed"]
+    context["account_capability_snapshots_by_id"][IDS["capsnap"]]["supported_instrument_types"] = []
+    rehash_m05_projections(context)
+    assert validate_context({}, context, operation) is None
+    result = dispatcher(operation, request_for(operation), context)
+    assert result["denial_code"] == "CAPABILITY_SNAPSHOT_BLOCKED"
+    assert result["denial_code"] != "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize("instrument_type", ["ALIEN", "MARGIN_PAIR"])
+def test_unknown_or_market_disallowed_snapshot_instrument_type_invalidates_context(
+    instrument_type,
+):
+    context = fixture_context()
+    context["account_capability_snapshots_by_id"][IDS["capsnap"]]["supported_instrument_types"] = [
+        instrument_type
+    ]
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+def test_canonical_projection_identities_and_markdown_are_machine_synchronized():
+    expected = {
+        "InstrumentCatalogProjection": "catalog_snapshot_id",
+        "AccountCapabilitySnapshotProjection": "account_capability_snapshot_id",
+    }
+    for schema_name, identity in expected.items():
+        assert SCHEMAS[schema_name]["id_field"] == identity
+        assert identity in SCHEMAS[schema_name]["exact_fields"]
+        assert "projection_aliases" not in SCHEMAS[schema_name]
+    assert (
+        "observed_permission_set" in SCHEMAS["AccountCapabilitySnapshotProjection"]["exact_fields"]
+    )
+    assert "source_catalog_snapshot_ids" in SCHEMAS["TradingUniverseProjection"]["exact_fields"]
+    assert SCHEMAS["AccountCapabilitySnapshotProjection"]["array_policy"][
+        "supported_instrument_types"
+    ] == {"unique": True, "empty_allowed": True, "item_registry_ref": "m05_instrument_types"}
+    assert resolve_canonical_registry("m05_instrument_types") == (
+        "SPOT_PAIR",
+        "MARGIN_PAIR",
+        "PERPETUAL_CONTRACT",
+        "DELIVERY_FUTURE",
+        "OPTION",
+    )
+    markdown = PATH.with_suffix(".md").read_text(encoding="utf-8")
+    for text in (
+        "catalog_snapshot_id",
+        "account_capability_snapshot_id",
+        "observed_permission_set",
+        "source_catalog_snapshot_ids",
+        "/instrument_type_registry",
+        "validate_strategy_execution_operability",
+        "validation_time_utc < stale_after_utc",
+    ):
+        assert text in markdown
+
+
+def test_cross_contract_projection_audit_is_complete_and_executable():
+    audit = CONTRACT["cross_contract_projection_audit"]
+    expected = {
+        "ExchangeAccountProjection": "exchange_account_id",
+        "TradingUniverseProjection": "trading_universe_id",
+        "InstrumentProjection": "instrument_id",
+        "InstrumentCatalogProjection": "catalog_snapshot_id",
+        "AccountCapabilitySnapshotProjection": "account_capability_snapshot_id",
+        "CredentialProfileProjection": "credential_profile_id",
+    }
+    assert set(audit) == set(expected)
+    for projection, identity in expected.items():
+        entry = audit[projection]
+        assert entry["canonical_identity_field"] == identity
+        assert identity in SCHEMAS[projection]["exact_fields"]
+        assert set(entry["authority_relevant_fields"]) == set(SCHEMAS[projection]["exact_fields"])
+        assert entry["canonical_registries"]
+        assert entry["structural_invariants"]
+        assert entry["operation_specific_operability"]
+        assert "intentional_omissions" in entry
+        assert entry["validated_context_maps"]
+        covered_maps = {
+            **CONTRACT["trusted_validation_context"]["map_fields"],
+            **CONTRACT["trusted_validation_context"]["history_map_fields"],
+        }
+        assert all(map_name in covered_maps for map_name in entry["validated_context_maps"])
+        assert "validated upstream" not in json.dumps(entry).lower()
+        if entry["hash_definition_ref"] is not None:
+            assert entry["hash_definition_ref"] in CONTRACT["canonical_hash_definition_refs"]
+            assert entry["lineage_source"] in entry["validated_context_maps"]
+    snapshot_fields = set(audit["AccountCapabilitySnapshotProjection"]["authority_relevant_fields"])
+    assert {
+        "version",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "adapter_family_id",
+        "adapter_version",
+        "content_hash",
+    } <= snapshot_fields
+    assert "m05_exchange_registry_entries" in audit["InstrumentProjection"]["canonical_registries"]
+
+
+@pytest.mark.parametrize(
+    "operation", ["CREATE_STRATEGY_INSTANCE", "BIND_MARKET_DATA_ROUTE", "BIND_EXECUTION_ROUTE"]
+)
+def test_every_successful_mutating_plan_produces_a_valid_persisted_graph(operation):
+    context = fixture_context(instance_state="DRAFT")
+    instance = context["strategy_instances_by_id"][IDS["sinst"]]
+    if operation == "CREATE_STRATEGY_INSTANCE":
+        context["strategy_instances_by_id"].clear()
+    elif operation == "BIND_MARKET_DATA_ROUTE":
+        instance["market_data_route_id"] = None
+        instance["execution_route_id"] = IDS["xroute"]
+    else:
+        instance["market_data_route_id"] = IDS["mdr"]
+        instance["execution_route_id"] = None
+    request = request_for(operation)
+    result = dispatcher(operation, request, context)
+    assert result["allowed"]
+    apply_planned_transition_and_validate(operation, context, result)
+
+
+@pytest.mark.parametrize(
+    "operation", ["CREATE_STRATEGY_INSTANCE", "BIND_MARKET_DATA_ROUTE", "BIND_EXECUTION_ROUTE"]
+)
+def test_cross_workspace_instrument_cannot_be_created_or_bound_into_a_strategy_graph(operation):
+    context = fixture_context(instance_state="DRAFT")
+    foreign_workspace = f"ws_{UUID7}0f"
+    context["workspace_ids"].append(foreign_workspace)
+    context["instruments_by_id"][IDS["instr"]]["workspace_id"] = foreign_workspace
+    instance = context["strategy_instances_by_id"][IDS["sinst"]]
+    if operation == "CREATE_STRATEGY_INSTANCE":
+        context["strategy_instances_by_id"].clear()
+    elif operation == "BIND_MARKET_DATA_ROUTE":
+        instance["market_data_route_id"] = None
+    else:
+        instance["execution_route_id"] = None
+    result = dispatcher(operation, request_for(operation), context)
+    assert not result["allowed"]
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+    assert result["denial_code"] != "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("observed_at_utc", "2026-01-01T00:00:01Z"),
+        ("effective_at_utc", "2025-12-31T23:58:59Z"),
+        ("stale_after_utc", "2025-12-31T23:59:30Z"),
+    ],
+)
+def test_malformed_snapshot_temporal_authority_is_context_invalid(field, value):
+    context = fixture_context()
+    context["account_capability_snapshots_by_id"][IDS["capsnap"]][field] = value
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+@pytest.mark.parametrize("operation", ["VALIDATE_ROUTE_READINESS", "ACTIVATE_STRATEGY_INSTANCE"])
+def test_canonically_expired_snapshot_is_structural_but_blocks_testnet_operability(operation):
+    context = fixture_context()
+    context["account_capability_snapshots_by_id"][IDS["capsnap"]]["stale_after_utc"] = context[
+        "validation_time_utc"
+    ]
+    rehash_m05_projections(context)
+    assert validate_context({}, context, operation) is None
+    result = dispatcher(operation, request_for(operation), context)
+    assert result["denial_code"] == "CAPABILITY_SNAPSHOT_BLOCKED"
 
 
 @pytest.mark.parametrize(
@@ -2881,3 +3967,577 @@ def test_malformed_or_inconsistent_catalog_timestamps_invalidate_context(field, 
     )
     assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
     assert result["denial_code"] != "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("version", 2),
+        ("status", "STALE"),
+        ("observed_permission_set", ["READ_ACCOUNT"]),
+        ("supported_instrument_types", []),
+        ("observed_at_utc", "2025-12-31T23:58:59Z"),
+        ("effective_at_utc", "2025-12-31T23:59:31Z"),
+        ("stale_after_utc", "2026-01-01T00:06:00Z"),
+        ("adapter_family_id", "wrong-adapter"),
+        ("adapter_version", "2.0.0"),
+        ("previous_snapshot_id", f"capsnap_{UUID7}0f"),
+    ],
+)
+def test_snapshot_hash_inputs_cannot_change_without_canonical_rehash(field, value):
+    context = fixture_context()
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    context["account_capability_snapshots_by_id"][IDS["capsnap"]][field] = value
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("map_name", "field", "value"),
+    [
+        ("catalogs_by_id", "instrument_ids", []),
+        ("catalogs_by_id", "status", "STALE"),
+        ("catalogs_by_id", "adapter_version", "2.0.0"),
+        ("catalogs_by_id", "observed_at_utc", "2025-12-31T23:58:59Z"),
+        ("catalogs_by_id", "previous_snapshot_id", f"icat_{UUID7}0f"),
+        ("universes_by_id", "instrument_ids", []),
+        ("universes_by_id", "source_catalog_snapshot_ids", []),
+        ("universes_by_id", "version", 2),
+        ("universes_by_id", "lifecycle_state", "RETIRED"),
+        ("universes_by_id", "previous_version_id", f"univ_{UUID7}0f"),
+        ("universes_by_id", "creation_reason", "CHANGED"),
+    ],
+)
+def test_catalog_and_universe_hash_inputs_cannot_change_without_rehash(map_name, field, value):
+    context = fixture_context()
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    record_id = IDS["icat"] if map_name == "catalogs_by_id" else IDS["univ"]
+    context[map_name][record_id][field] = value
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+def test_canonical_hash_sorts_unordered_arrays_and_rejects_arbitrary_digest():
+    context = fixture_context()
+    snapshot = context["account_capability_snapshots_by_id"][IDS["capsnap"]]
+    original = snapshot["content_hash"]
+    snapshot["observed_permission_set"].reverse()
+    assert canonical_m05_hash("account_capability_snapshot", snapshot) == original
+    snapshot["content_hash"] = "0" * 64
+    assert (
+        dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )["denial_code"]
+        == "TRUSTED_CONTEXT_INVALID"
+    )
+
+
+@pytest.mark.parametrize("reference_name", list(CONTRACT["canonical_hash_definition_refs"]))
+def test_broken_hash_definition_pointer_is_contract_inconsistent(reference_name):
+    reference = CONTRACT["canonical_hash_definition_refs"][reference_name]
+    original = reference["json_pointer"]
+    context = fixture_context()
+    try:
+        reference["json_pointer"] = "/missing/hash/definition"
+        result = dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE",
+            request_for("ACTIVATE_STRATEGY_INSTANCE"),
+            context,
+        )
+        assert result["denial_code"] == "CONTRACT_INCONSISTENT"
+        assert result["audit_event_type"] == "STRATEGY_ROUTING_CONTRACT_INCONSISTENT"
+    finally:
+        reference["json_pointer"] = original
+
+
+@pytest.mark.parametrize(
+    "lineage_fault", ["missing", "self_cycle", "two_node_cycle", "multi_node_cycle"]
+)
+def test_snapshot_lineage_is_total_and_cycle_safe(lineage_fault):
+    context = fixture_context()
+    current = context["account_capability_snapshots_by_id"][IDS["capsnap"]]
+    first_id, second_id = f"capsnap_{UUID7}0e", f"capsnap_{UUID7}0f"
+    first = copy.deepcopy(current)
+    first.update(account_capability_snapshot_id=first_id, version=1, previous_snapshot_id=None)
+    first["content_hash"] = canonical_m05_hash("account_capability_snapshot", first)
+    second = copy.deepcopy(current)
+    second.update(
+        account_capability_snapshot_id=second_id, version=2, previous_snapshot_id=first_id
+    )
+    second["content_hash"] = canonical_m05_hash("account_capability_snapshot", second)
+    current.update(version=3, previous_snapshot_id=second_id)
+    context["previous_account_capability_snapshots_by_id"] = {
+        first_id: first,
+        second_id: second,
+    }
+    if lineage_fault == "missing":
+        current["previous_snapshot_id"] = f"capsnap_{UUID7}00"
+    elif lineage_fault == "self_cycle":
+        current["previous_snapshot_id"] = IDS["capsnap"]
+    elif lineage_fault == "two_node_cycle":
+        second["previous_snapshot_id"] = second_id
+    else:
+        first["previous_snapshot_id"] = second_id
+    for record in [first, second, current]:
+        record["content_hash"] = canonical_m05_hash("account_capability_snapshot", record)
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("source", "permissions"),
+    [
+        ("credential", ["PLACE_ORDERS"]),
+        ("snapshot", ["PLACE_ORDERS"]),
+        ("identity", ["PLACE_ORDERS"]),
+        ("credential", ["READ_ACCOUNT"]),
+        ("snapshot", ["READ_ACCOUNT"]),
+        ("identity", ["READ_ACCOUNT"]),
+        ("credential", ["READ_ACCOUNT", "PLACE_ORDERS", "WITHDRAW"]),
+        ("snapshot", ["READ_ACCOUNT", "PLACE_ORDERS", "WITHDRAW"]),
+        ("identity", ["READ_ACCOUNT", "PLACE_ORDERS", "WITHDRAW"]),
+    ],
+)
+def test_effective_permission_intersection_blocks_missing_or_withdraw(source, permissions):
+    context = fixture_context()
+    if source == "credential":
+        context["credential_profiles_by_id"][IDS["cred"]]["permission_snapshot"] = permissions
+    elif source == "snapshot":
+        context["account_capability_snapshots_by_id"][IDS["capsnap"]]["observed_permission_set"] = (
+            permissions
+        )
+        rehash_m05_projections(context)
+    else:
+        context["external_identity_snapshots_by_account_id"][IDS["xacc"]][
+            "observed_permission_set"
+        ] = permissions
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "ACCOUNT_READINESS_BLOCKED"
+    assert (
+        result["audit_event_type"]
+        == CONTRACT["denial_event_by_operation"]["ACTIVATE_STRATEGY_INSTANCE"]
+    )
+    assert result["denial_code"] != "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("connection_state", "DISCONNECTED"),
+        ("execution_authorization", "READ_ONLY"),
+        ("external_account_identity_state", "UNAVAILABLE"),
+    ],
+)
+def test_canonical_nonoperational_account_authority_is_domain_denial(field, value):
+    context = fixture_context()
+    context["accounts_by_id"][IDS["xacc"]][field] = value
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "ACCOUNT_READINESS_BLOCKED"
+    assert result["denial_code"] != "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("contract", "missing-contract.json"),
+        ("json_pointer", "exchange_registry_contract/entries"),
+        ("json_pointer", "/exchange_registry_contract"),
+        ("json_pointer", "/exchange_registry_contract/missing"),
+    ],
+)
+def test_exchange_registry_pointer_corruption_is_exception_safe(field, value):
+    reference = CONTRACT["canonical_cross_contract_registry_refs"]["m05_exchange_registry_entries"]
+    original = reference[field]
+    context = fixture_context()
+    try:
+        reference[field] = value
+        result = dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE",
+            request_for("ACTIVATE_STRATEGY_INSTANCE"),
+            context,
+        )
+        assert result["denial_code"] == "CONTRACT_INCONSISTENT"
+        assert result["audit_event_type"] == "STRATEGY_ROUTING_CONTRACT_INCONSISTENT"
+    finally:
+        reference[field] = original
+
+
+def test_duplicate_exchange_registry_identity_is_exception_safe():
+    entries = M05_CONTRACT["exchange_registry_contract"]["entries"]
+    context = fixture_context()
+    entries.append(copy.deepcopy(entries[0]))
+    try:
+        result = dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE",
+            request_for("ACTIVATE_STRATEGY_INSTANCE"),
+            context,
+        )
+        assert result["denial_code"] == "CONTRACT_INCONSISTENT"
+        assert result["audit_event_type"] == "STRATEGY_ROUTING_CONTRACT_INCONSISTENT"
+    finally:
+        entries.pop()
+
+
+def context_with_previous_snapshot():
+    context = fixture_context()
+    current = context["account_capability_snapshots_by_id"][IDS["capsnap"]]
+    predecessor_id = f"capsnap_{UUID7}0e"
+    predecessor = copy.deepcopy(current)
+    predecessor.update(
+        account_capability_snapshot_id=predecessor_id,
+        version=1,
+        previous_snapshot_id=None,
+    )
+    current.update(version=2, previous_snapshot_id=predecessor_id)
+    context["previous_account_capability_snapshots_by_id"][predecessor_id] = predecessor
+    rehash_m05_projections(context)
+    predecessor["content_hash"] = canonical_m05_hash("account_capability_snapshot", predecessor)
+    return context, predecessor
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("exchange_account_id", f"xacc_{UUID7}0f"),
+        ("exchange_id", "unknown_exchange"),
+        ("adapter_family_id", "wrong-adapter"),
+        ("observed_at_utc", "2026-01-01T00:00:00Z"),
+        ("effective_at_utc", "2025-12-31T23:00:00Z"),
+    ],
+)
+def test_every_previous_snapshot_receives_full_canonical_validation(field, value):
+    context, predecessor = context_with_previous_snapshot()
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    predecessor[field] = value
+    predecessor["content_hash"] = canonical_m05_hash("account_capability_snapshot", predecessor)
+    denial = validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE")
+    assert denial is not None and denial["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+def context_with_previous_catalog():
+    context = fixture_context()
+    current = context["catalogs_by_id"][IDS["icat"]]
+    predecessor_id = f"icat_{UUID7}0e"
+    predecessor = copy.deepcopy(current)
+    predecessor.update(catalog_snapshot_id=predecessor_id, previous_snapshot_id=None)
+    current["previous_snapshot_id"] = predecessor_id
+    context["previous_catalogs_by_id"][predecessor_id] = predecessor
+    historical_instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
+    historical_instrument["catalog_snapshot_id"] = predecessor_id
+    context["instruments_by_id"][IDS["instr"]]["metadata_version"] = 2
+    context["instrument_history_by_id"][IDS["instr"]] = [historical_instrument]
+    rehash_m05_projections(context)
+    predecessor["content_hash"] = canonical_m05_hash("instrument_catalog_snapshot", predecessor)
+    return context, predecessor
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("observed_at_utc", "2026-01-01T00:00:00Z"),
+        ("instrument_ids", [f"instr_{UUID7}0f"]),
+        ("exchange_id", "unknown_exchange"),
+        ("adapter_family_id", "wrong-adapter"),
+    ],
+)
+def test_every_previous_catalog_receives_full_canonical_validation(field, value):
+    context, predecessor = context_with_previous_catalog()
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    predecessor[field] = value
+    predecessor["content_hash"] = canonical_m05_hash("instrument_catalog_snapshot", predecessor)
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+def context_with_previous_universe():
+    context = fixture_context()
+    current = context["universes_by_id"][IDS["univ"]]
+    predecessor_id = f"univ_{UUID7}0e"
+    predecessor = copy.deepcopy(current)
+    predecessor.update(
+        trading_universe_id=predecessor_id,
+        lifecycle_state="RETIRED",
+        version=1,
+        previous_version_id=None,
+        retired_at_utc="2025-01-01T00:03:00Z",
+    )
+    current.update(version=2, previous_version_id=predecessor_id)
+    context["previous_universes_by_id"][predecessor_id] = predecessor
+    rehash_m05_projections(context)
+    predecessor["content_hash"] = canonical_m05_hash("trading_universe", predecessor)
+    return context, predecessor
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("exchange_account_id", f"xacc_{UUID7}0f"),
+        ("instrument_ids", [f"instr_{UUID7}0f"]),
+        ("source_catalog_snapshot_ids", [f"icat_{UUID7}0f"]),
+        ("lifecycle_state", "DRAFT"),
+    ],
+)
+def test_every_previous_universe_receives_full_canonical_validation(field, value):
+    context, predecessor = context_with_previous_universe()
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    predecessor[field] = value
+    predecessor["content_hash"] = canonical_m05_hash("trading_universe", predecessor)
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+def context_with_previous_credential():
+    context = fixture_context()
+    current = context["credential_profiles_by_id"][IDS["cred"]]
+    predecessor_id = f"cred_{UUID7}0e"
+    predecessor = copy.deepcopy(current)
+    predecessor.update(
+        credential_profile_id=predecessor_id,
+        lifecycle_state="RETIRED",
+        created_at_utc="2025-12-31T23:56:00Z",
+        retired_at_utc="2025-12-31T23:57:00Z",
+        rotated_from_credential_profile_id=None,
+    )
+    current["rotated_from_credential_profile_id"] = predecessor_id
+    context["previous_credential_profiles_by_id"][predecessor_id] = predecessor
+    return context, predecessor
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("lifecycle_state", "ACTIVE"),
+        ("retired_at_utc", None),
+        ("created_at_utc", "2026-01-01T00:02:00Z"),
+        ("exchange_account_id", f"xacc_{UUID7}0f"),
+        ("exchange_id", "unknown_exchange"),
+        ("environment_scope", "PAPER"),
+    ],
+)
+def test_every_previous_credential_receives_full_canonical_validation(field, value):
+    context, predecessor = context_with_previous_credential()
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    predecessor[field] = value
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+def test_active_selected_credential_cannot_have_retirement_timestamp():
+    context = fixture_context()
+    context["credential_profiles_by_id"][IDS["cred"]]["retired_at_utc"] = "2025-01-01T00:00:30Z"
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+def test_all_external_identity_records_are_globally_validated():
+    context = fixture_context()
+    second_account_id = f"xacc_{UUID7}0f"
+    second = copy.deepcopy(context["accounts_by_id"][IDS["xacc"]])
+    second["exchange_account_id"] = second_account_id
+    second["account_capability_snapshot_id"] = None
+    second["active_credential_profile_id"] = None
+    context["accounts_by_id"][second_account_id] = second
+    duplicate = copy.deepcopy(context["external_identity_snapshots_by_account_id"][IDS["xacc"]])
+    context["external_identity_snapshots_by_account_id"][second_account_id] = duplicate
+    result = dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )
+    assert result["denial_code"] == "TRUSTED_CONTEXT_INVALID"
+
+
+def test_instrument_history_exact_catalog_resolution_and_version_order():
+    context, _ = context_with_previous_catalog()
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    history = context["instrument_history_by_id"][IDS["instr"]]
+    history.append(copy.deepcopy(history[0]))
+    assert (
+        dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )["denial_code"]
+        == "TRUSTED_CONTEXT_INVALID"
+    )
+
+
+@pytest.mark.parametrize("fault", ["empty", "wrong_key", "identity", "catalog", "adapter"])
+def test_instrument_history_fail_closed_mutations(fault):
+    context, _ = context_with_previous_catalog()
+    history = context["instrument_history_by_id"]
+    record = history[IDS["instr"]][0]
+    if fault == "empty":
+        history[IDS["instr"]] = []
+    elif fault == "wrong_key":
+        history[f"instr_{UUID7}0f"] = history.pop(IDS["instr"])
+    elif fault == "identity":
+        record["venue_symbol"] = "ETHUSDT"
+    elif fault == "catalog":
+        record["catalog_snapshot_id"] = f"icat_{UUID7}0f"
+    else:
+        record["source_adapter_family_id"] = "wrong-adapter"
+    assert (
+        dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )["denial_code"]
+        == "TRUSTED_CONTEXT_INVALID"
+    )
+
+
+def test_previous_catalog_cannot_borrow_current_instrument_membership():
+    context, _ = context_with_previous_catalog()
+    context["instrument_history_by_id"].clear()
+    assert (
+        dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )["denial_code"]
+        == "TRUSTED_CONTEXT_INVALID"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("display_name", 7),
+        ("aliases", "paper"),
+        ("aliases", ["paper", "paper"]),
+        ("capability_discovery_policy", None),
+        ("capability_discovery_policy", "ALIEN"),
+        ("supported_environments", []),
+        ("supported_market_types", []),
+        ("supported_instrument_types", []),
+    ],
+)
+def test_exchange_registry_metadata_and_fingerprint_are_closed(field, value):
+    context = fixture_context()
+    entry = M05_CONTRACT["exchange_registry_contract"]["entries"][0]
+    original = entry[field]
+    try:
+        entry[field] = value
+        direct = run_direct_call_graph(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )
+        dispatched = dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )
+        assert tuple(
+            direct[key]
+            for key in ("allowed", "denial_code", "audit_event_type", "planned_transition")
+        ) == tuple(
+            dispatched[key]
+            for key in ("allowed", "denial_code", "audit_event_type", "planned_transition")
+        )
+        assert dispatched["denial_code"] == "CONTRACT_INCONSISTENT"
+    finally:
+        entry[field] = original
+
+
+@pytest.mark.parametrize("reference_name", list(CONTRACT["canonical_hash_definition_refs"]))
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("domain_separator", "BROKEN"),
+        ("input_fields", []),
+        ("canonicalization", "BROKEN"),
+        ("encoding", "UTF-16"),
+        ("digest_format", "UPPERCASE_HEX"),
+        ("algorithm", "SHA-1"),
+    ],
+)
+def test_hash_definition_fingerprint_covers_exact_metadata(reference_name, field, value):
+    context = fixture_context()
+    definition = resolve_canonical_pointer(
+        CONTRACT["canonical_hash_definition_refs"][reference_name], dict
+    )
+    original = definition[field]
+    try:
+        definition[field] = value
+        direct = run_direct_call_graph(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )
+        dispatched = dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )
+        assert direct == dispatched
+        assert dispatched["denial_code"] == "CONTRACT_INCONSISTENT"
+    finally:
+        definition[field] = original
+
+
+def test_paper_static_build_time_snapshot_is_optional():
+    context = fixture_context(environment="PAPER")
+    context["accounts_by_id"][IDS["xacc"]]["account_capability_snapshot_id"] = None
+    context["account_capability_snapshots_by_id"].clear()
+    assert validate_context({}, context, "ACTIVATE_STRATEGY_INSTANCE") is None
+    assert dispatcher(
+        "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+    )["allowed"]
+
+
+def test_testnet_adapter_snapshot_is_structurally_required():
+    context = fixture_context()
+    context["accounts_by_id"][IDS["xacc"]]["account_capability_snapshot_id"] = None
+    context["account_capability_snapshots_by_id"].clear()
+    assert (
+        dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )["denial_code"]
+        == "TRUSTED_CONTEXT_INVALID"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("secure_store_reference", "plaintext-secret"),
+        ("secure_store_reference", "http://locator"),
+        ("public_key_identifier", 7),
+        ("saas_sync_candidate", True),
+    ],
+)
+def test_credential_model_a_security_metadata_is_structural(field, value):
+    context = fixture_context()
+    context["credential_profiles_by_id"][IDS["cred"]][field] = value
+    assert (
+        dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )["denial_code"]
+        == "TRUSTED_CONTEXT_INVALID"
+    )
+
+
+@pytest.mark.parametrize(
+    "source", ["totally-wrong-source", "unknown-family/1.0", "generic_testnet_adapter_family/"]
+)
+def test_external_identity_adapter_version_source_is_closed(source):
+    context = fixture_context()
+    context["external_identity_snapshots_by_account_id"][IDS["xacc"]]["adapter_version_source"] = (
+        source
+    )
+    assert (
+        dispatcher(
+            "ACTIVATE_STRATEGY_INSTANCE", request_for("ACTIVATE_STRATEGY_INSTANCE"), context
+        )["denial_code"]
+        == "TRUSTED_CONTEXT_INVALID"
+    )
