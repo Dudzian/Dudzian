@@ -384,9 +384,6 @@
       "ORDER_ENTRY_PURPOSE",
       "PLACE_ORDERS_PERMISSION",
       "PRODUCT_CAPABILITIES"
-    ],
-    "LIVE": [
-      "CURRENT_EDITION_LIVE_EXECUTION_FORBIDDEN"
     ]
   },
   "authorization_dependency_policy": {
@@ -416,7 +413,12 @@
       "credential_profiles_by_id": "CredentialProfileProjection",
       "product_capabilities_by_environment": "ProductCapabilitiesProjection",
       "route_readiness_by_id": "RouteReadiness",
-      "portfolios_by_id": "PortfolioProjection"
+      "portfolios_by_id": "PortfolioProjection",
+      "previous_account_capability_snapshots_by_id": "AccountCapabilitySnapshotProjection",
+      "previous_catalogs_by_id": "InstrumentCatalogProjection",
+      "previous_universes_by_id": "TradingUniverseProjection",
+      "external_identity_snapshots_by_account_id": "TrustedExternalIdentityProjection",
+      "previous_credential_profiles_by_id": "CredentialProfileProjection"
     },
     "scalar_fields": {
       "validation_time_utc": "timestamp"
@@ -443,7 +445,15 @@
       "StrategyDefinition lineage and hashes",
       "global referential integrity",
       "derived cross-record invariants"
-    ]
+    ],
+    "history_map_fields": {
+      "instrument_history_by_id": {
+        "key_type": "instrument_id",
+        "value_type": "ordered_non_empty_array",
+        "record_schema": "InstrumentProjection",
+        "strictly_increasing_field": "metadata_version"
+      }
+    }
   },
   "validation_order": [
     "exact request validation",
@@ -477,7 +487,6 @@
       "Instrument.source_adapter_family_id == Catalog.adapter_family_id"
     ],
     "bound_execution_adapter": "ExecutionRoute.adapter_family_id == Instrument.source_adapter_family_id == Catalog.adapter_family_id; persisted mismatch is TRUSTED_CONTEXT_INVALID",
-    "unbound_execution_candidate": "adapter mismatch during bind is ROUTE_ADAPTER_MISMATCH",
     "account_snapshot": [
       "VALID, STALE, and REJECTED are structurally canonical; TESTNET authorization evaluates operability",
       "exact snapshot ID/account/exchange/environment/market_type",
@@ -925,11 +934,9 @@
     "ACCOUNT_READINESS_BLOCKED",
     "CAPABILITY_SNAPSHOT_BLOCKED",
     "CONTRACT_INCONSISTENT",
-    "ENDPOINT_FALLBACK_FORBIDDEN",
     "EXECUTION_ROUTE_NOT_FOUND",
     "EXECUTION_ROUTE_NOT_READY",
     "INSTRUMENT_SCOPE_MISMATCH",
-    "LIVE_EXECUTION_FORBIDDEN",
     "MARKET_DATA_FRESHNESS_BLOCKED",
     "MARKET_DATA_ROUTE_NOT_FOUND",
     "MARKET_DATA_ROUTE_NOT_READY",
@@ -937,7 +944,6 @@
     "PRODUCT_CAPABILITIES_BLOCKED",
     "REQUEST_SCHEMA_INVALID",
     "RETIRED_RESOURCE_FORBIDDEN",
-    "ROUTE_ADAPTER_MISMATCH",
     "ROUTE_CAPABILITY_BLOCKED",
     "ROUTE_SCOPE_MISMATCH",
     "STRATEGY_DEFINITION_ID_COLLISION",
@@ -1004,7 +1010,6 @@
         "STRATEGY_INSTANCE_BINDING_MISMATCH",
         "MARKET_DATA_ROUTE_NOT_FOUND",
         "ROUTE_SCOPE_MISMATCH",
-        "ENDPOINT_FALLBACK_FORBIDDEN",
         "INSTRUMENT_SCOPE_MISMATCH",
         "RETIRED_RESOURCE_FORBIDDEN"
       ],
@@ -1016,10 +1021,7 @@
         "STRATEGY_INSTANCE_BINDING_MISMATCH",
         "EXECUTION_ROUTE_NOT_FOUND",
         "ROUTE_SCOPE_MISMATCH",
-        "ROUTE_ADAPTER_MISMATCH",
         "ROUTE_CAPABILITY_BLOCKED",
-        "ENDPOINT_FALLBACK_FORBIDDEN",
-        "LIVE_EXECUTION_FORBIDDEN",
         "RETIRED_RESOURCE_FORBIDDEN"
       ],
       "callable_required": true
@@ -1031,8 +1033,7 @@
         "EXECUTION_ROUTE_NOT_READY",
         "MARKET_DATA_FRESHNESS_BLOCKED",
         "MARKET_DATA_SEQUENCE_INVALID",
-        "ROUTE_CAPABILITY_BLOCKED",
-        "INSTRUMENT_SCOPE_MISMATCH"
+        "ROUTE_CAPABILITY_BLOCKED"
       ],
       "callable_required": true
     },
@@ -1040,16 +1041,12 @@
       "denials": [
         "RETIRED_RESOURCE_FORBIDDEN",
         "ACCOUNT_READINESS_BLOCKED",
-        "TRADING_UNIVERSE_INVALID",
-        "INSTRUMENT_SCOPE_MISMATCH",
         "MARKET_DATA_ROUTE_NOT_READY",
         "EXECUTION_ROUTE_NOT_READY",
         "MARKET_DATA_FRESHNESS_BLOCKED",
         "MARKET_DATA_SEQUENCE_INVALID",
         "ROUTE_CAPABILITY_BLOCKED",
-        "CAPABILITY_SNAPSHOT_BLOCKED",
-        "PRODUCT_CAPABILITIES_BLOCKED",
-        "LIVE_EXECUTION_FORBIDDEN"
+        "PRODUCT_CAPABILITIES_BLOCKED"
       ],
       "callable_required": true
     },
@@ -1070,7 +1067,6 @@
         "ACCOUNT_READINESS_BLOCKED",
         "CAPABILITY_SNAPSHOT_BLOCKED",
         "PRODUCT_CAPABILITIES_BLOCKED",
-        "LIVE_EXECUTION_FORBIDDEN",
         "ROUTE_CAPABILITY_BLOCKED"
       ],
       "callable_required": true
@@ -1088,6 +1084,15 @@
         "STRATEGY_INSTANCE_NOT_FOUND",
         "STRATEGY_INSTANCE_BINDING_MISMATCH",
         "RETIRED_RESOURCE_FORBIDDEN"
+      ],
+      "callable_required": true
+    },
+    "validate_strategy_execution_operability": {
+      "denials": [
+        "STRATEGY_INSTANCE_NOT_FOUND",
+        "TRADING_UNIVERSE_INVALID",
+        "INSTRUMENT_SCOPE_MISMATCH",
+        "CAPABILITY_SNAPSHOT_BLOCKED"
       ],
       "callable_required": true
     }
@@ -1128,6 +1133,7 @@
       "validate_context",
       "validate_readiness_lifecycle",
       "validate_authorization_operability",
+      "validate_strategy_execution_operability",
       "validate_route_readiness_operation"
     ],
     "ACTIVATE_STRATEGY_INSTANCE": [
@@ -1135,6 +1141,7 @@
       "validate_context",
       "validate_strategy_instance_lifecycle_preflight",
       "validate_authorization_operability",
+      "validate_strategy_execution_operability",
       "validate_activation"
     ],
     "DEACTIVATE_STRATEGY_INSTANCE": [
@@ -1190,7 +1197,6 @@
     ],
     "BIND_MARKET_DATA_ROUTE": [
       "CONTRACT_INCONSISTENT",
-      "ENDPOINT_FALLBACK_FORBIDDEN",
       "INSTRUMENT_SCOPE_MISMATCH",
       "MARKET_DATA_ROUTE_NOT_FOUND",
       "REQUEST_SCHEMA_INVALID",
@@ -1202,11 +1208,8 @@
     ],
     "BIND_EXECUTION_ROUTE": [
       "CONTRACT_INCONSISTENT",
-      "ENDPOINT_FALLBACK_FORBIDDEN",
       "EXECUTION_ROUTE_NOT_FOUND",
-      "LIVE_EXECUTION_FORBIDDEN",
       "REQUEST_SCHEMA_INVALID",
-      "ROUTE_ADAPTER_MISMATCH",
       "ROUTE_CAPABILITY_BLOCKED",
       "ROUTE_SCOPE_MISMATCH",
       "STRATEGY_INSTANCE_BINDING_MISMATCH",
@@ -1228,9 +1231,9 @@
       "ACCOUNT_READINESS_BLOCKED",
       "CAPABILITY_SNAPSHOT_BLOCKED",
       "PRODUCT_CAPABILITIES_BLOCKED",
-      "LIVE_EXECUTION_FORBIDDEN",
       "STRATEGY_INSTANCE_BINDING_MISMATCH",
-      "RETIRED_RESOURCE_FORBIDDEN"
+      "RETIRED_RESOURCE_FORBIDDEN",
+      "TRADING_UNIVERSE_INVALID"
     ],
     "ACTIVATE_STRATEGY_INSTANCE": [
       "ACCOUNT_READINESS_BLOCKED",
@@ -1238,7 +1241,6 @@
       "CONTRACT_INCONSISTENT",
       "EXECUTION_ROUTE_NOT_READY",
       "INSTRUMENT_SCOPE_MISMATCH",
-      "LIVE_EXECUTION_FORBIDDEN",
       "MARKET_DATA_FRESHNESS_BLOCKED",
       "MARKET_DATA_ROUTE_NOT_READY",
       "MARKET_DATA_SEQUENCE_INVALID",
@@ -1680,8 +1682,11 @@
         "environment",
         "market_type",
         "lifecycle_state",
-        "capability_snapshot_id",
-        "active_credential_profile_id"
+        "account_capability_snapshot_id",
+        "active_credential_profile_id",
+        "connection_state",
+        "execution_authorization",
+        "external_account_identity_state"
       ],
       "field_types": {
         "exchange_account_id": "id",
@@ -1691,8 +1696,11 @@
         "environment": "enum",
         "market_type": "enum",
         "lifecycle_state": "enum",
-        "capability_snapshot_id": "id",
-        "active_credential_profile_id": "id"
+        "active_credential_profile_id": "id",
+        "account_capability_snapshot_id": "id",
+        "connection_state": "enum",
+        "execution_authorization": "enum",
+        "external_account_identity_state": "enum"
       },
       "id_field": "exchange_account_id",
       "id_prefix": "xacc",
@@ -1707,18 +1715,22 @@
         ]
       },
       "nullable_fields": [
-        "active_credential_profile_id"
+        "active_credential_profile_id",
+        "account_capability_snapshot_id"
       ],
       "array_policy": {},
       "nested_schemas": {},
       "entity_references": {
         "workspace_id": "Workspace",
         "portfolio_id": "Portfolio",
-        "capability_snapshot_id": "AccountCapabilitySnapshotProjection",
-        "active_credential_profile_id": "CredentialProfileProjection"
+        "active_credential_profile_id": "CredentialProfileProjection",
+        "account_capability_snapshot_id": "AccountCapabilitySnapshotProjection"
       },
       "enum_registry_ref": {
-        "lifecycle_state": "m05_account_lifecycle_states"
+        "lifecycle_state": "m05_account_lifecycle_states",
+        "connection_state": "m05_connection_states",
+        "execution_authorization": "m05_execution_authorizations",
+        "external_account_identity_state": "m05_external_identity_states"
       }
     },
     "TradingUniverseProjection": {
@@ -1726,26 +1738,44 @@
         "trading_universe_id",
         "exchange_account_id",
         "instrument_ids",
-        "source_catalog_ids",
-        "lifecycle_state"
+        "source_catalog_snapshot_ids",
+        "lifecycle_state",
+        "version",
+        "created_at_utc",
+        "activated_at_utc",
+        "retired_at_utc",
+        "previous_version_id",
+        "content_hash",
+        "creation_reason"
       ],
       "field_types": {
         "trading_universe_id": "id",
         "exchange_account_id": "id",
         "instrument_ids": "array[id]",
-        "source_catalog_ids": "array[id]",
-        "lifecycle_state": "enum"
+        "lifecycle_state": "enum",
+        "source_catalog_snapshot_ids": "array[id]",
+        "version": "integer",
+        "created_at_utc": "timestamp",
+        "activated_at_utc": "timestamp",
+        "retired_at_utc": "timestamp",
+        "previous_version_id": "id",
+        "content_hash": "sha256",
+        "creation_reason": "string"
       },
       "id_field": "trading_universe_id",
       "id_prefix": "univ",
       "enum_registry": {},
-      "nullable_fields": [],
+      "nullable_fields": [
+        "activated_at_utc",
+        "retired_at_utc",
+        "previous_version_id"
+      ],
       "array_policy": {
         "instrument_ids": {
           "unique": true,
           "empty_allowed": false
         },
-        "source_catalog_ids": {
+        "source_catalog_snapshot_ids": {
           "unique": true,
           "empty_allowed": false
         }
@@ -1754,7 +1784,8 @@
       "entity_references": {
         "exchange_account_id": "ExchangeAccountProjection",
         "instrument_ids": "InstrumentProjection",
-        "source_catalog_ids": "InstrumentCatalogProjection"
+        "source_catalog_snapshot_ids": "InstrumentCatalogProjection",
+        "previous_version_id": "TradingUniverseProjection"
       },
       "enum_registry_ref": {
         "lifecycle_state": "m05_universe_lifecycle_states"
@@ -1763,23 +1794,67 @@
     "InstrumentProjection": {
       "exact_fields": [
         "instrument_id",
-        "catalog_id",
+        "workspace_id",
         "exchange_id",
         "environment",
         "market_type",
         "instrument_type",
-        "source_adapter_family_id",
-        "trading_status"
+        "venue_symbol",
+        "display_symbol",
+        "base_asset_reference",
+        "quote_asset_reference",
+        "settlement_asset_reference",
+        "trading_status",
+        "price_tick",
+        "quantity_step",
+        "min_quantity",
+        "max_quantity",
+        "min_notional",
+        "max_notional",
+        "contract_size",
+        "contract_value_currency",
+        "derivative_settlement_type",
+        "expiry_at_utc",
+        "strike_price",
+        "option_side",
+        "catalog_snapshot_id",
+        "metadata_version",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "source_adapter_family_id"
       ],
       "field_types": {
         "instrument_id": "id",
-        "catalog_id": "id",
+        "workspace_id": "id",
         "exchange_id": "string",
         "environment": "enum",
         "market_type": "enum",
         "instrument_type": "enum",
-        "source_adapter_family_id": "string",
-        "trading_status": "enum"
+        "venue_symbol": "string",
+        "display_symbol": "string",
+        "base_asset_reference": "object",
+        "quote_asset_reference": "object",
+        "settlement_asset_reference": "object",
+        "trading_status": "enum",
+        "price_tick": "string",
+        "quantity_step": "string",
+        "min_quantity": "string",
+        "max_quantity": "string",
+        "min_notional": "string",
+        "max_notional": "string",
+        "contract_size": "string",
+        "contract_value_currency": "string",
+        "derivative_settlement_type": "string",
+        "expiry_at_utc": "timestamp",
+        "strike_price": "string",
+        "option_side": "string",
+        "catalog_snapshot_id": "id",
+        "metadata_version": "integer",
+        "observed_at_utc": "timestamp",
+        "effective_at_utc": "timestamp",
+        "stale_after_utc": "timestamp",
+        "source_adapter_family_id": "string"
       },
       "id_field": "instrument_id",
       "id_prefix": "instr",
@@ -1796,11 +1871,21 @@
           "SPOT_PAIR"
         ]
       },
-      "nullable_fields": [],
+      "nullable_fields": [
+        "settlement_asset_reference",
+        "max_notional",
+        "contract_size",
+        "contract_value_currency",
+        "derivative_settlement_type",
+        "expiry_at_utc",
+        "strike_price",
+        "option_side"
+      ],
       "array_policy": {},
       "nested_schemas": {},
       "entity_references": {
-        "catalog_id": "InstrumentCatalogProjection"
+        "workspace_id": "Workspace",
+        "catalog_snapshot_id": "InstrumentCatalogProjection"
       },
       "enum_registry_ref": {
         "trading_status": "m05_instrument_trading_statuses"
@@ -1808,7 +1893,7 @@
     },
     "InstrumentCatalogProjection": {
       "exact_fields": [
-        "catalog_id",
+        "catalog_snapshot_id",
         "exchange_id",
         "environment",
         "market_type",
@@ -1817,10 +1902,12 @@
         "observed_at_utc",
         "effective_at_utc",
         "status",
-        "stale_after_utc"
+        "stale_after_utc",
+        "adapter_version",
+        "content_hash",
+        "previous_snapshot_id"
       ],
       "field_types": {
-        "catalog_id": "id",
         "exchange_id": "string",
         "environment": "enum",
         "market_type": "enum",
@@ -1829,9 +1916,13 @@
         "status": "enum",
         "stale_after_utc": "timestamp",
         "observed_at_utc": "timestamp",
-        "effective_at_utc": "timestamp"
+        "effective_at_utc": "timestamp",
+        "catalog_snapshot_id": "id",
+        "adapter_version": "string",
+        "content_hash": "sha256",
+        "previous_snapshot_id": "id"
       },
-      "id_field": "catalog_id",
+      "id_field": "catalog_snapshot_id",
       "id_prefix": "icat",
       "enum_registry": {
         "environment": [
@@ -1843,7 +1934,9 @@
           "SPOT"
         ]
       },
-      "nullable_fields": [],
+      "nullable_fields": [
+        "previous_snapshot_id"
+      ],
       "array_policy": {
         "instrument_ids": {
           "unique": true,
@@ -1852,7 +1945,8 @@
       },
       "nested_schemas": {},
       "entity_references": {
-        "instrument_ids": "InstrumentProjection"
+        "instrument_ids": "InstrumentProjection",
+        "previous_snapshot_id": "InstrumentCatalogProjection"
       },
       "enum_registry_ref": {
         "status": "m05_catalog_statuses"
@@ -1860,30 +1954,42 @@
     },
     "AccountCapabilitySnapshotProjection": {
       "exact_fields": [
-        "snapshot_id",
+        "account_capability_snapshot_id",
         "exchange_account_id",
         "exchange_id",
         "environment",
         "market_type",
+        "version",
+        "previous_snapshot_id",
         "status",
-        "capabilities",
-        "observed_at",
-        "source_payload_hash",
-        "attested_payload_hash"
+        "observed_permission_set",
+        "supported_instrument_types",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "adapter_family_id",
+        "adapter_version",
+        "content_hash"
       ],
       "field_types": {
-        "snapshot_id": "id",
+        "account_capability_snapshot_id": "id",
         "exchange_account_id": "id",
         "exchange_id": "string",
         "environment": "enum",
         "market_type": "enum",
+        "version": "integer",
         "status": "enum",
-        "capabilities": "array[enum]",
-        "observed_at": "timestamp",
-        "source_payload_hash": "sha256",
-        "attested_payload_hash": "sha256"
+        "observed_permission_set": "array[enum]",
+        "supported_instrument_types": "array[enum]",
+        "observed_at_utc": "timestamp",
+        "effective_at_utc": "timestamp",
+        "stale_after_utc": "timestamp",
+        "adapter_family_id": "string",
+        "adapter_version": "string",
+        "content_hash": "sha256",
+        "previous_snapshot_id": "id"
       },
-      "id_field": "snapshot_id",
+      "id_field": "account_capability_snapshot_id",
       "id_prefix": "capsnap",
       "enum_registry": {
         "environment": [
@@ -1895,9 +2001,16 @@
           "SPOT"
         ]
       },
-      "nullable_fields": [],
+      "nullable_fields": [
+        "previous_snapshot_id"
+      ],
       "array_policy": {
-        "capabilities": {
+        "supported_instrument_types": {
+          "unique": true,
+          "empty_allowed": true,
+          "item_registry_ref": "m05_instrument_types"
+        },
+        "observed_permission_set": {
           "unique": true,
           "empty_allowed": false,
           "item_registry_ref": "m05_capabilities"
@@ -1905,7 +2018,8 @@
       },
       "nested_schemas": {},
       "entity_references": {
-        "exchange_account_id": "ExchangeAccountProjection"
+        "exchange_account_id": "ExchangeAccountProjection",
+        "previous_snapshot_id": "AccountCapabilitySnapshotProjection"
       },
       "enum_registry_ref": {
         "status": "m05_snapshot_statuses"
@@ -1916,35 +2030,51 @@
         "credential_profile_id",
         "exchange_account_id",
         "exchange_id",
-        "environment",
+        "environment_scope",
         "lifecycle_state",
-        "purpose",
-        "permissions"
+        "credential_purpose",
+        "permission_snapshot",
+        "created_at_utc",
+        "rotated_from_credential_profile_id",
+        "retired_at_utc",
+        "secure_store_reference",
+        "public_key_identifier",
+        "saas_sync_candidate"
       ],
       "field_types": {
         "credential_profile_id": "id",
         "exchange_account_id": "id",
         "exchange_id": "string",
-        "environment": "enum",
         "lifecycle_state": "enum",
-        "purpose": "enum",
-        "permissions": "array[enum]"
+        "environment_scope": "enum",
+        "credential_purpose": "enum",
+        "permission_snapshot": "array[enum]",
+        "created_at_utc": "timestamp",
+        "rotated_from_credential_profile_id": "id",
+        "retired_at_utc": "timestamp",
+        "secure_store_reference": "string",
+        "public_key_identifier": "string",
+        "saas_sync_candidate": "boolean"
       },
       "id_field": "credential_profile_id",
       "id_prefix": "cred",
       "enum_registry": {
-        "environment": [
-          "TESTNET",
-          "LIVE"
-        ],
         "lifecycle_state": [
           "ACTIVE",
           "RETIRED"
+        ],
+        "environment_scope": [
+          "TESTNET",
+          "LIVE"
         ]
       },
-      "nullable_fields": [],
+      "nullable_fields": [
+        "rotated_from_credential_profile_id",
+        "retired_at_utc",
+        "public_key_identifier"
+      ],
       "array_policy": {
-        "permissions": {
+        "permission_snapshot": {
           "unique": true,
           "empty_allowed": false,
           "item_registry_ref": "m05_permissions"
@@ -1952,10 +2082,11 @@
       },
       "nested_schemas": {},
       "entity_references": {
-        "exchange_account_id": "ExchangeAccountProjection"
+        "exchange_account_id": "ExchangeAccountProjection",
+        "rotated_from_credential_profile_id": "CredentialProfileProjection"
       },
       "enum_registry_ref": {
-        "purpose": "m05_credential_purposes"
+        "credential_purpose": "m05_credential_purposes"
       }
     },
     "ProductCapabilitiesProjection": {
@@ -2009,6 +2140,59 @@
       "entity_references": {
         "workspace_id": "Workspace"
       }
+    },
+    "TrustedExternalIdentityProjection": {
+      "exact_fields": [
+        "state",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "venue_account_identifier",
+        "subaccount_identifier",
+        "account_type",
+        "observed_permission_set",
+        "verification_timestamp",
+        "adapter_version_source"
+      ],
+      "field_types": {
+        "state": "enum",
+        "exchange_id": "string",
+        "environment": "enum",
+        "market_type": "enum",
+        "venue_account_identifier": "string",
+        "subaccount_identifier": "string",
+        "account_type": "string",
+        "observed_permission_set": "array[enum]",
+        "verification_timestamp": "timestamp",
+        "adapter_version_source": "string"
+      },
+      "id_field": null,
+      "id_prefix": null,
+      "enum_registry": {
+        "environment": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ],
+        "market_type": [
+          "SPOT"
+        ]
+      },
+      "nullable_fields": [
+        "subaccount_identifier"
+      ],
+      "array_policy": {
+        "observed_permission_set": {
+          "unique": true,
+          "empty_allowed": true,
+          "item_registry_ref": "m05_capabilities"
+        }
+      },
+      "nested_schemas": {},
+      "entity_references": {},
+      "enum_registry_ref": {
+        "state": "m05_external_identity_states"
+      }
     }
   },
   "id_prefix_registry": {
@@ -2021,10 +2205,10 @@
     "market_data_route_id": "mdr",
     "execution_route_id": "xroute",
     "instrument_id": "instr",
-    "catalog_id": "icat",
-    "snapshot_id": "capsnap",
     "credential_profile_id": "cred",
-    "request_id": "req"
+    "request_id": "req",
+    "catalog_snapshot_id": "icat",
+    "account_capability_snapshot_id": "capsnap"
   },
   "array_enum_registries": {
     "market_data_channel_types": [
@@ -2046,7 +2230,6 @@
       "ACCOUNT_ACTIVE",
       "ACCOUNT_CAPABILITY_SNAPSHOT_VALID",
       "CREDENTIAL_PROFILE_ACTIVE",
-      "CURRENT_EDITION_LIVE_EXECUTION_FORBIDDEN",
       "ORDER_ENTRY_PURPOSE",
       "PLACE_ORDERS_PERMISSION",
       "PRODUCT_CAPABILITIES"
@@ -2059,7 +2242,15 @@
     "freshness_boundary": "age_seconds <= max_age_seconds is fresh",
     "authorization_dependency_environments": [
       "TESTNET"
-    ]
+    ],
+    "supported_instrument_types": {
+      "canonical_registry_ref": "m05_instrument_types",
+      "unique": true,
+      "empty_allowed": true,
+      "testnet_subset_rule": "set(Universe Instrument.instrument_type) <= set(AccountCapabilitySnapshot.supported_instrument_types)",
+      "missing_authority_denial": "CAPABILITY_SNAPSHOT_BLOCKED",
+      "m05_structural_semantics": "empty canonical set is structurally valid and blocks every non-empty Universe at TESTNET operability"
+    }
   },
   "canonical_array_enum_registry_refs": {
     "m05_capabilities": {
@@ -2074,6 +2265,10 @@
       "contract": "environment_and_product_capabilities.json",
       "json_pointer": "/capability_id_registry/current_schema_allowed_capability_ids",
       "scope_semantics": "M0.4 defines a global closed capability ID registry and separately environment capability booleans; extra canonical IDs grant no M0.6 authority and the environment-required ID remains mandatory"
+    },
+    "m05_instrument_types": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_type_registry"
     }
   },
   "canonical_scalar_enum_registry_refs": {
@@ -2100,6 +2295,373 @@
     "m05_catalog_statuses": {
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/instrument_catalog_snapshot_contract/statuses"
+    },
+    "m05_connection_states": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_account_contract/connection_states"
+    },
+    "m05_execution_authorizations": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_account_contract/execution_authorizations"
+    },
+    "m05_external_identity_states": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/external_account_identity_contract/states"
     }
+  },
+  "instrument_projection_policy": {
+    "canonical_catalog_binding_field": "catalog_snapshot_id",
+    "workspace_ownership": "Instrument.workspace_id == StrategyInstance.workspace_id == ExchangeAccount.workspace_id == MarketDataRoute.workspace_id == ExecutionRoute.workspace_id",
+    "structural_time_order": "observed_at_utc <= effective_at_utc < stale_after_utc",
+    "future_metadata_forbidden": [
+      "observed_at_utc",
+      "effective_at_utc"
+    ],
+    "freshness_boundary": "validation_time_utc < stale_after_utc is fresh",
+    "operability": "trading_status == TRADING and fresh",
+    "structural_denial": "TRUSTED_CONTEXT_INVALID",
+    "operability_denial": "INSTRUMENT_SCOPE_MISMATCH"
+  },
+  "canonical_cross_contract_registry_refs": {
+    "m05_exchange_registry_entries": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_registry_contract/entries",
+      "content_fingerprint_sha256": "90622ea826a2b95342155ab27933bc79d15fa3b2390a2086a9031e129641de13"
+    }
+  },
+  "cross_contract_projection_audit": {
+    "ExchangeAccountProjection": {
+      "canonical_entity": "ExchangeAccount",
+      "canonical_identity_field": "exchange_account_id",
+      "canonical_parent": "Portfolio",
+      "authority_relevant_fields": [
+        "exchange_account_id",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "lifecycle_state",
+        "account_capability_snapshot_id",
+        "active_credential_profile_id",
+        "connection_state",
+        "execution_authorization",
+        "external_account_identity_state"
+      ],
+      "canonical_registries": [
+        "m05_exchange_registry_entries",
+        "m05_account_lifecycle_states"
+      ],
+      "structural_invariants": [
+        "exact exchange scope",
+        "workspace and portfolio ownership"
+      ],
+      "operation_specific_operability": [
+        "ACTIVE for TESTNET"
+      ],
+      "intentional_omissions": [
+        "display fields only"
+      ],
+      "trust_model": "MODEL_A_FULL_CANONICAL_PROJECTION",
+      "executable_schema_ref": "record_schemas.ExchangeAccountProjection",
+      "hash_definition_ref": null,
+      "lineage_source": "not_versioned",
+      "validated_context_maps": [
+        "accounts_by_id"
+      ]
+    },
+    "TradingUniverseProjection": {
+      "canonical_entity": "TradingUniverse",
+      "canonical_identity_field": "trading_universe_id",
+      "canonical_parent": "ExchangeAccount",
+      "authority_relevant_fields": [
+        "trading_universe_id",
+        "exchange_account_id",
+        "instrument_ids",
+        "source_catalog_snapshot_ids",
+        "lifecycle_state",
+        "version",
+        "created_at_utc",
+        "activated_at_utc",
+        "retired_at_utc",
+        "previous_version_id",
+        "content_hash",
+        "creation_reason"
+      ],
+      "canonical_registries": [
+        "m05_universe_lifecycle_states"
+      ],
+      "structural_invariants": [
+        "exact account and catalog membership",
+        "instrument workspace equals account workspace"
+      ],
+      "operation_specific_operability": [
+        "ACTIVE"
+      ],
+      "intentional_omissions": [
+        "version lineage represented by executable trusted predecessor maps"
+      ],
+      "trust_model": "MODEL_A_FULL_CANONICAL_PROJECTION",
+      "executable_schema_ref": "record_schemas.TradingUniverseProjection",
+      "hash_definition_ref": "trading_universe",
+      "lineage_source": "previous_universes_by_id",
+      "validated_context_maps": [
+        "universes_by_id",
+        "previous_universes_by_id"
+      ]
+    },
+    "InstrumentProjection": {
+      "canonical_entity": "Instrument",
+      "canonical_identity_field": "instrument_id",
+      "canonical_parent": "InstrumentCatalogSnapshot",
+      "authority_relevant_fields": [
+        "instrument_id",
+        "workspace_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "instrument_type",
+        "venue_symbol",
+        "display_symbol",
+        "base_asset_reference",
+        "quote_asset_reference",
+        "settlement_asset_reference",
+        "trading_status",
+        "price_tick",
+        "quantity_step",
+        "min_quantity",
+        "max_quantity",
+        "min_notional",
+        "max_notional",
+        "contract_size",
+        "contract_value_currency",
+        "derivative_settlement_type",
+        "expiry_at_utc",
+        "strike_price",
+        "option_side",
+        "catalog_snapshot_id",
+        "metadata_version",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "source_adapter_family_id"
+      ],
+      "canonical_registries": [
+        "m05_exchange_registry_entries",
+        "m05_instrument_trading_statuses",
+        "m05_instrument_types"
+      ],
+      "structural_invariants": [
+        "exact exchange scope and adapter",
+        "ordered metadata timestamps",
+        "workspace ownership"
+      ],
+      "operation_specific_operability": [
+        "TRADING and fresh"
+      ],
+      "intentional_omissions": [],
+      "trust_model": "MODEL_A_FULL_CANONICAL_PROJECTION",
+      "executable_schema_ref": "record_schemas.InstrumentProjection",
+      "hash_definition_ref": null,
+      "lineage_source": "not_versioned",
+      "validated_context_maps": [
+        "instruments_by_id",
+        "instrument_history_by_id"
+      ]
+    },
+    "InstrumentCatalogProjection": {
+      "canonical_entity": "InstrumentCatalogSnapshot",
+      "canonical_identity_field": "catalog_snapshot_id",
+      "canonical_parent": "Exchange Registry entry",
+      "authority_relevant_fields": [
+        "catalog_snapshot_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "adapter_family_id",
+        "instrument_ids",
+        "observed_at_utc",
+        "effective_at_utc",
+        "status",
+        "stale_after_utc",
+        "adapter_version",
+        "content_hash",
+        "previous_snapshot_id"
+      ],
+      "canonical_registries": [
+        "m05_exchange_registry_entries",
+        "m05_catalog_statuses"
+      ],
+      "structural_invariants": [
+        "exact exchange scope and adapter",
+        "ordered metadata timestamps"
+      ],
+      "operation_specific_operability": [
+        "VALID and fresh"
+      ],
+      "intentional_omissions": [
+        "version lineage represented by executable trusted predecessor maps"
+      ],
+      "trust_model": "MODEL_A_FULL_CANONICAL_PROJECTION",
+      "executable_schema_ref": "record_schemas.InstrumentCatalogProjection",
+      "hash_definition_ref": "instrument_catalog_snapshot",
+      "lineage_source": "previous_catalogs_by_id",
+      "validated_context_maps": [
+        "catalogs_by_id",
+        "previous_catalogs_by_id"
+      ]
+    },
+    "AccountCapabilitySnapshotProjection": {
+      "canonical_entity": "AccountCapabilitySnapshot",
+      "canonical_identity_field": "account_capability_snapshot_id",
+      "canonical_parent": "ExchangeAccount",
+      "authority_relevant_fields": [
+        "account_capability_snapshot_id",
+        "exchange_account_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "version",
+        "previous_snapshot_id",
+        "status",
+        "observed_permission_set",
+        "supported_instrument_types",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "adapter_family_id",
+        "adapter_version",
+        "content_hash"
+      ],
+      "canonical_registries": [
+        "m05_exchange_registry_entries",
+        "m05_snapshot_statuses",
+        "m05_capabilities",
+        "m05_instrument_types"
+      ],
+      "structural_invariants": [
+        "exact exchange scope and adapter",
+        "ordered canonical timestamps",
+        "canonical content hash attestation"
+      ],
+      "operation_specific_operability": [
+        "VALID, canonically fresh, locally fresh, required permissions and instrument types"
+      ],
+      "intentional_omissions": [
+        "previous snapshot lineage represented by executable trusted predecessor maps"
+      ],
+      "trust_model": "MODEL_A_FULL_CANONICAL_PROJECTION",
+      "executable_schema_ref": "record_schemas.AccountCapabilitySnapshotProjection",
+      "hash_definition_ref": "account_capability_snapshot",
+      "lineage_source": "previous_account_capability_snapshots_by_id",
+      "validated_context_maps": [
+        "account_capability_snapshots_by_id",
+        "previous_account_capability_snapshots_by_id"
+      ]
+    },
+    "CredentialProfileProjection": {
+      "canonical_entity": "CredentialProfile",
+      "canonical_identity_field": "credential_profile_id",
+      "canonical_parent": "ExchangeAccount",
+      "authority_relevant_fields": [
+        "credential_profile_id",
+        "exchange_account_id",
+        "exchange_id",
+        "environment_scope",
+        "lifecycle_state",
+        "credential_purpose",
+        "permission_snapshot",
+        "created_at_utc",
+        "rotated_from_credential_profile_id",
+        "retired_at_utc",
+        "secure_store_reference",
+        "public_key_identifier",
+        "saas_sync_candidate"
+      ],
+      "canonical_registries": [
+        "m05_exchange_registry_entries",
+        "m05_credential_purposes",
+        "m05_permissions"
+      ],
+      "structural_invariants": [
+        "exact account exchange environment binding"
+      ],
+      "operation_specific_operability": [
+        "ACTIVE ORDER_ENTRY with PLACE_ORDERS"
+      ],
+      "intentional_omissions": [
+        "secret payload only"
+      ],
+      "trust_model": "MODEL_A_FULL_CANONICAL_PROJECTION",
+      "executable_schema_ref": "record_schemas.CredentialProfileProjection",
+      "hash_definition_ref": null,
+      "lineage_source": "previous_credential_profiles_by_id",
+      "validated_context_maps": [
+        "credential_profiles_by_id",
+        "previous_credential_profiles_by_id"
+      ]
+    }
+  },
+  "live_exchange_registry_audit": {
+    "live_enabled_entry_present": false,
+    "ordinary_live_execution_denial_reachable": false,
+    "cross_milestone_blocker": "M0.5 closed Exchange Registry has no ENABLED entry supporting LIVE; persisted LIVE context fails TRUSTED_CONTEXT_INVALID before operation authority and LIVE_EXECUTION_FORBIDDEN is not an ordinary M0.6 reachability case",
+    "runtime": false,
+    "reachable": false,
+    "cross_milestone_blocked": true
+  },
+  "canonical_hash_definition_refs": {
+    "account_capability_snapshot": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/account_capability_snapshot_contract/content_hash_definition",
+      "content_fingerprint_sha256": "afa575e89ad8672adf68698e842c9e2fccb93b657246760f567f7bc57cfeb70e"
+    },
+    "instrument_catalog_snapshot": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_catalog_snapshot_contract/content_hash_definition",
+      "content_fingerprint_sha256": "42ba26a65d7c9440842a3ba3700b4fc0c1e8606697061a440d46066bf0e40c53"
+    },
+    "trading_universe": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/trading_universe_contract/content_hash_definition",
+      "content_fingerprint_sha256": "09ee36059a9ebd6be6c6165b8bfcc0f9a0abca185e8a5b6ad2d0cd668cdecb8a"
+    }
+  },
+  "m05_projection_trust_boundary": {
+    "model": "MODEL_A_FULL_CANONICAL_PROJECTION",
+    "validated_upstream_omission_forbidden": true,
+    "requirements": [
+      "exact schema",
+      "canonical hash recalculation for hash-versioned entities",
+      "map-key binding",
+      "cycle-safe lineage",
+      "canonical registries",
+      "operation-specific operability"
+    ]
+  },
+  "canonical_pointer_resolution_policy": {
+    "resolver": "resolve_canonical_pointer",
+    "source_contract_allowlist": [
+      "environment_and_product_capabilities.json",
+      "exchange_accounts_and_instruments.json"
+    ],
+    "json_pointer_syntax": "RFC 6901 absolute pointer with ~0 and ~1 decoding; every segment must exist",
+    "result_type_required": true,
+    "exchange_entry_exact_fields_required": true,
+    "duplicate_exchange_id_forbidden": true,
+    "machine_corruption_denial": "CONTRACT_INCONSISTENT",
+    "machine_corruption_audit_event": "STRATEGY_ROUTING_CONTRACT_INCONSISTENT",
+    "persisted_graph_corruption_denial": "TRUSTED_CONTEXT_INVALID"
+  },
+  "instrument_history_policy": {
+    "context_field": "instrument_history_by_id",
+    "canonical_record_fields_ref": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/record_fields"
+    },
+    "value_type": "ordered non-empty array",
+    "strictly_increasing_field": "metadata_version",
+    "current_version_rule": "current.metadata_version > max(history.metadata_version)",
+    "historical_catalog_resolution": "exact catalog_snapshot_id and reverse membership required"
   }
 }
