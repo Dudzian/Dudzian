@@ -1038,9 +1038,9 @@ class OpportunityLifecycleService:
                 )
                 ordered = sorted(
                     [*reference_samples, *evaluation_samples],
-                    key=lambda row: row.as_of.timestamp()
-                    if row.as_of is not None
-                    else float("-inf"),
+                    key=lambda row: (
+                        row.as_of.timestamp() if row.as_of is not None else float("-inf")
+                    ),
                 )
                 if ordered:
                     window_start = ordered[0].as_of

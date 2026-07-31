@@ -214,9 +214,9 @@ def test_fetch_snapshots_passes_symbol_from_config_to_stream(
     monkeypatch.setattr(
         fetcher,
         "_load_health_check_public_symbol",
-        lambda _config_path, environment_name: "BTC-PERPETUAL"
-        if environment_name.startswith("deribit")
-        else "XBTUSD",
+        lambda _config_path, environment_name: (
+            "BTC-PERPETUAL" if environment_name.startswith("deribit") else "XBTUSD"
+        ),
     )
     monkeypatch.setattr(fetcher, "_collect_single_snapshot", _stub_collect_single_snapshot)
 

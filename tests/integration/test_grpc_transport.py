@@ -561,8 +561,10 @@ def test_grpc_decision_feed_snapshot_and_reconnect(
             stream_interval=0.0,
         ):
             assert _wait_for(
-                lambda: service.feedHealth.get("status") == "connected"
-                and service.feedHealth.get("reconnects", 0) >= 1,
+                lambda: (
+                    service.feedHealth.get("status") == "connected"
+                    and service.feedHealth.get("reconnects", 0) >= 1
+                ),
                 app,
                 timeout=10.0,
             )

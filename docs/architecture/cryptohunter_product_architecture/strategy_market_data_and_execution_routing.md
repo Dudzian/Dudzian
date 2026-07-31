@@ -1,49 +1,186 @@
-# CryptoHunter M0.6 — Strategy, Market Data and Execution Routing
+# M0.6 — Strategy, Market Data and Execution Routing
 
-**Status: closed.** Autorytatywnym źródłem prawdy jest [kontrakt JSON](strategy_market_data_and_execution_routing.json). M0.6 został zamknięty po finalnym audycie semantycznym. Kontrakt pozostaje architektoniczny i nie implementuje runtime, adapterów, rzeczywistych endpointów, sekretów ani wykonywania zleceń.
+**Status: under audit.** Autorytatywnym źródłem prawdy jest `strategy_market_data_and_execution_routing.json`; ten dokument jest jego opisowym odpowiednikiem. M0.6 jest kontraktem architektury z czystymi validatorami referencyjnymi w testach. Nie jest runtime'em i nie dodaje storage, IPC, QML, sieci, adapterów, URL-i endpointów, sekretów, credential payloads ani wykonywania lub lifecycle'u zleceń. M0.7 nie został rozpoczęty.
 
-## Scope i identity
+## Identity i encje
 
-M0.6 rozdziela `StrategyDefinition` (`sdef_`), `StrategyInstance` (`sinst_`), `MarketDataRoute` (`mdr_`) i `ExecutionRoute` (`xroute_`). Wszystkie foreign IDs mają maszynowe odwołanie do encji oraz prefiks zgodny z M0.2; UUID musi mieć kanoniczny profil UUIDv7. Display name ani symbol nie są identity. Enum, lista enumów, timestamp oraz nested object wskazują konkretny zamknięty registry albo schema — nie istnieje niekwalifikowany typ „enum”.
+M0.6 przejmuje canonical lowercase UUIDv7 identity z M0.2: `sdef`, `sinst`, `mdr` i `xroute`. RouteReadiness jest nie-durable Core-owned projection mapowaną po exact `mdr` albo `xroute` route ID. Exact prefix i kanoniczny UUIDv7 route są częścią identity; display name oraz symbol nie są identity, a każdy foreign ID rozwiązuje się do jednej konkretnej encji.
 
-## StrategyDefinition i historia
+`StrategyDefinition` obejmuje exact: `strategy_definition_id`, `workspace_id`, `strategy_type_id`, `definition_version`, `configuration`, `canonical_content_hash`, `hash_domain_separator`, `lifecycle_state`. Lifecycle to `DRAFT → ACTIVE → RETIRED`, bez wyjścia z `RETIRED`.
 
-Definicja ma exact Workspace, strategy type, dodatnią wersję z wykluczeniem `bool`, zamkniętą konfigurację i immutable content hash. CoreHost przy każdym odczycie przelicza SHA-256 z `cryptohunter.strategy-definition.v1`, LF oraz kanonicznego UTF-8 JSON (`sort_keys`, separatory `,`/`:`, bez ASCII escaping). Caller nie może dostarczyć trusted history.
+`StrategyInstance` obejmuje exact: `strategy_instance_id`, `workspace_id`, `portfolio_id`, exact ID i wersję definicji, account, universe, osobne route IDs oraz lifecycle. Powstaje jako `DRAFT`; osobne pierwsze bindy prowadzą po związaniu obu tras do `BOUND`; aktywacja jest dozwolona z `BOUND` lub `INACTIVE`, `ACTIVE → INACTIVE`, a `DRAFT`, `BOUND` i `INACTIVE` mogą przejść do `RETIRED`. Non-null binding jest immutable i rebind wymaga nowej instancji.
 
-Lifecycle definicji jest zamknięty: `DRAFT → ACTIVE → RETIRED`; `CREATE_STRATEGY_DEFINITION` planuje `DRAFT`, a osobne `ACTIVATE_STRATEGY_DEFINITION` i `RETIRE_STRATEGY_DEFINITION` planują przejścia bez mutacji storage. RETIRED nie ma wyjścia. Retirement wymaga braku ACTIVE instance przypiętej do retiring exact version, blokuje nowe instancje i późniejszą aktywację tej wersji, lecz nie unieważnia wcześniejszej ACTIVE history version tylko dlatego, że późniejszy current został retired.
+## Immutable StrategyDefinition
 
-Current map ma jeden rekord na `strategy_definition_id`. History map używa klucza `<strategy_definition_id>@<definition_version>` i zawiera dokładnie `1..current-1`. Jeden resolver wybiera current wyłącznie przy exact current version, a wcześniejszą wersję wyłącznie przez exact history key. Pinning wersji jest immutable: brak implicit upgrade. Nowe instancje wymagają current ACTIVE version, natomiast istniejąca instancja przypięta do wcześniejszej ACTIVE version zachowuje prawo readiness/activation. Każdy history record zachowuje definition ID, Workspace i strategy type; luka, duplikat, obca własność, błędny hash lub separator blokują cały lineage.
+Current record jest w `strategy_definitions_by_id`. Wersje historyczne są w `previous_strategy_definitions_by_version_key` pod exact kluczem `<strategy_definition_id>@<definition_version>`, bez luk i duplikatów, dokładnie dla `1..current-1`. Jedyny resolver `resolve_strategy_definition_exact_version` nie wykonuje implicit upgrade. Nowa instancja wymaga current `ACTIVE`; istniejący pin do wcześniejszej `ACTIVE` wersji pozostaje poprawny mimo powstania nowszej wersji. Exact `RETIRED` nie może służyć nowej aktywacji.
 
-## StrategyInstance i pierwsze BIND
+Hash to SHA-256 jawnego separatora `cryptohunter.strategy-definition.v1\0` i kanonicznej konfiguracji UTF-8. Klucze są deterministycznie sortowane, whitespace nie ma znaczenia, float/NaN/Infinity są zabronione, bool nie jest integerem, a nested object jest zamknięty. Trusted validation zawsze przelicza hash.
 
-Nowa instancja powstaje jako `DRAFT`; oba route IDs mogą być `null` wyłącznie w tym stanie. `BIND_MARKET_DATA_ROUTE` i `BIND_EXECUTION_ROUTE` planują pierwsze przypięcie dokładnie raz. Po ustawieniu non-null ID staje się immutable, a ponowne przypięcie wymaga nowej StrategyInstance. Oba bindingi prowadzą do `BOUND`; aktywować wolno tylko `BOUND` lub `INACTIVE`. Nie istnieje implicit/default exchange, account, universe ani route.
+## Routes, endpoint classes i readiness
 
-## MarketDataRoute, ExecutionRoute i readiness
+MarketDataRoute i ExecutionRoute są oddzielnymi encjami. MarketDataRoute deklaruje exact workspace, exchange, environment, market type, adapter family, endpoint class, `PUBLIC`/`PRIVATE` scope, instruments, kanały (trades, order book, ticker, candles i właściwe kanały prywatne), snapshot/stream semantics, sekwencję, deterministic freshness, reconnect i route lifecycle. Public data nigdy nie nadaje execution authority.
 
-Persisted routes przechowują `route_status`, czyli lifecycle/configuration state, lecz nie przechowują bieżącego readiness. Jedynym Core-owned źródłem `route_kind`, `readiness_state`, `observed_at`, `metadata_version` i `sequence_state` jest `route_readiness_by_id`. Każdy wybrany route wymaga dokładnie jednego rekordu. Market readiness nie implikuje execution readiness.
+ExecutionRoute deklaruje exact account/exchange/environment/market type, adapter family, endpoint class, instrument types, status, capability ceiling i dependencies. Autorytatywne `authorization_dependencies_by_environment` jest jedynym registry używanym przez bind, readiness, activation, testy i ten dokument; wymagane jest exact set equality. Bind sprawdza deklarację, natomiast chwilową operacyjność wszystkich dependencies dopiero readiness/activation.
 
-Freshness jest deterministycznie liczona względem Core-owned `validation_time_utc`, nigdy zegara systemowego. Sequence state musi odpowiadać zadeklarowanej sequence policy. `STALE`, `NOT_READY`, `UNKNOWN`, zły route kind, timestamp z przyszłości, przeterminowanie lub gap blokują aktywację. Execution timestamp z przyszłości blokuje execution readiness. Reconnect zachowuje exact immutable route scope. `VALIDATE_ROUTE_READINESS` dodatkowo wiąże oba routes z exact instance Workspace, ExchangeAccount i account exchange/environment/market type, adapterami instrumentów/katalogów, pełnym universe coverage oraz supported instrument types; execution freshness ma osobny deterministyczny limit; kończy się wyłącznie planem `readiness_validated`, nigdy przejściem do `ACTIVE`.
+Endpoint classes są abstrakcyjne i nie zawierają URL-i: `PAPER_PUBLIC_DATA`, `PAPER_SIMULATION`, `TESTNET_PUBLIC_DATA`, `TESTNET_PRIVATE_DATA`, `LIVE_PUBLIC_DATA`, `LIVE_PRIVATE_DATA`. Każda ma exact environment, access scope i allowed route kinds. Nie ma implicit selection ani cross-environment fallback; PAPER nie przechodzi do TESTNET/LIVE, TESTNET do LIVE, endpoint publiczny nie służy private execution, a prywatny kanał nie może znaleźć się na public route.
 
-MarketDataRoute określa exact instrument coverage przez `instrument_id`, zamknięte channels, snapshot/stream i public/private scope. ExecutionRoute wiąże dokładnie jedno M0.5 ExchangeAccount oraz obsługiwane instrument types i authorization dependencies. Abstrakcyjne endpoint classes nie są URL-ami. Maszynowa mapa każdego endpoint class wskazuje exact environment, access scope oraz allowed route kinds; walidacja blokuje cross-environment fallback, public/private scope mismatch, public-only endpoint dla ExecutionRoute oraz prywatne kanały na PUBLIC route.
+Bieżący readiness nie jest persisted route field. Jedynym źródłem jest Core-owned `route_readiness_by_id`; rekord zawiera exact `route_id`, `route_kind`, `readiness_state`, `observed_at`, `metadata_version`, `sequence_state`. Stany to `UNKNOWN`, `NOT_READY`, `READY`, `STALE`. Freshness i timestamp w przyszłości są oceniane wyłącznie wobec Core-owned `validation_time_utc`, nigdy zegara systemowego. Market readiness nie implikuje execution readiness, kind musi odpowiadać istniejącej trasie i orphan readiness jest nieważny.
 
-## Trusted validation context i projekcje M0.4/M0.5
+## PAPER, TESTNET, LIVE
 
-Request niesie tylko IDs, oczekiwane wersje oraz intent. `TradingUniverse.source_catalog_snapshot_ids` jest exact zbiorem katalogów faktycznie użytych przez instrumenty universe: brak używanego lub dodatkowy nieużywany katalog unieważnia context. `credential_profiles_by_id` zawiera wyłącznie aktywnie wybrane profile — najwyżej jeden na account; historyczne, zapasowe i RETIRED profile są poza tą mapą. Zamknięty context CoreHost waliduje globalnie wszystkie foreign references, także w unrelated records: definition/instance/account/universe/routes, instrument–catalog membership, snapshots, credentials i readiness muszą tworzyć dwukierunkowo spójny graf. Orphan lub dangling ID unieważnia cały context. PAPER account może mieć `active_credential_profile_id=null` i pustą mapę credentials; TESTNET wymaga exact aktywnego profilu.
+PAPER oznacza wyłącznie lokalną symulację, bez private exchange execution i bez obowiązkowego CredentialProfile; `active_credential_profile_id` może być null, a ProductCapabilities nadal muszą spełniać M0.4. TESTNET wymaga aktywnego exact account, capabilities, VALID AccountCapabilitySnapshot, aktywnego CredentialProfile o purpose `ORDER_ENTRY` i permission `PLACE_ORDERS`, z exact account/exchange/environment binding i bez LIVE fallback. W bieżącej edycji LIVE execution jest zawsze `LIVE_EXECUTION_FORBIDDEN`; widoczność może być opisana, lecz nie daje execution authority.
 
-Kolejność jest autorytatywna: exact request schema, pełna struktura i wszystkie rekordy context, globalna integralność referencyjna, a dopiero potem operation-specific lookup/lifecycle i kontrola denial membership dispatchera. Malformed lub dangling persisted graph zawsze daje `TRUSTED_CONTEXT_INVALID` i ma pierwszeństwo przed domain denial; brak ID przenoszonego wyłącznie przez poprawny request daje precyzyjny operation denial. Zamknięty context CoreHost waliduje exact top-level shape, typ i empty policy każdej mapy, następnie każdy rekord (także unrelated), exact fields, constrained types, nested schema i map-key binding. Dopiero potem operation może wykonać kontrolowany `.get()`. `None`, `False`, lista, pusty string i integer nigdy nie zastępują mapy. Jawne `{}` jest jednak poprawnym stanem każdej mapy w świeżym systemie; dopiero operacja potrzebująca brakującej projekcji zwraca właściwy operation-specific denial. Dzięki temu pierwsza `CREATE_STRATEGY_DEFINITION` nie wymaga kont, universes, instrumentów, routes ani readiness.
+## Trusted context i integralność
 
-Core-owned trusted projections zachowują dokładne identity i semantykę zamkniętych kontraktów: M0.5 `ExchangeAccount`, `CredentialProfile`, `TradingUniverse`, `Instrument`, `InstrumentCatalogSnapshot`, zwalidowany `AccountCapabilitySnapshot` oraz M0.4 `ProductCapabilities`. Snapshot projection wiąże exact source hash z attestation, potwierdza wcześniejszą pełną walidację M0.5 i ma deterministyczne `validated_at_utc`/`fresh_until_utc`. Credential projection jest bezsekretowa i sprawdza exact account, exchange, environment, ACTIVE lifecycle, ORDER_ENTRY purpose oraz permission snapshot. Create instance sprawdza aktywną exact definition version i Workspace, unikalne instance ID, ACTIVE account z exact Portfolio oraz ACTIVE universe przypisany do tego account. Oba pierwsze BIND sprawdzają exact resolved ACTIVE definition version i jej Workspace, account Portfolio, universe–account binding, exact Workspace/account/exchange/environment/market type, adapter, universe coverage, instrument types i endpoint boundary bez wymagania drugiego route. BIND execution nie wymaga bieżącego połączenia ani resolution credential, lecz route musi już deklarować exact environment-specific authorization dependency set z jedynego registry `authorization_dependencies_by_environment`; to samo registry czyta activation, a brak lub nadmiar kończy się `ROUTE_CAPABILITY_BLOCKED`. Decision osobno podaje `planned_instance_state`: pierwszy binding pozostawia `DRAFT`, drugi planuje `BOUND`. Aktywacja dodatkowo sprawdza definition/route/instrument/catalog lifecycle, wszystkie dwukierunkowe account–universe–snapshot–instrument–catalog bindings, catalog membership, snapshot instrument types, ProductCapabilities trust oraz przecięcie permissions. Authority ma dwie niezależne reguły. Product capability wymagane przez operację musi należeć do `ExecutionRoute.route_capability_ceiling` oraz M0.4 ProductCapabilities. Account permission wymagane przez operację musi należeć osobno do zwalidowanego M0.5 AccountCapabilitySnapshot i CredentialProfile permission snapshot. Słowniki nigdy nie są ze sobą przecinane; pusty ceiling albo brak permission niczego nie przyznaje. LIVE pozostaje zablokowane. PAPER korzysta wyłącznie z M0.4 `PAPER_LOCAL_SIMULATION` i abstrakcyjnego `PAPER_SIMULATION`, nigdy z private exchange execution authority ani TESTNET/LIVE endpointu.
+Context jest zamknięty i zawiera wszystkie mapy wskazane w JSON oraz `validation_time_utc`. Każda mapa musi być rzeczywistym `dict`, mieć exact closed records i map-key binding. Jawne `{}` jest dozwolone według polityki mapy; `None`, `False`, lista, string ani integer nie są mapą. Malformed unrelated record unieważnia cały context.
+
+Kolejność jest stała: exact request; exact top-level context; wszystkie rekordy; global references; operation lookup; lifecycle/routing/authority; immutable planned outcome; dispatcher denial membership. Persisted dangling graph daje `TRUSTED_CONTEXT_INVALID`; dopiero brak zasobu wskazanego wyłącznie przez poprawny request daje operation-specific denial.
+
+Globalna walidacja rozwiązuje exact definition version, Workspace, Portfolio, ExchangeAccount, universe należący do exact account i obie trasy z exact workspace/account/exchange/environment/market type. Każdy instrument i catalog istnieje, universe source catalog set jest dokładnie zbiorem katalogów jego instrumentów, Instrument należy do Catalog, Catalog back-referencuje Instrument, scope zgadza się z account, a `Instrument.source_adapter_family_id == Catalog.adapter_family_id`.
+
+Dla bound graph obowiązuje `ExecutionRoute.adapter_family_id == Instrument.source_adapter_family_id == Catalog.adapter_family_id`; persisted mismatch jest `TRUSTED_CONTEXT_INVALID`. Dla nieprzypiętego kandydata BIND mismatch jest `ROUTE_ADAPTER_MISMATCH`. Snapshot ma exact ID/account/exchange/environment/market type, canonical status `VALID`, `STALE` albo `REJECTED`, source hash zgodny z attestation oraz invariants czasowe wobec validation clock. Tylko `VALID` może przejść TESTNET operability; `STALE` i `REJECTED` dają `CAPABILITY_SNAPSHOT_BLOCKED`.
+
+`credential_profiles_by_id` zawiera wyłącznie aktywnie wybrane profile, najwyżej jeden na account, z exact account/exchange/environment i lifecycle `ACTIVE`. TESTNET wymaga `ORDER_ENTRY`/`PLACE_ORDERS`; PAPER pozwala na null i pustą mapę.
 
 ## Operacje, denials i audit
 
-Zamknięty registry ma jedenaście operacji, w tym lifecycle definicji: create definition/instance, update state, dwa pierwsze BIND, readiness validation, activate, deactivate i retire. `VALIDATE_ROUTE_READINESS` przyjmuje wyłącznie stały intent `VALIDATE_ONLY`, a `ACTIVATE_STRATEGY_INSTANCE` wyłącznie `ACTIVATE`; zamiana jest błędem request schema. Każda ma exact request constraints, własne lifecycle preconditions, operation-specific denial list oraz immutable planned transition bez storage mutation. Maszynowa macierz dopuszcza: DRAFT→BOUND wyłącznie przez oba pierwsze BIND, BOUND/INACTIVE→ACTIVE tylko przez ACTIVATE, ACTIVE→INACTIVE tylko przez DEACTIVATE oraz DRAFT/BOUND/INACTIVE→RETIRED tylko przez RETIRE; RETIRED nie ma wyjścia, a generic UPDATE nie aktywuje, nie wskrzesza i nie omija first-bind policy. `CONTRACT_INCONSISTENT` jest zarezerwowane wyłącznie dla uszkodzenia samego maszynowego kontraktu; malformed request, persisted lineage lub trusted graph zwraca kontrolowany operation/context denial. Direct validator, full-context validation i dispatcher są równoważne. Znana operacja nie wpada domyślnie w generic failure; `UNKNOWN_OPERATION` dotyczy wyłącznie nazw spoza registry.
+Zamknięte operacje to `CREATE_STRATEGY_DEFINITION`, `ACTIVATE_STRATEGY_DEFINITION`, `RETIRE_STRATEGY_DEFINITION`, `CREATE_STRATEGY_INSTANCE`, `BIND_MARKET_DATA_ROUTE`, `BIND_EXECUTION_ROUTE`, `VALIDATE_ROUTE_READINESS`, `ACTIVATE_STRATEGY_INSTANCE`, `DEACTIVATE_STRATEGY_INSTANCE`, `RETIRE_STRATEGY_INSTANCE`. Authority to zawsze CoreHost, default success jest false, wynik jest immutable planem bez storage mutation. Readiness ma wyłącznie intent `VALIDATE_ONLY`, aktywacja wyłącznie `ACTIVATE`. `SUBMIT_ORDER`, `CREATE_ORDER`, `CANCEL_ORDER`, `REPLACE_ORDER`, `EXECUTE_TRADE` są jawnie zabronione.
 
-JSON centralizuje `validator_denial_registry`, `allowed_denials_by_operation`, rzeczywisty `operation_validator_call_graph`, `success_event_by_operation` i `denial_event_by_operation`. Krawędzie graphu zawierają wyłącznie nazwy validatorów, bez kopii denial arrays. Deniale runtime są unionem centralnych wpisów registry osiągalnych dla operacji, a wykonywalne mutation cases pokrywają każdą parę i — poza context denial — startują z poprawnym trusted context.  Każdy dozwolony denial mapuje się na denial event operacji; unknown operation i contract inconsistency mają osobne eventy. Success wymaga `denial_code=null`, denial dozwolonego kodu, a każdy event zabrania secret fields. Odmowa nie ma side effects.
+Autorytatywne `validator_denial_registry`, `operation_validator_call_graph` i `allowed_denials_by_operation` eliminują kopiowane listy na krawędziach. Union deniali osiągalnych validatorów musi być dokładnie allowed minus `CONTRACT_INCONSISTENT`. Każda runtime operation/denial pair ma wykonywalny przypadek; poza request/context failure zaczyna on z poprawnym trusted context. `CONTRACT_INCONSISTENT` jest wyłącznie uszkodzeniem machine contract, nigdy zwykłym błędem domenowym.
 
-## Fail-closed i relacje M0.2–M0.5
+Każda operacja ma exact success i denial audit event. Payload jest zamknięty, zawiera operation, outcome, denial i bezpieczne ID, bez sekretów, credential material lub URL. `UNKNOWN_OPERATION` oraz `CONTRACT_INCONSISTENT` mają odrębne eventy.
 
-Unknown enum/channel/dependency, foreign prefix, `bool` jako integer, malformed UTC, extra nested field, malformed unrelated record, missing dependency, lineage gap, hash mismatch, stale readiness, sequence gap, scope mismatch, capability expansion, ambiguity lub retired resource kończą się kontrolowanym denialem bez wyjątku. M0.6 wykorzystuje identity M0.2, CoreHost authority M0.3, environment/ProductCapabilities/Live block M0.4 oraz multi-exchange projections M0.5, nie zmieniając wcześniejszych kontraktów.
+## Wykonywalny model walidacji referencyjnej
 
-## Out of scope
+Kontrakt maszynowy definiuje dla każdej operacji zamknięte `request_fields`, `request_types`, `constants`, `nullable_fields` i `nested_schemas`; nie istnieje ogólny ani domyślny payload. Wspólny `validate_request` sprawdza rzeczywisty dict, exact fields, durable ID prefixes, enumy, constant authority/intent, rozróżnienie integer/bool i zamknięte obiekty konfiguracji.
 
-Brak runtime, adapterów, rzeczywistych endpointów, sekretów, credential payloads, strategii i order execution. Submit/cancel/replace oraz order lifecycle pozostają w **M0.7**, ledger/capital/P&L w **M0.8**, a risk, kill switch i `ExecutionLease` w **M0.9**.
+`record_schemas` zawiera wykonywalne schema dla StrategyDefinition, StrategyInstance, obu routes, RouteReadiness oraz projekcji Account, Universe, Instrument, Catalog, CapabilitySnapshot, CredentialProfile, ProductCapabilities i Portfolio. Każde schema deklaruje exact fields/types, identity, enumy, nullability, unikalność/pustość tablic, nested schemas i entity references. `validate_record` jest wspólnym interpreterem tych definicji, a `validate_context` wykonuje kolejno exact top level, wszystkie schemas i map-key bindings, definition lineage/hashes, global references oraz derived invariants. `active_strategy_instances` jest unique `sinst` array równą dokładnie zbiorowi persisted rekordów `ACTIVE`, a nie mapą ani falsey placeholderem.
+
+Referencyjny `dispatcher(operation, request, context)` nie przyjmuje oczekiwanego deniala. Wykonuje callable wskazane przez `operation_validator_call_graph`: `validate_request`, następnie pełny `validate_context`, następnie mały validator operacji. Dopiero potem zwraca immutable planned decision i sprawdza denial membership; rozbieżność machine contract jako jedyna prowadzi do `CONTRACT_INCONSISTENT`. Testowy builder reachability mutuje request albo graph contextu, lecz oczekiwany kod jest używany wyłącznie do zbudowania wejścia i asercji, nigdy jako argument dispatchera lub validatora.
+
+## Semantic closure of lifecycle and route authority
+
+`UPDATE_STRATEGY_INSTANCE_STATE` is not an operation. `BOUND` is derived only after both
+immutable first binds; activation, deactivation, and retirement are exclusively planned by
+their dedicated operations. Instance creation requires an active current definition and
+active universe, exact Workspace/Portfolio/Account ownership, and two null route IDs.
+
+Definition lineage preserves Workspace, strategy type, and hash domain separator across all
+versions. Trusted-context validation covers every route, including unbound candidates, while
+operation-specific candidate mismatches require an independently valid candidate graph.
+Readiness and activation share bound-route operability checks. TESTNET activation requires
+`PLACE_ORDERS` in the snapshot, execution-route ceiling, and selected credential. Future
+snapshot observations invalidate trusted context; `STALE` or `REJECTED` snapshots are activation
+denials. Every successful operation is checked against derived planned-outcome invariants.
+
+## Trusted graph and readiness closure
+
+Both route binds accept only a `DRAFT` StrategyInstance. `BOUND`, `ACTIVE`, and `INACTIVE`
+produce `STRATEGY_INSTANCE_BINDING_MISMATCH`; `RETIRED` produces
+`RETIRED_RESOURCE_FORBIDDEN`. Creating any StrategyDefinition version requires an existing
+Workspace (`WORKSPACE_NOT_FOUND` otherwise), and every persisted version uses the contract's
+exact hash domain separator.
+
+Every Instrument–Catalog relationship has exact exchange, environment, market type, adapter,
+catalog identity, and reverse membership. Every Account requires the ProductCapabilities
+projection for its exact environment. The selected-credential map contains only profiles in
+`ACTIVE` lifecycle selected by their Account; a structurally absent TESTNET selection remains
+an activation-time `ACCOUNT_READINESS_BLOCKED` denial.
+
+The authoritative array registries close market-data channels, instrument types, route
+capabilities, and authorization-dependency names. Market route data scope exactly matches
+endpoint access scope, and public scope rejects private channels. Market readiness age uses
+the bound route's `freshness_policy.max_age_seconds` with an inclusive boundary. Execution
+readiness uses the machine `execution_readiness_max_age_seconds` policy and requires
+`NOT_APPLICABLE` sequence state.
+
+Planned definition creation includes its canonical content hash, exact version, ownership,
+strategy type, and authoritative separator. Bind outcomes prove DRAFT source state, no rebind,
+and DRAFT/BOUND derivation. Trusted graph omissions are rejected during context validation;
+only malformed machine registries or call graphs can become `CONTRACT_INCONSISTENT`.
+
+## Authorization and reverse-integrity closure
+
+`validate_authorization_operability` is the single current-authority check shared by readiness
+and activation. PAPER depends only on ProductCapabilities and never on snapshot status/age/
+permissions or credentials. TESTNET additionally requires an ACTIVE Account, a VALID and fresh
+snapshot containing `PLACE_ORDERS`, enabled ProductCapabilities permitting the exact operation,
+an ACTIVE selected `ORDER_ENTRY` credential with `PLACE_ORDERS`, and an execution ceiling with
+`PLACE_ORDERS`. LIVE execution readiness and activation are always forbidden. Snapshot age uses
+`account_capability_snapshot_policy.max_age_seconds_by_environment` with an inclusive boundary.
+
+Trusted validation checks both directions of every Instrument–Catalog edge, every snapshot
+against its existing Account, and every Portfolio against an existing Workspace, including
+unrelated records. UNKNOWN_OPERATION and CONTRACT_INCONSISTENT use their dedicated audit events.
+Every registered operation has an exact planned-outcome shape; no unknown plan is accepted.
+RouteReadiness is a non-durable Core-owned projection keyed by an exact `mdr` or `xroute` ID and
+has no independent identity prefix. Broken lineage is a trusted-context failure, so there is no
+runtime `STRATEGY_DEFINITION_LINEAGE_INVALID` denial.
+
+## Readiness lifecycle and complete-plan closure
+
+Readiness runs `validate_readiness_lifecycle` before authorization: DRAFT is a binding mismatch,
+BOUND/ACTIVE/INACTIVE continue, and RETIRED is forbidden. PAPER checks ProductCapabilities
+before—and instead of—Account lifecycle, snapshot, credential, or TESTNET ceiling requirements.
+A persisted instance may never reference a DRAFT definition; RETIRED pinning remains historical,
+but reactivation requires an exact ACTIVE definition.
+
+Definition lifecycle conflicts now use `STRATEGY_DEFINITION_STATE_CONFLICT`; only RETIRED uses
+`RETIRED_RESOURCE_FORBIDDEN`. CREATE decisions contain the exact complete record fields,
+including explicit DRAFT lifecycle and copied configuration. Decisions recursively freeze
+objects as mapping proxies and arrays as tuples, so nested planned data is immutable without
+mutating either request or trusted context.
+
+## Terminal lifecycle and canonical projection enums
+
+`validate_strategy_instance_lifecycle_preflight` is shared by activation and deactivation. For
+activation it runs before authorization: only BOUND and INACTIVE continue; DRAFT and ACTIVE are
+binding conflicts, while RETIRED is terminal. For deactivation the same preflight succeeds only
+from ACTIVE, returns the same terminal denial for RETIRED, and a binding conflict otherwise.
+Readiness retains its independent DRAFT/RETIRED preflight.
+
+Projection arrays resolve rather than duplicate closed registries: snapshot capabilities and
+credential permissions use M0.5 `credential_profile_contract.permission_registry`, while
+ProductCapabilities allowed values use M0.4
+`capability_id_registry.current_schema_allowed_capability_ids`. Unknown array members invalidate
+the trusted context. TESTNET still requires `PLACE_ORDERS` in snapshot, credential, and route
+ceiling; PAPER checks only its M0.4 `PAPER_LOCAL_SIMULATION` capability and LIVE execution stays
+forbidden.
+
+## Final consistency closure
+
+The shared lifecycle preflight accepts only activation and deactivation operation names; any
+other call-graph placement is a machine-contract fault with the dedicated contract audit event.
+Snapshot `VALID`, `STALE`, and `REJECTED` states are structurally valid. Orphan/scope/hash/future-time
+failures invalidate context, while `STALE` or `REJECTED` snapshots remain trusted records that deny
+TESTNET operability.
+
+M0.4 supplies one global closed capability-ID registry plus separate environment booleans, not a
+per-environment ID allowlist. Therefore extra canonical IDs are structurally harmless and grant
+no authority: M0.6 still requires the exact environment capability. All declared external JSON
+Pointers are executable contract inputs and a broken pointer is a machine-contract fault. Direct
+call-graph execution and dispatcher decisions have exact parity for every runtime denial pair.
+
+## Canonical M0.5 scalar projections
+
+Scalar projection enums are resolved directly from M0.5 rather than copied locally. Account
+lifecycle uses `/exchange_account_contract/lifecycle_states`, universe lifecycle uses
+`/trading_universe_contract/lifecycle_states`, snapshot status uses
+`/account_capability_snapshot_contract/statuses`, and credential purpose uses
+`/credential_profile_contract/credential_purposes`. Canonical inactive states remain structurally
+trusted but fail operation-specific readiness: inactive TESTNET accounts and non-order-entry
+credentials return `ACCOUNT_READINESS_BLOCKED`, inactive universes return
+`TRADING_UNIVERSE_INVALID`, and `STALE` or `REJECTED` snapshots return
+`CAPABILITY_SNAPSHOT_BLOCKED`. Broken references are machine-contract faults.
+
+
+## Canonical M0.5 Instrument and Catalog projections
+
+`InstrumentProjection.trading_status` resolves `/instrument_contract/trading_statuses`; `TRADING`
+is operational, while `HALTED`, `SUSPENDED`, `DELISTED`, and `UNKNOWN` are structurally trusted
+but deny activation with `INSTRUMENT_SCOPE_MISMATCH`. `InstrumentCatalogProjection.status`
+resolves `/instrument_catalog_snapshot_contract/statuses` and carries `observed_at_utc`, `effective_at_utc`, and `stale_after_utc` with an exact ordered timestamp graph. A catalog
+is operational only when its status is `VALID` and `validation_time_utc < stale_after_utc`; canonical
+`PARTIAL`, `STALE`, `REJECTED`, or an expired `VALID` catalog denies activation with
+`TRADING_UNIVERSE_INVALID`. Structural schema validation and operation-specific operability are
+distinct. All declared external JSON Pointers fail closed as machine-contract faults.

@@ -2260,16 +2260,21 @@ def test_runtime_overview_cards_react_to_live_signals(tmp_path: Path) -> None:
         feed_sla_prefixed_name = "runtimeOverviewCardLoader_feed_sla"
 
         assert _wait_until(
-            lambda: _find_object(feed_sla_prefixed_name) is not None
-            or _find_loader_by_card_id("feed_sla") is not None
-            or _wait_for_child(card_name, timeout_ms=0) is not None,
+            lambda: (
+                _find_object(feed_sla_prefixed_name) is not None
+                or _find_loader_by_card_id("feed_sla") is not None
+                or _wait_for_child(card_name, timeout_ms=0) is not None
+            ),
             timeout_ms=10000,
         ), f"Nie znaleziono loadera SLA ani karty SLA. {_sla_debug_snapshot()}"
 
         assert _wait_until(
-            lambda: _feed_sla_ready_via_loader()
-            or _wait_for_feed_sla_object(card_name, timeout_ms=0) is not None
-            or _wait_for_feed_sla_object("runtimeOverviewSlaStateLabel", timeout_ms=0) is not None,
+            lambda: (
+                _feed_sla_ready_via_loader()
+                or _wait_for_feed_sla_object(card_name, timeout_ms=0) is not None
+                or _wait_for_feed_sla_object("runtimeOverviewSlaStateLabel", timeout_ms=0)
+                is not None
+            ),
             timeout_ms=5000,
         ), (
             "Feed SLA nie osiągnęło stanu gotowości (brak karty i SLA state label). "
