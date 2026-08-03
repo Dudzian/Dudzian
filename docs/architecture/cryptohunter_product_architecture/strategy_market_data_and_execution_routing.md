@@ -372,8 +372,148 @@ and M0.7 remains unstarted.
 Canonical Instrument structural validation resolves the complete M0.5 AssetReference and decimal
 contracts. Asset references are exact closed objects (`venue_asset_code`,
 `canonical_display_code`, `asset_namespace`, `mapping_status`), accept trusted `EXACT` or
-`EXPLICIT_ALIAS` mappings, and fail closed otherwise. Decimal strings use the canonical M0.5 regex
-before `Decimal` comparisons. This full structural projection is distinct from narrower M0.6
-operation authority. Persisted Instrument history validates record shape and scalar types before
-ordering or identity comparisons. Dispatcher and direct parity execute identical planned-outcome
-validation through the same executor.
+`EXPLICIT_ALIAS` mappings, and fail closed for `AMBIGUOUS`, `UNKNOWN`, malformed, missing-field,
+extra-field, or wrong-namespace values. The same validator covers base, quote, and every non-null
+settlement reference. Spot and margin settlement is optional but, when present, its venue code
+equals the quote venue code.
+
+The schema resolves the canonical environment, market-type and instrument-type registries,
+allowed pairs, trading statuses, record fields, AssetReference contract, and decimal policy. It
+therefore represents `SPOT/SPOT_PAIR`, `MARGIN/MARGIN_PAIR`,
+`PERPETUAL/PERPETUAL_CONTRACT`, `DELIVERY_FUTURES/DELIVERY_FUTURE`, and `OPTIONS/OPTION`.
+That structural coverage grants no execution authority: narrower edition limits remain solely in
+operation-specific operability. Credential environment scope resolves the same full registry,
+including `PAPER`.
+
+These bindings are executable rather than documentary. The single
+`resolve_instrument_projection_contract` helper resolves every declared
+`InstrumentProjection.canonical_projection_refs` pointer, including
+`/derivative_consistency_rules`, through the exception-safe canonical pointer resolver. It closes
+registry contents, allowed-pair and derivative mapping keys, AssetReference and decimal-policy
+object keys, and requires the local exact field set to equal canonical
+`/instrument_contract/record_fields`. Pointer corruption is a machine-contract fault and both
+dispatcher and direct execution return `CONTRACT_INCONSISTENT` with
+`STRATEGY_ROUTING_CONTRACT_INCONSISTENT`; malformed persisted Instrument data remains
+`TRUSTED_CONTEXT_INVALID`.
+
+`canonical_projection_binding_manifest` attests every projection binding with its exact source
+contract, JSON Pointer, result type, canonical JSON fingerprint, and closed consumer list. A second
+`canonical_enum_binding_manifest` covers the dynamically collected complete set of external
+canonical scalar, array, and pointer enum consumers across
+Account, Instrument, Catalog, Snapshot, Credential, TrustedExternalIdentity and both route schemas.
+Validation cross-checks the Instrument environment, market type, instrument type and trading status
+schema bindings against their projection bindings. Consequently a same-type pointer swap, removed
+schema binding, changed canonical content, or changed fingerprint is
+`CONTRACT_INCONSISTENT`, while a persisted noncanonical enum remains
+`TRUSTED_CONTEXT_INVALID`.
+
+Each enum attestation also binds the schema name, field name, exact field type, binding kind,
+non-nullability, single exact-fields membership, and—where applicable—the entire array policy.
+Scalar bindings forbid local enum fallbacks. Array bindings require `array[enum]`, the exact
+`item_registry_ref`, declared `unique` and `empty_allowed` booleans, and no local `item_registry`.
+The manifest set must equal the consumer set collected from every
+`enum_canonical_pointer_ref`, `enum_registry_ref`, and `array_policy.item_registry_ref`; no fixed
+entry count is used as completeness evidence. Same-type swaps among lifecycle/status registries or
+between M0.4 product capabilities and M0.5 permissions fail as machine-contract corruption through
+both dispatcher and direct execution.
+
+One decimal helper first applies the exact M0.5 regex and then constructs `Decimal`. It requires
+positive price tick and quantity step, positive derivative contract size and option strike when
+required, non-negative non-null minima and maxima, and ordered min/max pairs. All four limit fields
+are nullable: null/null means no limits, value/null means a lower limit only, null/value is invalid,
+and value/value requires minimum no greater than maximum. The string `"0"` is a real zero limit;
+only null means absence. Consequently non-strings, scientific notation, signs, negative zero, leading zeroes,
+trailing fractional zeroes, whitespace, underscores, empty strings, NaN and Infinity fail closed.
+
+Complete PAPER trusted-graph fixtures—not isolated Instrument records—prove structural coverage of
+all five pairs across Account, Catalog, Instrument, Universe, MarketDataRoute, ExecutionRoute,
+ProductCapabilities, hashes, and reverse references. Account, Catalog, Snapshot, identity, and both
+route schemas resolve canonical market types, while ExecutionRoute supported instrument types
+resolve canonical `/instrument_type_registry`.
+
+Structural coverage remains separate from authority. The closed
+`current_edition_execution_pair_policy` grants M0.6 readiness and activation only to
+`SPOT/SPOT_PAIR`. `VALIDATE_ROUTE_READINESS` and `ACTIVATE_STRATEGY_INSTANCE` return the ordinary
+`INSTRUMENT_SCOPE_MISMATCH` denial for each other structurally valid pair. Bind continues to check
+the declared graph rather than current operability and therefore does not apply this edition gate.
+The exception-safe `resolve_current_edition_execution_pair_policy` requires the exact six-field
+policy object, exact SPOT-only pair, exact two consumers, fixed denial, and both separation flags.
+Mutating the policy to add MARGIN or any other authority cannot grant or remove access: dispatcher
+and direct execution return `CONTRACT_INCONSISTENT` with the dedicated contract audit event. Both
+market-data and execution-route first binds remain outside this gate and produce their declared
+`DRAFT` resulting state for structurally valid unsupported pairs.
+
+A global identity index spans current and historical Instrument maps. The exact tuple
+`(exchange_id, environment, market_type, venue_symbol)` maps to one `instrument_id`, and each ID
+maps immutably to one tuple while allowing multiple metadata versions. Current and historical
+Universe resolution also requires `Instrument.workspace_id == ExchangeAccount.workspace_id`, so
+an exact predecessor Catalog cannot authorize a foreign-Workspace Instrument.
+
+TrustedExternalIdentity uses one helper in global integrity and authorization operability. Its
+exact tuple is `(exchange_id, environment, market_type, venue_account_identifier,
+subaccount_identifier)`—never `account_type`—and collision scope contains only ACTIVE
+ExchangeAccounts with matching `VERIFIED` identity. Thus two active accounts collide even when
+their account types differ, while a disabled duplicate does not block the active account.
+End-to-end regressions exercise both cases through the full trusted context. Historical Universe
+validation likewise rejects a historical Instrument bound through an exact previous Catalog when
+that Instrument belongs to a second, otherwise existing Workspace.
+Persisted Instrument history validates record shape and scalar types before ordering or identity
+comparisons. Dispatcher and direct parity execute identical planned-outcome validation through the
+same executor.
+
+### Immutable external canonical enum consumer specification
+
+M0.6 does not treat schema discovery as the source of required external enum consumers. The executable reference validator owns an independent immutable consumer specification; validation requires exact equality between that specification, the dynamically observed schema bindings, and `canonical_enum_binding_manifest`. The dynamic collector therefore detects missing and additional bindings but cannot reduce the required set.
+
+Every M0.4/M0.5-bound consumer has an immutable per-consumer assignment covering schema, field, field type, binding kind, source contract, JSON Pointer, registry reference, nullability, exact-field membership, and (for arrays) the complete array policy. Every such field must have exactly one external binding. Local scalar enum fallbacks and local array item registries are forbidden, including for all route, Account, Instrument, Catalog, Snapshot, Credential, TrustedExternalIdentity, and ProductCapabilities environment fields.
+
+Canonical registry fingerprints are independently pinned once per registry identity. Validation requires the actual canonical content, the immutable fingerprint, and every manifest attestation to agree. Coordinated edits to schema and manifest, coordinated canonical-content and manifest-fingerprint drift, registry substitution, dual binding, binding removal, or array-policy weakening are machine-contract faults and produce `CONTRACT_INCONSISTENT`. With unchanged machine metadata, noncanonical persisted enum values remain `TRUSTED_CONTEXT_INVALID`.
+
+### Deep-immutable canonical dependency roots
+
+The reference validator deep-freezes independent expectations recursively: dictionaries become read-only mappings, lists become tuples, and nested consumer assignments and array policies cannot be modified. The complete canonical dependency root inventory independently pins M0.4 capability IDs, execution environments and both environment-capability key sets; M0.5 environment, market, instrument, pairing, Instrument schema, AssetReference, decimal and derivative contracts; Exchange Registry entries; all three lineage hash definitions; account operability policy; and secure-store locator grammar.
+
+`ProductCapabilitiesProjection.environment` is a derived canonical projection of ordered `environment_id` values from M0.4 `/execution_environments`, not a direct M0.5 binding. Its resolver validates the closed M0.4 environment record shape and requires equality among those IDs, both M0.4 environment-capability key sets, and the M0.5 environment registry. Divergence is a machine-contract fault.
+
+Every authority-bearing dependency requires the actual canonical JSON fingerprint, the independent deep-immutable fingerprint, and the M0.6 root-manifest attestation to match. Exchange Registry and the three hash definitions retain their specialized M0.6 attestations as additional checks. Account operability and secure-store validation consume only their validated resolvers. Coordinated canonical-source and M0.6 fingerprint changes therefore remain `CONTRACT_INCONSISTENT`; malformed persisted records under unchanged metadata remain `TRUSTED_CONTEXT_INVALID` or their ordinary readiness denial.
+
+### Executable canonical dependency consumers
+
+A canonical dependency root, identified by dependency ID, exclusively defines source-contract and JSON-Pointer authority. Every authority-bearing consumer is bound to exactly one dependency ID by the deep-immutable expected consumer-binding registry; validation requires exact equality among that registry, `canonical_dependency_consumer_bindings`, and each root manifest's closed consumer list. Consumers resolve through `resolve_canonical_dependency(dependency_id)`, which ignores mutable consumer-supplied pointer choices and returns a recursively frozen result.
+
+Exchange Registry and hash-definition specialized references are attestations only. They must repeat the root dependency ID, source, pointer, result type, and fingerprint exactly; `canonical_exchange_entries()` and each named hash resolver obtain content from the dependency resolver rather than from those references. Specialized references therefore cannot redirect a consumer. Additional, uninventoried canonical-source properties are harmless while unused, but no alternate pointer can acquire authority by updating a specialized fingerprint or by synchronizing and rehashing persisted data.
+
+### Exact ProductCapabilities projection and closed local authority
+
+The global M0.4 capability-ID registry is vocabulary only; granted authority is the exact current-edition `capability_set`. The dependency inventory independently fingerprints `/current_product_edition`, `/ProductCapabilities/current_edition_capability_policy`, `/current_edition_signed_payload_policy`, and the global capability vocabulary. The executable policy resolver requires the three edition identities to equal `CRYPTOHUNTER_TESTNET_EDITION`, requires exact capability-set equality, follows the closed environment-capabilities reference, and closes feature flags, source, fail-closed policy, LIVE authority, and hash requirements.
+
+`ProductCapabilitiesProjection` is an exact derived canonical projection. PAPER, TESTNET, and LIVE records bind all four fields—environment, execution flag, ordered allowed operations, and exact M0.4 edition identity. Any persisted mismatch is `TRUSTED_CONTEXT_INVALID`; M0.4 policy or attestation drift is `CONTRACT_INCONSISTENT`.
+
+M0.6 local authority policies are independently deep-frozen for endpoint classes, authorization dependencies, Snapshot freshness, execution-readiness freshness, and current-edition execution pairs. Authority validators resolve these policies through the closed local-policy resolver rather than reading mutable contract values directly. Coordinated policy and machine-manifest weakening remains a machine-contract fault, while stale persisted Snapshot and readiness observations retain their ordinary domain denials.
+
+### Independently immutable executable operation protocol
+
+The executable operation protocol is independently and recursively frozen: it closes the complete operation set, exact request schemas and CoreHost authority, intents, exact ordered validator graphs, validator denials, per-operation allowed denials, denial registry, success/denial and special events, and forbidden operations. Mutable request schemas do not define their own authority.
+
+`validate_executable_operation_protocol()` runs at the start of the common executor, before graph lookup, the first validator, or terminal success. Successful validation executes the immutable expected graph rather than the mutable contract list. Terminal success cannot precede mandatory lifecycle, authorization, strategy-operability, or readiness gates, and no validator may follow it. Coordinated graph, denial, request-schema, or event metadata drift remains `CONTRACT_INCONSISTENT`; a genuinely unknown operation remains `UNKNOWN_OPERATION`.
+
+The preflight also validates untrusted executable metadata: the `REQUESTS` cache must exactly equal every immutable expected request schema, and every graph validator name must belong to the trusted read-only `EXPECTED_VALIDATOR_IMPLEMENTATIONS` dispatch table. Contract-fault and unknown-operation audit events are emitted from the immutable expected special-event mapping, so corruption of mutable special-event metadata cannot alter fail-closed evidence.
+
+
+### Executable trust boundary
+
+M0.6 treats the Python module source loaded from the verified repository or package, its module namespace and function objects, the Python interpreter and standard library, process memory and closure cells, both public entrypoint implementations, and the validator, resolver, and helper implementations as its trusted computing base. The deployment assumption is that this trusted code remains unchanged after verification.
+
+The M0.6 machine contract, the canonical M0.4 and M0.5 JSON contracts, requests, persisted trusted-validation context, machine-readable schemas and manifests, the mutable request-schema cache, and external canonical pointers and metadata are untrusted data. `EXPECTED_EXECUTABLE_OPERATION_PROTOCOL` remains an independently authored, deeply frozen specification. Protocol preflight exactly compares the untrusted operation registry, request schemas, ordered graphs, denial registries, allowed denials, denial-code registry, event mappings, special events, and forbidden operations against that specification before executing a graph. `EXPECTED_VALIDATOR_IMPLEMENTATIONS` is a read-only trusted-code dispatch table, not an anti-tamper mechanism.
+
+Arbitrary in-process Python execution, monkeypatching functions, replacing `__code__`, changing closure cells, rebinding dispatcher or executor globals, memory corruption, and interpreter compromise are explicitly outside this machine-data threat model. Any such capability is already a compromise of the trusted computing base and cannot be independently detected by code executing in that same compromised process. In-process self-attestation is therefore not a security boundary.
+
+After protocol validation, the executor uses the exact graph from the immutable expected protocol, invokes the trusted validator mapped to each name, validates denial membership and planned outcomes, and maps machine-data corruption to `CONTRACT_INCONSISTENT`. `dispatcher()` and `run_direct_call_graph()` are functionally equivalent public paths to this executor; their parity is a functional requirement rather than protection against process-code replacement.
+
+Runtime code-integrity enforcement, if required, must be implemented by an external bootstrap or deployment trust mechanism that validates signed/hash-pinned artifacts before importing the application module. M0.6 does not implement package signing, a bootloader, runtime anti-tamper, or an external verifier. M0.6 remains under audit, M0.7 is not started, and LIVE remains unreachable and cross-milestone blocked.
+
+### Fail-closed decision boundary
+
+Every decision event—including ordinary success, ordinary denial, contract corruption, and unknown-operation denial—is selected exclusively from the independently deep-frozen `EXPECTED_EXECUTABLE_OPERATION_PROTOCOL`. The mutable success, denial, and special-event structures in the machine contract are untrusted attestations validated by protocol preflight only. Neither the contract-fault path nor the unknown-operation path reads machine event metadata while constructing its response, so structurally malformed or missing event registries produce the immutable `STRATEGY_ROUTING_CONTRACT_INCONSISTENT` event rather than an exception.
+
+The outer `operation` value is untrusted and is type-checked before any mapping lookup or membership operation. A non-string value is denied as `UNKNOWN_OPERATION`, emits `STRATEGY_ROUTING_UNKNOWN_OPERATION_DENIED`, and is normalized to JSON `null` in the deeply frozen decision payload; an unknown string is retained as supplied. A malformed `request.operation` remains request data for a known outer operation and therefore receives the ordinary `REQUEST_SCHEMA_INVALID` denial. Dispatcher/direct-call parity applies to all these paths as a functional requirement within the existing trusted computing base.

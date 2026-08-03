@@ -941,7 +941,6 @@
     "MARKET_DATA_ROUTE_NOT_FOUND",
     "MARKET_DATA_ROUTE_NOT_READY",
     "MARKET_DATA_SEQUENCE_INVALID",
-    "PRODUCT_CAPABILITIES_BLOCKED",
     "REQUEST_SCHEMA_INVALID",
     "RETIRED_RESOURCE_FORBIDDEN",
     "ROUTE_CAPABILITY_BLOCKED",
@@ -1033,7 +1032,8 @@
         "EXECUTION_ROUTE_NOT_READY",
         "MARKET_DATA_FRESHNESS_BLOCKED",
         "MARKET_DATA_SEQUENCE_INVALID",
-        "ROUTE_CAPABILITY_BLOCKED"
+        "ROUTE_CAPABILITY_BLOCKED",
+        "INSTRUMENT_SCOPE_MISMATCH"
       ],
       "callable_required": true
     },
@@ -1045,8 +1045,7 @@
         "EXECUTION_ROUTE_NOT_READY",
         "MARKET_DATA_FRESHNESS_BLOCKED",
         "MARKET_DATA_SEQUENCE_INVALID",
-        "ROUTE_CAPABILITY_BLOCKED",
-        "PRODUCT_CAPABILITIES_BLOCKED"
+        "ROUTE_CAPABILITY_BLOCKED"
       ],
       "callable_required": true
     },
@@ -1066,7 +1065,6 @@
       "denials": [
         "ACCOUNT_READINESS_BLOCKED",
         "CAPABILITY_SNAPSHOT_BLOCKED",
-        "PRODUCT_CAPABILITIES_BLOCKED",
         "ROUTE_CAPABILITY_BLOCKED"
       ],
       "callable_required": true
@@ -1230,7 +1228,6 @@
       "INSTRUMENT_SCOPE_MISMATCH",
       "ACCOUNT_READINESS_BLOCKED",
       "CAPABILITY_SNAPSHOT_BLOCKED",
-      "PRODUCT_CAPABILITIES_BLOCKED",
       "STRATEGY_INSTANCE_BINDING_MISMATCH",
       "RETIRED_RESOURCE_FORBIDDEN",
       "TRADING_UNIVERSE_INVALID"
@@ -1244,7 +1241,6 @@
       "MARKET_DATA_FRESHNESS_BLOCKED",
       "MARKET_DATA_ROUTE_NOT_READY",
       "MARKET_DATA_SEQUENCE_INVALID",
-      "PRODUCT_CAPABILITIES_BLOCKED",
       "REQUEST_SCHEMA_INVALID",
       "RETIRED_RESOURCE_FORBIDDEN",
       "ROUTE_CAPABILITY_BLOCKED",
@@ -1493,14 +1489,6 @@
       "id_field": "market_data_route_id",
       "id_prefix": "mdr",
       "enum_registry": {
-        "environment": [
-          "PAPER",
-          "TESTNET",
-          "LIVE"
-        ],
-        "market_type": [
-          "SPOT"
-        ],
         "endpoint_class": [
           "PAPER_PUBLIC_DATA",
           "PAPER_SIMULATION",
@@ -1553,6 +1541,16 @@
       "entity_references": {
         "workspace_id": "Workspace",
         "instrument_ids": "InstrumentProjection"
+      },
+      "enum_canonical_pointer_ref": {
+        "market_type": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/market_type_registry"
+        },
+        "environment": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        }
       }
     },
     "ExecutionRoute": {
@@ -1587,14 +1585,6 @@
       "id_field": "execution_route_id",
       "id_prefix": "xroute",
       "enum_registry": {
-        "environment": [
-          "PAPER",
-          "TESTNET",
-          "LIVE"
-        ],
-        "market_type": [
-          "SPOT"
-        ],
         "endpoint_class": [
           "PAPER_PUBLIC_DATA",
           "PAPER_SIMULATION",
@@ -1613,7 +1603,7 @@
         "supported_instrument_types": {
           "unique": true,
           "empty_allowed": false,
-          "item_registry": "instrument_types"
+          "item_registry_ref": "m05_instrument_types"
         },
         "route_capability_ceiling": {
           "unique": true,
@@ -1630,6 +1620,16 @@
       "entity_references": {
         "workspace_id": "Workspace",
         "exchange_account_id": "ExchangeAccountProjection"
+      },
+      "enum_canonical_pointer_ref": {
+        "market_type": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/market_type_registry"
+        },
+        "environment": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        }
       }
     },
     "RouteReadiness": {
@@ -1704,16 +1704,7 @@
       },
       "id_field": "exchange_account_id",
       "id_prefix": "xacc",
-      "enum_registry": {
-        "environment": [
-          "PAPER",
-          "TESTNET",
-          "LIVE"
-        ],
-        "market_type": [
-          "SPOT"
-        ]
-      },
+      "enum_registry": {},
       "nullable_fields": [
         "active_credential_profile_id",
         "account_capability_snapshot_id"
@@ -1731,6 +1722,16 @@
         "connection_state": "m05_connection_states",
         "execution_authorization": "m05_execution_authorizations",
         "external_account_identity_state": "m05_external_identity_states"
+      },
+      "enum_canonical_pointer_ref": {
+        "market_type": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/market_type_registry"
+        },
+        "environment": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        }
       }
     },
     "TradingUniverseProjection": {
@@ -1858,19 +1859,7 @@
       },
       "id_field": "instrument_id",
       "id_prefix": "instr",
-      "enum_registry": {
-        "environment": [
-          "PAPER",
-          "TESTNET",
-          "LIVE"
-        ],
-        "market_type": [
-          "SPOT"
-        ],
-        "instrument_type": [
-          "SPOT_PAIR"
-        ]
-      },
+      "enum_registry": {},
       "nullable_fields": [
         "settlement_asset_reference",
         "max_notional",
@@ -1879,7 +1868,10 @@
         "derivative_settlement_type",
         "expiry_at_utc",
         "strike_price",
-        "option_side"
+        "option_side",
+        "max_quantity",
+        "min_quantity",
+        "min_notional"
       ],
       "array_policy": {},
       "nested_schemas": {},
@@ -1889,6 +1881,58 @@
       },
       "enum_registry_ref": {
         "trading_status": "m05_instrument_trading_statuses"
+      },
+      "canonical_projection_refs": {
+        "environment_registry": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        },
+        "market_type_registry": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/market_type_registry"
+        },
+        "instrument_type_registry": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/instrument_type_registry"
+        },
+        "allowed_market_instrument_type_pairs": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/allowed_market_instrument_type_pairs"
+        },
+        "trading_statuses": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/instrument_contract/trading_statuses"
+        },
+        "record_fields": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/instrument_contract/record_fields"
+        },
+        "asset_reference_contract": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/asset_reference_contract"
+        },
+        "decimal_policy": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/decimal_policy"
+        },
+        "derivative_consistency_rules": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/derivative_consistency_rules"
+        }
+      },
+      "enum_canonical_pointer_ref": {
+        "environment": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        },
+        "market_type": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/market_type_registry"
+        },
+        "instrument_type": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/instrument_type_registry"
+        }
       }
     },
     "InstrumentCatalogProjection": {
@@ -1924,16 +1968,7 @@
       },
       "id_field": "catalog_snapshot_id",
       "id_prefix": "icat",
-      "enum_registry": {
-        "environment": [
-          "PAPER",
-          "TESTNET",
-          "LIVE"
-        ],
-        "market_type": [
-          "SPOT"
-        ]
-      },
+      "enum_registry": {},
       "nullable_fields": [
         "previous_snapshot_id"
       ],
@@ -1950,6 +1985,16 @@
       },
       "enum_registry_ref": {
         "status": "m05_catalog_statuses"
+      },
+      "enum_canonical_pointer_ref": {
+        "market_type": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/market_type_registry"
+        },
+        "environment": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        }
       }
     },
     "AccountCapabilitySnapshotProjection": {
@@ -1991,16 +2036,7 @@
       },
       "id_field": "account_capability_snapshot_id",
       "id_prefix": "capsnap",
-      "enum_registry": {
-        "environment": [
-          "PAPER",
-          "TESTNET",
-          "LIVE"
-        ],
-        "market_type": [
-          "SPOT"
-        ]
-      },
+      "enum_registry": {},
       "nullable_fields": [
         "previous_snapshot_id"
       ],
@@ -2023,6 +2059,16 @@
       },
       "enum_registry_ref": {
         "status": "m05_snapshot_statuses"
+      },
+      "enum_canonical_pointer_ref": {
+        "market_type": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/market_type_registry"
+        },
+        "environment": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        }
       }
     },
     "CredentialProfileProjection": {
@@ -2062,10 +2108,6 @@
         "lifecycle_state": [
           "ACTIVE",
           "RETIRED"
-        ],
-        "environment_scope": [
-          "TESTNET",
-          "LIVE"
         ]
       },
       "nullable_fields": [
@@ -2087,6 +2129,12 @@
       },
       "enum_registry_ref": {
         "credential_purpose": "m05_credential_purposes"
+      },
+      "enum_canonical_pointer_ref": {
+        "environment_scope": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        }
       }
     },
     "ProductCapabilitiesProjection": {
@@ -2104,13 +2152,7 @@
       },
       "id_field": "environment",
       "id_prefix": null,
-      "enum_registry": {
-        "environment": [
-          "PAPER",
-          "TESTNET",
-          "LIVE"
-        ]
-      },
+      "enum_registry": {},
       "nullable_fields": [],
       "array_policy": {
         "allowed_operations": {
@@ -2120,7 +2162,15 @@
         }
       },
       "nested_schemas": {},
-      "entity_references": {}
+      "entity_references": {},
+      "enum_canonical_pointer_ref": {},
+      "derived_canonical_projection_ref": {
+        "environment": {
+          "contract": "environment_and_product_capabilities.json",
+          "json_pointer": "/execution_environments",
+          "projection": "ordered environment_id values"
+        }
+      }
     },
     "PortfolioProjection": {
       "exact_fields": [
@@ -2168,16 +2218,7 @@
       },
       "id_field": null,
       "id_prefix": null,
-      "enum_registry": {
-        "environment": [
-          "PAPER",
-          "TESTNET",
-          "LIVE"
-        ],
-        "market_type": [
-          "SPOT"
-        ]
-      },
+      "enum_registry": {},
       "nullable_fields": [
         "subaccount_identifier"
       ],
@@ -2192,6 +2233,16 @@
       "entity_references": {},
       "enum_registry_ref": {
         "state": "m05_external_identity_states"
+      },
+      "enum_canonical_pointer_ref": {
+        "market_type": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/market_type_registry"
+        },
+        "environment": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/environment_registry"
+        }
       }
     }
   },
@@ -2218,9 +2269,6 @@
       "CANDLES",
       "PRIVATE_ORDERS",
       "PRIVATE_BALANCES"
-    ],
-    "instrument_types": [
-      "SPOT_PAIR"
     ],
     "route_capabilities": [
       "PLACE_ORDERS",
@@ -2326,7 +2374,9 @@
     "m05_exchange_registry_entries": {
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/exchange_registry_contract/entries",
-      "content_fingerprint_sha256": "90622ea826a2b95342155ab27933bc79d15fa3b2390a2086a9031e129641de13"
+      "content_fingerprint_sha256": "90622ea826a2b95342155ab27933bc79d15fa3b2390a2086a9031e129641de13",
+      "dependency_id": "m05_exchange_registry_entries",
+      "expected_result_type": "array"
     }
   },
   "cross_contract_projection_audit": {
@@ -2467,7 +2517,85 @@
       "validated_context_maps": [
         "instruments_by_id",
         "instrument_history_by_id"
-      ]
+      ],
+      "canonical_projection_resolver": "resolve_instrument_projection_contract",
+      "canonical_projection_refs_executed": [
+        "environment_registry",
+        "market_type_registry",
+        "instrument_type_registry",
+        "allowed_market_instrument_type_pairs",
+        "trading_statuses",
+        "record_fields",
+        "asset_reference_contract",
+        "decimal_policy",
+        "derivative_consistency_rules"
+      ],
+      "exact_fields_binding": "set(local exact_fields) == set(canonical /instrument_contract/record_fields)",
+      "limit_nullability_binding": "all four min/max limit fields nullable; non-null maximum requires non-null minimum",
+      "current_edition_authority_policy": "current_edition_execution_pair_policy",
+      "pointer_corruption_denial": "CONTRACT_INCONSISTENT",
+      "full_graph_structural_pairs": [
+        "SPOT/SPOT_PAIR",
+        "MARGIN/MARGIN_PAIR",
+        "PERPETUAL/PERPETUAL_CONTRACT",
+        "DELIVERY_FUTURES/DELIVERY_FUTURE",
+        "OPTIONS/OPTION"
+      ],
+      "exact_binding_manifest": "canonical_projection_binding_manifest",
+      "canonical_enum_binding_manifest": "canonical_enum_binding_manifest",
+      "scalar_projection_pointer_equality": true,
+      "edition_policy_resolver": "resolve_current_edition_execution_pair_policy",
+      "edition_policy_used_by": [
+        "VALIDATE_ROUTE_READINESS",
+        "ACTIVATE_STRATEGY_INSTANCE"
+      ],
+      "bind_operations_outside_edition_gate": [
+        "BIND_MARKET_DATA_ROUTE",
+        "BIND_EXECUTION_ROUTE"
+      ],
+      "failure_classification": {
+        "machine_contract": "CONTRACT_INCONSISTENT",
+        "persisted_record": "TRUSTED_CONTEXT_INVALID"
+      },
+      "external_canonical_enum_consumer_set": "required by immutable independent specification and observed by dynamic schema collector",
+      "enum_structural_attestation": [
+        "field_type",
+        "exact_fields_membership",
+        "nullable",
+        "array_policy"
+      ],
+      "enum_manifest_completeness": "expected == observed == manifest",
+      "immutable_array_policy": "per consumer",
+      "external_binding_cardinality": "exactly one external binding",
+      "external_local_fallback": "forbidden",
+      "external_enum_failure_classification": {
+        "machine_metadata": "CONTRACT_INCONSISTENT",
+        "persisted_data": "TRUSTED_CONTEXT_INVALID"
+      },
+      "canonical_dependency_root_inventory": "canonical_dependency_root_manifest",
+      "dependency_expectation_immutability": "recursive dict-to-MappingProxyType and list-to-tuple deep freeze",
+      "product_capabilities_environment_authority": "M0.4 /execution_environments projected as ordered environment_id values",
+      "cross_milestone_environment_equality": "M0.4 execution environments == both M0.4 environment capability key sets == M0.5 environment registry",
+      "independent_dependency_fingerprints": true,
+      "account_operability_resolver": "resolve_m05_account_operability_policy",
+      "secure_store_grammar_resolver": "resolve_m05_secure_store_grammar",
+      "root_consumer_binding_registry": "canonical_dependency_consumer_bindings",
+      "root_consumer_binding_invariants": [
+        "root dependency identity defines immutable source and pointer",
+        "consumer resolves by dependency ID",
+        "specialized attestations equal root",
+        "no direct mutable-pointer authority",
+        "uninventoried pointers cannot acquire authority"
+      ],
+      "product_capabilities_projection_audit": {
+        "global_capability_id_registry": "vocabulary only",
+        "current_edition_capability_set": "granted authority",
+        "projection": "exact derived canonical projection",
+        "edition": "exact M0.4 edition identity",
+        "persisted_mismatch": "TRUSTED_CONTEXT_INVALID",
+        "machine_policy_drift": "CONTRACT_INCONSISTENT",
+        "local_authority_policies": "independently closed"
+      }
     },
     "InstrumentCatalogProjection": {
       "canonical_entity": "InstrumentCatalogSnapshot",
@@ -2614,17 +2742,23 @@
     "account_capability_snapshot": {
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/account_capability_snapshot_contract/content_hash_definition",
-      "content_fingerprint_sha256": "afa575e89ad8672adf68698e842c9e2fccb93b657246760f567f7bc57cfeb70e"
+      "content_fingerprint_sha256": "afa575e89ad8672adf68698e842c9e2fccb93b657246760f567f7bc57cfeb70e",
+      "dependency_id": "m05_account_snapshot_hash",
+      "expected_result_type": "object"
     },
     "instrument_catalog_snapshot": {
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/instrument_catalog_snapshot_contract/content_hash_definition",
-      "content_fingerprint_sha256": "42ba26a65d7c9440842a3ba3700b4fc0c1e8606697061a440d46066bf0e40c53"
+      "content_fingerprint_sha256": "42ba26a65d7c9440842a3ba3700b4fc0c1e8606697061a440d46066bf0e40c53",
+      "dependency_id": "m05_catalog_hash",
+      "expected_result_type": "object"
     },
     "trading_universe": {
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/trading_universe_contract/content_hash_definition",
-      "content_fingerprint_sha256": "09ee36059a9ebd6be6c6165b8bfcc0f9a0abca185e8a5b6ad2d0cd668cdecb8a"
+      "content_fingerprint_sha256": "09ee36059a9ebd6be6c6165b8bfcc0f9a0abca185e8a5b6ad2d0cd668cdecb8a",
+      "dependency_id": "m05_universe_hash",
+      "expected_result_type": "object"
     }
   },
   "m05_projection_trust_boundary": {
@@ -2663,5 +2797,1053 @@
     "strictly_increasing_field": "metadata_version",
     "current_version_rule": "current.metadata_version > max(history.metadata_version)",
     "historical_catalog_resolution": "exact catalog_snapshot_id and reverse membership required"
+  },
+  "instrument_projection_validation_policy": {
+    "structural_scope": "All canonical M0.5 market/instrument pairs are representable; M0.6 execution authority is evaluated separately per operation.",
+    "decimal_validator": "One exact-regex-then-Decimal helper validates every numeric field, positivity, nullable maxima, and min/max ordering.",
+    "asset_reference_validator": "One canonical validator covers base, quote, and every non-null settlement reference.",
+    "global_identity_index": {
+      "sources": [
+        "instruments_by_id",
+        "instrument_history_by_id"
+      ],
+      "tuple": [
+        "exchange_id",
+        "environment",
+        "market_type",
+        "venue_symbol"
+      ]
+    },
+    "historical_universe_workspace_binding": "Instrument.workspace_id must equal ExchangeAccount.workspace_id for current and historical resolution.",
+    "canonical_resolver": "resolve_instrument_projection_contract",
+    "limit_nullability": {
+      "min_quantity": true,
+      "max_quantity": true,
+      "min_notional": true,
+      "max_notional": true,
+      "maximum_without_minimum": false,
+      "null_semantics": "no limit"
+    },
+    "machine_corruption_denial": "CONTRACT_INCONSISTENT"
+  },
+  "trusted_external_identity_validation_policy": {
+    "tuple": [
+      "exchange_id",
+      "environment",
+      "market_type",
+      "venue_account_identifier",
+      "subaccount_identifier"
+    ],
+    "scope": "ACTIVE ExchangeAccount with matching VERIFIED TrustedExternalIdentity",
+    "shared_helper": "trusted_external_identity_tuple",
+    "account_type_is_identity_dimension": false
+  },
+  "current_edition_execution_pair_policy": {
+    "policy_id": "M0_6_CURRENT_EDITION_EXECUTION_PAIRS",
+    "allowed_pairs": {
+      "SPOT": [
+        "SPOT_PAIR"
+      ]
+    },
+    "used_by": [
+      "VALIDATE_ROUTE_READINESS",
+      "ACTIVATE_STRATEGY_INSTANCE"
+    ],
+    "unsupported_pair_denial": "INSTRUMENT_SCOPE_MISMATCH",
+    "structural_projection_is_not_authority": true,
+    "bind_checks_declaration_not_current_operability": true
+  },
+  "canonical_projection_binding_manifest": {
+    "environment_registry": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9",
+      "consumers": [
+        "InstrumentProjection.environment",
+        "CredentialProfileProjection.environment_scope",
+        "MarketDataRoute.environment",
+        "ExecutionRoute.environment",
+        "ExchangeAccountProjection.environment",
+        "InstrumentCatalogProjection.environment",
+        "AccountCapabilitySnapshotProjection.environment",
+        "TrustedExternalIdentityProjection.environment"
+      ]
+    },
+    "market_type_registry": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2",
+      "consumers": [
+        "InstrumentProjection.market_type",
+        "ExchangeAccountProjection.market_type",
+        "InstrumentCatalogProjection.market_type",
+        "AccountCapabilitySnapshotProjection.market_type",
+        "TrustedExternalIdentityProjection.market_type",
+        "MarketDataRoute.market_type",
+        "ExecutionRoute.market_type"
+      ]
+    },
+    "instrument_type_registry": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_type_registry",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "e99ba1e3af1a3b5771add15b7d0ab0659c0b24a1bd855c04c0d5c27f2d2831f8",
+      "consumers": [
+        "InstrumentProjection.instrument_type",
+        "AccountCapabilitySnapshotProjection.supported_instrument_types",
+        "ExecutionRoute.supported_instrument_types"
+      ]
+    },
+    "allowed_market_instrument_type_pairs": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/allowed_market_instrument_type_pairs",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "3904c78c08f7ac68f632db1e605417dac64e21cba9f734e0830bb2864ab77936",
+      "consumers": [
+        "resolve_instrument_projection_contract",
+        "validate_instrument_record",
+        "validate_snapshot_record"
+      ]
+    },
+    "trading_statuses": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/trading_statuses",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "fffc70c35a4aa8440c884815fd6f51b67e4e76b76ff74ec5e1abc3b35ccab206",
+      "consumers": [
+        "InstrumentProjection.trading_status"
+      ]
+    },
+    "record_fields": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/record_fields",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409",
+      "consumers": [
+        "InstrumentProjection.exact_fields"
+      ]
+    },
+    "asset_reference_contract": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/asset_reference_contract",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae",
+      "consumers": [
+        "validate_instrument_record"
+      ]
+    },
+    "decimal_policy": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/decimal_policy",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "e526f728e0075a3a27380a87a213eb5e5f074d90cc4b63a99b48485957070b48",
+      "consumers": [
+        "validate_instrument_record.canonical_decimal"
+      ]
+    },
+    "derivative_consistency_rules": {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/derivative_consistency_rules",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "d4d4f6dd2ec09b5feb87a967fb3d79d4e74243049dc6e0202450ecb55d9868ee",
+      "consumers": [
+        "validate_instrument_record"
+      ]
+    }
+  },
+  "canonical_enum_binding_manifest": {
+    "MarketDataRoute.market_type": {
+      "schema": "MarketDataRoute",
+      "field": "market_type",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2"
+    },
+    "MarketDataRoute.environment": {
+      "schema": "MarketDataRoute",
+      "field": "environment",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    "ExecutionRoute.market_type": {
+      "schema": "ExecutionRoute",
+      "field": "market_type",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2"
+    },
+    "ExecutionRoute.environment": {
+      "schema": "ExecutionRoute",
+      "field": "environment",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    "ExecutionRoute.supported_instrument_types": {
+      "schema": "ExecutionRoute",
+      "field": "supported_instrument_types",
+      "field_type": "array[enum]",
+      "binding_kind": "item_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": {
+        "unique": true,
+        "empty_allowed": false,
+        "item_registry_ref": "m05_instrument_types"
+      },
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_type_registry",
+      "registry_ref": "m05_instrument_types",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "e99ba1e3af1a3b5771add15b7d0ab0659c0b24a1bd855c04c0d5c27f2d2831f8"
+    },
+    "ExchangeAccountProjection.market_type": {
+      "schema": "ExchangeAccountProjection",
+      "field": "market_type",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2"
+    },
+    "ExchangeAccountProjection.environment": {
+      "schema": "ExchangeAccountProjection",
+      "field": "environment",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    "ExchangeAccountProjection.lifecycle_state": {
+      "schema": "ExchangeAccountProjection",
+      "field": "lifecycle_state",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_account_contract/lifecycle_states",
+      "registry_ref": "m05_account_lifecycle_states",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "b986f40965e0e81b1293a709b08dbd90b88818e78e4583e15c1e95fd7762cbb4"
+    },
+    "ExchangeAccountProjection.connection_state": {
+      "schema": "ExchangeAccountProjection",
+      "field": "connection_state",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_account_contract/connection_states",
+      "registry_ref": "m05_connection_states",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "4e7471865d166327ab3ca006ae01b7312d762ce09a1ce9ce85a8a3826f067fc0"
+    },
+    "ExchangeAccountProjection.execution_authorization": {
+      "schema": "ExchangeAccountProjection",
+      "field": "execution_authorization",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_account_contract/execution_authorizations",
+      "registry_ref": "m05_execution_authorizations",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "06cd91f979f0f90a6ae247565950152397305215299cc3450a54acee307d120b"
+    },
+    "ExchangeAccountProjection.external_account_identity_state": {
+      "schema": "ExchangeAccountProjection",
+      "field": "external_account_identity_state",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/external_account_identity_contract/states",
+      "registry_ref": "m05_external_identity_states",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "a3af91e769180487348480ebf5e24c8e456aeea3ffed772aebce448007560cd6"
+    },
+    "TradingUniverseProjection.lifecycle_state": {
+      "schema": "TradingUniverseProjection",
+      "field": "lifecycle_state",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/trading_universe_contract/lifecycle_states",
+      "registry_ref": "m05_universe_lifecycle_states",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f462d4ea15629414b3b8862183985f4759242a6834052eead5117907f5596a16"
+    },
+    "InstrumentProjection.environment": {
+      "schema": "InstrumentProjection",
+      "field": "environment",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    "InstrumentProjection.market_type": {
+      "schema": "InstrumentProjection",
+      "field": "market_type",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2"
+    },
+    "InstrumentProjection.instrument_type": {
+      "schema": "InstrumentProjection",
+      "field": "instrument_type",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_type_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "e99ba1e3af1a3b5771add15b7d0ab0659c0b24a1bd855c04c0d5c27f2d2831f8"
+    },
+    "InstrumentProjection.trading_status": {
+      "schema": "InstrumentProjection",
+      "field": "trading_status",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/trading_statuses",
+      "registry_ref": "m05_instrument_trading_statuses",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "fffc70c35a4aa8440c884815fd6f51b67e4e76b76ff74ec5e1abc3b35ccab206"
+    },
+    "InstrumentCatalogProjection.market_type": {
+      "schema": "InstrumentCatalogProjection",
+      "field": "market_type",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2"
+    },
+    "InstrumentCatalogProjection.environment": {
+      "schema": "InstrumentCatalogProjection",
+      "field": "environment",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    "InstrumentCatalogProjection.status": {
+      "schema": "InstrumentCatalogProjection",
+      "field": "status",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_catalog_snapshot_contract/statuses",
+      "registry_ref": "m05_catalog_statuses",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "620b1ffbc737b7d095f742945301e604522813d4837d36243c817ce76867246e"
+    },
+    "AccountCapabilitySnapshotProjection.market_type": {
+      "schema": "AccountCapabilitySnapshotProjection",
+      "field": "market_type",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2"
+    },
+    "AccountCapabilitySnapshotProjection.environment": {
+      "schema": "AccountCapabilitySnapshotProjection",
+      "field": "environment",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    "AccountCapabilitySnapshotProjection.status": {
+      "schema": "AccountCapabilitySnapshotProjection",
+      "field": "status",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/account_capability_snapshot_contract/statuses",
+      "registry_ref": "m05_snapshot_statuses",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "ebe92c083d6949c70946e9367ee6f073b03dee6ab1c4ef937ff594c27d6fca34"
+    },
+    "AccountCapabilitySnapshotProjection.supported_instrument_types": {
+      "schema": "AccountCapabilitySnapshotProjection",
+      "field": "supported_instrument_types",
+      "field_type": "array[enum]",
+      "binding_kind": "item_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": {
+        "unique": true,
+        "empty_allowed": true,
+        "item_registry_ref": "m05_instrument_types"
+      },
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_type_registry",
+      "registry_ref": "m05_instrument_types",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "e99ba1e3af1a3b5771add15b7d0ab0659c0b24a1bd855c04c0d5c27f2d2831f8"
+    },
+    "AccountCapabilitySnapshotProjection.observed_permission_set": {
+      "schema": "AccountCapabilitySnapshotProjection",
+      "field": "observed_permission_set",
+      "field_type": "array[enum]",
+      "binding_kind": "item_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": {
+        "unique": true,
+        "empty_allowed": false,
+        "item_registry_ref": "m05_capabilities"
+      },
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract/permission_registry",
+      "registry_ref": "m05_capabilities",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "23a0295aaa597c702ab17348a8552057760d5ffe4df849eb9995e36fd0f8d847"
+    },
+    "CredentialProfileProjection.environment_scope": {
+      "schema": "CredentialProfileProjection",
+      "field": "environment_scope",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    "CredentialProfileProjection.credential_purpose": {
+      "schema": "CredentialProfileProjection",
+      "field": "credential_purpose",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract/credential_purposes",
+      "registry_ref": "m05_credential_purposes",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "65b6616dc26bda201d1348cf2bd88c3a02f19408642ad30d5911330c5d4761aa"
+    },
+    "CredentialProfileProjection.permission_snapshot": {
+      "schema": "CredentialProfileProjection",
+      "field": "permission_snapshot",
+      "field_type": "array[enum]",
+      "binding_kind": "item_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": {
+        "unique": true,
+        "empty_allowed": false,
+        "item_registry_ref": "m05_permissions"
+      },
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract/permission_registry",
+      "registry_ref": "m05_permissions",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "23a0295aaa597c702ab17348a8552057760d5ffe4df849eb9995e36fd0f8d847"
+    },
+    "ProductCapabilitiesProjection.environment": {
+      "schema": "ProductCapabilitiesProjection",
+      "field": "environment",
+      "field_type": "enum",
+      "binding_kind": "derived_canonical_projection",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/execution_environments",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "61f5dd195aa69c646dc296c2d8c0f2ce97683979e3ef6ddc35b0adaa269a809b",
+      "projection": "ordered environment_id values"
+    },
+    "ProductCapabilitiesProjection.allowed_operations": {
+      "schema": "ProductCapabilitiesProjection",
+      "field": "allowed_operations",
+      "field_type": "array[enum]",
+      "binding_kind": "item_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": {
+        "unique": true,
+        "empty_allowed": true,
+        "item_registry_ref": "m04_product_capabilities"
+      },
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/capability_id_registry/current_schema_allowed_capability_ids",
+      "registry_ref": "m04_product_capabilities",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "da387f22de48e101f293b5dd304eedf52e0cb5dbcf8142b0f0c98b972acd55d2"
+    },
+    "TrustedExternalIdentityProjection.market_type": {
+      "schema": "TrustedExternalIdentityProjection",
+      "field": "market_type",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2"
+    },
+    "TrustedExternalIdentityProjection.environment": {
+      "schema": "TrustedExternalIdentityProjection",
+      "field": "environment",
+      "field_type": "enum",
+      "binding_kind": "enum_canonical_pointer_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "registry_ref": null,
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    "TrustedExternalIdentityProjection.state": {
+      "schema": "TrustedExternalIdentityProjection",
+      "field": "state",
+      "field_type": "enum",
+      "binding_kind": "enum_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": null,
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/external_account_identity_contract/states",
+      "registry_ref": "m05_external_identity_states",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "a3af91e769180487348480ebf5e24c8e456aeea3ffed772aebce448007560cd6"
+    },
+    "TrustedExternalIdentityProjection.observed_permission_set": {
+      "schema": "TrustedExternalIdentityProjection",
+      "field": "observed_permission_set",
+      "field_type": "array[enum]",
+      "binding_kind": "item_registry_ref",
+      "nullable": false,
+      "exact_fields_membership": true,
+      "array_policy": {
+        "unique": true,
+        "empty_allowed": true,
+        "item_registry_ref": "m05_capabilities"
+      },
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract/permission_registry",
+      "registry_ref": "m05_capabilities",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "23a0295aaa597c702ab17348a8552057760d5ffe4df849eb9995e36fd0f8d847"
+    }
+  },
+  "canonical_dependency_root_manifest": {
+    "m04_capability_ids": {
+      "source_contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/capability_id_registry/current_schema_allowed_capability_ids",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "da387f22de48e101f293b5dd304eedf52e0cb5dbcf8142b0f0c98b972acd55d2",
+      "consumers": [
+        "ProductCapabilitiesProjection.allowed_operations"
+      ],
+      "authority_classification": "product authority"
+    },
+    "m04_execution_environments": {
+      "source_contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/execution_environments",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "61f5dd195aa69c646dc296c2d8c0f2ce97683979e3ef6ddc35b0adaa269a809b",
+      "consumers": [
+        "resolve_m04_environment_ids.execution_environments"
+      ],
+      "authority_classification": "environment authority",
+      "projection": "ordered environment_id values"
+    },
+    "m04_current_edition_environment_capabilities": {
+      "source_contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/current_product_edition/environment_capabilities",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "3ef879a0dad726b6f225a2748599a7a4a013e85a2cfba04ee581b348324212ee",
+      "consumers": [
+        "resolve_m04_environment_ids.current_edition_environment_capabilities"
+      ],
+      "authority_classification": "edition environment authority",
+      "projection": "ordered object keys"
+    },
+    "m04_product_capabilities_environment_capabilities": {
+      "source_contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/ProductCapabilities/current_edition_capability_policy/environment_capabilities",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "c012c2b9793e58b9f52b81aa9eb90e142f33b6f73ab23c0e4d210ed053c5b1dc",
+      "consumers": [
+        "resolve_m04_environment_ids.product_capabilities_environment_capabilities"
+      ],
+      "authority_classification": "signed product environment authority",
+      "projection": "ordered object keys"
+    },
+    "m05_environment_registry": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9",
+      "consumers": [
+        "resolve_m04_environment_ids.m05_environment_registry",
+        "validate_canonical_enum_binding_manifest.environment_registry"
+      ],
+      "authority_classification": "environment authority"
+    },
+    "m05_market_types": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/market_type_registry",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "f9f3ddd7226000e3d8998868a218adb2fa44127623df1bb39d486c4128129ac2",
+      "consumers": [
+        "validate_canonical_enum_binding_manifest.market_types"
+      ],
+      "authority_classification": "market authority"
+    },
+    "m05_instrument_types": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_type_registry",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "e99ba1e3af1a3b5771add15b7d0ab0659c0b24a1bd855c04c0d5c27f2d2831f8",
+      "consumers": [
+        "validate_canonical_enum_binding_manifest.instrument_types"
+      ],
+      "authority_classification": "instrument authority"
+    },
+    "m05_allowed_pairs": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/allowed_market_instrument_type_pairs",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "3904c78c08f7ac68f632db1e605417dac64e21cba9f734e0830bb2864ab77936",
+      "consumers": [
+        "resolve_instrument_projection_contract.allowed_pairs"
+      ],
+      "authority_classification": "structural pairing authority"
+    },
+    "m05_instrument_trading_statuses": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/trading_statuses",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "fffc70c35a4aa8440c884815fd6f51b67e4e76b76ff74ec5e1abc3b35ccab206",
+      "consumers": [
+        "validate_canonical_enum_binding_manifest.instrument_trading_statuses"
+      ],
+      "authority_classification": "instrument status authority"
+    },
+    "m05_instrument_record_fields": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/record_fields",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409",
+      "consumers": [
+        "resolve_instrument_projection_contract.record_fields"
+      ],
+      "authority_classification": "schema authority"
+    },
+    "m05_asset_reference_contract": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/asset_reference_contract",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae",
+      "consumers": [
+        "resolve_instrument_projection_contract.asset_reference_contract"
+      ],
+      "authority_classification": "asset identity authority"
+    },
+    "m05_decimal_policy": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/decimal_policy",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "e526f728e0075a3a27380a87a213eb5e5f074d90cc4b63a99b48485957070b48",
+      "consumers": [
+        "resolve_instrument_projection_contract.decimal_policy"
+      ],
+      "authority_classification": "numeric authority"
+    },
+    "m05_derivative_rules": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/derivative_consistency_rules",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "d4d4f6dd2ec09b5feb87a967fb3d79d4e74243049dc6e0202450ecb55d9868ee",
+      "consumers": [
+        "resolve_instrument_projection_contract.derivative_rules"
+      ],
+      "authority_classification": "derivative authority"
+    },
+    "m05_exchange_registry_entries": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_registry_contract/entries",
+      "expected_result_type": "array",
+      "content_fingerprint_sha256": "90622ea826a2b95342155ab27933bc79d15fa3b2390a2086a9031e129641de13",
+      "consumers": [
+        "canonical_exchange_entries"
+      ],
+      "authority_classification": "exchange identity authority"
+    },
+    "m05_account_snapshot_hash": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/account_capability_snapshot_contract/content_hash_definition",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "afa575e89ad8672adf68698e842c9e2fccb93b657246760f567f7bc57cfeb70e",
+      "consumers": [
+        "resolve_hash_definition.account_capability_snapshot"
+      ],
+      "authority_classification": "lineage authority"
+    },
+    "m05_catalog_hash": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_catalog_snapshot_contract/content_hash_definition",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "42ba26a65d7c9440842a3ba3700b4fc0c1e8606697061a440d46066bf0e40c53",
+      "consumers": [
+        "resolve_hash_definition.instrument_catalog_snapshot"
+      ],
+      "authority_classification": "lineage authority"
+    },
+    "m05_universe_hash": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/trading_universe_contract/content_hash_definition",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "09ee36059a9ebd6be6c6165b8bfcc0f9a0abca185e8a5b6ad2d0cd668cdecb8a",
+      "consumers": [
+        "resolve_hash_definition.trading_universe"
+      ],
+      "authority_classification": "lineage authority"
+    },
+    "m05_account_operability_policy": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/current_edition_account_operability_policy",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "83026ad96253eea2105229d6f3aa478964340f4626a6b6e386badf8022fd72b1",
+      "consumers": [
+        "resolve_m05_account_operability_policy"
+      ],
+      "authority_classification": "operation authority"
+    },
+    "m05_secure_store_grammar": {
+      "source_contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract/secure_store_reference_grammar",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "1f4ae0b510ed548d3a3662c02ede1e43c69c47f371be353bb00a20fbadf0656a",
+      "consumers": [
+        "resolve_m05_secure_store_grammar"
+      ],
+      "authority_classification": "credential locator authority"
+    },
+    "m04_current_product_edition": {
+      "source_contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/current_product_edition",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "5fa73f356d9b315161031b4fb41661b8294ed14ce42bfae4565e87b34120adc8",
+      "consumers": [
+        "resolve_m04_current_product_capability_policy.current_product_edition"
+      ],
+      "authority_classification": "edition authority"
+    },
+    "m04_product_capability_policy": {
+      "source_contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/ProductCapabilities/current_edition_capability_policy",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "b18334a5589d077b73e9785c2fb85283cc456e158cd6fdafbf4af3c6c54066da",
+      "consumers": [
+        "resolve_m04_current_product_capability_policy.product_capability_policy",
+        "resolve_m04_product_capabilities_projection"
+      ],
+      "authority_classification": "product capability grant authority"
+    },
+    "m04_signed_payload_policy": {
+      "source_contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/current_edition_signed_payload_policy",
+      "expected_result_type": "object",
+      "content_fingerprint_sha256": "7aae83f097f31226715512641da00316aa4efed1e74f34ba84fd25c76c2a7862",
+      "consumers": [
+        "resolve_m04_current_product_capability_policy.signed_payload_policy"
+      ],
+      "authority_classification": "signed edition authority"
+    }
+  },
+  "canonical_dependency_consumer_bindings": {
+    "ProductCapabilitiesProjection.allowed_operations": "m04_capability_ids",
+    "resolve_m04_environment_ids.execution_environments": "m04_execution_environments",
+    "resolve_m04_environment_ids.current_edition_environment_capabilities": "m04_current_edition_environment_capabilities",
+    "resolve_m04_environment_ids.product_capabilities_environment_capabilities": "m04_product_capabilities_environment_capabilities",
+    "resolve_m04_environment_ids.m05_environment_registry": "m05_environment_registry",
+    "resolve_m05_account_operability_policy": "m05_account_operability_policy",
+    "resolve_hash_definition.account_capability_snapshot": "m05_account_snapshot_hash",
+    "resolve_instrument_projection_contract.allowed_pairs": "m05_allowed_pairs",
+    "resolve_instrument_projection_contract.asset_reference_contract": "m05_asset_reference_contract",
+    "resolve_hash_definition.instrument_catalog_snapshot": "m05_catalog_hash",
+    "resolve_instrument_projection_contract.decimal_policy": "m05_decimal_policy",
+    "resolve_instrument_projection_contract.derivative_rules": "m05_derivative_rules",
+    "validate_canonical_enum_binding_manifest.environment_registry": "m05_environment_registry",
+    "canonical_exchange_entries": "m05_exchange_registry_entries",
+    "resolve_instrument_projection_contract.record_fields": "m05_instrument_record_fields",
+    "validate_canonical_enum_binding_manifest.instrument_trading_statuses": "m05_instrument_trading_statuses",
+    "validate_canonical_enum_binding_manifest.instrument_types": "m05_instrument_types",
+    "validate_canonical_enum_binding_manifest.market_types": "m05_market_types",
+    "resolve_m05_secure_store_grammar": "m05_secure_store_grammar",
+    "resolve_hash_definition.trading_universe": "m05_universe_hash",
+    "resolve_m04_current_product_capability_policy.current_product_edition": "m04_current_product_edition",
+    "resolve_m04_current_product_capability_policy.product_capability_policy": "m04_product_capability_policy",
+    "resolve_m04_product_capabilities_projection": "m04_product_capability_policy",
+    "resolve_m04_current_product_capability_policy.signed_payload_policy": "m04_signed_payload_policy"
+  },
+  "m06_local_authority_policy_manifest": {
+    "endpoint_class_registry": {
+      "PAPER_PUBLIC_DATA": {
+        "environment": "PAPER",
+        "access_scope": "PUBLIC",
+        "allowed_route_kinds": [
+          "MARKET_DATA"
+        ]
+      },
+      "PAPER_SIMULATION": {
+        "environment": "PAPER",
+        "access_scope": "LOCAL_SIMULATION",
+        "allowed_route_kinds": [
+          "EXECUTION"
+        ]
+      },
+      "TESTNET_PUBLIC_DATA": {
+        "environment": "TESTNET",
+        "access_scope": "PUBLIC",
+        "allowed_route_kinds": [
+          "MARKET_DATA"
+        ]
+      },
+      "TESTNET_PRIVATE_DATA": {
+        "environment": "TESTNET",
+        "access_scope": "PRIVATE",
+        "allowed_route_kinds": [
+          "MARKET_DATA",
+          "EXECUTION"
+        ]
+      },
+      "LIVE_PUBLIC_DATA": {
+        "environment": "LIVE",
+        "access_scope": "PUBLIC",
+        "allowed_route_kinds": [
+          "MARKET_DATA"
+        ]
+      },
+      "LIVE_PRIVATE_DATA": {
+        "environment": "LIVE",
+        "access_scope": "PRIVATE",
+        "allowed_route_kinds": [
+          "MARKET_DATA",
+          "EXECUTION"
+        ]
+      }
+    },
+    "authorization_dependencies_by_environment": {
+      "PAPER": [
+        "PRODUCT_CAPABILITIES"
+      ],
+      "TESTNET": [
+        "ACCOUNT_ACTIVE",
+        "ACCOUNT_CAPABILITY_SNAPSHOT_VALID",
+        "CREDENTIAL_PROFILE_ACTIVE",
+        "ORDER_ENTRY_PURPOSE",
+        "PLACE_ORDERS_PERMISSION",
+        "PRODUCT_CAPABILITIES"
+      ]
+    },
+    "account_capability_snapshot_policy": {
+      "max_age_seconds_by_environment": {
+        "TESTNET": 300
+      },
+      "freshness_boundary": "age_seconds <= max_age_seconds is fresh",
+      "authorization_dependency_environments": [
+        "TESTNET"
+      ],
+      "supported_instrument_types": {
+        "canonical_registry_ref": "m05_instrument_types",
+        "unique": true,
+        "empty_allowed": true,
+        "testnet_subset_rule": "set(Universe Instrument.instrument_type) <= set(AccountCapabilitySnapshot.supported_instrument_types)",
+        "missing_authority_denial": "CAPABILITY_SNAPSHOT_BLOCKED",
+        "m05_structural_semantics": "empty canonical set is structurally valid and blocks every non-empty Universe at TESTNET operability"
+      }
+    },
+    "current_edition_execution_pair_policy": {
+      "policy_id": "M0_6_CURRENT_EDITION_EXECUTION_PAIRS",
+      "allowed_pairs": {
+        "SPOT": [
+          "SPOT_PAIR"
+        ]
+      },
+      "used_by": [
+        "VALIDATE_ROUTE_READINESS",
+        "ACTIVATE_STRATEGY_INSTANCE"
+      ],
+      "unsupported_pair_denial": "INSTRUMENT_SCOPE_MISMATCH",
+      "structural_projection_is_not_authority": true,
+      "bind_checks_declaration_not_current_operability": true
+    },
+    "execution_readiness_max_age_seconds": 30
+  },
+  "executable_operation_protocol_audit": {
+    "expected_specification": "independent recursively deep-frozen EXPECTED_EXECUTABLE_OPERATION_PROTOCOL",
+    "operation_graphs": "exact ordered machine-data authority",
+    "request_schema_authority": "immutable expected schema; machine schema is untrusted attestation data",
+    "preflight": "validate_executable_operation_protocol before graph lookup or validator execution",
+    "terminal_success": "cannot precede mandatory gates or have following validators",
+    "coordinated_metadata_drift": "CONTRACT_INCONSISTENT",
+    "unknown_operation": "UNKNOWN_OPERATION",
+    "request_cache_binding": "REQUESTS must exactly equal immutable expected request schemas",
+    "validator_dispatch": "trusted read-only EXPECTED_VALIDATOR_IMPLEMENTATIONS mapping",
+    "contract_fault_event_source": "immutable expected special event mapping",
+    "dispatcher_direct_parity": "functional equivalence requirement, not process-code mutation protection",
+    "decision_boundary": {
+      "all_decision_event_mappings_source": "immutable EXPECTED_EXECUTABLE_OPERATION_PROTOCOL",
+      "machine_event_mappings_role": "untrusted attestations only",
+      "contract_fault_decision_reads_machine_event_metadata": false,
+      "unknown_operation_decision_reads_machine_event_metadata": false,
+      "non_string_outer_operation": "normalized to null and denied as UNKNOWN_OPERATION",
+      "malformed_machine_event_registry": "CONTRACT_INCONSISTENT, never an exception"
+    }
+  },
+  "executable_trust_boundary": {
+    "trusted_computing_base": [
+      "Python module source loaded from the verified repository/package",
+      "module namespace and function objects",
+      "Python interpreter and standard library",
+      "process memory and closure cells",
+      "dispatcher and direct-call entrypoint implementations",
+      "validator, resolver and helper implementations"
+    ],
+    "untrusted_inputs": [
+      "M0.6 machine CONTRACT data",
+      "M0.4 and M0.5 canonical JSON contracts",
+      "request data",
+      "persisted trusted-validation context",
+      "machine-readable schemas and manifests",
+      "mutable request-schema cache",
+      "external canonical pointers and their metadata"
+    ],
+    "out_of_scope": [
+      "arbitrary in-process Python code execution",
+      "monkeypatching module functions",
+      "replacing function __code__",
+      "mutating closure cell contents",
+      "rebinding dispatcher or executor globals",
+      "memory corruption",
+      "interpreter compromise"
+    ],
+    "assumptions": {
+      "trusted_code_immutable_by_deployment_assumption": true,
+      "in_process_code_mutation_out_of_scope": true,
+      "machine_contract_data_untrusted": true,
+      "request_and_persisted_context_untrusted": true,
+      "runtime_code_integrity_requires_external_trust_anchor": true
+    },
+    "deferred_code_integrity_requirement": "Runtime code-integrity enforcement, if required, must be implemented by an external bootstrap or deployment trust mechanism that validates signed/hash-pinned artifacts before importing the application module."
   }
 }
