@@ -1510,6 +1510,7 @@ EXPECTED_CANONICAL_DEPENDENCIES = deep_freeze(
             "consumers": [
                 "resolve_m04_environment_ids.m05_environment_registry",
                 "validate_canonical_enum_binding_manifest.environment_registry",
+                "validate_current_edition_live_exchange_registry_invariant.environment_registry",
             ],
             "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9",
             "expected_result_type": "array",
@@ -1518,7 +1519,10 @@ EXPECTED_CANONICAL_DEPENDENCIES = deep_freeze(
         },
         "m05_exchange_registry_entries": {
             "authority_classification": "exchange identity authority",
-            "consumers": ["canonical_exchange_entries"],
+            "consumers": [
+                "canonical_exchange_entries",
+                "validate_current_edition_live_exchange_registry_invariant.exchange_registry_entries",
+            ],
             "content_fingerprint_sha256": "90622ea826a2b95342155ab27933bc79d15fa3b2390a2086a9031e129641de13",
             "expected_result_type": "array",
             "json_pointer": "/exchange_registry_contract/entries",
@@ -1601,6 +1605,22 @@ EXPECTED_CANONICAL_DEPENDENCY_CONSUMER_BINDINGS = deep_freeze(
         "validate_canonical_enum_binding_manifest.instrument_trading_statuses": "m05_instrument_trading_statuses",
         "validate_canonical_enum_binding_manifest.instrument_types": "m05_instrument_types",
         "validate_canonical_enum_binding_manifest.market_types": "m05_market_types",
+        "validate_current_edition_live_exchange_registry_invariant.environment_registry": "m05_environment_registry",
+        "validate_current_edition_live_exchange_registry_invariant.exchange_registry_entries": "m05_exchange_registry_entries",
+    }
+)
+
+EXPECTED_CURRENT_EDITION_LIVE_EXCHANGE_REGISTRY_AUDIT = deep_freeze(
+    {
+        "classification": "CURRENT_EDITION_REQUIRED_INVARIANT",
+        "canonical_live_environment_present": True,
+        "enabled_live_exchange_entry_present": False,
+        "canonical_cross_contract_drift_denial": "CONTRACT_INCONSISTENT",
+        "persisted_live_trusted_graph_allowed": False,
+        "execution_authority": False,
+        "endpoint_classes_are_vocabulary_only": True,
+        "runtime": False,
+        "reachable": False,
     }
 )
 
@@ -1766,7 +1786,25 @@ def validate_canonical_dependency_roots():
     for dependency_id in EXPECTED_CANONICAL_DEPENDENCIES:
         resolve_canonical_dependency(dependency_id)
     _validate_specialized_dependency_attestations()
+    validate_current_edition_live_exchange_registry_invariant()
     return CONTRACT["canonical_dependency_root_manifest"]
+
+
+def validate_current_edition_live_exchange_registry_invariant():
+    audit = CONTRACT.get("live_exchange_registry_audit")
+    environments = resolve_canonical_dependency("m05_environment_registry")
+    entries = resolve_canonical_dependency("m05_exchange_registry_entries")
+    enabled_live_entry_present = any(
+        entry["status"] == "ENABLED" and "LIVE" in entry["supported_environments"]
+        for entry in entries
+    )
+    if (
+        deep_freeze(audit) != EXPECTED_CURRENT_EDITION_LIVE_EXCHANGE_REGISTRY_AUDIT
+        or "LIVE" not in environments
+        or enabled_live_entry_present
+    ):
+        raise TypeError("current-edition LIVE Exchange Registry invariant")
+    return audit
 
 
 def resolve_m04_environment_ids():
@@ -5614,23 +5652,30 @@ def test_testnet_authorization_operability_is_shared_by_readiness(mutation, expe
     assert result["denial_code"] != "CONTRACT_INCONSISTENT"
 
 
-def test_live_execution_is_a_cross_milestone_registry_blocker():
+def test_live_exchange_registry_state_is_a_current_edition_invariant():
+    assert "LIVE" in resolve_canonical_dependency("m05_environment_registry")
     assert not any(
         entry["status"] == "ENABLED" and "LIVE" in entry["supported_environments"]
         for entry in canonical_exchange_entries()
     )
-    assert CONTRACT["live_exchange_registry_audit"] == {
-        "live_enabled_entry_present": False,
-        "ordinary_live_execution_denial_reachable": False,
-        "runtime": False,
-        "reachable": False,
-        "cross_milestone_blocked": True,
-        "cross_milestone_blocker": (
-            "M0.5 closed Exchange Registry has no ENABLED entry supporting LIVE; persisted LIVE "
-            "context fails TRUSTED_CONTEXT_INVALID before operation authority and "
-            "LIVE_EXECUTION_FORBIDDEN is not an ordinary M0.6 reachability case"
-        ),
-    }
+    assert (
+        deep_freeze(validate_current_edition_live_exchange_registry_invariant())
+        == EXPECTED_CURRENT_EDITION_LIVE_EXCHANGE_REGISTRY_AUDIT
+    )
+
+
+def test_coordinated_enabled_live_venue_drift_fails_closed(monkeypatch):
+    context = fixture_context("PAPER")
+    entries = copy.deepcopy(M05_CONTRACT["exchange_registry_contract"]["entries"])
+    entries[0]["supported_environments"].append("LIVE")
+    monkeypatch.setitem(M05_CONTRACT["exchange_registry_contract"], "entries", entries)
+    _update_dependency_attestation(monkeypatch, "m05_exchange_registry_entries", entries)
+    monkeypatch.setitem(
+        CONTRACT["live_exchange_registry_audit"],
+        "enabled_live_exchange_entry_present",
+        True,
+    )
+    _assert_contract_fault_in_both_paths(context)
 
 
 def test_special_audit_events_cover_machine_contract_faults():
