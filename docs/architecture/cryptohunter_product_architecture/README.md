@@ -78,12 +78,3 @@ M0.6 jest zamkniętym kontraktem architektonicznym definiującym StrategyDefinit
 12. M0.12 — audit, observability, alerts and updater
 13. M0.13 — final architecture contract and validators
 14. M0.14 — closing audit
-
-## Status M0.6 — under audit
-
-M0.6 definiuje kontrakt StrategyDefinition, immutable version pinning, StrategyInstance oraz rozdzielonych MarketDataRoute i ExecutionRoute, ich exact binding i Core-owned readiness. Ustala fail-closed granice PAPER/TESTNET/LIVE, zamknięty trusted validation context, integralność grafu M0.2–M0.5, operation-specific denials, audit events i wykonywalny validator call graph. Jest wyłącznie kontraktem architektury i referencyjnymi validatorami testowymi; nie implementuje runtime'u, storage, adapterów, endpointów, sekretów ani order execution. M0.7 nie został rozpoczęty.
-
-## Artefakty M0.6
-
-- [strategy_market_data_and_execution_routing.md](strategy_market_data_and_execution_routing.md) — opisowy kontrakt strategii, danych rynkowych i routingu wykonania M0.6.
-- [strategy_market_data_and_execution_routing.json](strategy_market_data_and_execution_routing.json) — autorytatywny, maszynowo walidowany kontrakt M0.6.
