@@ -8585,24 +8585,27 @@ def test_coordinated_event_mapping_drift_still_fails_closed(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("reference_field", "incorrect_reference"),
+    ("reference_field", "expected_reference", "incorrect_reference"),
     [
         (
             "success_event_ref",
+            "success_event_by_operation.ACTIVATE_STRATEGY_INSTANCE",
             "success_event_by_operation.DEACTIVATE_STRATEGY_INSTANCE",
         ),
         (
             "denial_event_ref",
+            "denial_event_by_operation.ACTIVATE_STRATEGY_INSTANCE",
             "denial_event_by_operation.DEACTIVATE_STRATEGY_INSTANCE",
         ),
     ],
 )
 def test_operation_registry_event_reference_is_exact_bound(
-    monkeypatch, reference_field, incorrect_reference
+    monkeypatch, reference_field, expected_reference, incorrect_reference
 ):
     operation = "ACTIVATE_STRATEGY_INSTANCE"
     registry = copy.deepcopy(CONTRACT["operation_registry"])
-    assert reference_field in registry[operation]
+    assert registry[operation][reference_field] == expected_reference
+    assert incorrect_reference != expected_reference
     registry[operation][reference_field] = incorrect_reference
     monkeypatch.setitem(CONTRACT, "operation_registry", registry)
     _assert_protocol_fault_both_paths(request_for(operation), fixture_context(), operation)
