@@ -62,6 +62,15 @@ M0.6 jest zamkniętym kontraktem architektonicznym definiującym StrategyDefinit
 - [strategy_market_data_and_execution_routing.md](strategy_market_data_and_execution_routing.md) — opisowy kontrakt strategii i routingu M0.6.
 - [strategy_market_data_and_execution_routing.json](strategy_market_data_and_execution_routing.json) — maszynowo walidowany kontrakt strategii i routingu M0.6, będący źródłem prawdy.
 
+## Status M0.7 — closed
+
+M0.7 definiuje zamknięty kontrakt commands, immutable events, order lifecycle, idempotency, retry/duplicate handling, fills oraz bezpieczną granicę wykonania wspólną dla PAPER/TESTNET/LIVE. LIVE jest first-class target, lecz w current edition pozostaje zablokowane przez upstream M0.4/M0.6 policy. M0.7 nie implementuje runtime ani wykonywania zleceń.
+
+## Artefakty M0.7
+
+- [commands_events_order_lifecycle_and_idempotency.md](commands_events_order_lifecycle_and_idempotency.md) — opisowy kontrakt M0.7.
+- [commands_events_order_lifecycle_and_idempotency.json](commands_events_order_lifecycle_and_idempotency.json) — maszynowo walidowany kontrakt M0.7, będący źródłem prawdy.
+
 ## Planowane elementy M0.1–M0.14
 
 1. M0.1 — current-state audit/inventory
