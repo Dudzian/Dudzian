@@ -1,0 +1,1640 @@
+{
+  "schema_version": "cryptohunter.commands_events_order_lifecycle_and_idempotency.v1",
+  "m0_element": "M0.7",
+  "status": "closed",
+  "authority": "CoreHost",
+  "source_of_truth": "this JSON; Markdown is descriptive",
+  "scope": {
+    "contract_only": true,
+    "defines": [
+      "order commands",
+      "immutable command outcomes",
+      "order lifecycle",
+      "immutable events",
+      "idempotency and replay",
+      "fill progression",
+      "environment-safe side-effect boundary"
+    ],
+    "forbidden": [
+      "runtime adapter",
+      "network",
+      "storage engine",
+      "migration",
+      "secrets",
+      "QML",
+      "ledger M0.8",
+      "risk engine M0.9",
+      "ExecutionLease implementation",
+      "auth M0.10",
+      "persistence M0.11",
+      "real LIVE trading"
+    ]
+  },
+  "identity_policy": {
+    "canonical_source": "canonical_domain_vocabulary.json /entity_kinds",
+    "durable_ids": {
+      "OrderIntent": {
+        "field": "order_intent_id",
+        "prefix": "oint"
+      },
+      "Order": {
+        "field": "order_id",
+        "prefix": "ord"
+      },
+      "Fill": {
+        "field": "fill_id",
+        "prefix": "fill"
+      },
+      "AuditEvent": {
+        "field": "audit_event_id",
+        "prefix": "evt"
+      }
+    },
+    "command_identity": {
+      "field": "command_id",
+      "format": "cmd_<lowercase canonical UUIDv7>",
+      "classification": "immutable idempotency identity, not aggregate identity",
+      "scope": [
+        "workspace_id",
+        "environment",
+        "exchange_account_id",
+        "command_id"
+      ],
+      "order_id_is_command_id": false
+    },
+    "external_ids": [
+      "venue_order_id",
+      "venue_trade_id",
+      "client_order_id"
+    ],
+    "external_ids_are_not_durable_ids": true
+  },
+  "command_registry": {
+    "SUBMIT_ORDER": {
+      "authority": "CoreHost command handler",
+      "request_fields": [
+        "command_id",
+        "operation_type",
+        "authority_context_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "strategy_instance_id",
+        "source_type",
+        "instrument_id",
+        "execution_route_id",
+        "correlation_id",
+        "causation_id",
+        "idempotency_key",
+        "order_intent_id",
+        "order_id",
+        "side",
+        "order_type",
+        "quantity",
+        "limit_price",
+        "time_in_force",
+        "expire_at_utc"
+      ],
+      "creates": "one Order from one OrderIntent",
+      "accepted_effect": "persist plan only; not acknowledgement or execution",
+      "nullable_fields": [
+        "strategy_instance_id",
+        "causation_id",
+        "limit_price",
+        "expire_at_utc"
+      ],
+      "field_schemas": {
+        "command_id": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "operation_type": {
+          "type": "constant",
+          "value": "SUBMIT_ORDER"
+        },
+        "authority_context_id": {
+          "type": "id",
+          "id_kind": "AuthorityContext",
+          "prefix": "authctx"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "id_kind": "Workspace",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "id_kind": "Portfolio",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "id_kind": "ExchangeAccount",
+          "prefix": "xacc"
+        },
+        "strategy_instance_id": {
+          "type": "id",
+          "id_kind": "StrategyInstance",
+          "prefix": "sinst"
+        },
+        "source_type": {
+          "type": "enum",
+          "values": [
+            "STRATEGY_INSTANCE",
+            "OPERATOR",
+            "SYSTEM_RECONCILIATION"
+          ]
+        },
+        "instrument_id": {
+          "type": "id",
+          "id_kind": "Instrument",
+          "prefix": "instr"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "id_kind": "ExecutionRoute",
+          "prefix": "xroute"
+        },
+        "correlation_id": {
+          "type": "id",
+          "id_kind": "Correlation",
+          "prefix": "corr"
+        },
+        "causation_id": {
+          "type": "id",
+          "id_kind": "Causation",
+          "prefix": "cause"
+        },
+        "idempotency_key": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "order_intent_id": {
+          "type": "id",
+          "id_kind": "OrderIntent",
+          "prefix": "oint"
+        },
+        "order_id": {
+          "type": "id",
+          "id_kind": "Order",
+          "prefix": "ord"
+        },
+        "side": {
+          "type": "enum",
+          "values": [
+            "BUY",
+            "SELL"
+          ]
+        },
+        "order_type": {
+          "type": "enum",
+          "values": [
+            "MARKET",
+            "LIMIT"
+          ]
+        },
+        "quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "limit_price": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "time_in_force": {
+          "type": "enum",
+          "values": [
+            "GTC",
+            "IOC",
+            "FOK",
+            "GTD"
+          ]
+        },
+        "expire_at_utc": {
+          "type": "timestamp"
+        }
+      },
+      "decimal_fields": [
+        "quantity",
+        "limit_price"
+      ],
+      "timestamp_fields": [
+        "expire_at_utc"
+      ],
+      "expected_version_fields": [],
+      "constraints": [
+        "order_id differs from command_id",
+        "MARKET requires limit_price null",
+        "LIMIT requires limit_price non-null",
+        "GTD requires expire_at_utc non-null",
+        "non-GTD requires expire_at_utc null",
+        "STRATEGY_INSTANCE source requires strategy_instance_id non-null",
+        "other sources require strategy_instance_id null"
+      ]
+    },
+    "CANCEL_ORDER": {
+      "authority": "CoreHost command handler",
+      "request_fields": [
+        "command_id",
+        "operation_type",
+        "authority_context_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "strategy_instance_id",
+        "source_type",
+        "instrument_id",
+        "execution_route_id",
+        "correlation_id",
+        "causation_id",
+        "idempotency_key",
+        "order_id",
+        "expected_order_version",
+        "reason_code"
+      ],
+      "targets": "existing nonterminal Order",
+      "accepted_effect": "plan cancellation only",
+      "nullable_fields": [
+        "strategy_instance_id",
+        "causation_id"
+      ],
+      "field_schemas": {
+        "command_id": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "operation_type": {
+          "type": "constant",
+          "value": "CANCEL_ORDER"
+        },
+        "authority_context_id": {
+          "type": "id",
+          "id_kind": "AuthorityContext",
+          "prefix": "authctx"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "id_kind": "Workspace",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "id_kind": "Portfolio",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "id_kind": "ExchangeAccount",
+          "prefix": "xacc"
+        },
+        "strategy_instance_id": {
+          "type": "id",
+          "id_kind": "StrategyInstance",
+          "prefix": "sinst"
+        },
+        "source_type": {
+          "type": "enum",
+          "values": [
+            "STRATEGY_INSTANCE",
+            "OPERATOR",
+            "SYSTEM_RECONCILIATION"
+          ]
+        },
+        "instrument_id": {
+          "type": "id",
+          "id_kind": "Instrument",
+          "prefix": "instr"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "id_kind": "ExecutionRoute",
+          "prefix": "xroute"
+        },
+        "correlation_id": {
+          "type": "id",
+          "id_kind": "Correlation",
+          "prefix": "corr"
+        },
+        "causation_id": {
+          "type": "id",
+          "id_kind": "Causation",
+          "prefix": "cause"
+        },
+        "idempotency_key": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "order_id": {
+          "type": "id",
+          "id_kind": "Order",
+          "prefix": "ord"
+        },
+        "expected_order_version": {
+          "type": "positive_integer"
+        },
+        "reason_code": {
+          "type": "enum",
+          "values": [
+            "OPERATOR_REQUEST",
+            "STRATEGY_REQUEST",
+            "SYSTEM_SAFETY",
+            "RECONCILIATION"
+          ]
+        }
+      },
+      "decimal_fields": [],
+      "timestamp_fields": [],
+      "expected_version_fields": [
+        "expected_order_version"
+      ],
+      "constraints": [
+        "expected_order_version > 0 and bool forbidden"
+      ]
+    },
+    "REPLACE_ORDER": {
+      "authority": "CoreHost command handler",
+      "request_fields": [
+        "command_id",
+        "operation_type",
+        "authority_context_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "strategy_instance_id",
+        "source_type",
+        "instrument_id",
+        "execution_route_id",
+        "correlation_id",
+        "causation_id",
+        "idempotency_key",
+        "order_id",
+        "replacement_order_id",
+        "expected_order_version",
+        "quantity",
+        "limit_price",
+        "time_in_force",
+        "expire_at_utc"
+      ],
+      "targets": "existing nonterminal Order and preallocates distinct replacement Order identity",
+      "accepted_effect": "plan venue replace; confirmation terminates original as REPLACED",
+      "nullable_fields": [
+        "strategy_instance_id",
+        "causation_id",
+        "limit_price",
+        "expire_at_utc"
+      ],
+      "field_schemas": {
+        "command_id": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "operation_type": {
+          "type": "constant",
+          "value": "REPLACE_ORDER"
+        },
+        "authority_context_id": {
+          "type": "id",
+          "id_kind": "AuthorityContext",
+          "prefix": "authctx"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "id_kind": "Workspace",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "id_kind": "Portfolio",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "id_kind": "ExchangeAccount",
+          "prefix": "xacc"
+        },
+        "strategy_instance_id": {
+          "type": "id",
+          "id_kind": "StrategyInstance",
+          "prefix": "sinst"
+        },
+        "source_type": {
+          "type": "enum",
+          "values": [
+            "STRATEGY_INSTANCE",
+            "OPERATOR",
+            "SYSTEM_RECONCILIATION"
+          ]
+        },
+        "instrument_id": {
+          "type": "id",
+          "id_kind": "Instrument",
+          "prefix": "instr"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "id_kind": "ExecutionRoute",
+          "prefix": "xroute"
+        },
+        "correlation_id": {
+          "type": "id",
+          "id_kind": "Correlation",
+          "prefix": "corr"
+        },
+        "causation_id": {
+          "type": "id",
+          "id_kind": "Causation",
+          "prefix": "cause"
+        },
+        "idempotency_key": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "order_id": {
+          "type": "id",
+          "id_kind": "Order",
+          "prefix": "ord"
+        },
+        "replacement_order_id": {
+          "type": "id",
+          "id_kind": "Order",
+          "prefix": "ord"
+        },
+        "expected_order_version": {
+          "type": "positive_integer"
+        },
+        "quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "limit_price": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "time_in_force": {
+          "type": "enum",
+          "values": [
+            "GTC",
+            "IOC",
+            "FOK",
+            "GTD"
+          ]
+        },
+        "expire_at_utc": {
+          "type": "timestamp"
+        }
+      },
+      "decimal_fields": [
+        "quantity",
+        "limit_price"
+      ],
+      "timestamp_fields": [
+        "expire_at_utc"
+      ],
+      "expected_version_fields": [
+        "expected_order_version"
+      ],
+      "constraints": [
+        "replacement_order_id differs from order_id",
+        "expected_order_version > 0 and bool forbidden",
+        "LIMIT semantics require limit_price non-null",
+        "GTD requires expire_at_utc non-null",
+        "non-GTD requires expire_at_utc null"
+      ]
+    }
+  },
+  "closed_request_policy": {
+    "generic_payload_forbidden": true,
+    "unknown_fields": "MALFORMED_REQUEST",
+    "missing_fields": "MALFORMED_REQUEST",
+    "numeric_encoding": "canonical decimal string; float, NaN and Infinity forbidden",
+    "canonical_json": {
+      "utf8": true,
+      "sort_keys": true,
+      "separators": [
+        ",",
+        ":"
+      ],
+      "unicode_normalization": "NFC",
+      "timestamps": "UTC RFC3339 with Z",
+      "nulls": "only fields declared nullable"
+    }
+  },
+  "command_outcome_contract": {
+    "immutable": true,
+    "fields": [
+      "command_id",
+      "operation_type",
+      "request_fingerprint_sha256",
+      "outcome",
+      "denial_code",
+      "order_id",
+      "accepted_audit_event_id",
+      "recorded_at_utc"
+    ],
+    "outcomes": [
+      "ACCEPTED",
+      "REJECTED",
+      "REPLAYED"
+    ],
+    "acceptance_means": "validated authorized durable planned effect only",
+    "acceptance_does_not_mean": [
+      "dispatch",
+      "exchange acknowledgement",
+      "fill",
+      "trade execution"
+    ],
+    "pipeline": [
+      "validate closed schema",
+      "resolve trusted scope",
+      "verify upstream authority",
+      "reserve idempotency identity and fingerprint atomically",
+      "record immutable accepted/rejected outcome",
+      "dispatch only accepted external effect after all gates"
+    ]
+  },
+  "idempotency_contract": {
+    "required_before_external_side_effect": true,
+    "identity": "command_id is canonical idempotency identity; idempotency_key must equal command_id",
+    "scope": [
+      "workspace_id",
+      "environment",
+      "exchange_account_id",
+      "command_id"
+    ],
+    "fingerprint_input": "operation_type plus every normalized closed request field except exact fingerprint_excluded_fields; command_id, idempotency_key, and causation_id included",
+    "same_identity_same_fingerprint": "return byte-equivalent immutable recorded outcome with COMMAND_REPLAYED; no new transition, event fact, dispatch, or side effect",
+    "same_identity_different_fingerprint": "IDEMPOTENCY_CONFLICT; no mutation or side effect",
+    "timeout_unknown": "never resubmit; enter RECONCILIATION_REQUIRED and reconcile by client_order_id/venue facts",
+    "atomicity": "reservation and immutable outcome precede dispatch; crash gap is recovered without a second submission",
+    "client_order_id": "deterministically derived from scoped command identity, stable across retries, never caller authority",
+    "duplicate_event": "same audit_event_id and canonical fingerprint is replay success/ignored",
+    "event_identity_conflict": "same audit_event_id different fingerprint is EVENT_IDENTITY_CONFLICT",
+    "duplicate_ack": "venue_order_id plus acknowledgement fact deduplicated; identical replay ignored",
+    "duplicate_fill": "fill_id is durable canonical identity; venue_trade_id is scoped external dedupe key; identical duplicate ignored, conflicting duplicate requires reconciliation",
+    "fingerprint_excluded_fields": [
+      "correlation_id"
+    ]
+  },
+  "order_lifecycle": {
+    "states": [
+      "PLANNED",
+      "SUBMISSION_PENDING",
+      "ACKNOWLEDGED",
+      "PARTIALLY_FILLED",
+      "CANCEL_PENDING",
+      "REPLACE_PENDING",
+      "RECONCILIATION_REQUIRED",
+      "REJECTED",
+      "FILLED",
+      "CANCELLED",
+      "EXPIRED",
+      "REPLACED"
+    ],
+    "initial_state": "PLANNED",
+    "terminal_states": [
+      "REJECTED",
+      "FILLED",
+      "CANCELLED",
+      "EXPIRED",
+      "REPLACED"
+    ],
+    "transitions": [
+      {
+        "event": "ORDER_PLANNED",
+        "owner": "COMMAND_HANDLER",
+        "sources": [
+          "NONE"
+        ],
+        "target": "PLANNED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_DISPATCHED",
+        "owner": "DISPATCHER",
+        "sources": [
+          "PLANNED"
+        ],
+        "target": "SUBMISSION_PENDING",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_ACKNOWLEDGED",
+        "owner": "EXECUTION_ADAPTER",
+        "sources": [
+          "SUBMISSION_PENDING",
+          "RECONCILIATION_REQUIRED"
+        ],
+        "target": "ACKNOWLEDGED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_REJECTED",
+        "owner": "EXECUTION_ADAPTER",
+        "sources": [
+          "SUBMISSION_PENDING",
+          "RECONCILIATION_REQUIRED"
+        ],
+        "target": "REJECTED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_PARTIALLY_FILLED",
+        "owner": "FILL_INGESTOR",
+        "sources": [
+          "SUBMISSION_PENDING",
+          "ACKNOWLEDGED",
+          "PARTIALLY_FILLED",
+          "CANCEL_PENDING",
+          "REPLACE_PENDING",
+          "RECONCILIATION_REQUIRED"
+        ],
+        "target": "PARTIALLY_FILLED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_FILLED",
+        "owner": "FILL_INGESTOR",
+        "sources": [
+          "SUBMISSION_PENDING",
+          "ACKNOWLEDGED",
+          "PARTIALLY_FILLED",
+          "CANCEL_PENDING",
+          "REPLACE_PENDING",
+          "RECONCILIATION_REQUIRED"
+        ],
+        "target": "FILLED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_CANCEL_REQUESTED",
+        "owner": "COMMAND_HANDLER",
+        "sources": [
+          "ACKNOWLEDGED",
+          "PARTIALLY_FILLED"
+        ],
+        "target": "CANCEL_PENDING",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_CANCEL_CONFIRMED",
+        "owner": "EXECUTION_ADAPTER",
+        "sources": [
+          "CANCEL_PENDING",
+          "RECONCILIATION_REQUIRED"
+        ],
+        "target": "CANCELLED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_CANCEL_REJECTED",
+        "owner": "EXECUTION_ADAPTER",
+        "sources": [
+          "CANCEL_PENDING"
+        ],
+        "replay_safe": true,
+        "target_rule": "RESTORE_PRE_REQUEST_STATE"
+      },
+      {
+        "event": "ORDER_REPLACE_REQUESTED",
+        "owner": "COMMAND_HANDLER",
+        "sources": [
+          "ACKNOWLEDGED",
+          "PARTIALLY_FILLED"
+        ],
+        "target": "REPLACE_PENDING",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_REPLACE_CONFIRMED",
+        "owner": "EXECUTION_ADAPTER",
+        "sources": [
+          "REPLACE_PENDING",
+          "RECONCILIATION_REQUIRED"
+        ],
+        "target": "REPLACED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_REPLACE_REJECTED",
+        "owner": "EXECUTION_ADAPTER",
+        "sources": [
+          "REPLACE_PENDING"
+        ],
+        "replay_safe": true,
+        "target_rule": "RESTORE_PRE_REQUEST_STATE"
+      },
+      {
+        "event": "ORDER_EXPIRED",
+        "owner": "EXECUTION_ADAPTER",
+        "sources": [
+          "SUBMISSION_PENDING",
+          "ACKNOWLEDGED",
+          "PARTIALLY_FILLED",
+          "CANCEL_PENDING",
+          "REPLACE_PENDING",
+          "RECONCILIATION_REQUIRED"
+        ],
+        "target": "EXPIRED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_EXTERNAL_OUTCOME_UNKNOWN",
+        "owner": "DISPATCHER",
+        "sources": [
+          "SUBMISSION_PENDING",
+          "CANCEL_PENDING",
+          "REPLACE_PENDING"
+        ],
+        "target": "RECONCILIATION_REQUIRED",
+        "replay_safe": true
+      },
+      {
+        "event": "ORDER_RECONCILIATION_OBSERVED",
+        "owner": "RECONCILER",
+        "sources": [
+          "RECONCILIATION_REQUIRED"
+        ],
+        "replay_safe": true,
+        "target_rule": "RESOLVE_TRUSTED_RECONCILIATION_FACT"
+      }
+    ],
+    "restore_rule": "RESTORE_PRE_REQUEST_STATE is exact stored ACKNOWLEDGED or PARTIALLY_FILLED state/version from request transition; never caller supplied",
+    "derived_reconciliation_rule": "target is deterministically derived from trusted acknowledgement/fill/cancel/replace/expiry fact and full aggregate history",
+    "terminal_rule": "terminal states have no outgoing transitions; late identical facts are replay, other facts require reconciliation/audit and never regress terminal state",
+    "dynamic_target_rules": {
+      "RESTORE_PRE_REQUEST_STATE": {
+        "allowed_stored_states": [
+          "ACKNOWLEDGED",
+          "PARTIALLY_FILLED"
+        ],
+        "missing_or_other": "INVALID_LIFECYCLE_TRANSITION",
+        "caller_target_forbidden": true
+      },
+      "RESOLVE_TRUSTED_RECONCILIATION_FACT": {
+        "trusted_fact_targets": {
+          "ACKNOWLEDGED": "ACKNOWLEDGED",
+          "REJECTED": "REJECTED",
+          "PARTIAL_FILL": "PARTIALLY_FILLED",
+          "FULL_FILL": "FILLED",
+          "CANCEL_CONFIRMED": "CANCELLED",
+          "REPLACE_CONFIRMED": "REPLACED",
+          "EXPIRED": "EXPIRED"
+        },
+        "unknown_or_untrusted": "TRUSTED_CONTEXT_FAILURE"
+      }
+    }
+  },
+  "fill_contract": {
+    "identity": "canonical fill_id prefix fill from M0.2",
+    "external_dedupe_scope": [
+      "environment",
+      "exchange_account_id",
+      "exchange_id",
+      "venue_trade_id"
+    ],
+    "decimal_fields": [
+      "executed_quantity",
+      "execution_price",
+      "fee_quantity"
+    ],
+    "float_forbidden": true,
+    "cumulative_executed_quantity": "sum of unique accepted fill executed_quantity in deterministic fill sequence",
+    "remaining_quantity": "order quantity minus cumulative executed quantity",
+    "average_execution_price": "retain exact notional numerator and cumulative executed denominator; emit canonical decimal only when quotient has a finite decimal expansion; otherwise null for presentation and never apply implicit Decimal-context rounding",
+    "invariants": [
+      "fill quantity > 0",
+      "execution price > 0",
+      "cumulative never regresses",
+      "cumulative <= order quantity",
+      "remaining >= 0",
+      "PARTIALLY_FILLED iff 0 < cumulative < quantity",
+      "FILLED iff cumulative == quantity",
+      "overfill rejected and reconciliation required"
+    ],
+    "canonical_decimal_output": "M0.5 regex; fractional trailing zeros removed and zero exactly 0"
+  },
+  "event_contract": {
+    "immutable_facts": true,
+    "event_types": [
+      "ORDER_PLANNED",
+      "ORDER_DISPATCHED",
+      "ORDER_ACKNOWLEDGED",
+      "ORDER_REJECTED",
+      "ORDER_PARTIALLY_FILLED",
+      "ORDER_FILLED",
+      "ORDER_CANCEL_REQUESTED",
+      "ORDER_CANCEL_CONFIRMED",
+      "ORDER_CANCEL_REJECTED",
+      "ORDER_REPLACE_REQUESTED",
+      "ORDER_REPLACE_CONFIRMED",
+      "ORDER_REPLACE_REJECTED",
+      "ORDER_EXPIRED",
+      "ORDER_EXTERNAL_OUTCOME_UNKNOWN",
+      "ORDER_RECONCILIATION_OBSERVED",
+      "COMMAND_ACCEPTED",
+      "COMMAND_REJECTED",
+      "COMMAND_REPLAYED",
+      "IDEMPOTENCY_CONFLICT",
+      "EVENT_REPLAY_IGNORED",
+      "EVENT_REJECTED"
+    ],
+    "fields": [
+      "audit_event_id",
+      "event_type",
+      "order_id",
+      "aggregate_version",
+      "correlation_id",
+      "causation_id",
+      "command_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "execution_route_id",
+      "occurred_at_utc",
+      "safe_payload",
+      "event_fingerprint_sha256"
+    ],
+    "safe_payload": "exact event_schema_registry; no unknown or missing fields and no secrets, credentials, endpoints, raw venue response, arbitrary payload or PII",
+    "ordering": "per-order aggregate_version starts at 1 and increases exactly by one after each accepted new fact",
+    "duplicate": "same audit_event_id and fingerprint returns replay success without version increment",
+    "stale": "version <= current with different event identity is STALE_EVENT",
+    "gap": "version > current + 1 is EVENT_VERSION_GAP and reconciliation required",
+    "scope_mismatch": "ORDER_SCOPE_MISMATCH",
+    "impossible_transition": "INVALID_LIFECYCLE_TRANSITION",
+    "event_schema_registry": {
+      "ORDER_PLANNED": {
+        "safe_payload_fields": [
+          "side",
+          "order_type",
+          "quantity"
+        ],
+        "field_schemas": {
+          "side": {
+            "type": "string"
+          },
+          "order_type": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "decimal"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_DISPATCHED": {
+        "safe_payload_fields": [
+          "client_order_id"
+        ],
+        "field_schemas": {
+          "client_order_id": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_ACKNOWLEDGED": {
+        "safe_payload_fields": [
+          "venue_order_id"
+        ],
+        "field_schemas": {
+          "venue_order_id": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_REJECTED": {
+        "safe_payload_fields": [
+          "reason_code"
+        ],
+        "field_schemas": {
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_PARTIALLY_FILLED": {
+        "safe_payload_fields": [
+          "fill_id",
+          "venue_trade_id",
+          "cumulative_executed_quantity"
+        ],
+        "field_schemas": {
+          "fill_id": {
+            "type": "id",
+            "prefix": "fill"
+          },
+          "venue_trade_id": {
+            "type": "string"
+          },
+          "cumulative_executed_quantity": {
+            "type": "decimal"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_FILLED": {
+        "safe_payload_fields": [
+          "fill_id",
+          "venue_trade_id",
+          "cumulative_executed_quantity"
+        ],
+        "field_schemas": {
+          "fill_id": {
+            "type": "id",
+            "prefix": "fill"
+          },
+          "venue_trade_id": {
+            "type": "string"
+          },
+          "cumulative_executed_quantity": {
+            "type": "decimal"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_CANCEL_REQUESTED": {
+        "safe_payload_fields": [
+          "reason_code"
+        ],
+        "field_schemas": {
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_CANCEL_CONFIRMED": {
+        "safe_payload_fields": [
+          "venue_order_id"
+        ],
+        "field_schemas": {
+          "venue_order_id": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_CANCEL_REJECTED": {
+        "safe_payload_fields": [
+          "reason_code"
+        ],
+        "field_schemas": {
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_REPLACE_REQUESTED": {
+        "safe_payload_fields": [
+          "replacement_order_id"
+        ],
+        "field_schemas": {
+          "replacement_order_id": {
+            "type": "id",
+            "prefix": "ord"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_REPLACE_CONFIRMED": {
+        "safe_payload_fields": [
+          "replacement_order_id",
+          "venue_order_id"
+        ],
+        "field_schemas": {
+          "replacement_order_id": {
+            "type": "id",
+            "prefix": "ord"
+          },
+          "venue_order_id": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_REPLACE_REJECTED": {
+        "safe_payload_fields": [
+          "reason_code"
+        ],
+        "field_schemas": {
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_EXPIRED": {
+        "safe_payload_fields": [
+          "venue_order_id"
+        ],
+        "field_schemas": {
+          "venue_order_id": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_EXTERNAL_OUTCOME_UNKNOWN": {
+        "safe_payload_fields": [
+          "operation_type",
+          "client_order_id"
+        ],
+        "field_schemas": {
+          "operation_type": {
+            "type": "string"
+          },
+          "client_order_id": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "ORDER_RECONCILIATION_OBSERVED": {
+        "safe_payload_fields": [
+          "trusted_fact_kind",
+          "venue_order_id"
+        ],
+        "field_schemas": {
+          "trusted_fact_kind": {
+            "type": "enum",
+            "values": [
+              "ACKNOWLEDGED",
+              "REJECTED",
+              "PARTIAL_FILL",
+              "FULL_FILL",
+              "CANCEL_CONFIRMED",
+              "REPLACE_CONFIRMED",
+              "EXPIRED"
+            ]
+          },
+          "venue_order_id": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [
+          "venue_order_id"
+        ],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "COMMAND_ACCEPTED": {
+        "safe_payload_fields": [
+          "command_id",
+          "operation_type"
+        ],
+        "field_schemas": {
+          "command_id": {
+            "type": "id",
+            "prefix": "cmd"
+          },
+          "operation_type": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "COMMAND_REJECTED": {
+        "safe_payload_fields": [
+          "command_id",
+          "denial_code"
+        ],
+        "field_schemas": {
+          "command_id": {
+            "type": "id",
+            "prefix": "cmd"
+          },
+          "denial_code": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "COMMAND_REPLAYED": {
+        "safe_payload_fields": [
+          "command_id"
+        ],
+        "field_schemas": {
+          "command_id": {
+            "type": "id",
+            "prefix": "cmd"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "IDEMPOTENCY_CONFLICT": {
+        "safe_payload_fields": [
+          "command_id"
+        ],
+        "field_schemas": {
+          "command_id": {
+            "type": "id",
+            "prefix": "cmd"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "EVENT_REPLAY_IGNORED": {
+        "safe_payload_fields": [
+          "replayed_audit_event_id"
+        ],
+        "field_schemas": {
+          "replayed_audit_event_id": {
+            "type": "id",
+            "prefix": "evt"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "EVENT_REJECTED": {
+        "safe_payload_fields": [
+          "rejected_audit_event_id",
+          "reason_code"
+        ],
+        "field_schemas": {
+          "rejected_audit_event_id": {
+            "type": "id",
+            "prefix": "evt"
+          },
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "nullable_fields": [],
+        "required_scope": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      }
+    },
+    "identity_conflict": "EVENT_IDENTITY_CONFLICT",
+    "envelope_schema": {
+      "fields": [
+        "audit_event_id",
+        "event_type",
+        "order_id",
+        "aggregate_version",
+        "correlation_id",
+        "causation_id",
+        "command_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "execution_route_id",
+        "occurred_at_utc",
+        "safe_payload",
+        "event_fingerprint_sha256"
+      ],
+      "nullable_fields": [
+        "causation_id",
+        "command_id"
+      ],
+      "field_schemas": {
+        "audit_event_id": {
+          "type": "id",
+          "prefix": "evt"
+        },
+        "event_type": {
+          "type": "enum",
+          "registry": "event_types"
+        },
+        "order_id": {
+          "type": "id",
+          "prefix": "ord"
+        },
+        "aggregate_version": {
+          "type": "positive_integer"
+        },
+        "correlation_id": {
+          "type": "id",
+          "prefix": "corr"
+        },
+        "causation_id": {
+          "type": "id",
+          "prefix": "cause"
+        },
+        "command_id": {
+          "type": "id",
+          "prefix": "cmd"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "exchange_id": {
+          "type": "non_empty_string"
+        },
+        "instrument_id": {
+          "type": "id",
+          "prefix": "instr"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "prefix": "xroute"
+        },
+        "occurred_at_utc": {
+          "type": "timestamp"
+        },
+        "safe_payload": {
+          "type": "event_safe_payload"
+        },
+        "event_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "fingerprint_excluded_fields": [
+        "event_fingerprint_sha256"
+      ],
+      "scope_fields": [
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "execution_route_id"
+      ]
+    },
+    "fingerprint": "SHA-256 over canonical NFC/UTF-8 JSON of the complete immutable event envelope except exact event_fingerprint_sha256 field"
+  },
+  "failure_taxonomy": {
+    "MALFORMED_REQUEST": "shape/type/canonical encoding failure",
+    "UNAUTHORIZED_OPERATION": "upstream authority denial",
+    "INVALID_LIFECYCLE_TRANSITION": "valid request invalid for current state",
+    "IDEMPOTENCY_CONFLICT": "same scoped command identity different fingerprint",
+    "REPLAY_SUCCESS": "same identity and fingerprint; recorded result returned",
+    "TRUSTED_CONTEXT_FAILURE": "missing/stale/untrusted canonical context",
+    "CONTRACT_INCONSISTENT": "machine-contract drift/schema corruption/canonical dependency attestation corruption only",
+    "EXTERNAL_OUTCOME_UNKNOWN": "reconciliation required; no blind retry",
+    "STALE_EVENT": "non-next event",
+    "ORDER_SCOPE_MISMATCH": "event/order scope mismatch",
+    "EVENT_IDENTITY_CONFLICT": "same scoped audit_event_id with a different immutable fact fingerprint; ordinary data denial",
+    "EVENT_VERSION_GAP": "non-contiguous aggregate version; reconciliation required",
+    "MALFORMED_EVENT": "event envelope or safe-payload shape, type, or canonical encoding failure",
+    "EVENT_FINGERPRINT_MISMATCH": "well-shaped supplied event fingerprint differs from canonical full immutable fact fingerprint; ordinary data/integrity denial"
+  },
+  "environment_execution_boundary": {
+    "shared_model": [
+      "PAPER",
+      "TESTNET",
+      "LIVE"
+    ],
+    "PAPER": "deterministic local adapter allowed after same lifecycle/idempotency gates; no private exchange connection",
+    "TESTNET": "external side effects only after M0.4 capabilities, M0.5 account/instrument, M0.6 route/readiness authority and future M0.9 authorization",
+    "LIVE": "first-class target; current edition policy-disabled upstream; future coordinated policy may authorize without changing this lifecycle",
+    "no_fallback": "no TESTNET to LIVE, LIVE to TESTNET, implicit account, route, endpoint, credential, or venue fallback",
+    "non_authorities": [
+      "venue",
+      "endpoint",
+      "credential",
+      "well-formed command",
+      "command acceptance"
+    ],
+    "side_effect_gate_order": [
+      "M0.4 environment/ProductCapabilities authority",
+      "M0.5 exact account/exchange/instrument authority",
+      "M0.6 exact strategy instance/execution route/readiness authority",
+      "M0.9 future ExecutionLease authority dependency",
+      "M0.7 atomic idempotency reservation and accepted plan",
+      "adapter dispatch"
+    ],
+    "future_execution_lease": {
+      "owner": "M0.9",
+      "required_before_external side effect in target application": true,
+      "boolean_risk_ok_forbidden": true,
+      "not_a_M0.7_blocker": true
+    }
+  },
+  "cross_contract_dependencies": [
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/public_trading_environments",
+      "content_fingerprint_sha256": "b0114e386bf72439199ec8155d65a57dc7e00cabe79dba805f53221ba7713103"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/entity_kinds",
+      "content_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/identifier_policy",
+      "content_fingerprint_sha256": "44726b4e51c53722ebbc95212d708521007c59cb54292ea7bc5b970320031d20"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/external_identifier_fields",
+      "content_fingerprint_sha256": "4259419170eeb4677098999b288048213329f9b9a16be58ab67a24838d95b4be"
+    },
+    {
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/execution_environments",
+      "content_fingerprint_sha256": "61f5dd195aa69c646dc296c2d8c0f2ce97683979e3ef6ddc35b0adaa269a809b"
+    },
+    {
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/current_product_edition",
+      "content_fingerprint_sha256": "5fa73f356d9b315161031b4fb41661b8294ed14ce42bfae4565e87b34120adc8"
+    },
+    {
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/capability_id_registry/current_schema_allowed_capability_ids",
+      "content_fingerprint_sha256": "da387f22de48e101f293b5dd304eedf52e0cb5dbcf8142b0f0c98b972acd55d2"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/environment_registry",
+      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_account_contract/execution_authorizations",
+      "content_fingerprint_sha256": "06cd91f979f0f90a6ae247565950152397305215299cc3450a54acee307d120b"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/decimal_policy",
+      "content_fingerprint_sha256": "e526f728e0075a3a27380a87a213eb5e5f074d90cc4b63a99b48485957070b48"
+    },
+    {
+      "contract": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/entity_registry",
+      "content_fingerprint_sha256": "8bde48ea01fbc636040ce6c3764ac4e331e03fbb042defa449b85d20b54a5b43"
+    },
+    {
+      "contract": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/execution_route_contract",
+      "content_fingerprint_sha256": "a855a114e6b19b8218f9975d64fb04b9dac86e28a208e9e7d3a4976773de0a12"
+    },
+    {
+      "contract": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/route_readiness_contract",
+      "content_fingerprint_sha256": "92dda02de1e327d248bc9e987701b33279534f48b57ac2a97104c8380d7c4c33"
+    },
+    {
+      "contract": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/live_execution_authority_policy",
+      "content_fingerprint_sha256": "eb2034a4691a18f3037b2a5f93d1fb41fcb38ef67c6c43c5dfff891dd35fe1de"
+    }
+  ],
+  "executable_reference_model": {
+    "machine_json_untrusted_attestation": true,
+    "immutable_expected_protocol_required": true,
+    "deep_freeze_required": true,
+    "exact_registries_and_schemas": true,
+    "coordinated_mutable_weakening_fails_closed": true,
+    "anti_tamper_claim": false,
+    "trust_boundary": "immutable validator expectations plus independently fingerprinted canonical roots; not in-process security"
+  },
+  "closure_conditions": {
+    "audit_completed": true,
+    "closed_registry": true,
+    "exact_state_machine": true,
+    "idempotency_before_side_effect": true,
+    "event_and_fill_monotonicity": true,
+    "environment_boundary": true,
+    "cross_milestone_attestation": true,
+    "reference_tests": true,
+    "remaining_blockers": []
+  }
+}
