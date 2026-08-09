@@ -28,7 +28,7 @@ Bieżący readiness nie jest persisted route field. Jedynym źródłem jest Core
 
 ## PAPER, TESTNET, LIVE
 
-PAPER oznacza wyłącznie lokalną symulację, bez private exchange execution i bez obowiązkowego CredentialProfile; `active_credential_profile_id` może być null, a ProductCapabilities nadal muszą spełniać M0.4. TESTNET wymaga aktywnego exact account, observed_permission_set, VALID AccountCapabilitySnapshot, aktywnego CredentialProfile o purpose `ORDER_ENTRY` i permission `PLACE_ORDERS`, z exact account/exchange/environment binding i bez LIVE fallback. Bieżąca edycja wymaga jako cross-contract invariant, aby kanoniczny M0.5 zawierał LIVE w `environment_registry`, lecz nie zawierał żadnego ENABLED wpisu Exchange Registry obsługującego LIVE. Persisted LIVE graph jest `TRUSTED_CONTEXT_INVALID`, a sama widoczność LIVE nie daje execution authority.
+PAPER oznacza wyłącznie lokalną symulację, bez private exchange execution i bez obowiązkowego CredentialProfile; `active_credential_profile_id` może być null, a ProductCapabilities nadal muszą spełniać M0.4. TESTNET wymaga aktywnego exact account, observed_permission_set, VALID AccountCapabilitySnapshot, aktywnego CredentialProfile o purpose `ORDER_ENTRY` i permission `PLACE_ORDERS`, z exact account/exchange/environment binding i bez LIVE fallback. LIVE jest first-class środowiskiem docelowej architektury, lecz jego execution jest w bieżącej edycji wyłączone przez kanoniczną politykę M0.4 ProductCapabilities. Kanoniczny M0.5 aktualnie nie ma ENABLED venue obsługującego LIVE, ale nie jest to permanentny invariant bezpieczeństwa M0.6. Venue capability jest konieczne dla przyszłego LIVE, lecz samo nigdy nie nadaje execution authority ani nie omija account, credential/capability lub route readiness.
 
 ## Trusted context i integralność
 
@@ -106,7 +106,7 @@ and activation. PAPER depends only on ProductCapabilities and never on snapshot 
 permissions or credentials. TESTNET additionally requires an ACTIVE Account, a VALID and fresh
 snapshot containing `PLACE_ORDERS`, enabled ProductCapabilities permitting the exact operation,
 an ACTIVE selected `ORDER_ENTRY` credential with `PLACE_ORDERS`, and an execution ceiling with
-`PLACE_ORDERS`. LIVE execution readiness and activation are always forbidden. Snapshot age uses
+`PLACE_ORDERS`. Current-edition LIVE execution readiness and activation are disabled by the canonical ProductCapabilities authority policy. Snapshot age uses
 `account_capability_snapshot_policy.max_age_seconds_by_environment` with an inclusive boundary.
 
 Trusted validation checks both directions of every Instrument–Catalog edge, every snapshot
@@ -218,7 +218,7 @@ For TESTNET, readiness and activation require
 set(AccountCapabilitySnapshot.supported_instrument_types)`. A structurally valid snapshot that
 omits a required type returns exactly `CAPABILITY_SNAPSHOT_BLOCKED`; it is neither
 `TRUSTED_CONTEXT_INVALID` nor `CONTRACT_INCONSISTENT`. PAPER remains governed only by
-ProductCapabilities. LIVE is non-runtime, non-reachable, and forbidden by the current edition.
+ProductCapabilities. LIVE is non-runtime and non-reachable under the current edition's ProductCapabilities policy.
 
 The reusable `validate_strategy_execution_operability` callable is present in both
 `VALIDATE_ROUTE_READINESS` and `ACTIVATE_STRATEGY_INSTANCE` call graphs after lifecycle and
@@ -240,9 +240,11 @@ Every exchange-bound Account, Instrument, Catalog, Snapshot, CredentialProfile, 
 and ExecutionRoute resolves the closed M0.5 `/exchange_registry_contract/entries`. The entry must
 exist and be `ENABLED`; environment, market type, instrument type, and adapter family must match.
 The positive PAPER and TESTNET fixtures resolve `paper_simulated_venue` and
-`generic_testnet_venue` directly from M0.5. M0.5 has no enabled LIVE entry, so a persisted LIVE
-graph is structurally invalid and `LIVE_EXECUTION_FORBIDDEN` is not an ordinary reachable M0.6
-denial. This exact canonical state is a required current-edition invariant, not an unresolved blocker.
+`generic_testnet_venue` directly from M0.5. M0.5 currently has no enabled LIVE entry, so the
+current canonical data cannot resolve a LIVE exchange-bound graph. That data state is not an
+execution authority and is not a permanent M0.6 invariant: a future coordinated contract version
+may add an enabled LIVE-capable venue and update its canonical fingerprints. LIVE execution would
+still remain disabled until ProductCapabilities and all later authority gates explicitly allow it.
 
 M0.5 permits an empty canonical `supported_instrument_types` list. M0.6 therefore accepts `[]`
 structurally, but TESTNET readiness and activation for a non-empty Universe return exactly
@@ -332,9 +334,10 @@ trusted tuple uniqueness; non-operational but structurally canonical states rema
 
 M0.5 permits an empty canonical `supported_instrument_types` set. It is structurally valid, while
 a non-empty TESTNET Universe with a missing type is denied as `CAPABILITY_SNAPSHOT_BLOCKED`.
-The LIVE audit is a `CURRENT_EDITION_REQUIRED_INVARIANT`: LIVE exists in the canonical environment
-registry, no ENABLED venue supports it, persisted LIVE trusted graphs and execution authority are
-forbidden, and no ordinary LIVE denial participates in runtime reachability.
+The LIVE execution authority policy records that LIVE is supported by the target architecture but
+is not executable or runtime-reachable in the current edition. Authority comes from the canonical
+ProductCapabilities policy; venue support and endpoint vocabulary alone grant no authority, and
+cross-environment fallback remains disabled.
 
 ## Canonical Instrument history and contract metadata closure
 
@@ -368,10 +371,11 @@ opaque `secure-store://` locator, nullable non-empty public-key identifier, and 
 `saas_sync_candidate = false`, without secret material. TrustedExternalIdentity additionally
 exact-binds `adapter_version_source` to the Exchange adapter family plus a non-empty version.
 
-LIVE remains `runtime = false` and `reachable = false`; persisted LIVE trusted graphs remain
-forbidden and neither readiness nor activation can acquire LIVE execution authority. The canonical
-no-enabled-LIVE-venue state is a required current-edition invariant whose drift is
-`CONTRACT_INCONSISTENT`. M0.6 is closed and M0.7 remains unstarted.
+LIVE remains non-runtime and non-reachable in the current edition, and neither readiness nor
+activation can acquire LIVE execution authority while canonical ProductCapabilities disable it.
+Uncoordinated M0.5 registry edits still fail as generic canonical dependency fingerprint drift;
+the presence of a LIVE-capable venue is not itself a contract fault. M0.6 is closed and M0.7
+remains unstarted.
 
 Canonical Instrument structural validation resolves the complete M0.5 AssetReference and decimal
 contracts. Asset references are exact closed objects (`venue_asset_code`,
@@ -514,7 +518,7 @@ Arbitrary in-process Python execution, monkeypatching functions, replacing `__co
 
 After protocol validation, the executor uses the exact graph from the immutable expected protocol, invokes the trusted validator mapped to each name, validates denial membership and planned outcomes, and maps machine-data corruption to `CONTRACT_INCONSISTENT`. `dispatcher()` and `run_direct_call_graph()` are functionally equivalent public paths to this executor; their parity is a functional requirement rather than protection against process-code replacement.
 
-Runtime code-integrity enforcement, if required, must be implemented by an external bootstrap or deployment trust mechanism that validates signed/hash-pinned artifacts before importing the application module. M0.6 does not implement package signing, a bootloader, runtime anti-tamper, or an external verifier. M0.6 is closed, M0.7 is not started, and LIVE remains forbidden and unreachable in the current edition.
+Runtime code-integrity enforcement, if required, must be implemented by an external bootstrap or deployment trust mechanism that validates signed/hash-pinned artifacts before importing the application module. M0.6 does not implement package signing, a bootloader, runtime anti-tamper, or an external verifier. M0.6 is closed, M0.7 is not started, and LIVE execution remains policy-disabled and unreachable in the current edition.
 
 ### Fail-closed decision boundary
 

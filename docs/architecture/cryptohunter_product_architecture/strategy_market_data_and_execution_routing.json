@@ -2730,16 +2730,15 @@
       ]
     }
   },
-  "live_exchange_registry_audit": {
-    "classification": "CURRENT_EDITION_REQUIRED_INVARIANT",
-    "canonical_live_environment_present": true,
-    "enabled_live_exchange_entry_present": false,
-    "canonical_cross_contract_drift_denial": "CONTRACT_INCONSISTENT",
-    "persisted_live_trusted_graph_allowed": false,
-    "execution_authority": false,
-    "endpoint_classes_are_vocabulary_only": true,
-    "runtime": false,
-    "reachable": false
+  "live_execution_authority_policy": {
+    "classification": "TARGET_LIVE_EXECUTION_AUTHORITY_POLICY",
+    "target_architecture_supports_live": true,
+    "current_edition_live_execution_enabled": false,
+    "current_execution_authority_source": "CANONICAL_PRODUCT_CAPABILITY_POLICY",
+    "venue_support_alone_grants_execution_authority": false,
+    "endpoint_class_alone_grants_execution_authority": false,
+    "cross_environment_fallback_allowed": false,
+    "current_edition_runtime_reachable": false
   },
   "canonical_hash_definition_refs": {
     "account_capability_snapshot": {
@@ -3496,8 +3495,7 @@
       "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9",
       "consumers": [
         "resolve_m04_environment_ids.m05_environment_registry",
-        "validate_canonical_enum_binding_manifest.environment_registry",
-        "validate_current_edition_live_exchange_registry_invariant.environment_registry"
+        "validate_canonical_enum_binding_manifest.environment_registry"
       ],
       "authority_classification": "environment authority"
     },
@@ -3587,8 +3585,7 @@
       "expected_result_type": "array",
       "content_fingerprint_sha256": "90622ea826a2b95342155ab27933bc79d15fa3b2390a2086a9031e129641de13",
       "consumers": [
-        "canonical_exchange_entries",
-        "validate_current_edition_live_exchange_registry_invariant.exchange_registry_entries"
+        "canonical_exchange_entries"
       ],
       "authority_classification": "exchange identity authority"
     },
@@ -3698,9 +3695,7 @@
     "resolve_m04_current_product_capability_policy.current_product_edition": "m04_current_product_edition",
     "resolve_m04_current_product_capability_policy.product_capability_policy": "m04_product_capability_policy",
     "resolve_m04_product_capabilities_projection": "m04_product_capability_policy",
-    "resolve_m04_current_product_capability_policy.signed_payload_policy": "m04_signed_payload_policy",
-    "validate_current_edition_live_exchange_registry_invariant.environment_registry": "m05_environment_registry",
-    "validate_current_edition_live_exchange_registry_invariant.exchange_registry_entries": "m05_exchange_registry_entries"
+    "resolve_m04_current_product_capability_policy.signed_payload_policy": "m04_signed_payload_policy"
   },
   "m06_local_authority_policy_manifest": {
     "endpoint_class_registry": {
