@@ -87,3 +87,16 @@ M0.7 definiuje zamknięty kontrakt commands, immutable events, order lifecycle, 
 12. M0.12 — audit, observability, alerts and updater
 13. M0.13 — final architecture contract and validators
 14. M0.14 — closing audit
+
+## Status M0.8 — closed
+
+M0.8 closes the target architecture for an immutable, atomic, per-asset-balanced `LedgerEntry`
+journal and rebuildable Portfolio balance, capital, SPOT FIFO position/P&L, valuation/NAV, and
+reconciliation projections. It preserves venue-scoped asset identity, separates capital and fees
+from trading P&L, and uses one isolated accounting core for PAPER, TESTNET, and LIVE without enabling
+LIVE execution or implementing persistence, runtime execution, or M0.9 risk.
+
+Artifacts:
+
+- [`ledger_portfolio_capital_and_pnl.json`](ledger_portfolio_capital_and_pnl.json)
+- [`ledger_portfolio_capital_and_pnl.md`](ledger_portfolio_capital_and_pnl.md)
