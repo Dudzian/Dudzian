@@ -290,6 +290,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._active_stream: Iterable[StreamBatch] | None = None
         self._async_task: asyncio.Task[None] | None = None
         self._disabled = False
         self._buffers: dict[str, deque[MarketSnapshot]] = {}
@@ -315,13 +316,35 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._thread = threading.Thread(
             target=self._run_loop, name=_PIPELINE_THREAD_NAME, daemon=True
         )
-        self._thread.start()
         self._register_instance()
+        try:
+            self._thread.start()
+        except BaseException:
+            self._thread = None
+            self._unregister_instance()
+            raise
 
-    def stop(self) -> None:
+    def stop(self, *, timeout: float = 5.0) -> None:
         self._stop_event.set()
+        with self._lock:
+            stream = self._active_stream
+        if stream is not None:
+            closer = getattr(stream, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:
+                    self._logger.debug(
+                        "Nie udało się zamknąć aktywnego streamu strategii",
+                        exc_info=True,
+                    )
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5.0)
+            self._thread.join(timeout=max(0.0, float(timeout)))
+            if self._thread.is_alive():
+                raise TimeoutError(
+                    "StreamingStrategyFeed.close_all_active timeout: "
+                    f"worker thread still alive after {timeout:.1f}s"
+                )
         self._thread = None
         task = self._async_task
         if task and not task.done():
@@ -440,24 +463,39 @@ class StreamingStrategyFeed(StrategyDataFeed):
         return tuple(collected)
 
     def _run_loop(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                stream = self._stream_factory()
-                consume_stream(
-                    stream,
-                    handle_batch=self.ingest_batch,
-                    heartbeat_interval=self._heartbeat_interval,
-                    idle_timeout=self._idle_timeout,
-                    on_heartbeat=self._handle_heartbeat,
-                    stop_condition=self._stop_event.is_set,
-                )
-            except TimeoutError:
-                self._logger.warning("Brak nowych danych w streamie strategii przez dłuższy czas")
-            except Exception:  # pragma: no cover
-                self._logger.exception("Błąd podczas przetwarzania streamu strategii")
-            if self._stop_event.is_set():
-                break
-            time.sleep(self._restart_delay)
+        try:
+            while not self._stop_event.is_set():
+                stream: Iterable[StreamBatch] | None = None
+                try:
+                    candidate = self._stream_factory()
+                    if callable(getattr(candidate, "__aiter__", None)):
+                        raise TypeError("Synchroniczny feed wymaga Iterable[StreamBatch]")
+                    stream = candidate  # type: ignore[assignment]
+                    with self._lock:
+                        self._active_stream = stream
+                    assert stream is not None
+                    consume_stream(
+                        stream,
+                        handle_batch=self.ingest_batch,
+                        heartbeat_interval=self._heartbeat_interval,
+                        idle_timeout=self._idle_timeout,
+                        on_heartbeat=self._handle_heartbeat,
+                        stop_condition=self._stop_event.is_set,
+                    )
+                except TimeoutError:
+                    self._logger.warning(
+                        "Brak nowych danych w streamie strategii przez dłuższy czas"
+                    )
+                except Exception:  # pragma: no cover
+                    self._logger.exception("Błąd podczas przetwarzania streamu strategii")
+                finally:
+                    with self._lock:
+                        if self._active_stream is stream:
+                            self._active_stream = None
+                if self._stop_event.wait(self._restart_delay):
+                    break
+        finally:
+            self._unregister_instance()
 
     async def _run_loop_async(self) -> None:
         try:
@@ -518,12 +556,14 @@ class StreamingStrategyFeed(StrategyDataFeed):
                 pass
 
     @classmethod
-    def close_all_active(cls) -> None:
+    def close_all_active(cls, *, timeout: float = 5.0) -> None:
         with cls._active_lock:
             active = list(cls._active_instances)
         for pipeline in active:
             try:
-                pipeline.stop()
+                pipeline.stop(timeout=timeout)
+            except TimeoutError:
+                raise
             except Exception:  # pragma: no cover
                 _LOGGER.debug("Nie udało się zamknąć StreamingStrategyFeed", exc_info=True)
 

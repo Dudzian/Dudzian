@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import json
 import asyncio
+import threading
 import time
 from types import MethodType, SimpleNamespace
 from contextlib import suppress
@@ -425,6 +426,77 @@ def test_streaming_strategy_feed_stop_async_unregisters_when_no_task() -> None:
 
     active = list(data_pipeline_module.StreamingStrategyFeed._active_instances)
     assert feed not in active
+
+
+@pytest.mark.parametrize(
+    "feed_class",
+    [StreamingStrategyFeed, data_pipeline_module.StreamingStrategyFeed],
+)
+def test_close_all_active_interrupts_restart_delay(feed_class) -> None:
+    exhausted = threading.Event()
+
+    class _ExhaustedStream:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            exhausted.set()
+            raise StopIteration
+
+    feed = feed_class(
+        history_feed=_DummyHistoryFeed(),
+        stream_factory=_ExhaustedStream,
+        symbols_map={"trend-d1": ("BTC/USDT",)},
+        restart_delay=5.0,
+    )
+
+    feed.start()
+    assert exhausted.wait(timeout=1.0)
+
+    worker = feed._thread
+    feed_class.close_all_active(timeout=0.2)
+    feed_class.close_all_active(timeout=0.2)
+
+    assert worker is not None and not worker.is_alive()
+    assert feed._thread is None
+    assert feed not in feed_class._active_instances
+
+
+@pytest.mark.parametrize(
+    "feed_class",
+    [StreamingStrategyFeed, data_pipeline_module.StreamingStrategyFeed],
+)
+def test_stream_close_error_does_not_skip_worker_cleanup(feed_class) -> None:
+    entered = threading.Event()
+    released = threading.Event()
+
+    class _FailingCloseStream:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            entered.set()
+            released.wait(timeout=1.0)
+            raise StopIteration
+
+        def close(self) -> None:
+            released.set()
+            raise OSError("close failed")
+
+    feed = feed_class(
+        history_feed=_DummyHistoryFeed(),
+        stream_factory=_FailingCloseStream,
+        symbols_map={"trend-d1": ("BTC/USDT",)},
+    )
+    feed.start()
+    assert entered.wait(timeout=1.0)
+    worker = feed._thread
+
+    feed_class.close_all_active(timeout=0.2)
+
+    assert worker is not None and not worker.is_alive()
+    assert feed._thread is None
+    assert feed not in feed_class._active_instances
 
 
 def test_decision_aware_sink_filters_signals() -> None:
