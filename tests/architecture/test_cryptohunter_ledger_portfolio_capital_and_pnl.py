@@ -13,7 +13,7 @@ from decimal import localcontext
 from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping, cast
+from typing import Any, Callable, Mapping, cast
 
 import pytest
 
@@ -253,14 +253,20 @@ EXPECTED_PROTOCOLS = freeze(
                 "failure": "fail closed",
             },
             "capital_reservation": {
-                "authority": "exact-economic AuditEvent",
+                "authority": "accepted exact-economic M0.8 AuditEvent-derived accounting fact plus "
+                "nominal sealed accepted M0.7 SUBMIT_ORDER command context; exact command/order/"
+                "scope/account binding; reservation asset/quantity remain M0.8 economics; not M0.9 "
+                "risk authority",
                 "identity": "audit_event_id",
                 "roles": ["OWNED_AVAILABLE", "OWNED_RESERVED"],
                 "effects": "available to reserved only",
                 "failure": "fail closed",
             },
             "capital_release": {
-                "authority": "exact-economic AuditEvent",
+                "authority": "accepted exact-economic M0.8 AuditEvent-derived accounting fact plus "
+                "nominal sealed accepted M0.7 terminal lifecycle/event context; exact order/scope/"
+                "account and terminal-state mapping; legal predecessor and contiguous version "
+                "proven upstream",
                 "identity": "audit_event_id",
                 "roles": ["OWNED_AVAILABLE", "OWNED_RESERVED"],
                 "effects": "reserved to available only",
@@ -276,10 +282,13 @@ EXPECTED_PROTOCOLS = freeze(
                 "failure": "UNSUPPORTED_ACCOUNTING_SEMANTICS",
             },
             "reconciliation_correction": {
-                "authority": "explicit exact-economic AuditEvent with reason and provenance",
+                "authority": "accepted exact-economic AuditEvent plus exact referenced accepted target batch "
+                "and target-aware inverse validation",
                 "identity": "audit_event_id",
-                "roles": ["OWNED_AVAILABLE", "RECONCILIATION_CLEARING"],
-                "effects": "new balanced compensation; no history mutation",
+                "roles": "inherited exactly from referenced accepted target batch; no standalone "
+                "role authority",
+                "effects": "exact direction-inverse compensation only; target-aware batch "
+                "validation mandatory; no history mutation",
                 "failure": "fail closed",
             },
         },
@@ -307,8 +316,10 @@ EXPECTED_PROTOCOLS = freeze(
             "non-negative after every accepted batch",
         },
         "reservation_protocol": {
-            "binding": "exact order_id plus canonical M0.7 SUBMIT_ORDER command_id; command_id "
-            "is idempotency identity",
+            "binding": "nominal M07PrevalidatedAcceptedCommandContext proving exact canonical "
+            "accepted SUBMIT_ORDER request, command fingerprint/membership and "
+            "command/order/scope/account/instrument/route identity; reservation asset/quantity are "
+            "separate M0.8 economics; command_id is idempotency identity",
             "effect": "available to reserved in exact scope; no equity/P&L",
             "fill_consumption": "matching Fill.order_id consumes exact reserved spend "
             "atomically before available; partial Fill leaves remainder",
@@ -316,6 +327,9 @@ EXPECTED_PROTOCOLS = freeze(
             "replay": "same command economics replays across a new audit_event_id; changed "
             "economics conflicts",
             "boundary": "accounting state only; no M0.9 approval",
+            "terminal_evidence": "nominal M07PrevalidatedAcceptedTerminalOrderEventContext proving "
+            "exact accepted M0.7 event envelope/fingerprint/version/history, event-to-terminal "
+            "lifecycle target and exact order/scope/account/instrument/route",
         },
         "asset_identity": {
             "key": "exact M0.5 AssetReference object including venue_asset_code, "
@@ -347,6 +361,16 @@ EXPECTED_PROTOCOLS = freeze(
             "flip",
             "late_fact": "append at a new sequence; never rewrite history",
             "same_effective_time": "append_sequence then posting_index",
+            "lot_fields": [
+                "quantity",
+                "unit_cost_basis",
+                "basis_valuation_unit",
+                "source_identity",
+                "append_sequence",
+                "posting_index",
+            ],
+            "cross_unit": "explicit trusted historical conversion from basis_valuation_unit to Fill "
+            "quote/P&L unit; otherwise preserve exact valuation failure",
         },
         "pnl_model": {
             "gross_realized": "FIFO disposal proceeds minus exact consumed cost in valuation asset",
@@ -441,6 +465,20 @@ EXPECTED_PROTOCOLS = freeze(
             "drift": "RECONCILIATION_DRIFT; zero mutation",
             "correction": "exact reversal of existing accepted source/batch only; inverse "
             "postings derived; generic INCREASE/DECREASE forbidden",
+            "correction_targets": [
+                "fill",
+                "deposit",
+                "withdrawal",
+                "internal_transfer",
+                "capital_reservation",
+                "capital_release",
+            ],
+            "target_idempotency": "exact target tuple may be effectively reversed once; same "
+            "correction identity replays, a different correction identity conflicts without mutation",
+            "target_aware_validation": "mandatory precommit correction validation before journal/"
+            "maps mutation; correction scope exact-matches every target entry; same order/"
+            "cardinality/workspace/portfolio/environment/account/asset/role/posting_role/quantity "
+            "and opposite direction",
             "observed_fact_fields": [
                 "workspace_id",
                 "portfolio_id",
@@ -568,6 +606,31 @@ EXPECTED_PROTOCOLS = freeze(
                 "json_pointer": "/fill_contract",
                 "content_fingerprint_sha256": "1846393d14f684fc2462eb12b5d92f9c18cfa8a0163b2a2f41fe88c913324d1b",
             },
+            {
+                "contract": "commands_events_order_lifecycle_and_idempotency.json",
+                "json_pointer": "/command_registry/SUBMIT_ORDER",
+                "content_fingerprint_sha256": "864bc27bf55228d08b6592f2042a3f9a1f447eae661382bde0b380602369d748",
+            },
+            {
+                "contract": "commands_events_order_lifecycle_and_idempotency.json",
+                "json_pointer": "/event_contract",
+                "content_fingerprint_sha256": "c63d514a4546161798de2f7f90441821cd71653fba433c3577c6d7b630e4b6b2",
+            },
+            {
+                "contract": "commands_events_order_lifecycle_and_idempotency.json",
+                "json_pointer": "/order_lifecycle",
+                "content_fingerprint_sha256": "48a514419aaa0863078e69ffc50c3acd4b37a06d873d257275fb68874cc840dd",
+            },
+            {
+                "contract": "commands_events_order_lifecycle_and_idempotency.json",
+                "json_pointer": "/idempotency_contract",
+                "content_fingerprint_sha256": "43ba37d976eb5948970d289cc71cd06da82cb90803f9e5f61cc84109f00e9a62",
+            },
+            {
+                "contract": "commands_events_order_lifecycle_and_idempotency.json",
+                "json_pointer": "/closed_request_policy",
+                "content_fingerprint_sha256": "f3a523b01cbce2bafabeaad261777e3a97fc4f60db751deee0e77cb912f93e7c",
+            },
         ],
         "forbidden": [
             "float",
@@ -672,13 +735,10 @@ EXPECTED_PROTOCOLS = freeze(
                     "order_id",
                     "command_id",
                 ],
-                "constraints": "order_id and canonical "
-                "SUBMIT_ORDER "
-                "command_id bind exact "
-                "scope/asset/quantity; "
-                "command identity "
-                "dedupes even across "
-                "audit_event_id",
+                "constraints": "accepted M0.7 SUBMIT_ORDER binds command/order/scope/account/"
+                "instrument/route and idempotency_key == command_id; separately accepted M0.8 fact "
+                "supplies exact reservation asset_reference/quantity; M0.7 does not supply or "
+                "approve reservation economics; not M0.9 risk approval",
             },
             "capital_release": {
                 "exact_fields": [
@@ -690,14 +750,13 @@ EXPECTED_PROTOCOLS = freeze(
                     "effective_at_utc",
                     "provenance",
                     "source_fingerprint_sha256",
+                    "exchange_account_id",
                     "order_id",
                     "terminal_state",
                 ],
-                "constraints": "terminal "
-                "REJECTED/CANCELLED/EXPIRED/FILLED/REPLACED "
-                "fact releases exact "
-                "remaining order "
-                "reservation once",
+                "constraints": "accepted exact M0.7 terminal event context and event "
+                "fingerprint/version/history bind order and full scope including account; releases "
+                "exact remainder once",
             },
             "reconciliation_correction": {
                 "exact_fields": [
@@ -881,6 +940,9 @@ EXPECTED_PROTOCOLS = freeze(
             ],
             "mutable_cache": "forbidden as authority; cache removal/change cannot affect "
             "projection",
+            "expected_batch": "rederive source fingerprint, rule, contiguous postings and complete "
+            "batch from canonical immutable source context plus preceding reconstructed accounting "
+            "state; compare exact entries and recomputed batch fingerprint",
             "inventory_effects": {
                 "deposit": "adds FIFO lot with exact accepted effective-time unit basis",
                 "withdrawal": "consumes FIFO basis; no trading P&L",
@@ -889,9 +951,8 @@ EXPECTED_PROTOCOLS = freeze(
                 "unchanged",
                 "fill_fee": "consumes exact fee-asset inventory basis; missing "
                 "inventory fails closed",
-                "reconciliation_reversal": "removes target source effect through "
-                "exact compensation; no generic "
-                "adjustment",
+                "reconciliation_reversal": "removes exact accepted target source effect through "
+                "direction-inverse compensation only",
             },
         },
         "non_fill_authority": {
@@ -899,6 +960,52 @@ EXPECTED_PROTOCOLS = freeze(
             "membership": "Core-owned accepted projection maps audit_event_id to exact "
             "source_type, fingerprint and scope",
             "self_hash": "integrity only; raw/self-hashed facts rejected",
+        },
+        "m07_authority_boundary": {
+            "model": "direct field interpretation with exact dependency attestation",
+            "submit_order_consumed_fields": [
+                "command_id",
+                "operation_type",
+                "authority_context_id",
+                "environment",
+                "workspace_id",
+                "portfolio_id",
+                "exchange_account_id",
+                "strategy_instance_id",
+                "source_type",
+                "instrument_id",
+                "execution_route_id",
+                "correlation_id",
+                "causation_id",
+                "idempotency_key",
+                "order_intent_id",
+                "order_id",
+                "side",
+                "order_type",
+                "quantity",
+                "limit_price",
+                "time_in_force",
+                "expire_at_utc",
+            ],
+            "reservation_economics": "asset_reference and reservation quantity belong only to M0.8 "
+            "AccountingEconomicFact; M0.7 does not provide or approve them; M0.8 reservation is "
+            "accounting state, not M0.9 risk authority",
+            "terminal_event_mapping": {
+                "ORDER_REJECTED": "REJECTED",
+                "ORDER_FILLED": "FILLED",
+                "ORDER_CANCEL_CONFIRMED": "CANCELLED",
+                "ORDER_REPLACE_CONFIRMED": "REPLACED",
+                "ORDER_EXPIRED": "EXPIRED",
+            },
+            "accepted_history": "reservation retains exact accepted AccountingEconomicFact plus "
+            "sealed nominal accepted SUBMIT_ORDER context; release retains exact fact plus sealed "
+            "M0.7 lifecycle-ingestion proof binding event identity/fingerprint/order/version/type/"
+            "terminal target/legal predecessor/previous contiguous version; rebuild rejects missing "
+            "evidence",
+            "terminal_event_attestation": "exact M0.7 envelope schemas including nullable "
+            "command_id/causation_id and non-bool positive aggregate_version; exact terminal "
+            "safe_payload field/value schemas; canonical event fingerprint; sealed accepted "
+            "lifecycle proof with legal predecessor and contiguous previous version",
         },
     }
 )
@@ -1176,6 +1283,49 @@ def validate_ledger_entry(value: Mapping[str, Any], previous_sequence: int) -> s
     return "VALID"
 
 
+def validate_correction_batch(
+    correction: AccountingEconomicFact,
+    target_entries: tuple[LedgerEntry, ...],
+    correction_entries: tuple[LedgerEntry, ...],
+) -> str:
+    try:
+        payload = correction.payload
+        if payload["source_type"] != "reconciliation_correction" or (
+            payload["target_source_type"],
+            payload["target_accounting_source_identity"],
+            payload["target_source_fingerprint_sha256"],
+            payload["target_batch_fingerprint_sha256"],
+        ) != (
+            target_entries[0].source_type,
+            target_entries[0].accounting_source_identity,
+            target_entries[0].accounting_source_fingerprint_sha256,
+            target_entries[0].batch_fingerprint_sha256,
+        ):
+            raise ValueError
+        if len(target_entries) != len(correction_entries) or not target_entries:
+            raise ValueError
+        scope = (payload["workspace_id"], payload["portfolio_id"], payload["environment"])
+        for index, (target, inverse) in enumerate(
+            zip(target_entries, correction_entries, strict=True)
+        ):
+            if (
+                (target.workspace_id, target.portfolio_id, target.environment) != scope
+                or (inverse.workspace_id, inverse.portfolio_id, inverse.environment) != scope
+                or inverse.source_type != "reconciliation_correction"
+                or inverse.posting_index != index
+                or inverse.exchange_account_id != target.exchange_account_id
+                or inverse.asset_reference != target.asset_reference
+                or inverse.account_role != target.account_role
+                or inverse.posting_role != target.posting_role
+                or inverse.quantity != target.quantity
+                or inverse.direction != ("CREDIT" if target.direction == "DEBIT" else "DEBIT")
+            ):
+                raise ValueError
+    except (IndexError, KeyError, TypeError, ValueError):
+        return "MALFORMED_ACCOUNTING_FACT"
+    return "VALID"
+
+
 @dataclass(frozen=True)
 class CoreAcceptedFillProjection:
     order_id: str
@@ -1278,6 +1428,11 @@ def attest_m07_accepted_fill(
 class AccountingEconomicFact:
     payload: Mapping[str, Any]
     source_fingerprint: str
+    upstream_context: (
+        M07PrevalidatedAcceptedCommandContext
+        | M07PrevalidatedAcceptedTerminalOrderEventContext
+        | None
+    ) = None
 
 
 @dataclass(frozen=True)
@@ -1285,21 +1440,315 @@ class CoreAcceptedAccountingFactProjection:
     accepted: Mapping[str, tuple[str, str, str, str, str]]
 
 
-def accepted_accounting_authority(
-    payload: Mapping[str, Any],
-) -> CoreAcceptedAccountingFactProjection:
-    scope = (
-        payload["source_type"],
-        payload["source_fingerprint_sha256"],
-        payload["workspace_id"],
-        payload["portfolio_id"],
-        payload["environment"],
+@dataclass(frozen=True)
+class CoreAcceptedCommandProjection:
+    accepted: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class M07PrevalidatedAcceptedCommandContext:
+    request: Mapping[str, Any]
+    command_fingerprint: str
+    authority: CoreAcceptedCommandProjection
+    acceptance_seal: object
+
+
+@dataclass(frozen=True)
+class CoreAcceptedOrderEventProjection:
+    accepted: Mapping[str, AcceptedTerminalLifecycleProof]
+
+
+@dataclass(frozen=True)
+class AcceptedTerminalLifecycleProof:
+    event_fingerprint: str
+    order_id: str
+    aggregate_version: int
+    event_type: str
+    terminal_state: str
+    predecessor_state: str
+    previous_aggregate_version: int
+    lifecycle_validation_seal: object
+
+
+@dataclass(frozen=True)
+class M07PrevalidatedAcceptedTerminalOrderEventContext:
+    event: Mapping[str, Any]
+    terminal_state: str
+    authority: CoreAcceptedOrderEventProjection
+    acceptance_seal: object
+
+
+_M07_CORE_ACCEPTANCE_SEAL = object()
+_M07_LIFECYCLE_VALIDATION_SEAL = object()
+
+
+M07_SUBMIT_ORDER_FIELDS = frozenset(
+    {
+        "command_id",
+        "operation_type",
+        "authority_context_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "strategy_instance_id",
+        "source_type",
+        "instrument_id",
+        "execution_route_id",
+        "correlation_id",
+        "causation_id",
+        "idempotency_key",
+        "order_intent_id",
+        "order_id",
+        "side",
+        "order_type",
+        "quantity",
+        "limit_price",
+        "time_in_force",
+        "expire_at_utc",
+    }
+)
+M07_EVENT_FIELDS = frozenset(
+    {
+        "audit_event_id",
+        "event_type",
+        "order_id",
+        "aggregate_version",
+        "correlation_id",
+        "causation_id",
+        "command_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "execution_route_id",
+        "occurred_at_utc",
+        "safe_payload",
+        "event_fingerprint_sha256",
+    }
+)
+M07_TERMINAL_EVENT_TARGETS = {
+    "ORDER_REJECTED": "REJECTED",
+    "ORDER_FILLED": "FILLED",
+    "ORDER_CANCEL_CONFIRMED": "CANCELLED",
+    "ORDER_REPLACE_CONFIRMED": "REPLACED",
+    "ORDER_EXPIRED": "EXPIRED",
+}
+
+
+def m07_command_fingerprint(request: Mapping[str, Any]) -> str:
+    return digest({key: value for key, value in request.items() if key != "correlation_id"})
+
+
+def attest_m07_accepted_submit_order(
+    request: dict[str, Any], authority: CoreAcceptedCommandProjection
+) -> M07PrevalidatedAcceptedCommandContext:
+    if set(request) != M07_SUBMIT_ORDER_FIELDS or request["operation_type"] != "SUBMIT_ORDER":
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    for field, prefix in {
+        "command_id": "cmd",
+        "authority_context_id": "authctx",
+        "workspace_id": "ws",
+        "portfolio_id": "port",
+        "exchange_account_id": "xacc",
+        "instrument_id": "instr",
+        "execution_route_id": "xroute",
+        "correlation_id": "corr",
+        "idempotency_key": "cmd",
+        "order_intent_id": "oint",
+        "order_id": "ord",
+    }.items():
+        if not valid_id(request[field], prefix):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    if request["environment"] not in {"PAPER", "TESTNET", "LIVE"}:
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    if request["idempotency_key"] != request["command_id"]:
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    decimal(request["quantity"])
+    if (
+        request["side"] not in {"BUY", "SELL"}
+        or request["order_type"] not in {"MARKET", "LIMIT"}
+        or request["time_in_force"] not in {"GTC", "IOC", "FOK", "GTD"}
+        or request["source_type"] not in {"STRATEGY_INSTANCE", "OPERATOR", "SYSTEM_RECONCILIATION"}
+        or (request["order_type"] == "MARKET") != (request["limit_price"] is None)
+        or (request["time_in_force"] == "GTD") != (request["expire_at_utc"] is not None)
+        or (request["source_type"] == "STRATEGY_INSTANCE")
+        != (request["strategy_instance_id"] is not None)
+    ):
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    if request["limit_price"] is not None:
+        decimal(request["limit_price"])
+    if request["expire_at_utc"] is not None:
+        timestamp(request["expire_at_utc"])
+    for field, prefix in (("strategy_instance_id", "sinst"), ("causation_id", "cause")):
+        if request[field] is not None and not valid_id(request[field], prefix):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    fingerprint = m07_command_fingerprint(request)
+    if authority.accepted.get(request["command_id"]) != fingerprint:
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    return M07PrevalidatedAcceptedCommandContext(
+        freeze(request), fingerprint, authority, _M07_CORE_ACCEPTANCE_SEAL
     )
-    return CoreAcceptedAccountingFactProjection(freeze({payload["audit_event_id"]: scope}))
+
+
+def m07_event_fingerprint(event: Mapping[str, Any]) -> str:
+    return digest({key: value for key, value in event.items() if key != "event_fingerprint_sha256"})
+
+
+def accepted_terminal_lifecycle_proof(
+    event: Mapping[str, Any], predecessor_state: str
+) -> AcceptedTerminalLifecycleProof:
+    """Test fixture for the opaque result of prior canonical M0.7 lifecycle ingestion."""
+    return AcceptedTerminalLifecycleProof(
+        event["event_fingerprint_sha256"],
+        event["order_id"],
+        event["aggregate_version"],
+        event["event_type"],
+        M07_TERMINAL_EVENT_TARGETS[event["event_type"]],
+        predecessor_state,
+        event["aggregate_version"] - 1,
+        _M07_LIFECYCLE_VALIDATION_SEAL,
+    )
+
+
+def attest_m07_accepted_terminal_event(
+    event: dict[str, Any], authority: CoreAcceptedOrderEventProjection
+) -> M07PrevalidatedAcceptedTerminalOrderEventContext:
+    if set(event) != M07_EVENT_FIELDS or event["event_type"] not in M07_TERMINAL_EVENT_TARGETS:
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    expected_payload_fields = {
+        "ORDER_REJECTED": {"reason_code"},
+        "ORDER_FILLED": {"fill_id", "venue_trade_id", "cumulative_executed_quantity"},
+        "ORDER_CANCEL_CONFIRMED": {"venue_order_id"},
+        "ORDER_REPLACE_CONFIRMED": {"replacement_order_id", "venue_order_id"},
+        "ORDER_EXPIRED": {"venue_order_id"},
+    }
+    if (
+        not isinstance(event["safe_payload"], Mapping)
+        or set(event["safe_payload"]) != (expected_payload_fields[event["event_type"]])
+    ):
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    payload = event["safe_payload"]
+    event_type = event["event_type"]
+    if event_type == "ORDER_REJECTED":
+        if type(payload["reason_code"]) is not str or not payload["reason_code"]:
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    elif event_type == "ORDER_FILLED":
+        if (
+            not valid_id(payload["fill_id"], "fill")
+            or type(payload["venue_trade_id"]) is not str
+            or not payload["venue_trade_id"]
+        ):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+        if (
+            type(payload["cumulative_executed_quantity"]) is not str
+            or not DECIMAL_RE.fullmatch(payload["cumulative_executed_quantity"])
+            or payload["cumulative_executed_quantity"] == "0"
+        ):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    elif event_type == "ORDER_REPLACE_CONFIRMED":
+        if not valid_id(payload["replacement_order_id"], "ord"):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+        if type(payload["venue_order_id"]) is not str or not payload["venue_order_id"]:
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    elif type(payload["venue_order_id"]) is not str or not payload["venue_order_id"]:
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    if event["event_fingerprint_sha256"] != m07_event_fingerprint(event):
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    Scope(
+        event["workspace_id"],
+        event["portfolio_id"],
+        event["environment"],
+        event["exchange_account_id"],
+    ).validate()
+    if type(event["aggregate_version"]) is not int or event["aggregate_version"] <= 0:
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    for field, prefix in {
+        "audit_event_id": "evt",
+        "order_id": "ord",
+        "correlation_id": "corr",
+        "instrument_id": "instr",
+        "execution_route_id": "xroute",
+    }.items():
+        if not valid_id(event[field], prefix):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    for field, prefix in (("causation_id", "cause"), ("command_id", "cmd")):
+        if event[field] is not None and not valid_id(event[field], prefix):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    if type(event["exchange_id"]) is not str or not event["exchange_id"]:
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    proof = authority.accepted.get(event["audit_event_id"])
+    legal_predecessors = {
+        "ORDER_REJECTED": {"SUBMISSION_PENDING", "RECONCILIATION_REQUIRED"},
+        "ORDER_FILLED": {
+            "SUBMISSION_PENDING",
+            "ACKNOWLEDGED",
+            "PARTIALLY_FILLED",
+            "CANCEL_PENDING",
+            "REPLACE_PENDING",
+            "RECONCILIATION_REQUIRED",
+        },
+        "ORDER_CANCEL_CONFIRMED": {"CANCEL_PENDING", "RECONCILIATION_REQUIRED"},
+        "ORDER_REPLACE_CONFIRMED": {"REPLACE_PENDING", "RECONCILIATION_REQUIRED"},
+        "ORDER_EXPIRED": {
+            "SUBMISSION_PENDING",
+            "ACKNOWLEDGED",
+            "PARTIALLY_FILLED",
+            "CANCEL_PENDING",
+            "REPLACE_PENDING",
+            "RECONCILIATION_REQUIRED",
+        },
+    }
+    if (
+        not isinstance(proof, AcceptedTerminalLifecycleProof)
+        or proof.lifecycle_validation_seal is not _M07_LIFECYCLE_VALIDATION_SEAL
+        or proof.event_fingerprint != event["event_fingerprint_sha256"]
+        or proof.order_id != event["order_id"]
+        or proof.aggregate_version != event["aggregate_version"]
+        or proof.event_type != event_type
+        or proof.terminal_state != M07_TERMINAL_EVENT_TARGETS[event_type]
+        or proof.predecessor_state not in legal_predecessors[event_type]
+        or proof.previous_aggregate_version + 1 != event["aggregate_version"]
+    ):
+        raise ValueError("TRUSTED_CONTEXT_FAILURE")
+    timestamp(event["occurred_at_utc"])
+    return M07PrevalidatedAcceptedTerminalOrderEventContext(
+        freeze(event),
+        M07_TERMINAL_EVENT_TARGETS[event["event_type"]],
+        authority,
+        _M07_CORE_ACCEPTANCE_SEAL,
+    )
+
+
+def preexisting_accounting_projection(
+    accepted_records: tuple[Mapping[str, Any], ...],
+) -> CoreAcceptedAccountingFactProjection:
+    return CoreAcceptedAccountingFactProjection(
+        freeze(
+            {
+                payload["audit_event_id"]: (
+                    payload["source_type"],
+                    payload["source_fingerprint_sha256"],
+                    payload["workspace_id"],
+                    payload["portfolio_id"],
+                    payload["environment"],
+                )
+                for payload in accepted_records
+            }
+        )
+    )
 
 
 def economic_fact(
-    payload: dict[str, Any], authority: CoreAcceptedAccountingFactProjection | None = None
+    payload: dict[str, Any],
+    authority: CoreAcceptedAccountingFactProjection | None = None,
+    upstream_context: (
+        M07PrevalidatedAcceptedCommandContext
+        | M07PrevalidatedAcceptedTerminalOrderEventContext
+        | None
+    ) = None,
 ) -> AccountingEconomicFact:
     source = payload.get("source_type")
     registry = EXPECTED_PROTOCOLS["accounting_economic_fact_schema_registry"]
@@ -1360,6 +1809,20 @@ def economic_fact(
             raise ValueError("TRUSTED_CONTEXT_FAILURE")
         AssetReference.trusted(payload["asset_reference"])
         decimal(payload["quantity"])
+        if not isinstance(upstream_context, M07PrevalidatedAcceptedCommandContext) or (
+            upstream_context.acceptance_seal is not _M07_CORE_ACCEPTANCE_SEAL
+        ):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+        request = upstream_context.request
+        if (
+            request["command_id"] != payload["command_id"]
+            or request["order_id"] != payload["order_id"]
+            or request["workspace_id"] != payload["workspace_id"]
+            or request["portfolio_id"] != payload["portfolio_id"]
+            or request["environment"] != payload["environment"]
+            or request["exchange_account_id"] != payload["exchange_account_id"]
+        ):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
     elif source == "capital_release":
         if not valid_id(payload["order_id"], "ord") or payload["terminal_state"] not in {
             "REJECTED",
@@ -1368,6 +1831,21 @@ def economic_fact(
             "EXPIRED",
             "REPLACED",
         }:
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+        if not isinstance(upstream_context, M07PrevalidatedAcceptedTerminalOrderEventContext) or (
+            upstream_context.acceptance_seal is not _M07_CORE_ACCEPTANCE_SEAL
+        ):
+            raise ValueError("TRUSTED_CONTEXT_FAILURE")
+        event = upstream_context.event
+        if (
+            event["audit_event_id"] != payload["audit_event_id"]
+            or event["order_id"] != payload["order_id"]
+            or upstream_context.terminal_state != payload["terminal_state"]
+            or event["workspace_id"] != payload["workspace_id"]
+            or event["portfolio_id"] != payload["portfolio_id"]
+            or event["environment"] != payload["environment"]
+            or event["exchange_account_id"] != payload["exchange_account_id"]
+        ):
             raise ValueError("TRUSTED_CONTEXT_FAILURE")
     elif source == "reconciliation_correction":
         if type(payload["reason"]) is not str or not payload["reason"]:
@@ -1396,7 +1874,7 @@ def economic_fact(
             or source_quantity != destination_quantity
         ):
             raise ValueError("UNSUPPORTED_ACCOUNTING_SEMANTICS")
-    return AccountingEconomicFact(freeze(payload), supplied)
+    return AccountingEconomicFact(freeze(payload), supplied, upstream_context)
 
 
 @dataclass
@@ -1420,6 +1898,22 @@ class AcceptedSourceRecord:
     context: Any
 
 
+@dataclass(frozen=True)
+class AcceptedFillAccountingContext:
+    fill_context: M07PrevalidatedAcceptedFillContext
+    historical_valuation: PrevalidatedValuationContext | None
+
+
+@dataclass(frozen=True)
+class InventoryLot:
+    quantity: Fraction
+    unit_cost_basis: Fraction
+    basis_valuation_unit: AssetReference
+    source_identity: str
+    append_sequence: int
+    posting_index: int
+
+
 @dataclass
 class Engine:
     entries: list[LedgerEntry] = field(default_factory=list)
@@ -1431,13 +1925,54 @@ class Engine:
     )
     reservations: dict[str, ReservationState] = field(default_factory=dict)
     reservation_commands: dict[str, tuple[str, str]] = field(default_factory=dict)
+    correction_candidate_hook: (
+        Callable[[tuple[LedgerEntry, ...]], tuple[LedgerEntry, ...]] | None
+    ) = None
 
     @classmethod
     def rebuild(
         cls,
         entries: list[LedgerEntry],
         source_history: Mapping[tuple[str, str], AcceptedSourceRecord],
+        *,
+        _validate: bool = True,
     ) -> Engine:
+        if _validate:
+            canonical = cls()
+            for key, record in sorted(
+                source_history.items(), key=lambda item: item[1].first_sequence
+            ):
+                if key != (record.source_type, record.identity):
+                    raise ValueError("CONTRACT_INCONSISTENT")
+                outcome = (
+                    canonical.account_trusted_fill(
+                        cast(AcceptedFillAccountingContext, record.context).fill_context,
+                        cast(AcceptedFillAccountingContext, record.context).historical_valuation,
+                    )
+                    if record.source_type == "fill"
+                    else canonical.account_fact(record.context)
+                )
+                if outcome != "ACCEPTED":
+                    raise ValueError("CONTRACT_INCONSISTENT")
+                derived = canonical.accepted[(record.source_type, record.identity, RULE)][2]
+                presented = tuple(
+                    entry
+                    for entry in entries
+                    if entry.source_type == record.source_type
+                    and entry.accounting_source_identity == record.identity
+                )
+                if (
+                    record.fingerprint
+                    != canonical.accepted[(record.source_type, record.identity, RULE)][0]
+                    or record.batch_fingerprint
+                    != canonical.accepted[(record.source_type, record.identity, RULE)][1]
+                    or record.first_sequence != derived[0].append_sequence
+                    or presented != derived
+                ):
+                    raise ValueError("CONTRACT_INCONSISTENT")
+            if len(entries) != len(canonical.entries):
+                raise ValueError("CONTRACT_INCONSISTENT")
+            return canonical
         rebuilt = cls(entries=list(entries), accepted_source_history=dict(source_history))
         for record in source_history.values():
             journal = tuple(
@@ -1451,7 +1986,17 @@ class Engine:
                 record.batch_fingerprint,
                 journal,
             )
+        reversed_targets = {
+            (
+                record.context.payload["target_source_type"],
+                record.context.payload["target_accounting_source_identity"],
+            )
+            for record in source_history.values()
+            if record.source_type == "reconciliation_correction"
+        }
         for record in sorted(source_history.values(), key=lambda item: item.first_sequence):
+            if (record.source_type, record.identity) in reversed_targets:
+                continue
             if record.source_type == "capital_reservation":
                 fact_ = cast(AccountingEconomicFact, record.context).payload
                 scope_ = Scope(
@@ -1479,7 +2024,7 @@ class Engine:
                 rebuilt.reservations[state.order_id] = state
                 rebuilt.reservation_commands[state.command_id] = (state.order_id, economics)
             elif record.source_type == "fill":
-                context_ = cast(M07PrevalidatedAcceptedFillContext, record.context)
+                context_ = cast(AcceptedFillAccountingContext, record.context).fill_context
                 fill_reservation = rebuilt.reservations.get(context_.fill["order_id"])
                 if fill_reservation is not None:
                     instrument_ = context_.historical_instrument
@@ -1511,7 +2056,10 @@ class Engine:
     def fills(self) -> list[tuple[int, M07PrevalidatedAcceptedFillContext]]:
         return sorted(
             [
-                (record.first_sequence, cast(M07PrevalidatedAcceptedFillContext, record.context))
+                (
+                    record.first_sequence,
+                    cast(AcceptedFillAccountingContext, record.context).fill_context,
+                )
                 for record in self.accepted_source_history.values()
                 if record.source_type == "fill"
             ],
@@ -1581,6 +2129,7 @@ class Engine:
         fill_id: str | None = None,
         audit_event_id: str | None = None,
         correction_reason: str | None = None,
+        precommit_validator: Callable[[tuple[LedgerEntry, ...]], str] | None = None,
     ) -> str:
         key = (source_type, identity, RULE)
         if key in self.accepted and self.accepted[key][0] != fingerprint:
@@ -1646,6 +2195,10 @@ class Engine:
                 if validate_ledger_entry(asdict(entry), sequence - 1) != "VALID":
                     return "CONTRACT_INCONSISTENT"
                 created.append(entry)
+            if source_type == "reconciliation_correction" and self.correction_candidate_hook:
+                created = list(self.correction_candidate_hook(tuple(created)))
+            if precommit_validator is not None and precommit_validator(tuple(created)) != "VALID":
+                return "MALFORMED_ACCOUNTING_FACT"
             projected = Engine(entries=[*self.entries, *created])
             if any(value < 0 for value in projected.balances().values()) or any(
                 value < 0 for value in projected.balances("OWNED_RESERVED").values()
@@ -1661,6 +2214,16 @@ class Engine:
         if not isinstance(fact, AccountingEconomicFact):
             return "TRUSTED_CONTEXT_FAILURE"
         p, source = fact.payload, cast(str, fact.payload["source_type"])
+        if source == "capital_reservation" and (
+            not isinstance(fact.upstream_context, M07PrevalidatedAcceptedCommandContext)
+            or fact.upstream_context.acceptance_seal is not _M07_CORE_ACCEPTANCE_SEAL
+        ):
+            return "TRUSTED_CONTEXT_FAILURE"
+        if source == "capital_release" and (
+            not isinstance(fact.upstream_context, M07PrevalidatedAcceptedTerminalOrderEventContext)
+            or fact.upstream_context.acceptance_seal is not _M07_CORE_ACCEPTANCE_SEAL
+        ):
+            return "TRUSTED_CONTEXT_FAILURE"
         if source in {"funding", "interest", "fee", "realized_pnl"}:
             return "UNSUPPORTED_ACCOUNTING_SEMANTICS"
         effective, identity = cast(str, p["effective_at_utc"]), cast(str, p["audit_event_id"])
@@ -1698,6 +2261,10 @@ class Engine:
         elif source == "capital_release":
             order_id = cast(str, p["order_id"])
             state = self.reservations.get(order_id)
+            if state is not None and state.scope != Scope(
+                p["workspace_id"], p["portfolio_id"], p["environment"], p["exchange_account_id"]
+            ):
+                return "RESERVATION_CONFLICT"
             if state is None or state.remaining == 0:
                 return (
                     "REPLAY_SUCCESS"
@@ -1751,14 +2318,48 @@ class Engine:
                 cast(str, p["target_accounting_source_identity"]),
             )
             target = self.accepted_source_history.get(target_key)
+            supported_targets = {
+                "fill",
+                "deposit",
+                "withdrawal",
+                "internal_transfer",
+                "capital_reservation",
+                "capital_release",
+            }
+            already_reversed = any(
+                record.source_type == "reconciliation_correction"
+                and record.identity != identity
+                and (
+                    record.context.payload["target_source_type"],
+                    record.context.payload["target_accounting_source_identity"],
+                    record.context.payload["target_source_fingerprint_sha256"],
+                    record.context.payload["target_batch_fingerprint_sha256"],
+                )
+                == (
+                    p["target_source_type"],
+                    p["target_accounting_source_identity"],
+                    p["target_source_fingerprint_sha256"],
+                    p["target_batch_fingerprint_sha256"],
+                )
+                for record in self.accepted_source_history.values()
+            )
+            if already_reversed:
+                return "ACCOUNTING_IDENTITY_CONFLICT"
             if (
                 target is None
+                or target.source_type not in supported_targets
                 or target.fingerprint != p["target_source_fingerprint_sha256"]
                 or target.batch_fingerprint != p["target_batch_fingerprint_sha256"]
                 or not self._source_record_integrity(*target_key)
             ):
                 return "TRUSTED_CONTEXT_FAILURE"
             target_entries = self.accepted[(target.source_type, target.identity, RULE)][2]
+            correction_scope = (p["workspace_id"], p["portfolio_id"], p["environment"])
+            if any(
+                (entry.workspace_id, entry.portfolio_id, entry.environment) != correction_scope
+                for entry in target_entries
+            ):
+                return "TRUSTED_CONTEXT_FAILURE"
             postings = [
                 PostingProjection(
                     Scope(
@@ -1798,6 +2399,11 @@ class Engine:
                 ]
             else:
                 return "UNSUPPORTED_ACCOUNTING_SEMANTICS"
+        precommit_validator = (
+            (lambda candidates: validate_correction_batch(fact, target_entries, candidates))
+            if source == "reconciliation_correction"
+            else None
+        )
         outcome = self._commit(
             source,
             identity,
@@ -1808,6 +2414,7 @@ class Engine:
             correction_reason=cast(str, p["reason"])
             if source == "reconciliation_correction"
             else None,
+            precommit_validator=precommit_validator,
         )
         if outcome == "ACCEPTED":
             created = self.accepted[(source, identity, RULE)][2]
@@ -1833,12 +2440,18 @@ class Engine:
                 self.reservation_commands[state.command_id] = (state.order_id, economics)
             elif source == "capital_release":
                 self.reservations[cast(str, p["order_id"])].remaining = Fraction()
+            elif source == "reconciliation_correction":
+                rebuilt = Engine.rebuild(
+                    self.entries, self.accepted_source_history, _validate=False
+                )
+                self.reservations = rebuilt.reservations
+                self.reservation_commands = rebuilt.reservation_commands
         return outcome
 
     def _inventory(
         self,
-    ) -> dict[tuple[Scope, AssetReference], list[tuple[Fraction, Fraction, str]]]:
-        inventory: dict[tuple[Scope, AssetReference], list[tuple[Fraction, Fraction, str]]] = {}
+    ) -> dict[tuple[Scope, AssetReference], list[InventoryLot]]:
+        inventory: dict[tuple[Scope, AssetReference], list[InventoryLot]] = {}
         reversed_targets = {
             (
                 record.context.payload["target_source_type"],
@@ -1848,22 +2461,20 @@ class Engine:
             if record.source_type == "reconciliation_correction"
         }
 
-        def consume(
-            key: tuple[Scope, AssetReference], amount: Fraction
-        ) -> list[tuple[Fraction, Fraction, str]]:
+        def consume(key: tuple[Scope, AssetReference], amount: Fraction) -> list[InventoryLot]:
             current = inventory.setdefault(key, [])
-            if sum((lot[0] for lot in current), Fraction()) < amount:
+            if sum((lot.quantity for lot in current), Fraction()) < amount:
                 raise ValueError("INSUFFICIENT_AVAILABLE_CAPITAL")
-            moved: list[tuple[Fraction, Fraction, str]] = []
-            rebuilt: list[tuple[Fraction, Fraction, str]] = []
+            moved: list[InventoryLot] = []
+            rebuilt: list[InventoryLot] = []
             remaining = amount
-            for index, (quantity, basis, identity) in enumerate(current):
-                used = min(quantity, remaining)
+            for index, lot in enumerate(current):
+                used = min(lot.quantity, remaining)
                 if used:
-                    moved.append((used, basis, identity))
+                    moved.append(replace(lot, quantity=used))
                 remaining -= used
-                if quantity > used:
-                    rebuilt.append((quantity - used, basis, identity))
+                if lot.quantity > used:
+                    rebuilt.append(replace(lot, quantity=lot.quantity - used))
                 if remaining == 0:
                     rebuilt.extend(current[index + 1 :])
                     break
@@ -1880,7 +2491,7 @@ class Engine:
             }:
                 continue
             if record.source_type == "fill":
-                context = cast(M07PrevalidatedAcceptedFillContext, record.context)
+                context = cast(AcceptedFillAccountingContext, record.context).fill_context
                 fact_, instrument = context.fill, context.historical_instrument
                 account = Scope(
                     fact_["workspace_id"],
@@ -1895,23 +2506,39 @@ class Engine:
                 quantity_ = decimal(fact_["executed_quantity"])
                 if fact_["side"] == "BUY":
                     consume((account, quote), quantity_ * decimal(fact_["execution_price"]))
-                    inventory.setdefault((account, base), []).append(
-                        (quantity_, decimal(fact_["execution_price"]), fact_["fill_id"])
+                    net = quantity_ - (
+                        decimal(fact_["fee_quantity"])
+                        if fact_["fee_kind"] == "CHARGE"
+                        and AssetReference.trusted(fact_["fee_asset_reference"]) == base
+                        else Fraction()
                     )
+                    if net:
+                        inventory.setdefault((account, base), []).append(
+                            InventoryLot(
+                                net,
+                                decimal(fact_["execution_price"]),
+                                quote,
+                                fact_["fill_id"],
+                                record.first_sequence,
+                                0,
+                            )
+                        )
                 else:
                     consume((account, base), quantity_)
                     inventory.setdefault((account, quote), []).append(
-                        (
+                        InventoryLot(
                             quantity_ * decimal(fact_["execution_price"]),
                             Fraction(1),
+                            quote,
                             fact_["fill_id"],
+                            record.first_sequence,
+                            2,
                         )
                     )
                 if fact_["fee_kind"] == "CHARGE":
-                    consume(
-                        (account, AssetReference.trusted(fact_["fee_asset_reference"])),
-                        decimal(fact_["fee_quantity"]),
-                    )
+                    fee_asset = AssetReference.trusted(fact_["fee_asset_reference"])
+                    if not (fact_["side"] == "BUY" and fee_asset == base):
+                        consume((account, fee_asset), decimal(fact_["fee_quantity"]))
             else:
                 fact_ = cast(AccountingEconomicFact, record.context).payload
                 if record.source_type in {"deposit", "withdrawal"}:
@@ -1925,10 +2552,13 @@ class Engine:
                     key = (account, asset_)
                     if record.source_type == "deposit":
                         inventory.setdefault(key, []).append(
-                            (
+                            InventoryLot(
                                 decimal(fact_["quantity"]),
                                 decimal(fact_["unit_cost_basis"]),
+                                AssetReference.trusted(fact_["basis_valuation_unit"]),
                                 record.identity,
+                                record.first_sequence,
+                                0,
                             )
                         )
                     else:
@@ -1951,11 +2581,13 @@ class Engine:
                     inventory.setdefault((destination_scope, asset_), []).extend(moved)
         return inventory
 
-    def lots(self, scope: Scope, base: AssetReference) -> list[tuple[Fraction, Fraction, str]]:
+    def lots(self, scope: Scope, base: AssetReference) -> list[InventoryLot]:
         return self._inventory().get((scope, base), [])
 
     def account_trusted_fill(
-        self, context: M07PrevalidatedAcceptedFillContext | Mapping[str, Any]
+        self,
+        context: M07PrevalidatedAcceptedFillContext | Mapping[str, Any],
+        historical_valuation: PrevalidatedValuationContext | None = None,
     ) -> str:
         if not isinstance(context, M07PrevalidatedAcceptedFillContext):
             return "TRUSTED_CONTEXT_FAILURE"
@@ -2024,7 +2656,7 @@ class Engine:
                 PostingProjection(scope, quote, spend_role, "CREDIT", qtext, "ASSET_PAID"),
             ]
         else:
-            if sum((x[0] for x in self.lots(scope, base)), Fraction()) < q:
+            if sum((x.quantity for x in self.lots(scope, base)), Fraction()) < q:
                 return "INSUFFICIENT_AVAILABLE_CAPITAL"
             postings = [
                 PostingProjection(
@@ -2048,9 +2680,19 @@ class Engine:
             lots = self.lots(scope, base)
             remaining = q
             cost = Fraction()
-            for amount, unit_cost, _ in lots:
-                used = min(amount, remaining)
-                cost += used * unit_cost
+            for lot in lots:
+                used = min(lot.quantity, remaining)
+                if lot.basis_valuation_unit != quote:
+                    if historical_valuation is None:
+                        return "MISSING_VALUATION"
+                    status, rate = resolve_rate(
+                        historical_valuation, lot.basis_valuation_unit, quote
+                    )
+                    if status != "COMPLETE":
+                        return status
+                    cost += used * lot.unit_cost_basis * cast(Fraction, rate)
+                else:
+                    cost += used * lot.unit_cost_basis
                 remaining -= used
                 if not remaining:
                     break
@@ -2114,7 +2756,7 @@ class Engine:
                 context.source_fingerprint,
                 created[0].batch_fingerprint_sha256,
                 created[0].append_sequence,
-                context,
+                AcceptedFillAccountingContext(context, historical_valuation),
             )
             if reservation is not None:
                 reservation.remaining -= spend_quantity
@@ -2170,7 +2812,9 @@ class PrevalidatedValuationContext:
     authority: CoreAcceptedValuationSourceRegistry
 
 
-def core_valuation_registry(raw_edges: list[dict[str, Any]]) -> CoreAcceptedValuationSourceRegistry:
+def preexisting_valuation_projection(
+    raw_edges: list[dict[str, Any]],
+) -> CoreAcceptedValuationSourceRegistry:
     return CoreAcceptedValuationSourceRegistry(
         freeze({edge["source_id"]: edge["source_fingerprint_sha256"] for edge in raw_edges})
     )
@@ -2222,11 +2866,12 @@ def validate_valuation_edges(
     return PrevalidatedValuationContext(tuple(edges), reporting_as_of_utc, authority)
 
 
-def trusted_valuation_context(
+def accepted_valuation_fixture(
     raw_edges: list[dict[str, Any]], reporting_as_of_utc: str = "2026-01-01T00:00:02Z"
 ) -> PrevalidatedValuationContext:
+    """Test-only two-boundary fixture: model prior Core acceptance, then validate presentation."""
     return validate_valuation_edges(
-        raw_edges, core_valuation_registry(raw_edges), reporting_as_of_utc
+        raw_edges, preexisting_valuation_projection(raw_edges), reporting_as_of_utc
     )
 
 
@@ -2422,8 +3067,14 @@ def project_unrealized_pnl(
         if quote_status != "COMPLETE":
             failures.add(quote_status)
             continue
-        for amount, unit_cost, _ in engine.lots(account_scope, base):
-            total += amount * cast(Fraction, mark) - amount * unit_cost * cast(Fraction, quote_rate)
+        for lot in engine.lots(account_scope, base):
+            basis_status, basis_rate = resolve_rate(context, lot.basis_valuation_unit, unit)
+            if basis_status != "COMPLETE":
+                failures.add(basis_status)
+                continue
+            total += lot.quantity * cast(Fraction, mark) - (
+                lot.quantity * lot.unit_cost_basis * cast(Fraction, basis_rate)
+            )
     if failures:
         for failure in ("STALE_VALUATION", "UNSUPPORTED_VALUATION_PATH", "MISSING_VALUATION"):
             if failure in failures:
@@ -2457,7 +3108,7 @@ class PrevalidatedObservedBalanceContext:
     authority: CoreAcceptedObservedBalanceSourceRegistry
 
 
-def core_observed_registry(
+def preexisting_observed_projection(
     raw: dict[str, Any], semantics: str = "BALANCE"
 ) -> CoreAcceptedObservedBalanceSourceRegistry:
     return CoreAcceptedObservedBalanceSourceRegistry(
@@ -2465,7 +3116,7 @@ def core_observed_registry(
     )
 
 
-def validate_trusted_observed_context(
+def validate_observed_context(
     raw: dict[str, Any], authority: CoreAcceptedObservedBalanceSourceRegistry
 ) -> PrevalidatedObservedBalanceContext:
     if not isinstance(authority, CoreAcceptedObservedBalanceSourceRegistry):
@@ -2517,9 +3168,10 @@ def validate_trusted_observed_context(
     )
 
 
-def trusted_observed_context(raw: dict[str, Any]) -> PrevalidatedObservedBalanceContext:
+def accepted_observed_fixture(raw: dict[str, Any]) -> PrevalidatedObservedBalanceContext:
+    """Test-only fixture for a separately preexisting Core observation projection."""
     semantics = "UNSUPPORTED" if raw["source_id"] == ident("snap", 63) else "BALANCE"
-    return validate_trusted_observed_context(raw, core_observed_registry(raw, semantics))
+    return validate_observed_context(raw, preexisting_observed_projection(raw, semantics))
 
 
 def reconcile(
@@ -2658,6 +3310,7 @@ def fill(
 def fact(
     source: str, scope: Scope, asset_: AssetReference, quantity_: str, number: int, **extra: Any
 ) -> AccountingEconomicFact:
+    upstream = extra.pop("_upstream_context", None)
     if source in {"deposit", "withdrawal"}:
         extra.setdefault("basis_valuation_unit", USD.object())
         extra.setdefault("unit_cost_basis", "1")
@@ -2675,7 +3328,8 @@ def fact(
         **extra,
     }
     raw["source_fingerprint_sha256"] = digest(raw)
-    return economic_fact(raw, accepted_accounting_authority(raw))
+    authority = preexisting_accounting_projection((freeze(raw),))
+    return economic_fact(raw, authority, upstream)
 
 
 def deposit(
@@ -2684,6 +3338,13 @@ def deposit(
     return engine.account_fact(
         fact("deposit", scope, asset_, quantity_, number, capital_flow_kind="EXTERNAL_CONTRIBUTION")
     )
+
+
+def lot_values(lots: list[InventoryLot]) -> list[tuple[Fraction, Fraction, AssetReference, str]]:
+    return [
+        (lot.quantity, lot.unit_cost_basis, lot.basis_valuation_unit, lot.source_identity)
+        for lot in lots
+    ]
 
 
 def valuation_edge(
@@ -2979,7 +3640,9 @@ def test_buy_base_fee_changes_lot_and_inventory_exactly() -> None:
         == "ACCEPTED"
     )
     assert engine._available(PAPER, BTC) == Fraction(99, 100)
-    assert engine.lots(PAPER, BTC) == [(Fraction(99, 100), Fraction(100), ident("fill", 3))]
+    assert lot_values(engine.lots(PAPER, BTC)) == [
+        (Fraction(99, 100), Fraction(100), USD, ident("fill", 3))
+    ]
 
 
 def test_third_asset_fee_requires_sufficient_balance() -> None:
@@ -3002,7 +3665,9 @@ def test_sell_no_fee_integrates_fifo_and_balanced_pnl() -> None:
     assert engine.account_trusted_fill(fill("BUY", "2", "120", number=21)) == "ACCEPTED"
     sell = fill("SELL", "1.5", "150", number=22)
     assert engine.account_trusted_fill(sell) == "ACCEPTED"
-    assert engine.lots(PAPER, BTC) == [(Fraction(3, 2), Fraction(120), ident("fill", 21))]
+    assert lot_values(engine.lots(PAPER, BTC)) == [
+        (Fraction(3, 2), Fraction(120), USD, ident("fill", 21))
+    ]
     pnl = [
         x
         for x in engine.entries
@@ -3071,33 +3736,112 @@ def reservation(
     *,
     audit_suffix: int | None = None,
 ) -> AccountingEconomicFact:
+    command_id = ident("cmd", command_suffix or number)
+    order_id = ident("ord", order_suffix)
+    request = {
+        "command_id": command_id,
+        "operation_type": "SUBMIT_ORDER",
+        "authority_context_id": ident("authctx", number),
+        "environment": scope.environment,
+        "workspace_id": scope.workspace_id,
+        "portfolio_id": scope.portfolio_id,
+        "exchange_account_id": scope.exchange_account_id,
+        "strategy_instance_id": None,
+        "source_type": "OPERATOR",
+        "instrument_id": ident("instr", number),
+        "execution_route_id": ident("xroute", number),
+        "correlation_id": ident("corr", number),
+        "causation_id": None,
+        "idempotency_key": command_id,
+        "order_intent_id": ident("oint", number),
+        "order_id": order_id,
+        "side": "BUY",
+        "order_type": "MARKET",
+        "quantity": "1",
+        "limit_price": None,
+        "time_in_force": "GTC",
+        "expire_at_utc": None,
+    }
+    fingerprint = m07_command_fingerprint(request)
+    upstream = attest_m07_accepted_submit_order(
+        request, CoreAcceptedCommandProjection(freeze({command_id: fingerprint}))
+    )
     return fact(
         "capital_reservation",
         scope,
         USD,
         quantity_,
         audit_suffix or number,
-        order_id=ident("ord", order_suffix),
-        command_id=ident("cmd", command_suffix or number),
+        order_id=order_id,
+        command_id=command_id,
+        _upstream_context=upstream,
     )
 
 
 def terminal_release(
     order_suffix: int, number: int, state: str = "CANCELLED"
 ) -> AccountingEconomicFact:
+    event_type = {value: key for key, value in M07_TERMINAL_EVENT_TARGETS.items()}[state]
+    safe_payload = (
+        {"reason_code": "VENUE_REJECTED"}
+        if event_type == "ORDER_REJECTED"
+        else {
+            "fill_id": ident("fill", number),
+            "venue_trade_id": f"trade-{number}",
+            "cumulative_executed_quantity": "1",
+        }
+        if event_type == "ORDER_FILLED"
+        else {"replacement_order_id": ident("ord", number + 1000), "venue_order_id": f"v-{number}"}
+        if event_type == "ORDER_REPLACE_CONFIRMED"
+        else {"venue_order_id": f"v-{number}"}
+    )
+    event = {
+        "audit_event_id": ident("evt", number),
+        "event_type": event_type,
+        "order_id": ident("ord", order_suffix),
+        "aggregate_version": 2,
+        "correlation_id": ident("corr", number),
+        "causation_id": ident("cause", number),
+        "command_id": ident("cmd", number),
+        "environment": PAPER.environment,
+        "workspace_id": PAPER.workspace_id,
+        "portfolio_id": PAPER.portfolio_id,
+        "exchange_account_id": PAPER.exchange_account_id,
+        "exchange_id": "paper_simulated_venue",
+        "instrument_id": ident("instr", number),
+        "execution_route_id": ident("xroute", number),
+        "occurred_at_utc": T,
+        "safe_payload": safe_payload,
+        "event_fingerprint_sha256": "",
+    }
+    event["event_fingerprint_sha256"] = m07_event_fingerprint(event)
+    predecessor = {
+        "ORDER_REJECTED": "SUBMISSION_PENDING",
+        "ORDER_FILLED": "PARTIALLY_FILLED",
+        "ORDER_CANCEL_CONFIRMED": "CANCEL_PENDING",
+        "ORDER_REPLACE_CONFIRMED": "REPLACE_PENDING",
+        "ORDER_EXPIRED": "ACKNOWLEDGED",
+    }[event_type]
+    evidence = attest_m07_accepted_terminal_event(
+        event,
+        CoreAcceptedOrderEventProjection(
+            freeze({event["audit_event_id"]: accepted_terminal_lifecycle_proof(event, predecessor)})
+        ),
+    )
     raw = {
         "audit_event_id": ident("evt", number),
         "source_type": "capital_release",
         "workspace_id": PAPER.workspace_id,
         "portfolio_id": PAPER.portfolio_id,
         "environment": PAPER.environment,
+        "exchange_account_id": PAPER.exchange_account_id,
         "effective_at_utc": T,
         "provenance": "accepted terminal M0.7 order event",
         "order_id": ident("ord", order_suffix),
         "terminal_state": state,
     }
     raw["source_fingerprint_sha256"] = digest(raw)
-    return economic_fact(raw, accepted_accounting_authority(raw))
+    return economic_fact(raw, preexisting_accounting_projection((freeze(raw),)), evidence)
 
 
 def test_reservation_exact_and_terminal_release_replay() -> None:
@@ -3148,7 +3892,7 @@ def transfer_fact(
         "destination_quantity": quantity_,
     }
     raw["source_fingerprint_sha256"] = digest(raw)
-    return economic_fact(raw, accepted_accounting_authority(raw))
+    return economic_fact(raw, preexisting_accounting_projection((freeze(raw),)))
 
 
 def test_internal_transfer_has_four_legs_constant_portfolio_owned_and_no_pnl() -> None:
@@ -3193,7 +3937,7 @@ def test_contribution_and_withdrawal_are_not_pnl() -> None:
 
 def test_trusted_direct_and_deterministic_multihop_valuation() -> None:
     ETH = AssetReference.trusted(asset("ETH"))
-    context = trusted_valuation_context(
+    context = accepted_valuation_fixture(
         [valuation_edge(BTC, ETH, "10", number=1), valuation_edge(ETH, USD, "20", number=2)]
     )
     assert resolve_rate(context, BTC, USD) == ("COMPLETE", 200)
@@ -3201,17 +3945,17 @@ def test_trusted_direct_and_deterministic_multihop_valuation() -> None:
 
 def test_raw_missing_stale_cycle_and_different_venue_valuation() -> None:
     assert resolve_rate({}, BTC, USD) == ("TRUSTED_CONTEXT_FAILURE", None)
-    assert resolve_rate(trusted_valuation_context([]), BTC, USD) == ("MISSING_VALUATION", None)
+    assert resolve_rate(accepted_valuation_fixture([]), BTC, USD) == ("MISSING_VALUATION", None)
     assert resolve_rate(
-        trusted_valuation_context([valuation_edge(BTC, USD, "100", stale=True)]), BTC, USD
+        accepted_valuation_fixture([valuation_edge(BTC, USD, "100", stale=True)]), BTC, USD
     ) == ("STALE_VALUATION", None)
     ETH = AssetReference.trusted(asset("ETH"))
-    cycle = trusted_valuation_context(
+    cycle = accepted_valuation_fixture(
         [valuation_edge(BTC, ETH, "2", number=3), valuation_edge(ETH, BTC, "0.5", number=4)]
     )
     assert resolve_rate(cycle, BTC, USD) == ("UNSUPPORTED_VALUATION_PATH", None)
     other_btc = AssetReference.trusted(asset("BTC", "other_venue"))
-    context = trusted_valuation_context([valuation_edge(BTC, USD, "100", number=5)])
+    context = accepted_valuation_fixture([valuation_edge(BTC, USD, "100", number=5)])
     assert resolve_rate(context, other_btc, USD) == ("MISSING_VALUATION", None)
 
 
@@ -3225,15 +3969,15 @@ def test_invalid_valuation_edge_fails(tamper: str) -> None:
     else:
         raw["extra"] = True
     with pytest.raises(ValueError):
-        trusted_valuation_context([raw])
+        accepted_valuation_fixture([raw])
 
 
 def test_mark_changes_nav_and_unrealized_without_ledger_or_realized_mutation() -> None:
     engine = funded()
     engine.account_trusted_fill(fill("BUY", "1", "100", number=110))
     snapshot = copy.deepcopy(engine.entries)
-    first = trusted_valuation_context([valuation_edge(BTC, USD, "120", number=10)])
-    second = trusted_valuation_context([valuation_edge(BTC, USD, "150", number=11)])
+    first = accepted_valuation_fixture([valuation_edge(BTC, USD, "120", number=10)])
+    second = accepted_valuation_fixture([valuation_edge(BTC, USD, "150", number=11)])
     assert nav(engine, first, USD, portfolio_scope(PAPER)) == ("COMPLETE", 10020) and nav(
         engine, second, USD, portfolio_scope(PAPER)
     ) == (
@@ -3249,7 +3993,7 @@ def test_mark_changes_nav_and_unrealized_without_ledger_or_realized_mutation() -
 def test_missing_mark_is_partially_unvalued_not_zero() -> None:
     engine = funded()
     engine.account_trusted_fill(fill("BUY", "1", "100", number=120))
-    assert nav(engine, trusted_valuation_context([]), USD, portfolio_scope(PAPER)) == (
+    assert nav(engine, accepted_valuation_fixture([]), USD, portfolio_scope(PAPER)) == (
         "PARTIALLY_UNVALUED",
         None,
     )
@@ -3276,9 +4020,11 @@ def test_observed_snapshot_match_drift_and_zero_mutation() -> None:
     engine = Engine()
     deposit(engine, PAPER, USD, "10", 130)
     before = copy.deepcopy(engine.entries)
-    assert reconcile(engine, trusted_observed_context(snapshot_raw(PAPER, USD, "10", 1))) == "MATCH"
     assert (
-        reconcile(engine, trusted_observed_context(snapshot_raw(PAPER, USD, "12", 2))) == "DRIFT"
+        reconcile(engine, accepted_observed_fixture(snapshot_raw(PAPER, USD, "10", 1))) == "MATCH"
+    )
+    assert (
+        reconcile(engine, accepted_observed_fixture(snapshot_raw(PAPER, USD, "12", 2))) == "DRIFT"
         and engine.entries == before
     )
     assert reconcile(engine, snapshot_raw(PAPER, USD, "12", 2)) == "TRUSTED_CONTEXT_FAILURE"
@@ -3303,7 +4049,7 @@ def reversal_fact(
         "target_batch_fingerprint_sha256": target.batch_fingerprint,
     }
     raw["source_fingerprint_sha256"] = digest(raw)
-    return economic_fact(raw, accepted_accounting_authority(raw))
+    return economic_fact(raw, preexisting_accounting_projection((freeze(raw),)))
 
 
 def test_trusted_reconciliation_exact_reversal_is_append_only() -> None:
@@ -3489,13 +4235,13 @@ def test_three_lot_fifo_partial_sell_preserves_all_trailing_lots() -> None:
     sell = fill("SELL", "1.5", "150", number=323)
     assert engine.account_trusted_fill(sell) == "ACCEPTED"
     expected = [
-        (Fraction(3, 2), Fraction(120), ident("fill", 321)),
-        (Fraction(3), Fraction(130), ident("fill", 322)),
+        (Fraction(3, 2), Fraction(120), USD, ident("fill", 321)),
+        (Fraction(3), Fraction(130), USD, ident("fill", 322)),
     ]
-    assert engine.lots(PAPER, BTC) == expected
+    assert lot_values(engine.lots(PAPER, BTC)) == expected
     snapshot = copy.deepcopy(expected)
     assert engine.account_trusted_fill(sell) == "REPLAY_SUCCESS"
-    assert engine.lots(PAPER, BTC) == snapshot
+    assert lot_values(engine.lots(PAPER, BTC)) == snapshot
 
 
 def test_fifo_exact_boundary_preserves_later_lots_then_full_close() -> None:
@@ -3503,7 +4249,9 @@ def test_fifo_exact_boundary_preserves_later_lots_then_full_close() -> None:
     for number, quantity_, price in ((330, "1", "100"), (331, "2", "120"), (332, "3", "130")):
         engine.account_trusted_fill(fill("BUY", quantity_, price, number=number))
     engine.account_trusted_fill(fill("SELL", "3", "150", number=333))
-    assert engine.lots(PAPER, BTC) == [(Fraction(3), Fraction(130), ident("fill", 332))]
+    assert lot_values(engine.lots(PAPER, BTC)) == [
+        (Fraction(3), Fraction(130), USD, ident("fill", 332))
+    ]
     engine.account_trusted_fill(fill("SELL", "3", "140", number=334))
     assert engine.lots(PAPER, BTC) == []
 
@@ -3527,7 +4275,7 @@ def test_nav_is_portfolio_environment_scoped_and_never_authoritative_600() -> No
     deposit(engine, testnet, USD, "200", 401)
     deposit(engine, live, USD, "300", 402)
     deposit(engine, other, USD, "700", 403)
-    context = trusted_valuation_context([])
+    context = accepted_valuation_fixture([])
     values = {
         nav(engine, context, USD, portfolio_scope(scope))[1] for scope in (PAPER, testnet, live)
     }
@@ -3540,8 +4288,8 @@ def test_executable_realized_fee_net_and_unrealized_pnl() -> None:
     engine = funded()
     engine.account_trusted_fill(fill("BUY", "1", "100", number=410))
     journal = copy.deepcopy(engine.entries)
-    mark120 = trusted_valuation_context([valuation_edge(BTC, USD, "120", number=20)])
-    mark150 = trusted_valuation_context([valuation_edge(BTC, USD, "150", number=21)])
+    mark120 = accepted_valuation_fixture([valuation_edge(BTC, USD, "120", number=20)])
+    mark150 = accepted_valuation_fixture([valuation_edge(BTC, USD, "150", number=21)])
     assert project_unrealized_pnl(engine, portfolio_scope(PAPER), mark120, USD) == ("COMPLETE", 20)
     assert project_unrealized_pnl(engine, portfolio_scope(PAPER), mark150, USD) == ("COMPLETE", 50)
     assert engine.entries == journal
@@ -3563,7 +4311,7 @@ def test_third_asset_fee_without_valuation_makes_net_pnl_incomplete() -> None:
         fill("BUY", "1", "100", number=421, fee_kind="CHARGE", fee_quantity="0.01", fee_asset=BNB)
     )
     result = project_realized_pnl(
-        engine, portfolio_scope(PAPER), trusted_valuation_context([]), USD
+        engine, portfolio_scope(PAPER), accepted_valuation_fixture([]), USD
     )
     assert (
         result.status == "MISSING_VALUATION"
@@ -3574,7 +4322,7 @@ def test_third_asset_fee_without_valuation_makes_net_pnl_incomplete() -> None:
 
 def test_capital_flows_do_not_change_trading_pnl_projection() -> None:
     engine = Engine()
-    context = trusted_valuation_context([])
+    context = accepted_valuation_fixture([])
     before = project_realized_pnl(engine, portfolio_scope(PAPER), context, USD)
     deposit(engine, PAPER, USD, "100", 430)
     engine.account_fact(
@@ -3603,7 +4351,7 @@ def test_accounting_source_identity_must_equal_durable_reference() -> None:
 
 def test_self_hashed_arbitrary_valuation_source_has_no_authority() -> None:
     accepted = valuation_edge(BTC, USD, "100", number=10)
-    authority = core_valuation_registry([accepted])
+    authority = preexisting_valuation_projection([accepted])
     tampered = copy.deepcopy(accepted)
     tampered["rate"] = "101"
     tampered["source_fingerprint_sha256"] = digest(
@@ -3617,14 +4365,14 @@ def test_self_hashed_arbitrary_valuation_source_has_no_authority() -> None:
 
 def test_valuation_path_fresh_alternative_beats_stale_and_cycle() -> None:
     eth = AssetReference.trusted(asset("ETH"))
-    stale_and_fresh = trusted_valuation_context(
+    stale_and_fresh = accepted_valuation_fixture(
         [
             valuation_edge(BTC, USD, "90", stale=True, number=30),
             valuation_edge(BTC, USD, "100", number=31),
         ]
     )
     assert resolve_rate(stale_and_fresh, BTC, USD) == ("COMPLETE", 100)
-    cycle_and_valid = trusted_valuation_context(
+    cycle_and_valid = accepted_valuation_fixture(
         [
             valuation_edge(BTC, eth, "2", number=32),
             valuation_edge(eth, BTC, "0.5", number=33),
@@ -3637,7 +4385,7 @@ def test_valuation_path_fresh_alternative_beats_stale_and_cycle() -> None:
 def test_two_fresh_valuation_paths_have_fingerprint_deterministic_winner() -> None:
     first = valuation_edge(BTC, USD, "100", number=35)
     second = valuation_edge(BTC, USD, "101", number=36)
-    context = trusted_valuation_context([second, first])
+    context = accepted_valuation_fixture([second, first])
     expected = Fraction(
         first["rate"]
         if first["source_fingerprint_sha256"] < second["source_fingerprint_sha256"]
@@ -3650,23 +4398,27 @@ def test_reconciliation_declared_outcomes_are_all_executable() -> None:
     engine = Engine()
     assert reconcile(engine, None) == "MISSING_EXTERNAL_FACT"
     assert (
-        reconcile(engine, trusted_observed_context(snapshot_raw(PAPER, USD, "0", 50)))
+        reconcile(engine, accepted_observed_fixture(snapshot_raw(PAPER, USD, "0", 50)))
         == "MISSING_INTERNAL_FACT"
     )
     deposit(engine, PAPER, USD, "1", 450)
     engine.account_fact(
         fact("withdrawal", PAPER, USD, "1", 451, capital_flow_kind="EXTERNAL_WITHDRAWAL")
     )
-    assert reconcile(engine, trusted_observed_context(snapshot_raw(PAPER, USD, "0", 51))) == "MATCH"
-    assert reconcile(engine, trusted_observed_context(snapshot_raw(PAPER, USD, "2", 52))) == "DRIFT"
+    assert (
+        reconcile(engine, accepted_observed_fixture(snapshot_raw(PAPER, USD, "0", 51))) == "MATCH"
+    )
+    assert (
+        reconcile(engine, accepted_observed_fixture(snapshot_raw(PAPER, USD, "2", 52))) == "DRIFT"
+    )
     unmapped = snapshot_raw(PAPER, USD, "0", 53)
     unmapped["asset_reference"]["mapping_status"] = "UNKNOWN"
     unmapped["source_fingerprint_sha256"] = digest(
         {key: value for key, value in unmapped.items() if key != "source_fingerprint_sha256"}
     )
-    assert reconcile(engine, trusted_observed_context(unmapped)) == "UNMAPPED_ASSET"
+    assert reconcile(engine, accepted_observed_fixture(unmapped)) == "UNMAPPED_ASSET"
     assert (
-        reconcile(engine, trusted_observed_context(snapshot_raw(PAPER, USD, "0", 63)))
+        reconcile(engine, accepted_observed_fixture(snapshot_raw(PAPER, USD, "0", 63)))
         == "UNSUPPORTED"
     )
 
@@ -3756,12 +4508,18 @@ def test_inventory_deposit_basis_sell_withdraw_transfer_and_third_fee() -> None:
     )
     assert engine.account_fact(withdrawal) == "ACCEPTED"
     assert engine.account_fact(transfer_fact(PAPER, account_b, BTC, BTC, "0.5", 544)) == "ACCEPTED"
-    assert engine.lots(PAPER, BTC) == [(Fraction(1, 4), Fraction(90), ident("evt", 541))]
-    assert engine.lots(account_b, BTC) == [(Fraction(1, 2), Fraction(90), ident("evt", 541))]
+    assert lot_values(engine.lots(PAPER, BTC)) == [
+        (Fraction(1, 4), Fraction(90), USD, ident("evt", 541))
+    ]
+    assert lot_values(engine.lots(account_b, BTC)) == [
+        (Fraction(1, 2), Fraction(90), USD, ident("evt", 541))
+    ]
     total_basis = sum(
         amount * basis
         for scope_ in (PAPER, account_b)
-        for amount, basis, _ in engine.lots(scope_, BTC)
+        for amount, basis in (
+            (lot.quantity, lot.unit_cost_basis) for lot in engine.lots(scope_, BTC)
+        )
     )
     assert total_basis == Fraction(135, 2)
     bnb = fact(
@@ -3778,7 +4536,9 @@ def test_inventory_deposit_basis_sell_withdraw_transfer_and_third_fee() -> None:
     engine.account_trusted_fill(
         fill("BUY", "0.1", "100", number=546, fee_kind="CHARGE", fee_quantity="0.25", fee_asset=BNB)
     )
-    assert engine.lots(PAPER, BNB) == [(Fraction(3, 4), Fraction(10), ident("evt", 545))]
+    assert lot_values(engine.lots(PAPER, BNB)) == [
+        (Fraction(3, 4), Fraction(10), USD, ident("evt", 545))
+    ]
 
 
 def test_full_inventory_removal_and_base_fee_equal_quantity_leave_no_lot() -> None:
@@ -3799,7 +4559,7 @@ def test_rebuild_from_journal_and_accepted_history_without_fill_cache() -> None:
         fill("BUY", "1", "100", number=561, fee_kind="CHARGE", fee_quantity="0.1", fee_asset=BNB)
     )
     engine.account_trusted_fill(fill("SELL", "0.5", "130", number=562))
-    context = trusted_valuation_context(
+    context = accepted_valuation_fixture(
         [valuation_edge(BTC, USD, "140", number=40), valuation_edge(BNB, USD, "10", number=41)]
     )
     before = (
@@ -3821,7 +4581,7 @@ def test_rebuild_from_journal_and_accepted_history_without_fill_cache() -> None:
 
 def test_unknown_drift_never_adjusts_and_missing_deposit_uses_deposit() -> None:
     engine = Engine()
-    observation = trusted_observed_context(snapshot_raw(PAPER, USD, "10", 55))
+    observation = accepted_observed_fixture(snapshot_raw(PAPER, USD, "10", 55))
     before = copy.deepcopy(engine.entries)
     assert reconcile(engine, observation) == "MISSING_INTERNAL_FACT" and engine.entries == before
     deposit(engine, PAPER, USD, "10", 570)
@@ -3859,7 +4619,7 @@ def test_correction_without_exact_target_rejected_and_exact_reversal_preserves_i
         "target_batch_fingerprint_sha256": "2" * 64,
     }
     raw["source_fingerprint_sha256"] = digest(raw)
-    malformed = economic_fact(raw, accepted_accounting_authority(raw))
+    malformed = economic_fact(raw, preexisting_accounting_projection((freeze(raw),)))
     assert engine.account_fact(malformed) == "TRUSTED_CONTEXT_FAILURE" and engine.entries == before
     correction = reversal_fact(engine, "deposit", ident("evt", 580), 582)
     assert engine.account_fact(correction) == "ACCEPTED"
@@ -3920,7 +4680,7 @@ def test_raw_self_hashed_non_fill_and_snapshot_mutations_lack_authority() -> Non
     accepted = dict(
         fact("deposit", PAPER, USD, "1", 600, capital_flow_kind="EXTERNAL_CONTRIBUTION").payload
     )
-    authority = accepted_accounting_authority(accepted)
+    authority = preexisting_accounting_projection((freeze(accepted),))
     accepted["quantity"] = "2"
     accepted["source_fingerprint_sha256"] = digest(
         {key: value for key, value in accepted.items() if key != "source_fingerprint_sha256"}
@@ -3928,28 +4688,28 @@ def test_raw_self_hashed_non_fill_and_snapshot_mutations_lack_authority() -> Non
     with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
         economic_fact(accepted, authority)
     snapshot = snapshot_raw(PAPER, USD, "1", 56)
-    snapshot_authority = core_observed_registry(snapshot)
+    snapshot_authority = preexisting_observed_projection(snapshot)
     snapshot["observed_quantity"] = "2"
     snapshot["source_fingerprint_sha256"] = digest(
         {key: value for key, value in snapshot.items() if key != "source_fingerprint_sha256"}
     )
     with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
-        validate_trusted_observed_context(snapshot, snapshot_authority)
+        validate_observed_context(snapshot, snapshot_authority)
 
 
 def test_shared_reporting_asof_and_valuation_failure_preservation() -> None:
     edge = valuation_edge(BTC, USD, "120", number=57)
-    authority = core_valuation_registry([edge])
+    authority = preexisting_valuation_projection([edge])
     with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
         validate_valuation_edges([edge], authority, "2026-01-01T00:00:03Z")
     engine = funded()
     engine.account_trusted_fill(fill("BUY", "1", "100", number=610))
-    stale = trusted_valuation_context([valuation_edge(BTC, USD, "120", stale=True, number=58)])
+    stale = accepted_valuation_fixture([valuation_edge(BTC, USD, "120", stale=True, number=58)])
     assert (
         project_unrealized_pnl(engine, portfolio_scope(PAPER), stale, USD)[0] == "STALE_VALUATION"
     )
     eth = AssetReference.trusted(asset("ETH"))
-    cycle = trusted_valuation_context(
+    cycle = accepted_valuation_fixture(
         [valuation_edge(BTC, eth, "2", number=59), valuation_edge(eth, BTC, "0.5", number=60)]
     )
     assert (
@@ -3961,7 +4721,7 @@ def test_shared_reporting_asof_and_valuation_failure_preservation() -> None:
     zero.account_fact(
         fact("withdrawal", PAPER, BNB, "1", 612, capital_flow_kind="EXTERNAL_WITHDRAWAL")
     )
-    assert nav(zero, trusted_valuation_context([]), USD, portfolio_scope(PAPER)) == ("COMPLETE", 0)
+    assert nav(zero, accepted_valuation_fixture([]), USD, portfolio_scope(PAPER)) == ("COMPLETE", 0)
 
 
 def test_fill_replay_detects_changed_stored_posting_semantics() -> None:
@@ -4000,6 +4760,7 @@ def test_invalid_order_command_and_terminal_state_rejected_at_source_boundary() 
         "workspace_id": PAPER.workspace_id,
         "portfolio_id": PAPER.portfolio_id,
         "environment": PAPER.environment,
+        "exchange_account_id": PAPER.exchange_account_id,
         "effective_at_utc": T,
         "provenance": "terminal",
         "order_id": ident("ord", 631),
@@ -4007,7 +4768,470 @@ def test_invalid_order_command_and_terminal_state_rejected_at_source_boundary() 
     }
     raw["source_fingerprint_sha256"] = digest(raw)
     with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
-        economic_fact(raw, accepted_accounting_authority(raw))
+        economic_fact(raw, preexisting_accounting_projection((freeze(raw),)))
+
+
+def test_reservation_requires_nominal_exact_submit_order_authority() -> None:
+    accepted = reservation(PAPER, "1", 640, 640, command_suffix=641)
+    raw = dict(accepted.payload)
+    original = cast(M07PrevalidatedAcceptedCommandContext, accepted.upstream_context)
+    wrong_request = dict(original.request)
+    wrong_request["order_id"] = ident("ord", 999)
+    wrong_fingerprint = m07_command_fingerprint(wrong_request)
+    wrong = attest_m07_accepted_submit_order(
+        wrong_request,
+        CoreAcceptedCommandProjection(freeze({raw["command_id"]: wrong_fingerprint})),
+    )
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        economic_fact(raw, preexisting_accounting_projection((freeze(raw),)), wrong)
+
+
+def test_cross_unit_fifo_requires_and_uses_explicit_historical_conversion() -> None:
+    eur = AssetReference.trusted(asset("EUR"))
+    engine = funded()
+    assert (
+        engine.account_fact(
+            fact(
+                "deposit",
+                PAPER,
+                BTC,
+                "1",
+                650,
+                capital_flow_kind="EXTERNAL_CONTRIBUTION",
+                basis_valuation_unit=eur.object(),
+                unit_cost_basis="90",
+            )
+        )
+        == "ACCEPTED"
+    )
+    sell = fill("SELL", "1", "120", number=651)
+    before = copy.deepcopy(engine.entries)
+    assert engine.account_trusted_fill(sell) == "MISSING_VALUATION"
+    assert engine.entries == before
+    conversion = accepted_valuation_fixture([valuation_edge(eur, USD, "2", number=66)])
+    assert engine.account_trusted_fill(sell, conversion) == "ACCEPTED"
+    pnl = next(
+        entry
+        for entry in engine.entries
+        if entry.fill_id == ident("fill", 651)
+        and entry.account_role == "REALIZED_PNL_CLASSIFICATION"
+    )
+    assert pnl.direction == "CREDIT" and decimal(pnl.quantity) == 60
+    rebuilt = Engine.rebuild(copy.deepcopy(engine.entries), dict(engine.accepted_source_history))
+    assert rebuilt.lots(PAPER, BTC) == [] and rebuilt.balances() == engine.balances()
+
+
+def test_coordinated_journal_and_source_record_tamper_is_detected_by_rederivation() -> None:
+    engine = funded()
+    target_entries = engine.entries[:2]
+    attacker_projections = [
+        PostingProjection(
+            Scope(
+                entry.workspace_id,
+                entry.portfolio_id,
+                entry.environment,
+                cast(str, entry.exchange_account_id),
+            ),
+            AssetReference.trusted(entry.asset_reference),
+            entry.account_role,
+            entry.direction,
+            "999",
+            entry.posting_role,
+        )
+        for entry in target_entries
+    ]
+    attacker_batch = digest(
+        [posting.canonical_projection(index) for index, posting in enumerate(attacker_projections)]
+    )
+    entries = [
+        replace(entry, quantity="999", batch_fingerprint_sha256=attacker_batch)
+        for entry in target_entries
+    ] + engine.entries[2:]
+    record = engine.accepted_source_history[("deposit", ident("evt", 10))]
+    history = dict(engine.accepted_source_history)
+    history[("deposit", ident("evt", 10))] = replace(record, batch_fingerprint=attacker_batch)
+    with pytest.raises(ValueError, match="CONTRACT_INCONSISTENT"):
+        Engine.rebuild(entries, history)
+
+
+def test_fill_correction_is_single_use_and_restores_consumed_reservation() -> None:
+    engine = funded("100")
+    assert engine.account_fact(reservation(PAPER, "100", 660, 661)) == "ACCEPTED"
+    accepted_fill = fill("BUY", "0.4", "100", number=661)
+    assert engine.account_trusted_fill(accepted_fill) == "ACCEPTED"
+    assert engine.reservations[ident("ord", 661)].remaining == 60
+    first = reversal_fact(engine, "fill", ident("fill", 661), 662)
+    assert engine.account_fact(first) == "ACCEPTED"
+    assert engine.reservations[ident("ord", 661)].remaining == 100
+    second = reversal_fact(engine, "fill", ident("fill", 661), 663)
+    before = copy.deepcopy(engine.entries)
+    assert engine.account_fact(second) == "ACCOUNTING_IDENTITY_CONFLICT"
+    assert engine.entries == before
+
+
+def test_real_m07_submit_order_schema_membership_and_tamper_boundaries() -> None:
+    reservation_fact = reservation(PAPER, "7", 700, 701, command_suffix=702)
+    context = cast(M07PrevalidatedAcceptedCommandContext, reservation_fact.upstream_context)
+    assert set(context.request) == M07_SUBMIT_ORDER_FIELDS
+    assert set(EXPECTED_PROTOCOLS["m07_authority_boundary"]["submit_order_consumed_fields"]) == (
+        M07_SUBMIT_ORDER_FIELDS
+    )
+    assert context.request["operation_type"] == "SUBMIT_ORDER"
+    assert (
+        "reservation_asset" not in context.request and "reservation_quantity" not in context.request
+    )
+    assert context.request["quantity"] == "1" and reservation_fact.payload["quantity"] == "7"
+    assert Engine(entries=[]).account_fact(reservation_fact) == "INSUFFICIENT_AVAILABLE_CAPITAL"
+
+    cancel = dict(context.request)
+    cancel["operation_type"] = "CANCEL_ORDER"
+    cancel_fingerprint = m07_command_fingerprint(cancel)
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_submit_order(
+            cancel,
+            CoreAcceptedCommandProjection(freeze({cancel["command_id"]: cancel_fingerprint})),
+        )
+    changed = dict(context.request)
+    changed["quantity"] = "2"
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_submit_order(changed, context.authority)
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_submit_order(
+            dict(context.request), CoreAcceptedCommandProjection(freeze({}))
+        )
+    wrong_idempotency = dict(context.request)
+    wrong_idempotency["idempotency_key"] = ident("cmd", 999)
+    wrong_idempotency_fingerprint = m07_command_fingerprint(wrong_idempotency)
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_submit_order(
+            wrong_idempotency,
+            CoreAcceptedCommandProjection(
+                freeze({wrong_idempotency["command_id"]: wrong_idempotency_fingerprint})
+            ),
+        )
+
+
+def test_fabricated_m07_command_wrapper_and_missing_source_evidence_are_rejected() -> None:
+    accepted = reservation(PAPER, "1", 710, 711)
+    genuine = cast(M07PrevalidatedAcceptedCommandContext, accepted.upstream_context)
+    fabricated = M07PrevalidatedAcceptedCommandContext(
+        genuine.request, genuine.command_fingerprint, genuine.authority, object()
+    )
+    raw = dict(accepted.payload)
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        economic_fact(raw, preexisting_accounting_projection((freeze(raw),)), fabricated)
+    stripped = replace(accepted, upstream_context=None)
+    assert Engine().account_fact(stripped) == "TRUSTED_CONTEXT_FAILURE"
+
+
+def test_terminal_event_authority_exact_type_scope_fingerprint_and_history() -> None:
+    accepted = terminal_release(720, 721)
+    context = cast(M07PrevalidatedAcceptedTerminalOrderEventContext, accepted.upstream_context)
+    assert context.event["event_type"] == "ORDER_CANCEL_CONFIRMED"
+    assert context.terminal_state == "CANCELLED"
+    assert context.event["exchange_account_id"] == accepted.payload["exchange_account_id"]
+
+    for field, value in (
+        ("exchange_account_id", ident("xacc", 999)),
+        ("environment", "TESTNET"),
+    ):
+        event = dict(context.event)
+        event[field] = value
+        event["event_fingerprint_sha256"] = m07_event_fingerprint(event)
+        altered = attest_m07_accepted_terminal_event(
+            event,
+            CoreAcceptedOrderEventProjection(
+                freeze(
+                    {
+                        event["audit_event_id"]: accepted_terminal_lifecycle_proof(
+                            event, "CANCEL_PENDING"
+                        )
+                    }
+                )
+            ),
+        )
+        with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+            economic_fact(
+                dict(accepted.payload),
+                preexisting_accounting_projection((accepted.payload,)),
+                altered,
+            )
+    nonterminal = dict(context.event)
+    nonterminal["event_type"] = "ORDER_ACKNOWLEDGED"
+    nonterminal["event_fingerprint_sha256"] = m07_event_fingerprint(nonterminal)
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_terminal_event(
+            nonterminal,
+            CoreAcceptedOrderEventProjection(freeze({})),
+        )
+    tampered = dict(context.event)
+    tampered["occurred_at_utc"] = "2026-01-01T00:00:01Z"
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_terminal_event(tampered, context.authority)
+    fabricated = replace(context, acceptance_seal=object())
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        economic_fact(
+            dict(accepted.payload),
+            preexisting_accounting_projection((accepted.payload,)),
+            fabricated,
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("command_id", "cmd_bad"),
+        ("causation_id", "cause_bad"),
+        ("exchange_id", ""),
+        ("aggregate_version", True),
+    ],
+)
+def test_terminal_event_envelope_values_are_exact(field: str, value: Any) -> None:
+    context = cast(
+        M07PrevalidatedAcceptedTerminalOrderEventContext,
+        terminal_release(770, 771).upstream_context,
+    )
+    event = dict(context.event)
+    event[field] = value
+    event["event_fingerprint_sha256"] = m07_event_fingerprint(event)
+    proof = accepted_terminal_lifecycle_proof(event, "CANCEL_PENDING")
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_terminal_event(
+            event, CoreAcceptedOrderEventProjection(freeze({event["audit_event_id"]: proof}))
+        )
+
+
+@pytest.mark.parametrize(
+    "state,event_type,payload",
+    [
+        (
+            "FILLED",
+            "ORDER_FILLED",
+            {
+                "fill_id": "fill_bad",
+                "venue_trade_id": "trade",
+                "cumulative_executed_quantity": "1",
+            },
+        ),
+        (
+            "FILLED",
+            "ORDER_FILLED",
+            {
+                "fill_id": ident("fill", 780),
+                "venue_trade_id": "trade",
+                "cumulative_executed_quantity": "1.00",
+            },
+        ),
+        (
+            "REPLACED",
+            "ORDER_REPLACE_CONFIRMED",
+            {"replacement_order_id": "ord_bad", "venue_order_id": "venue"},
+        ),
+    ],
+)
+def test_terminal_safe_payload_values_are_exact(
+    state: str, event_type: str, payload: dict[str, Any]
+) -> None:
+    context = cast(
+        M07PrevalidatedAcceptedTerminalOrderEventContext,
+        terminal_release(780, 781, state).upstream_context,
+    )
+    event = dict(context.event)
+    event["event_type"] = event_type
+    event["safe_payload"] = payload
+    event["event_fingerprint_sha256"] = m07_event_fingerprint(event)
+    proof = accepted_terminal_lifecycle_proof(
+        event, "PARTIALLY_FILLED" if state == "FILLED" else "REPLACE_PENDING"
+    )
+    with pytest.raises((ValueError,), match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_terminal_event(
+            event, CoreAcceptedOrderEventProjection(freeze({event["audit_event_id"]: proof}))
+        )
+
+
+@pytest.mark.parametrize(
+    "proof_change",
+    [
+        {"predecessor_state": "ACKNOWLEDGED"},
+        {"previous_aggregate_version": 0},
+        {"aggregate_version": 1},
+    ],
+)
+def test_terminal_lifecycle_proof_rejects_illegal_predecessor_gap_and_stale(
+    proof_change: dict[str, Any],
+) -> None:
+    context = cast(
+        M07PrevalidatedAcceptedTerminalOrderEventContext,
+        terminal_release(790, 791).upstream_context,
+    )
+    event = dict(context.event)
+    proof = accepted_terminal_lifecycle_proof(event, "CANCEL_PENDING")
+    broken = replace(proof, **proof_change)
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        attest_m07_accepted_terminal_event(
+            event, CoreAcceptedOrderEventProjection(freeze({event["audit_event_id"]: broken}))
+        )
+
+
+def test_reservation_release_history_preserves_upstream_context_and_rebuild_requires_it() -> None:
+    engine = funded("10")
+    reserve = reservation(PAPER, "10", 730, 731)
+    assert engine.account_fact(reserve) == "ACCEPTED"
+    release = terminal_release(731, 732)
+    assert engine.account_fact(release) == "ACCEPTED"
+    for source, identity, context_type in (
+        (
+            "capital_reservation",
+            reserve.payload["audit_event_id"],
+            M07PrevalidatedAcceptedCommandContext,
+        ),
+        (
+            "capital_release",
+            release.payload["audit_event_id"],
+            M07PrevalidatedAcceptedTerminalOrderEventContext,
+        ),
+    ):
+        record = engine.accepted_source_history[(source, identity)]
+        assert isinstance(record.context.upstream_context, context_type)
+        broken = dict(engine.accepted_source_history)
+        broken[(source, identity)] = replace(
+            record, context=replace(record.context, upstream_context=None)
+        )
+        with pytest.raises(ValueError, match="CONTRACT_INCONSISTENT"):
+            Engine.rebuild(copy.deepcopy(engine.entries), broken)
+
+
+def test_raw_nonfill_valuation_and_snapshot_cannot_self_enroll() -> None:
+    raw = dict(
+        fact("deposit", PAPER, USD, "1", 740, capital_flow_kind="EXTERNAL_CONTRIBUTION").payload
+    )
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        economic_fact(raw, CoreAcceptedAccountingFactProjection(freeze({})))
+    other = dict(raw)
+    other["audit_event_id"] = ident("evt", 741)
+    other["source_fingerprint_sha256"] = digest(
+        {key: value for key, value in other.items() if key != "source_fingerprint_sha256"}
+    )
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        economic_fact(other, preexisting_accounting_projection((freeze(raw),)))
+    edge = valuation_edge(BTC, USD, "2", number=74)
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        validate_valuation_edges(
+            [edge], CoreAcceptedValuationSourceRegistry(freeze({})), edge["as_of_utc"]
+        )
+    snapshot = snapshot_raw(PAPER, USD, "1", 74)
+    with pytest.raises(ValueError, match="TRUSTED_CONTEXT_FAILURE"):
+        validate_observed_context(snapshot, CoreAcceptedObservedBalanceSourceRegistry(freeze({})))
+
+
+@pytest.mark.parametrize("root", ["command_registry", "event_contract", "order_lifecycle"])
+def test_direct_m07_authority_dependency_mutation_fails(root: str) -> None:
+    upstream = copy.deepcopy(CANONICAL)
+    document = upstream["commands_events_order_lifecycle_and_idempotency.json"]
+    if root == "command_registry":
+        document[root]["SUBMIT_ORDER"]["accepted_effect"] = "execute"
+    elif root == "event_contract":
+        document[root]["event_types"].append("ARBITRARY")
+    else:
+        document[root]["terminal_states"].remove("CANCELLED")
+    assert validate_contract(CONTRACT, upstream) == "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["fingerprint_exclusion", "identity", "nfc", "numeric_encoding"],
+)
+def test_direct_m07_idempotency_and_closed_request_dependency_mutations_fail(
+    mutation: str,
+) -> None:
+    upstream = copy.deepcopy(CANONICAL)
+    document = upstream["commands_events_order_lifecycle_and_idempotency.json"]
+    if mutation == "fingerprint_exclusion":
+        document["idempotency_contract"]["fingerprint_excluded_fields"] = [
+            "correlation_id",
+            "causation_id",
+        ]
+    elif mutation == "identity":
+        document["idempotency_contract"]["identity"] = "command_id only"
+    elif mutation == "nfc":
+        document["closed_request_policy"]["canonical_json"]["unicode_normalization"] = "NFD"
+    else:
+        document["closed_request_policy"]["numeric_encoding"] = "JSON number"
+    assert validate_contract(CONTRACT, upstream) == "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize("source", ["capital_reservation", "capital_release"])
+def test_composite_source_authority_cannot_be_weakened_to_audit_event_only(source: str) -> None:
+    changed = copy.deepcopy(CONTRACT)
+    changed["source_registry"][source]["authority"] = "exact-economic AuditEvent"
+    assert validate_contract(changed) == "CONTRACT_INCONSISTENT"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("workspace_id", ident("ws", 999)),
+        ("portfolio_id", ident("port", 999)),
+        ("environment", "TESTNET"),
+    ],
+)
+def test_correction_scope_must_exact_match_target(field: str, value: str) -> None:
+    engine = funded("10")
+    correction = reversal_fact(engine, "deposit", ident("evt", 10), 750)
+    raw = dict(correction.payload)
+    raw[field] = value
+    raw["source_fingerprint_sha256"] = digest(
+        {key: item for key, item in raw.items() if key != "source_fingerprint_sha256"}
+    )
+    changed = economic_fact(raw, preexisting_accounting_projection((freeze(raw),)))
+    before = copy.deepcopy(engine.entries)
+    assert engine.account_fact(changed) == "TRUSTED_CONTEXT_FAILURE"
+    assert engine.entries == before
+
+
+@pytest.mark.parametrize("mutation", ["role", "posting_role", "quantity", "account"])
+def test_target_aware_correction_batch_rejects_semantic_mutation(mutation: str) -> None:
+    engine = funded("10")
+    correction = reversal_fact(engine, "deposit", ident("evt", 10), 760)
+    assert engine.account_fact(correction) == "ACCEPTED"
+    target = engine.accepted[("deposit", ident("evt", 10), RULE)][2]
+    inverse = list(engine.accepted[("reconciliation_correction", ident("evt", 760), RULE)][2])
+    changes: dict[str, Any] = {
+        "role": {"account_role": "FEE_EXPENSE"},
+        "posting_role": {"posting_role": "FEE_CLASSIFIED"},
+        "quantity": {"quantity": "9"},
+        "account": {"exchange_account_id": ident("xacc", 999)},
+    }[mutation]
+    inverse[0] = replace(inverse[0], **changes)
+    assert (
+        validate_correction_batch(correction, target, tuple(inverse)) == "MALFORMED_ACCOUNTING_FACT"
+    )
+    assert (
+        validate_correction_batch(
+            correction,
+            target,
+            engine.accepted[("reconciliation_correction", ident("evt", 760), RULE)][2],
+        )
+        == "VALID"
+    )
+
+
+def test_invalid_correction_candidate_fails_before_any_engine_mutation() -> None:
+    engine = funded("10")
+    correction = reversal_fact(engine, "deposit", ident("evt", 10), 800)
+    engine.correction_candidate_hook = lambda candidates: (
+        replace(candidates[0], quantity="9"),
+        *candidates[1:],
+    )
+    entries_before = copy.deepcopy(engine.entries)
+    accepted_before = copy.deepcopy(engine.accepted)
+    history_before = dict(engine.accepted_source_history)
+    reservations_before = copy.deepcopy(engine.reservations)
+    assert engine.account_fact(correction) == "MALFORMED_ACCOUNTING_FACT"
+    assert engine.entries == entries_before
+    assert engine.accepted == accepted_before
+    assert engine.accepted_source_history == history_before
+    assert engine.reservations == reservations_before
 
 
 @pytest.mark.parametrize(

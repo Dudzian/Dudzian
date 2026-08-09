@@ -165,7 +165,7 @@
       "failure": "fail closed"
     },
     "capital_reservation": {
-      "authority": "exact-economic AuditEvent",
+      "authority": "accepted exact-economic M0.8 AuditEvent-derived accounting fact plus nominal sealed accepted M0.7 SUBMIT_ORDER command context; exact command/order/scope/account binding; reservation asset/quantity remain M0.8 economics; not M0.9 risk authority",
       "identity": "audit_event_id",
       "roles": [
         "OWNED_AVAILABLE",
@@ -175,7 +175,7 @@
       "failure": "fail closed"
     },
     "capital_release": {
-      "authority": "exact-economic AuditEvent",
+      "authority": "accepted exact-economic M0.8 AuditEvent-derived accounting fact plus nominal sealed accepted M0.7 terminal lifecycle/event context; exact order/scope/account and terminal-state mapping; legal predecessor and contiguous version proven upstream",
       "identity": "audit_event_id",
       "roles": [
         "OWNED_AVAILABLE",
@@ -192,13 +192,10 @@
       "failure": "UNSUPPORTED_ACCOUNTING_SEMANTICS"
     },
     "reconciliation_correction": {
-      "authority": "explicit exact-economic AuditEvent with reason and provenance",
+      "authority": "accepted exact-economic AuditEvent plus exact referenced accepted target batch and target-aware inverse validation",
       "identity": "audit_event_id",
-      "roles": [
-        "OWNED_AVAILABLE",
-        "RECONCILIATION_CLEARING"
-      ],
-      "effects": "new balanced compensation; no history mutation",
+      "roles": "inherited exactly from referenced accepted target batch; no standalone role authority",
+      "effects": "exact direction-inverse compensation only; target-aware batch validation mandatory; no history mutation",
       "failure": "fail closed"
     }
   },
@@ -225,7 +222,7 @@
     "non_negative": "every current-SPOT OWNED_AVAILABLE and OWNED_RESERVED projection is non-negative after every accepted batch"
   },
   "reservation_protocol": {
-    "binding": "exact order_id plus canonical M0.7 SUBMIT_ORDER command_id; command_id is idempotency identity",
+    "binding": "nominal M07PrevalidatedAcceptedCommandContext proving exact canonical accepted SUBMIT_ORDER request, command fingerprint/membership and command/order/scope/account/instrument/route identity; reservation asset/quantity are separate M0.8 economics; command_id is idempotency identity",
     "effect": "available to reserved in exact scope; no equity/P&L",
     "fill_consumption": "matching Fill.order_id consumes exact reserved spend atomically before available; partial Fill leaves remainder",
     "terminal_release": [
@@ -236,7 +233,8 @@
       "REPLACED"
     ],
     "replay": "same command economics replays across a new audit_event_id; changed economics conflicts",
-    "boundary": "accounting state only; no M0.9 approval"
+    "boundary": "accounting state only; no M0.9 approval",
+    "terminal_evidence": "nominal M07PrevalidatedAcceptedTerminalOrderEventContext proving exact accepted M0.7 event envelope/fingerprint/version/history, event-to-terminal lifecycle target and exact order/scope/account/instrument/route"
   },
   "asset_identity": {
     "key": "exact M0.5 AssetReference object including venue_asset_code, canonical_display_code, asset_namespace and mapping_status",
@@ -274,7 +272,16 @@
     "arithmetic": "Fraction exact",
     "sell": "consume oldest gross acquired lots; base-asset fee reduces received inventory before lot creation; no negative inventory, short, leverage or flip",
     "late_fact": "append at a new sequence; never rewrite history",
-    "same_effective_time": "append_sequence then posting_index"
+    "same_effective_time": "append_sequence then posting_index",
+    "lot_fields": [
+      "quantity",
+      "unit_cost_basis",
+      "basis_valuation_unit",
+      "source_identity",
+      "append_sequence",
+      "posting_index"
+    ],
+    "cross_unit": "explicit trusted historical conversion from basis_valuation_unit to Fill quote/P&L unit; otherwise preserve exact valuation failure"
   },
   "pnl_model": {
     "gross_realized": "FIFO disposal proceeds minus exact consumed cost in valuation asset",
@@ -370,7 +377,17 @@
       "MISSING_EXTERNAL_FACT": "no accepted external observation supplied",
       "UNMAPPED_ASSET": "observed asset mapping is AMBIGUOUS or UNKNOWN",
       "UNSUPPORTED": "authorized observation source declares unsupported balance semantics"
-    }
+    },
+    "correction_targets": [
+      "fill",
+      "deposit",
+      "withdrawal",
+      "internal_transfer",
+      "capital_reservation",
+      "capital_release"
+    ],
+    "target_idempotency": "exact target tuple may be effectively reversed once; same correction identity replays, a different correction identity conflicts without mutation",
+    "target_aware_validation": "mandatory precommit correction validation before journal/maps mutation; correction scope exact-matches every target entry; same order/cardinality/workspace/portfolio/environment/account/asset/role/posting_role/quantity and opposite direction"
   },
   "ordering_policy": {
     "journal": "strict append_sequence assigned only after atomic validation",
@@ -477,6 +494,31 @@
       "contract": "commands_events_order_lifecycle_and_idempotency.json",
       "json_pointer": "/fill_contract",
       "content_fingerprint_sha256": "1846393d14f684fc2462eb12b5d92f9c18cfa8a0163b2a2f41fe88c913324d1b"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/command_registry/SUBMIT_ORDER",
+      "content_fingerprint_sha256": "864bc27bf55228d08b6592f2042a3f9a1f447eae661382bde0b380602369d748"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/event_contract",
+      "content_fingerprint_sha256": "c63d514a4546161798de2f7f90441821cd71653fba433c3577c6d7b630e4b6b2"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/order_lifecycle",
+      "content_fingerprint_sha256": "48a514419aaa0863078e69ffc50c3acd4b37a06d873d257275fb68874cc840dd"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/idempotency_contract",
+      "content_fingerprint_sha256": "43ba37d976eb5948970d289cc71cd06da82cb90803f9e5f61cc84109f00e9a62"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/closed_request_policy",
+      "content_fingerprint_sha256": "f3a523b01cbce2bafabeaad261777e3a97fc4f60db751deee0e77cb912f93e7c"
     }
   ],
   "forbidden": [
@@ -568,7 +610,7 @@
         "order_id",
         "command_id"
       ],
-      "constraints": "order_id and canonical SUBMIT_ORDER command_id bind exact scope/asset/quantity; command identity dedupes even across audit_event_id"
+      "constraints": "accepted M0.7 SUBMIT_ORDER binds command/order/scope/account/instrument/route and idempotency_key == command_id; separately accepted M0.8 fact supplies exact reservation asset_reference/quantity; M0.7 does not supply or approve reservation economics; not M0.9 risk approval"
     },
     "capital_release": {
       "exact_fields": [
@@ -580,10 +622,11 @@
         "effective_at_utc",
         "provenance",
         "source_fingerprint_sha256",
+        "exchange_account_id",
         "order_id",
         "terminal_state"
       ],
-      "constraints": "terminal REJECTED/CANCELLED/EXPIRED/FILLED/REPLACED fact releases exact remaining order reservation once"
+      "constraints": "accepted exact M0.7 terminal event context and event fingerprint/version/history bind order and full scope including account; releases exact remainder once"
     },
     "reconciliation_correction": {
       "exact_fields": [
@@ -756,12 +799,50 @@
       "withdrawal": "consumes FIFO basis; no trading P&L",
       "internal_transfer": "moves exact FIFO lot slices/basis account-to-account; Portfolio basis unchanged",
       "fill_fee": "consumes exact fee-asset inventory basis; missing inventory fails closed",
-      "reconciliation_reversal": "removes target source effect through exact compensation; no generic adjustment"
-    }
+      "reconciliation_reversal": "removes exact accepted target source effect through direction-inverse compensation only"
+    },
+    "expected_batch": "rederive source fingerprint, rule, contiguous postings and complete batch from canonical immutable source context plus preceding reconstructed accounting state; compare exact entries and recomputed batch fingerprint"
   },
   "non_fill_authority": {
     "context": "nominal CoreAcceptedAccountingFactContext",
     "membership": "Core-owned accepted projection maps audit_event_id to exact source_type, fingerprint and scope",
     "self_hash": "integrity only; raw/self-hashed facts rejected"
+  },
+  "m07_authority_boundary": {
+    "model": "direct field interpretation with exact dependency attestation",
+    "submit_order_consumed_fields": [
+      "command_id",
+      "operation_type",
+      "authority_context_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "strategy_instance_id",
+      "source_type",
+      "instrument_id",
+      "execution_route_id",
+      "correlation_id",
+      "causation_id",
+      "idempotency_key",
+      "order_intent_id",
+      "order_id",
+      "side",
+      "order_type",
+      "quantity",
+      "limit_price",
+      "time_in_force",
+      "expire_at_utc"
+    ],
+    "reservation_economics": "asset_reference and reservation quantity belong only to M0.8 AccountingEconomicFact; M0.7 does not provide or approve them; M0.8 reservation is accounting state, not M0.9 risk authority",
+    "terminal_event_mapping": {
+      "ORDER_REJECTED": "REJECTED",
+      "ORDER_FILLED": "FILLED",
+      "ORDER_CANCEL_CONFIRMED": "CANCELLED",
+      "ORDER_REPLACE_CONFIRMED": "REPLACED",
+      "ORDER_EXPIRED": "EXPIRED"
+    },
+    "accepted_history": "reservation retains exact accepted AccountingEconomicFact plus sealed nominal accepted SUBMIT_ORDER context; release retains exact fact plus sealed M0.7 lifecycle-ingestion proof binding event identity/fingerprint/order/version/type/terminal target/legal predecessor/previous contiguous version; rebuild rejects missing evidence",
+    "terminal_event_attestation": "exact M0.7 envelope schemas including nullable command_id/causation_id and non-bool positive aggregate_version; exact terminal safe_payload field/value schemas; canonical event fingerprint; sealed accepted lifecycle proof with legal predecessor and contiguous previous version"
   }
 }
