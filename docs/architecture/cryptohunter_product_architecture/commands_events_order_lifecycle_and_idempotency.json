@@ -818,25 +818,266 @@
     }
   },
   "fill_contract": {
-    "identity": "canonical fill_id prefix fill from M0.2",
+    "identity": "canonical fill_id prefix fill from M0.2; parent is canonical order_id",
+    "immutable_full_economic_fact": true,
+    "fact_fields": [
+      "fill_id",
+      "order_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "instrument_metadata_version",
+      "execution_route_id",
+      "venue_trade_id",
+      "side",
+      "executed_quantity",
+      "execution_price",
+      "executed_at_utc",
+      "fee_kind",
+      "fee_quantity",
+      "fee_asset_reference",
+      "fill_fingerprint_sha256"
+    ],
+    "nullable_fields": [
+      "fee_asset_reference"
+    ],
+    "field_schemas": {
+      "fill_id": {
+        "type": "id",
+        "prefix": "fill"
+      },
+      "order_id": {
+        "type": "id",
+        "prefix": "ord"
+      },
+      "environment": {
+        "type": "enum",
+        "values": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "workspace_id": {
+        "type": "id",
+        "prefix": "ws"
+      },
+      "portfolio_id": {
+        "type": "id",
+        "prefix": "port"
+      },
+      "exchange_account_id": {
+        "type": "id",
+        "prefix": "xacc"
+      },
+      "exchange_id": {
+        "type": "non_empty_string"
+      },
+      "instrument_id": {
+        "type": "id",
+        "prefix": "instr"
+      },
+      "instrument_metadata_version": {
+        "type": "positive_integer"
+      },
+      "execution_route_id": {
+        "type": "id",
+        "prefix": "xroute"
+      },
+      "venue_trade_id": {
+        "type": "non_empty_string"
+      },
+      "side": {
+        "type": "enum",
+        "values": [
+          "BUY",
+          "SELL"
+        ]
+      },
+      "executed_quantity": {
+        "type": "decimal",
+        "constraint": "positive"
+      },
+      "execution_price": {
+        "type": "decimal",
+        "constraint": "positive"
+      },
+      "executed_at_utc": {
+        "type": "timestamp"
+      },
+      "fee_kind": {
+        "type": "enum",
+        "values": [
+          "NONE",
+          "CHARGE"
+        ]
+      },
+      "fee_quantity": {
+        "type": "decimal",
+        "constraint": "non_negative"
+      },
+      "fee_asset_reference": {
+        "type": "asset_reference",
+        "fields": [
+          "venue_asset_code",
+          "canonical_display_code",
+          "asset_namespace",
+          "mapping_status"
+        ],
+        "field_schemas": {
+          "venue_asset_code": {
+            "type": "non_empty_string"
+          },
+          "canonical_display_code": {
+            "type": "non_empty_string"
+          },
+          "asset_namespace": {
+            "type": "non_empty_string"
+          },
+          "mapping_status": {
+            "type": "enum",
+            "values": [
+              "EXACT",
+              "EXPLICIT_ALIAS"
+            ]
+          }
+        },
+        "rules": [
+          "exact M0.5 asset-reference value object",
+          "AMBIGUOUS and UNKNOWN forbidden",
+          "no default to base, quote, or settlement asset"
+        ]
+      },
+      "fill_fingerprint_sha256": {
+        "type": "sha256_hex"
+      }
+    },
+    "instrument_binding": {
+      "identity": "instrument_id",
+      "metadata_binding": "instrument_metadata_version resolves exactly one full trusted historical Instrument record",
+      "required_matches": [
+        "workspace_id",
+        "exchange_id",
+        "environment"
+      ],
+      "asset_semantics": "resolved bound record supplies base, quote, and settlement asset references; no symbol parsing or current-version fallback",
+      "trusted_context": "nominal M05PrevalidatedInstrumentHistory produced only after successful canonical M0.5 trusted-history validation; raw/unvalidated mappings and caller booleans are rejected",
+      "resolution_failures": "missing/duplicate requested version, malformed history, or scope mismatch => TRUSTED_CONTEXT_FAILURE; no current-version fallback",
+      "m0_7_responsibility": "map key, requested instrument/version, ordered unique versions, identity continuity, Fill scope match, settlement namespace defense; M0.7 does not reimplement or weaken M0.5 structural validation"
+    },
+    "fee_semantics": {
+      "fee_kind_values": [
+        "NONE",
+        "CHARGE"
+      ],
+      "NONE": "fee_quantity must be exactly 0 and fee_asset_reference must be null",
+      "CHARGE": "fee_quantity must be positive and fee_asset_reference must be non-null, exact, mapping_status EXACT or EXPLICIT_ALIAS, and asset_namespace must equal Fill.exchange_id",
+      "third_asset_fee": "legal and preserved without base/quote default",
+      "maker_rebate": "unsupported fail-closed; negative decimals forbidden; a future explicit economic fact kind is required"
+    },
+    "fingerprint": {
+      "field": "fill_fingerprint_sha256",
+      "algorithm": "SHA-256",
+      "input_fields": [
+        "fill_id",
+        "order_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "instrument_metadata_version",
+        "execution_route_id",
+        "venue_trade_id",
+        "side",
+        "executed_quantity",
+        "execution_price",
+        "executed_at_utc",
+        "fee_kind",
+        "fee_quantity",
+        "fee_asset_reference"
+      ],
+      "excluded_fields": [
+        "fill_fingerprint_sha256"
+      ],
+      "canonicalization": [
+        "exact fact field order is schema attestation; JSON object keys sorted for hashing",
+        "UTF-8",
+        "NFC",
+        "canonical JSON separators comma and colon",
+        "M0.5 canonical decimals",
+        "canonical UTC RFC3339 Z timestamps"
+      ]
+    },
     "external_dedupe_scope": [
       "environment",
       "exchange_account_id",
       "exchange_id",
       "venue_trade_id"
     ],
+    "dedupe": {
+      "same_fill_id_same_fingerprint": "REPLAY_SUCCESS; zero new economic fact",
+      "same_fill_id_different_fingerprint": "FILL_IDENTITY_CONFLICT; reconciliation; no mutation",
+      "same_external_key_same_economics": "REPLAY_SUCCESS; if fill_id differs retain first fact and create zero duplicate economic effect",
+      "same_external_key_different_economics": "FILL_IDENTITY_CONFLICT; reconciliation; no mutation"
+    },
+    "trusted_resolution": {
+      "context_field": "fills_by_id",
+      "shape": "map fill_id -> exact immutable full Fill fact",
+      "authority": "composite Core-owned trusted boundary: exact Fill validation plus nominal prevalidated M0.5 instrument history binding; never caller or event safe_payload authority",
+      "rules": [
+        "map key equals fact.fill_id",
+        "exact schema and fingerprint required",
+        "one deterministic fact per fill_id",
+        "missing fill is TRUSTED_CONTEXT_FAILURE, never zero execution or no-fee",
+        "conflicting duplicate is FILL_IDENTITY_CONFLICT",
+        "persistence implementation deferred to M0.11",
+        "composite resolver returns Fill only with its exact resolved historical Instrument record",
+        "raw instrument_history_by_id mapping is rejected even when shaped correctly"
+      ]
+    },
+    "event_referential_integrity": {
+      "events": [
+        "ORDER_PARTIALLY_FILLED",
+        "ORDER_FILLED"
+      ],
+      "rules": [
+        "safe_payload fill_id resolves through trusted fills_by_id",
+        "Fill order_id equals event order_id",
+        "Fill environment workspace portfolio exchange_account exchange instrument and route equal event envelope",
+        "Fill venue_trade_id equals safe_payload venue_trade_id",
+        "Fill fingerprint validates before lifecycle effect",
+        "cumulative_executed_quantity is recomputed from accepted unique Fill history and must equal payload; caller value is not authority",
+        "all historical Fill scope fields match event envelope",
+        "cumulative uses canonical durable and scoped external venue-trade dedupe semantics",
+        "complete Core-owned accepted_fill_ids_by_order_id sequence is mandatory; no caller list and no current-fill fallback",
+        "current canonical Fill occurs in the exact Order sequence; an exact duplicate external trade outside it is REPLAY_SUCCESS"
+      ],
+      "missing_or_mismatch": "TRUSTED_CONTEXT_FAILURE; reconciliation; no lifecycle mutation",
+      "accepted_history_context": {
+        "field": "accepted_fill_ids_by_order_id",
+        "shape": "nominal CoreAcceptedFillProjection: order_id -> one ordered canonical accepted fill_id sequence",
+        "authority": "Core-owned projection derived from accepted M0.7 event/order history; raw mapping/list, caller request and safe_payload are rejected",
+        "duplicate_external_trade": "only first canonical economic effect remains in sequence; later exact duplicate resolves to REPLAY_SUCCESS and creates no lifecycle or cumulative effect"
+      }
+    },
     "decimal_fields": [
       "executed_quantity",
       "execution_price",
       "fee_quantity"
     ],
     "float_forbidden": true,
-    "cumulative_executed_quantity": "sum of unique accepted fill executed_quantity in deterministic fill sequence",
+    "cumulative_executed_quantity": "sum of unique accepted full-economic Fill facts in deterministic accepted event sequence",
     "remaining_quantity": "order quantity minus cumulative executed quantity",
     "average_execution_price": "retain exact notional numerator and cumulative executed denominator; emit canonical decimal only when quotient has a finite decimal expansion; otherwise null for presentation and never apply implicit Decimal-context rounding",
     "invariants": [
       "fill quantity > 0",
       "execution price > 0",
+      "executed_at_utc is immutable economic time and distinct from event occurred_at_utc",
       "cumulative never regresses",
       "cumulative <= order quantity",
       "remaining >= 0",
@@ -844,7 +1085,12 @@
       "FILLED iff cumulative == quantity",
       "overfill rejected and reconciliation required"
     ],
-    "canonical_decimal_output": "M0.5 regex; fractional trailing zeros removed and zero exactly 0"
+    "canonical_decimal_output": "M0.5 regex; fractional trailing zeros removed and zero exactly 0",
+    "trust_boundaries": {
+      "raw_structural_fill": "validate_fill proves exact fields, types, canonical encoding, fee scope and full-economic fingerprint only; not trusted economic authority",
+      "trusted_economic_fill": "composite resolver requires structural validity plus resolution against a nominal prevalidated M0.5 instrument history context",
+      "complete_accepted_history": "Core-owned accepted_fill_ids_by_order_id projection derived only from accepted M0.7 lifecycle history; caller request, safe_payload, and raw list/dict are never authority"
+    }
   },
   "event_contract": {
     "immutable_facts": true,
@@ -1511,7 +1757,10 @@
     "EVENT_IDENTITY_CONFLICT": "same scoped audit_event_id with a different immutable fact fingerprint; ordinary data denial",
     "EVENT_VERSION_GAP": "non-contiguous aggregate version; reconciliation required",
     "MALFORMED_EVENT": "event envelope or safe-payload shape, type, or canonical encoding failure",
-    "EVENT_FINGERPRINT_MISMATCH": "well-shaped supplied event fingerprint differs from canonical full immutable fact fingerprint; ordinary data/integrity denial"
+    "EVENT_FINGERPRINT_MISMATCH": "well-shaped supplied event fingerprint differs from canonical full immutable fact fingerprint; ordinary data/integrity denial",
+    "FILL_IDENTITY_CONFLICT": "same durable fill_id or scoped external venue trade identity has different full-economic fact; ordinary data conflict requiring reconciliation",
+    "MALFORMED_FILL": "Fill shape/type/canonical encoding/fingerprint-input semantic failure; ordinary data denial",
+    "FILL_PROGRESSION_CONFLICT": "accepted unique Fill progression exceeds order quantity or violates quantitative invariant; reconciliation required; no mutation"
   },
   "environment_execution_boundary": {
     "shared_model": [
@@ -1615,6 +1864,21 @@
       "contract": "strategy_market_data_and_execution_routing.json",
       "json_pointer": "/live_execution_authority_policy",
       "content_fingerprint_sha256": "eb2034a4691a18f3037b2a5f93d1fb41fcb38ef67c6c43c5dfff891dd35fe1de"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/asset_reference_contract",
+      "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/trusted_history_contract",
+      "content_fingerprint_sha256": "87b09322419aac6fcc36f12405931e1cf88cf0630ced72e68b341d5434e10e8f"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/record_fields",
+      "content_fingerprint_sha256": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409"
     }
   ],
   "executable_reference_model": {
