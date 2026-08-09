@@ -1,0 +1,767 @@
+{
+  "schema_version": "1.0.0",
+  "m0_element": "M0.8",
+  "status": "closed",
+  "authority": "target architecture contract; not production runtime or persistence",
+  "source_of_truth": [
+    "immutable canonical LedgerEntry journal",
+    "immutable trusted upstream economic facts",
+    "ACCOUNTING_SPOT_FIFO_V1 deterministic policy"
+  ],
+  "ledger_entry_schema": {
+    "exact_fields": [
+      "ledger_entry_id",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "strategy_instance_id",
+      "asset_reference",
+      "account_role",
+      "direction",
+      "quantity",
+      "source_type",
+      "accounting_source_identity",
+      "accounting_source_fingerprint_sha256",
+      "accounting_rule_version",
+      "posting_index",
+      "posting_role",
+      "batch_fingerprint_sha256",
+      "effective_at_utc",
+      "append_sequence",
+      "order_id",
+      "fill_id",
+      "audit_event_id",
+      "correction_reason"
+    ],
+    "nullable_fields": [
+      "exchange_account_id",
+      "strategy_instance_id",
+      "order_id",
+      "fill_id",
+      "audit_event_id",
+      "correction_reason"
+    ],
+    "identity": {
+      "kind": "LedgerEntry",
+      "prefix": "led",
+      "format": "M0.2 uuidv7"
+    },
+    "quantity": "strictly-positive canonical M0.5 decimal string; zero and signed values forbidden",
+    "direction_registry": [
+      "DEBIT",
+      "CREDIT"
+    ],
+    "immutability": "append-only; UPDATE and DELETE forbidden",
+    "posting_role_registry": [
+      "ASSET_RECEIVED",
+      "ASSET_PAID",
+      "TRADE_COUNTERPART",
+      "FEE_CLASSIFIED",
+      "FEE_PAID",
+      "CAPITAL_CLASSIFIED",
+      "RESERVE_AVAILABLE",
+      "RESERVE_HELD",
+      "TRANSFER_SOURCE",
+      "TRANSFER_DESTINATION",
+      "TRANSFER_CLEARING_SOURCE",
+      "TRANSFER_CLEARING_DESTINATION",
+      "PNL_CLASSIFIED",
+      "PNL_COUNTERPART",
+      "RECONCILIATION_OWNED",
+      "RECONCILIATION_COUNTERPART"
+    ],
+    "source_reference_constraints": {
+      "fill": "fill_id and order_id required; audit_event_id and correction_reason null",
+      "realized_pnl": "forbidden for independent append; Fill-derived PNL classification entries retain source_type fill",
+      "non_fill": "audit_event_id required; fill_id and order_id null",
+      "reconciliation_correction": "audit_event_id and non-empty correction_reason required"
+    }
+  },
+  "account_roles": {
+    "OWNED_AVAILABLE": "owned asset included in NAV",
+    "OWNED_RESERVED": "owned asset included in NAV",
+    "TRADE_CLEARING": "balancing counterpart; excluded from owned balances and NAV",
+    "FEE_EXPENSE": "classification only; excluded from owned balances and NAV",
+    "REALIZED_PNL_CLASSIFICATION": "classification only; excluded from owned balances and NAV",
+    "EXTERNAL_CAPITAL": "capital classification only; excluded from owned balances and NAV",
+    "TRANSFER_CLEARING": "balancing counterpart; excluded from owned balances and NAV",
+    "RECONCILIATION_CLEARING": "balancing counterpart; excluded from owned balances and NAV"
+  },
+  "batch_protocol": {
+    "atomicity": "validate identity, schema, transitions and per-asset balance before allocating IDs or appending; append entire batch or none",
+    "accounting_source_identity": "fill uses canonical fill_id; non-fill sources require an immutable exact-economic AuditEvent whose audit_event_id is authority",
+    "accounting_source_fingerprint": "sha256 of canonical exact economic source projection",
+    "accounting_rule_version": "ACCOUNTING_SPOT_FIFO_V1",
+    "posting_key": "(source_type, accounting_source_identity, accounting_rule_version, posting_index, posting_role)",
+    "batch_fingerprint": "sha256 of ordered canonical posting projections excluding ledger_entry_id and append_sequence",
+    "balance_invariant": "for every exact asset_reference in one batch, sum(DEBIT quantity) == sum(CREDIT quantity)",
+    "idempotency": "same identity+fingerprint+rule returns REPLAY_SUCCESS and original result with zero append; changed fingerprint returns ACCOUNTING_IDENTITY_CONFLICT with zero mutation",
+    "derived_batch_replay": "same source identity, fingerprint and rule with a different derived batch fingerprint is CONTRACT_INCONSISTENT with zero append",
+    "fill_replay_integrity": "replay verifies accepted source fingerprint and every stored journal entry/batch fingerprint against accepted original batch; mismatch CONTRACT_INCONSISTENT, zero append"
+  },
+  "source_registry": {
+    "fill": {
+      "authority": "M0.7 composite trusted accepted Full Fill",
+      "identity": "fill_id",
+      "roles": [
+        "OWNED_AVAILABLE",
+        "TRADE_CLEARING",
+        "FEE_EXPENSE",
+        "REALIZED_PNL_CLASSIFICATION"
+      ],
+      "effects": "spot inventory, FIFO cost basis, gross realized P&L and exact fee asset",
+      "failure": "fail closed"
+    },
+    "fee": {
+      "authority": "registry-reserved M0.2 source type; standalone fee authority is unavailable in current M0.8",
+      "identity": "none",
+      "roles": [],
+      "effects": "none; M0.7 Full Fill is the sole trade-fee authority",
+      "failure": "UNSUPPORTED_ACCOUNTING_SEMANTICS"
+    },
+    "funding": {
+      "authority": "not supplied by an execution-capable current-edition instrument; unsupported",
+      "identity": "audit_event_id",
+      "roles": [],
+      "effects": "none",
+      "failure": "UNSUPPORTED_ACCOUNTING_SEMANTICS"
+    },
+    "interest": {
+      "authority": "no closed borrow/interest economics upstream; unsupported",
+      "identity": "audit_event_id",
+      "roles": [],
+      "effects": "none",
+      "failure": "UNSUPPORTED_ACCOUNTING_SEMANTICS"
+    },
+    "deposit": {
+      "authority": "exact-economic AuditEvent with external/internal provenance",
+      "identity": "audit_event_id",
+      "roles": [
+        "OWNED_AVAILABLE",
+        "EXTERNAL_CAPITAL"
+      ],
+      "effects": "external contribution only with explicit Portfolio-boundary provenance",
+      "failure": "fail closed"
+    },
+    "withdrawal": {
+      "authority": "exact-economic AuditEvent with external/internal provenance",
+      "identity": "audit_event_id",
+      "roles": [
+        "OWNED_AVAILABLE",
+        "EXTERNAL_CAPITAL"
+      ],
+      "effects": "external withdrawal only with explicit Portfolio-boundary provenance",
+      "failure": "fail closed"
+    },
+    "internal_transfer": {
+      "authority": "exact-economic AuditEvent binding both legs and provenance",
+      "identity": "audit_event_id",
+      "roles": [
+        "OWNED_AVAILABLE",
+        "TRANSFER_CLEARING"
+      ],
+      "effects": "no P&L; distinct venue references need explicit equivalence or fail closed",
+      "failure": "fail closed"
+    },
+    "capital_reservation": {
+      "authority": "exact-economic AuditEvent",
+      "identity": "audit_event_id",
+      "roles": [
+        "OWNED_AVAILABLE",
+        "OWNED_RESERVED"
+      ],
+      "effects": "available to reserved only",
+      "failure": "fail closed"
+    },
+    "capital_release": {
+      "authority": "exact-economic AuditEvent",
+      "identity": "audit_event_id",
+      "roles": [
+        "OWNED_AVAILABLE",
+        "OWNED_RESERVED"
+      ],
+      "effects": "reserved to available only",
+      "failure": "fail closed"
+    },
+    "realized_pnl": {
+      "authority": "registry-reserved M0.2 source type; independent source is unsupported in M0.8",
+      "identity": "none",
+      "roles": [],
+      "effects": "none; Fill-derived REALIZED_PNL_CLASSIFICATION entries use source_type fill in the same atomic Fill batch",
+      "failure": "UNSUPPORTED_ACCOUNTING_SEMANTICS"
+    },
+    "reconciliation_correction": {
+      "authority": "explicit exact-economic AuditEvent with reason and provenance",
+      "identity": "audit_event_id",
+      "roles": [
+        "OWNED_AVAILABLE",
+        "RECONCILIATION_CLEARING"
+      ],
+      "effects": "new balanced compensation; no history mutation",
+      "failure": "fail closed"
+    }
+  },
+  "balance_model": {
+    "key": [
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "asset_reference"
+    ],
+    "owned_total": "OWNED_AVAILABLE plus OWNED_RESERVED net projection",
+    "available": "OWNED_AVAILABLE net projection",
+    "reserved": "OWNED_RESERVED net projection",
+    "invariant": "owned_total = available + reserved for current SPOT scope",
+    "excluded_roles": [
+      "TRADE_CLEARING",
+      "FEE_EXPENSE",
+      "REALIZED_PNL_CLASSIFICATION",
+      "EXTERNAL_CAPITAL",
+      "TRANSFER_CLEARING",
+      "RECONCILIATION_CLEARING"
+    ],
+    "non_negative": "every current-SPOT OWNED_AVAILABLE and OWNED_RESERVED projection is non-negative after every accepted batch"
+  },
+  "reservation_protocol": {
+    "binding": "exact order_id plus canonical M0.7 SUBMIT_ORDER command_id; command_id is idempotency identity",
+    "effect": "available to reserved in exact scope; no equity/P&L",
+    "fill_consumption": "matching Fill.order_id consumes exact reserved spend atomically before available; partial Fill leaves remainder",
+    "terminal_release": [
+      "REJECTED",
+      "CANCELLED",
+      "EXPIRED",
+      "FILLED",
+      "REPLACED"
+    ],
+    "replay": "same command economics replays across a new audit_event_id; changed economics conflicts",
+    "boundary": "accounting state only; no M0.9 approval"
+  },
+  "asset_identity": {
+    "key": "exact M0.5 AssetReference object including venue_asset_code, canonical_display_code, asset_namespace and mapping_status",
+    "accepted_mapping_status": [
+      "EXACT",
+      "EXPLICIT_ALIAS"
+    ],
+    "normalization": "none",
+    "cross_venue_unit_aggregation": "forbidden without explicit canonical equivalence authority, which M0.5 does not provide",
+    "portfolio_value_aggregation": "allowed only through explicit trusted valuation paths"
+  },
+  "instrument_coverage": {
+    "current_edition_execution_capable": [
+      "SPOT_PAIR"
+    ],
+    "accounting_supported": [
+      "SPOT_PAIR"
+    ],
+    "fail_closed": [
+      "MARGIN_PAIR",
+      "PERPETUAL_CONTRACT",
+      "DELIVERY_FUTURE",
+      "OPTION"
+    ],
+    "reason": "M0.6 current-edition readiness/activation allows SPOT/SPOT_PAIR only; derivatives remain structurally representable but lack complete collateral, liability, funding, expiry/exercise/settlement accounting economics"
+  },
+  "cost_basis_policy": {
+    "id": "ACCOUNTING_SPOT_FIFO_V1",
+    "scope": "analytical SPOT inventory projection, not tax policy",
+    "ordering": [
+      "append_sequence",
+      "posting_index"
+    ],
+    "lots": "projection-only, keyed by accepted Fill identity and deterministic posting index",
+    "arithmetic": "Fraction exact",
+    "sell": "consume oldest gross acquired lots; base-asset fee reduces received inventory before lot creation; no negative inventory, short, leverage or flip",
+    "late_fact": "append at a new sequence; never rewrite history",
+    "same_effective_time": "append_sequence then posting_index"
+  },
+  "pnl_model": {
+    "gross_realized": "FIFO disposal proceeds minus exact consumed cost in valuation asset",
+    "fee_effect": "separate exact fee quantity; valued only by trusted fee-asset valuation and subtracted once in net reporting",
+    "funding_interest": "unsupported in current execution-capable scope",
+    "net_realized": "gross realized minus once-valued fees plus supported funding/interest effects",
+    "unrealized": "projection-only mark value minus remaining exact FIFO cost",
+    "capital_flows": "excluded from trading P&L",
+    "mark_updates": "never change ledger or realized P&L",
+    "executable_projection": "scope-aware rebuild returns gross_realized, once-valued fee_effect, net_realized and unrealized; incomplete fee/mark conversion returns MISSING_VALUATION not zero",
+    "fee_valuation_time_policy": "trusted valuation context as_of_utc supplied explicitly to the reporting projection; never current implicit price or zero fallback"
+  },
+  "valuation_protocol": {
+    "required_fields": [
+      "subject_reference",
+      "valuation_unit",
+      "rate",
+      "source_id",
+      "observed_at_utc",
+      "effective_at_utc",
+      "as_of_utc",
+      "stale_after_utc",
+      "source_fingerprint_sha256"
+    ],
+    "rate": "positive canonical decimal converted to exact Fraction",
+    "path": "explicit ordered acyclic source-scoped edges; deterministic lexicographic fingerprint tie-break only among policy-authorized paths",
+    "missing": "MISSING_VALUATION; never zero",
+    "stale": "STALE_VALUATION; never trusted or zero",
+    "unsupported_path": "UNSUPPORTED_VALUATION_PATH",
+    "completeness": [
+      "COMPLETE",
+      "PARTIALLY_UNVALUED"
+    ],
+    "trusted_context": "nominal PrevalidatedValuationContext only; raw mapping rejected",
+    "freshness": "observed_at_utc <= effective_at_utc <= as_of_utc < stale_after_utc; stale is derived, never caller-supplied",
+    "valuation_unit": "exact AssetReference; no display-code or stablecoin equivalence",
+    "source_authority": "CoreAcceptedValuationFactProjection maps source_id to exact accepted fingerprint/scope/semantics; IDs or self-hashes alone grant no authority",
+    "path_precedence": "enumerate authorized acyclic paths; discard stale paths; choose fresh winner by ordered edge-fingerprint tuple; otherwise STALE before UNSUPPORTED cycle before MISSING",
+    "reporting_as_of": "one canonical reporting_as_of_utc per context/projection; every edge as_of_utc must equal it; freshness evaluated against it"
+  },
+  "equity_nav": {
+    "canonical_equation": "sum of each owned available+reserved asset quantity converted by a complete trusted valuation path, minus explicitly supported liabilities; classification roles and analytical spot positions are excluded",
+    "spot_rule": "marked owned inventory is counted once; neither position value nor realized/unrealized classifications are added",
+    "capital_metrics": [
+      "gross_contributions",
+      "gross_withdrawals",
+      "net_external_capital",
+      "equity_nav",
+      "gross_realized_trading_pnl",
+      "fee_effect",
+      "net_realized_pnl",
+      "unrealized_pnl"
+    ],
+    "historical_capital_valuation": "requires trusted valuation at effective time; today's mark is not substituted",
+    "scope": "one exact workspace_id, portfolio_id and environment; aggregates accounts only inside that scope; cross-environment total is NON_AUTHORITATIVE and not exposed by canonical nav"
+  },
+  "reconciliation_protocol": {
+    "snapshot": "observed external fact, never accounting authority",
+    "key": [
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "asset_reference",
+      "as_of_utc"
+    ],
+    "outcomes": [
+      "MATCH",
+      "DRIFT",
+      "MISSING_INTERNAL_FACT",
+      "MISSING_EXTERNAL_FACT",
+      "UNMAPPED_ASSET",
+      "UNSUPPORTED"
+    ],
+    "drift": "RECONCILIATION_DRIFT; zero mutation",
+    "correction": "exact reversal of existing accepted source/batch only; inverse postings derived; generic INCREASE/DECREASE forbidden",
+    "observed_fact_fields": [
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "asset_reference",
+      "observed_quantity",
+      "as_of_utc",
+      "source_id",
+      "source_fingerprint_sha256"
+    ],
+    "source_authority": "CoreAcceptedObservedBalanceFactProjection maps source_id to exact accepted fingerprint/scope/semantics; IDs or self-hashes alone grant no authority",
+    "outcome_rules": {
+      "MATCH": "internal history exists and exact projected quantity equals observed",
+      "DRIFT": "internal history exists and quantities differ; zero mutation",
+      "MISSING_INTERNAL_FACT": "no internal journal history for exact scope/asset",
+      "MISSING_EXTERNAL_FACT": "no accepted external observation supplied",
+      "UNMAPPED_ASSET": "observed asset mapping is AMBIGUOUS or UNKNOWN",
+      "UNSUPPORTED": "authorized observation source declares unsupported balance semantics"
+    }
+  },
+  "ordering_policy": {
+    "journal": "strict append_sequence assigned only after atomic validation",
+    "projection": [
+      "append_sequence",
+      "posting_index"
+    ],
+    "effective_time": "immutable economic metadata, not append order",
+    "late_and_backfill": "append new entries; no history rewrite",
+    "ties": "append_sequence then posting_index; never container iteration"
+  },
+  "environment_policy": {
+    "core": [
+      "PAPER",
+      "TESTNET",
+      "LIVE"
+    ],
+    "isolation": "execution-authoritative keys never cross environments",
+    "paper": "simulator must emit canonical Full Fill; legacy paper ledger is not authority",
+    "testnet": "trusted venue facts use the same core",
+    "live": "first-class accounting target using the same core, while current-edition execution remains policy-disabled",
+    "cross_environment_reporting": "explicit NON_AUTHORITATIVE only and forbidden for M0.9 execution/risk"
+  },
+  "m09_outputs": [
+    "owned_balances",
+    "available_capital",
+    "reserved_capital",
+    "spot_inventory_exposure",
+    "equity_nav",
+    "gross_and_net_realized_pnl",
+    "unrealized_pnl",
+    "valuation_completeness",
+    "reconciliation_status"
+  ],
+  "failure_taxonomy": [
+    "MALFORMED_ACCOUNTING_FACT",
+    "ACCOUNTING_IDENTITY_CONFLICT",
+    "UNBALANCED_ACCOUNTING_BATCH",
+    "INVALID_ACCOUNTING_TRANSITION",
+    "INSUFFICIENT_AVAILABLE_CAPITAL",
+    "RESERVATION_CONFLICT",
+    "MISSING_VALUATION",
+    "STALE_VALUATION",
+    "UNSUPPORTED_VALUATION_PATH",
+    "RECONCILIATION_DRIFT",
+    "UNSUPPORTED_ACCOUNTING_SEMANTICS",
+    "TRUSTED_CONTEXT_FAILURE",
+    "CONTRACT_INCONSISTENT",
+    "REPLAY_SUCCESS"
+  ],
+  "contract_inconsistent_scope": "only mutable machine-contract drift, schema corruption or dependency-attestation corruption",
+  "cross_contract_dependencies": [
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/public_trading_environments",
+      "content_fingerprint_sha256": "b0114e386bf72439199ec8155d65a57dc7e00cabe79dba805f53221ba7713103"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/entity_kinds",
+      "content_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/relationships",
+      "content_fingerprint_sha256": "03c64a8159cd7ae7f1103b029234c858d0cf86898d9dc0b652e1043667fc11a9"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/identifier_policy",
+      "content_fingerprint_sha256": "44726b4e51c53722ebbc95212d708521007c59cb54292ea7bc5b970320031d20"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/asset_reference_contract",
+      "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/decimal_policy",
+      "content_fingerprint_sha256": "e526f728e0075a3a27380a87a213eb5e5f074d90cc4b63a99b48485957070b48"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/record_fields",
+      "content_fingerprint_sha256": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract/trusted_history_contract",
+      "content_fingerprint_sha256": "87b09322419aac6fcc36f12405931e1cf88cf0630ced72e68b341d5434e10e8f"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_type_registry",
+      "content_fingerprint_sha256": "e99ba1e3af1a3b5771add15b7d0ab0659c0b24a1bd855c04c0d5c27f2d2831f8"
+    },
+    {
+      "contract": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/current_edition_execution_pair_policy",
+      "content_fingerprint_sha256": "7dd12317c8dab7bc2d19e751f39800db7895f737a42335df1e22927d465ec0b9"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/fill_contract",
+      "content_fingerprint_sha256": "1846393d14f684fc2462eb12b5d92f9c18cfa8a0163b2a2f41fe88c913324d1b"
+    }
+  ],
+  "forbidden": [
+    "float",
+    "mutable balance source of truth",
+    "production persistence",
+    "new Posting/Batch/Balance/Position/PnL durable entity",
+    "symbol parsing",
+    "global asset aliases",
+    "implicit stablecoin parity",
+    "LIVE enablement",
+    "risk approval",
+    "ExecutionLease",
+    "venue snapshot overwrite"
+  ],
+  "closure_conditions": "all executable M0.8 reference invariants and direct M0.2/M0.5/M0.6/M0.7 dependency attestations pass",
+  "accounting_economic_fact_schema_registry": {
+    "deposit": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256",
+        "exchange_account_id",
+        "asset_reference",
+        "quantity",
+        "capital_flow_kind",
+        "basis_valuation_unit",
+        "unit_cost_basis"
+      ],
+      "constraints": "EXTERNAL_CONTRIBUTION only; positive exact basis per unit in explicit valuation unit; creates FIFO inventory without trading P&L"
+    },
+    "withdrawal": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256",
+        "exchange_account_id",
+        "asset_reference",
+        "quantity",
+        "capital_flow_kind",
+        "basis_valuation_unit",
+        "unit_cost_basis"
+      ],
+      "constraints": "EXTERNAL_WITHDRAWAL only; consumes FIFO inventory/basis without trading P&L; cannot exceed available"
+    },
+    "internal_transfer": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256",
+        "source_exchange_account_id",
+        "source_asset_reference",
+        "source_quantity",
+        "destination_environment",
+        "destination_exchange_account_id",
+        "destination_asset_reference",
+        "destination_quantity"
+      ],
+      "constraints": "one Portfolio; source environment equals destination_environment; exact equal AssetReference and quantity; four postings; no P&L"
+    },
+    "capital_reservation": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256",
+        "exchange_account_id",
+        "asset_reference",
+        "quantity",
+        "order_id",
+        "command_id"
+      ],
+      "constraints": "order_id and canonical SUBMIT_ORDER command_id bind exact scope/asset/quantity; command identity dedupes even across audit_event_id"
+    },
+    "capital_release": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256",
+        "order_id",
+        "terminal_state"
+      ],
+      "constraints": "terminal REJECTED/CANCELLED/EXPIRED/FILLED/REPLACED fact releases exact remaining order reservation once"
+    },
+    "reconciliation_correction": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256",
+        "reason",
+        "target_source_type",
+        "target_accounting_source_identity",
+        "target_source_fingerprint_sha256",
+        "target_batch_fingerprint_sha256"
+      ],
+      "constraints": "exact accepted target source/fingerprint/batch required; derives inverse postings; generic quantity adjustment forbidden"
+    },
+    "fee": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256",
+        "exchange_account_id",
+        "asset_reference",
+        "quantity",
+        "reason"
+      ],
+      "constraints": "UNSUPPORTED_ACCOUNTING_SEMANTICS; no canonical independent-fee authority exists; M0.7 Full Fill is sole trade-fee authority"
+    },
+    "funding": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256"
+      ],
+      "constraints": "UNSUPPORTED_ACCOUNTING_SEMANTICS"
+    },
+    "interest": {
+      "exact_fields": [
+        "audit_event_id",
+        "source_type",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "effective_at_utc",
+        "provenance",
+        "source_fingerprint_sha256"
+      ],
+      "constraints": "UNSUPPORTED_ACCOUNTING_SEMANTICS"
+    }
+  },
+  "m07_fill_boundary": {
+    "context": "nominal M07PrevalidatedAcceptedFillContext returned by composite final-M0.7 resolution; raw mappings and subsets rejected",
+    "exact_full_fill_fields": [
+      "fill_id",
+      "order_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "instrument_metadata_version",
+      "execution_route_id",
+      "venue_trade_id",
+      "side",
+      "executed_quantity",
+      "execution_price",
+      "executed_at_utc",
+      "fee_kind",
+      "fee_quantity",
+      "fee_asset_reference",
+      "fill_fingerprint_sha256"
+    ],
+    "fingerprint": "canonical M0.7 fill_fingerprint_sha256 over /fill_contract/fingerprint/input_fields; M0.8 accounting source fingerprint equals it",
+    "composition": [
+      "exact Full Fill validation",
+      "canonical Fill fingerprint",
+      "resolved historical Instrument",
+      "Core-owned accepted Fill history projection"
+    ],
+    "preserved_scope": [
+      "order_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "instrument_metadata_version",
+      "execution_route_id",
+      "venue_trade_id"
+    ]
+  },
+  "source_posting_matrix": {
+    "fill": {
+      "allowed": [
+        "OWNED_AVAILABLE:ASSET_RECEIVED:DEBIT",
+        "OWNED_AVAILABLE:ASSET_PAID:CREDIT",
+        "OWNED_RESERVED:ASSET_PAID:CREDIT",
+        "TRADE_CLEARING:TRADE_COUNTERPART:DEBIT_OR_CREDIT",
+        "FEE_EXPENSE:FEE_CLASSIFIED:DEBIT",
+        "OWNED_AVAILABLE:FEE_PAID:CREDIT",
+        "REALIZED_PNL_CLASSIFICATION:PNL_CLASSIFIED:DEBIT_OR_CREDIT",
+        "TRADE_CLEARING:PNL_COUNTERPART:DEBIT_OR_CREDIT",
+        "OWNED_RESERVED:FEE_PAID:CREDIT"
+      ]
+    },
+    "deposit": {
+      "allowed": [
+        "OWNED_AVAILABLE:ASSET_RECEIVED:DEBIT",
+        "EXTERNAL_CAPITAL:CAPITAL_CLASSIFIED:CREDIT"
+      ]
+    },
+    "withdrawal": {
+      "allowed": [
+        "EXTERNAL_CAPITAL:CAPITAL_CLASSIFIED:DEBIT",
+        "OWNED_AVAILABLE:ASSET_PAID:CREDIT"
+      ]
+    },
+    "internal_transfer": {
+      "allowed": [
+        "TRANSFER_CLEARING:TRANSFER_CLEARING_SOURCE:DEBIT",
+        "OWNED_AVAILABLE:TRANSFER_SOURCE:CREDIT",
+        "OWNED_AVAILABLE:TRANSFER_DESTINATION:DEBIT",
+        "TRANSFER_CLEARING:TRANSFER_CLEARING_DESTINATION:CREDIT"
+      ]
+    },
+    "capital_reservation": {
+      "allowed": [
+        "OWNED_RESERVED:RESERVE_HELD:DEBIT",
+        "OWNED_AVAILABLE:RESERVE_AVAILABLE:CREDIT"
+      ]
+    },
+    "capital_release": {
+      "allowed": [
+        "OWNED_AVAILABLE:RESERVE_AVAILABLE:DEBIT",
+        "OWNED_RESERVED:RESERVE_HELD:CREDIT"
+      ]
+    },
+    "reconciliation_correction": {
+      "allowed": "exact direction-inverted target batch tuples only"
+    },
+    "fee": "FORBIDDEN",
+    "funding": "FORBIDDEN",
+    "interest": "FORBIDDEN",
+    "realized_pnl": "FORBIDDEN"
+  },
+  "rebuild_protocol": {
+    "authority": [
+      "immutable LedgerEntry journal",
+      "CoreAcceptedAccountingSourceHistory records exact-bound by source identity/fingerprint/rule/batch",
+      "one shared trusted valuation context when required"
+    ],
+    "mutable_cache": "forbidden as authority; cache removal/change cannot affect projection",
+    "inventory_effects": {
+      "deposit": "adds FIFO lot with exact accepted effective-time unit basis",
+      "withdrawal": "consumes FIFO basis; no trading P&L",
+      "internal_transfer": "moves exact FIFO lot slices/basis account-to-account; Portfolio basis unchanged",
+      "fill_fee": "consumes exact fee-asset inventory basis; missing inventory fails closed",
+      "reconciliation_reversal": "removes target source effect through exact compensation; no generic adjustment"
+    }
+  },
+  "non_fill_authority": {
+    "context": "nominal CoreAcceptedAccountingFactContext",
+    "membership": "Core-owned accepted projection maps audit_event_id to exact source_type, fingerprint and scope",
+    "self_hash": "integrity only; raw/self-hashed facts rejected"
+  }
+}
