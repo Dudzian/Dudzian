@@ -97,7 +97,8 @@ classification legs. Every entry in that result retains `source_type = fill`; th
 source.
 
 The closed non-durable AccountingEconomicFact registry specifies exact payload fields for deposit,
-withdrawal, internal transfer, reservation, release, reconciliation correction, and independent fee.
+withdrawal, internal transfer, reservation, release, and reconciliation correction. The independent
+`fee`, `funding`, `interest`, and `realized_pnl` shapes are closed forbidden inputs, not authorities.
 Each derives identity from its durable `audit_event_id`, validates a canonical payload fingerprint,
 and binds complete scope, exact assets/quantities, effective time and provenance/reason. Funding and
 interest remain unsupported for current SPOT. Internal transfer contains source and destination
@@ -107,10 +108,10 @@ namespaces, assets, or quantities fail closed.
 The engine computes posting indices and its batch fingerprint itself. Per-source posting keys are
 unique. A replay must match identity, source fingerprint, rule, and the previously derived batch;
 otherwise it is an identity or contract-integrity failure with no append. Prospective owned available
-and reserved balances are checked before commit. Withdrawals, trades, fees, and reservations cannot
-make either projection negative. Reservation effects are additionally keyed by exact scope, asset,
-and reservation reference; release cannot consume another account/environment/reference or exceed
-the open amount.
+and reserved balances are checked before commit. Withdrawals, trades, Fill fees, and reservations
+cannot make either projection negative. Reservation effects are keyed by accepted SUBMIT_ORDER
+command identity, exact order, scope, account, asset, and quantity; accepted terminal evidence cannot
+release another order/account/environment or more than the exact open remainder.
 
 Valuation uses an immutable nominal `PrevalidatedValuationContext` of exact edges containing subject
 AssetReference, valuation-unit AssetReference, positive rate, source ID, observed/effective/as-of/
@@ -145,6 +146,11 @@ types, and the Portfolio-to-LedgerEntry relationship; no array index is an autho
 | `exchange_accounts_and_instruments.json` | `/instrument_type_registry` | `e99ba1e3af1a3b5771add15b7d0ab0659c0b24a1bd855c04c0d5c27f2d2831f8` |
 | `strategy_market_data_and_execution_routing.json` | `/current_edition_execution_pair_policy` | `7dd12317c8dab7bc2d19e751f39800db7895f737a42335df1e22927d465ec0b9` |
 | `commands_events_order_lifecycle_and_idempotency.json` | `/fill_contract` | `1846393d14f684fc2462eb12b5d92f9c18cfa8a0163b2a2f41fe88c913324d1b` |
+| `commands_events_order_lifecycle_and_idempotency.json` | `/command_registry/SUBMIT_ORDER` | `864bc27bf55228d08b6592f2042a3f9a1f447eae661382bde0b380602369d748` |
+| `commands_events_order_lifecycle_and_idempotency.json` | `/event_contract` | `c63d514a4546161798de2f7f90441821cd71653fba433c3577c6d7b630e4b6b2` |
+| `commands_events_order_lifecycle_and_idempotency.json` | `/order_lifecycle` | `48a514419aaa0863078e69ffc50c3acd4b37a06d873d257275fb68874cc840dd` |
+| `commands_events_order_lifecycle_and_idempotency.json` | `/idempotency_contract` | `43ba37d976eb5948970d289cc71cd06da82cb90803f9e5f61cc84109f00e9a62` |
+| `commands_events_order_lifecycle_and_idempotency.json` | `/closed_request_policy` | `f3a523b01cbce2bafabeaad261777e3a97fc4f60db751deee0e77cb912f93e7c` |
 
 The independently deep-frozen expected contract covers the complete LedgerEntry schema, roles, batch,
 source and economic-fact registries, balance, reservation, asset identity, instrument coverage, FIFO,
@@ -170,8 +176,12 @@ accepted history, or a legacy subset is `TRUSTED_CONTEXT_FAILURE`.
 
 Non-Fill source validation executes source-specific constraints before accounting. Deposit accepts
 only `EXTERNAL_CONTRIBUTION`; withdrawal accepts only `EXTERNAL_WITHDRAWAL`; internal movement is
-only the atomic four-leg `internal_transfer`. Reservation and release require a non-empty reference.
-Reconciliation correction requires `INCREASE`/`DECREASE`, non-empty reason and provenance. The M0.2
+only the atomic four-leg `internal_transfer`. Reservation requires the nominal, already accepted M0.7
+`M07PrevalidatedAcceptedCommandContext`; release requires
+`M07PrevalidatedAcceptedTerminalOrderEventContext`.
+Neither identifiers nor caller terminal strings confer authority. Reconciliation correction requires
+an exact accepted target tuple, non-empty reason and provenance, and derives only the direction-inverse
+target postings; generic `INCREASE`/`DECREASE` is forbidden. The M0.2
 standalone `fee` source type is registry-reserved and currently returns
 `UNSUPPORTED_ACCOUNTING_SEMANTICS`: M0.7 Full Fill is the sole trade-fee authority, preventing a
 caller-created duplicate fee. Funding, interest, and independent realized-P&L remain likewise
@@ -179,8 +189,11 @@ unsupported for current SPOT semantics.
 
 FIFO reconstruction uses an enumerated cursor and preserves every lot after a partial or exact-boundary
 consumption. A BUY base fee cannot exceed executed quantity; such a fact is rejected before append.
-Lots remain ordered by accepted append sequence, duplicate Fill replay is effect-free, and full close
-has no residual lot.
+Lots retain quantity, unit cost, exact `basis_valuation_unit`, source identity, append sequence, and
+posting index. They remain ordered by accepted append sequence and posting index; duplicate Fill replay
+is effect-free, and full close has no residual lot. A disposal whose lot basis unit differs from its
+quote/P&L unit requires an explicit accepted historical valuation path. Its exact rate converts basis;
+otherwise the distinct missing, stale, or unsupported valuation result fails closed before append.
 
 Canonical NAV now requires an exact non-durable `PortfolioAccountingScope(workspace_id, portfolio_id,
 environment)`. It aggregates ExchangeAccounts only inside that scope. PAPER, TESTNET, LIVE, another
@@ -219,21 +232,45 @@ Finally, immutable expectations and `validate_contract` now also exact-bind `sch
 
 ## Order-bound reservations, rebuild, and inventory closure
 
-A reservation is bound to the existing M0.7 `order_id` and the canonical SUBMIT_ORDER `command_id`;
+A reservation is admitted only with nominal Core-owned `M07PrevalidatedAcceptedCommandContext`
+evidence and
+is bound to the existing M0.7 `order_id` and canonical SUBMIT_ORDER `command_id`;
 M0.7 defines `command_id` as the immutable idempotency identity and keeps it distinct from `order_id`.
+Exact M0.7 attestation enforces `idempotency_key == command_id`; `correlation_id` alone is excluded
+from the command fingerprint, while command, idempotency and nullable causation identities remain
+semantic. Those rules are directly attested at `/idempotency_contract`; canonical decimal,
+timestamp, null, UTF-8, sorted-key, compact-separator and NFC behavior is directly attested at
+`/closed_request_policy` rather than inferred from the SUBMIT_ORDER registry alone.
 The accepted reservation fact binds command, order, workspace, Portfolio, environment, account, exact
-asset, and quantity. The command identity deduplicates identical reservation economics even if a new
+instrument and route. M0.7 Order `quantity` is order economics, not reservation quantity, and M0.7 has
+no reservation-asset field. The exact reservation `asset_reference` and `quantity` belong exclusively
+to the separately accepted M0.8 accounting instruction. M0.8 records that instruction but does not
+claim M0.7 approved it and does not create M0.9 risk authority. The command identity deduplicates
+identical reservation economics even if a new
 AuditEvent ID is presented; changed economics conflict. A matching Fill consumes its exact spend from
 `OWNED_RESERVED` atomically (including a fee in the reserved spend asset), partial Fills leave the
-remainder, and another order/scope/asset cannot consume it. A Core-accepted terminal
-`REJECTED`, `FILLED`, `CANCELLED`, `EXPIRED`, or `REPLACED` fact derives and releases the exact
+remainder, and another order/scope/asset cannot consume it. A nominal Core-owned accepted terminal
+event context preserves the exact canonical envelope and safe-payload value schema, fingerprint,
+order, scope, account, instrument, and route. Its sealed opaque M0.7 lifecycle-ingestion proof binds
+event identity/type, resulting terminal target, legal predecessor state, aggregate version and exact
+previous contiguous version; stale and gap events cannot receive release authority. `ORDER_REJECTED`, `ORDER_FILLED`,
+`ORDER_CANCEL_CONFIRMED`, `ORDER_REPLACE_CONFIRMED`, and `ORDER_EXPIRED` map respectively to
+`REJECTED`, `FILLED`, `CANCELLED`, `REPLACED`, and `EXPIRED`. Only that accepted mapping releases the exact
 remainder once. This is accounting state, not M0.9 approval.
+Accordingly, neither durable source is authorized by an AuditEvent or self-hash alone: reservation
+requires the accepted M0.8 fact plus sealed accepted SUBMIT_ORDER context, and release requires the
+accepted M0.8 fact plus sealed accepted terminal lifecycle/event context.
 
 `Engine.fills` is no longer stored mutable authority: it is a derived view over immutable
 `CoreAcceptedAccountingSourceHistory`. Every accepted source record is exact-bound to journal entries
 by source identity, source fingerprint, rule version, and batch fingerprint. A fresh rebuild from the
 journal plus that immutable accepted-source history reconstructs balances, reservations, FIFO lots,
 gross/fee/net P&L, and unrealized P&L identically; valuation remains an explicit input.
+For every record rebuild replays its canonical immutable context against preceding reconstructed
+state, rederives the complete posting set, contiguous indices, rule, source and batch fingerprints,
+and exact first sequence, then compares every resulting `LedgerEntry`. A coordinated legal-looking
+journal mutation plus attacker-recomputed batch and source-record hashes therefore still differs from
+the canonical rederivation and yields `CONTRACT_INCONSISTENT`.
 
 FIFO inventory now processes every accepted asset-changing source in append order. External deposit
 requires an exact effective-time unit basis and creates a product-accounting lot. Withdrawal consumes
@@ -246,6 +283,16 @@ Unknown reconciliation drift still cannot mutate accounting. Correction is no lo
 increase/decrease: its AuditEvent must bind target source type, accounting source identity, source
 fingerprint, and batch fingerprint. The engine validates the existing accepted batch and derives exact
 direction-inverted postings. Missing canonical deposit is recorded as deposit, not correction.
+The correction workspace, Portfolio, and environment must equal every target entry. Mandatory
+target-aware batch validation runs on candidate entries before journal or accepted-map mutation, then
+compares one-to-one cardinality/order, account, AssetReference,
+role, posting role and quantity, and requires opposite direction. An isolated correction LedgerEntry
+is only structurally well-formed; it is not executable-valid without this accepted target context.
+The supported target set is exactly `fill`, `deposit`, `withdrawal`, `internal_transfer`,
+`capital_reservation`, and `capital_release`. An exact target tuple can be effectively reversed once:
+the same correction identity replays, while a second identity conflicts with zero mutation. Rebuild
+removes the reversed economic effect, so Fill reversal restores consumed reservation, FIFO and
+realized classification; reservation and release reversals also restore journal-consistent state.
 
 The independently frozen `source_posting_matrix` forbids fee, funding, interest, and independent
 realized-P&L durable entries and closes role, posting-role, and direction combinations for each
