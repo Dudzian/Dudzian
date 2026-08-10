@@ -100,3 +100,16 @@ Artifacts:
 
 - [`ledger_portfolio_capital_and_pnl.json`](ledger_portfolio_capital_and_pnl.json)
 - [`ledger_portfolio_capital_and_pnl.md`](ledger_portfolio_capital_and_pnl.md)
+
+## Status M0.9 — closed
+
+M0.9 definiuje deterministyczną hierarchię risk policy, exact current-SPOT pre-trade limits,
+hierarchiczny kill switch z monotonic fencing oraz krótko żyjący, exact-bound i one-shot
+`ExecutionLease`. Zachowuje M0.7 idempotency, wymaga M0.8 order-bound reservation, izoluje środowiska i
+pozostawia LIVE target-capable, ale zablokowane przez current upstream M0.4/M0.6. Nie implementuje
+runtime'u, exchange side effects, M0.10 security ani M0.11 persistence.
+
+## Artefakty M0.9
+
+- [risk_hierarchy_kill_switch_and_execution_lease.md](risk_hierarchy_kill_switch_and_execution_lease.md)
+- [risk_hierarchy_kill_switch_and_execution_lease.json](risk_hierarchy_kill_switch_and_execution_lease.json)
