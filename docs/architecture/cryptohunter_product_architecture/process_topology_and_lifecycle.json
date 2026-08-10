@@ -324,7 +324,7 @@
       "step_id": "resolve_device_installation_and_state_store_identity",
       "order": 1,
       "actor": "bootstrapper_or_core_host",
-      "description": "Resolve DeviceInstallation and canonical local state-store identity before any mutable initialization."
+      "description": "Resolve safe canonical account_id, device_installation_id and state-store identity: existing installations use accepted local/Core installation state; only absence of accepted installation identity permits a pre-existing external provisioning handoff. Mode is derived, never caller-selected, and identity resolution grants no device trust."
     },
     {
       "step_id": "acquire_local_process_lock",
@@ -357,38 +357,56 @@
       "description": "Verify state-store integrity."
     },
     {
-      "step_id": "read_kill_switch_and_last_environment",
+      "step_id": "determine_startup_readiness",
       "order": 7,
+      "actor": "core_host",
+      "description": "After process-lock ownership, RuntimeSession creation, state-store open and integrity verification, derive SETUP_REQUIRED or another readiness state from accepted Core/product state."
+    },
+    {
+      "step_id": "validate_first_run_bootstrap_authority_if_required",
+      "order": 8,
+      "actor": "core_host",
+      "description": "Only for derived SETUP_REQUIRED, validate exact pre-existing external product provisioning membership; missing or invalid authority remains fail-closed and starts no private exchange, strategy or order side effect."
+    },
+    {
+      "step_id": "offer_m010_initial_security_transition",
+      "order": 9,
+      "actor": "core_host",
+      "description": "A valid one-shot bootstrap authority enables only the later M0.10 initial-security establishment transition; it does not set READY or establish factors in M0.3."
+    },
+    {
+      "step_id": "read_kill_switch_and_last_environment",
+      "order": 10,
       "actor": "core_host",
       "description": "Read durable kill switch state and last trading environment."
     },
     {
       "step_id": "load_configuration_and_secure_store_references",
-      "order": 8,
+      "order": 11,
       "actor": "core_host",
       "description": "Load configuration and secure-store references without putting secrets in command line."
     },
     {
       "step_id": "connect_accounts_reconcile_and_acquire_leases",
-      "order": 9,
+      "order": 12,
       "actor": "core_host",
       "description": "Connect accounts as allowed by readiness gates, perform reconciliation, and acquire required ExecutionLease records."
     },
     {
       "step_id": "ready_gate",
-      "order": 10,
+      "order": 13,
       "actor": "core_host",
       "description": "Enter READY only after startup readiness, reconciliation, authorization, lease, kill-switch and capability/policy gates pass."
     },
     {
       "step_id": "tray_shows_real_core_state",
-      "order": 11,
+      "order": 14,
       "actor": "tray_agent",
       "description": "TrayAgent shows actual Core state."
     },
     {
       "step_id": "desktop_shell_on_preference_or_request",
-      "order": 12,
+      "order": 15,
       "actor": "desktop_shell",
       "description": "DesktopShell opens only by user preference, setup need, or request."
     }
@@ -3805,16 +3823,16 @@
       "alerts count"
     ],
     "menu": [
-      "Otw\u00f3rz CryptoHunter",
-      "Poka\u017c panel statusu",
-      "Poka\u017c/ukryj Compact Status HUD",
+      "Otwórz CryptoHunter",
+      "Pokaż panel statusu",
+      "Pokaż/ukryj Compact Status HUD",
       "Wstrzymaj strategie",
-      "Wzn\u00f3w strategie",
+      "Wznów strategie",
       "Synchronizuj teraz",
       "Zatrzymaj wszystkie strategie",
-      "Kill switch\u2026",
-      "Zatrzymaj Core i zako\u0144cz\u2026",
-      "Zako\u0144cz Tray Agent"
+      "Kill switch…",
+      "Zatrzymaj Core i zakończ…",
+      "Zakończ Tray Agent"
     ],
     "rules": [
       "never show command executed before Core confirmation",
@@ -3861,7 +3879,7 @@
       "active strategy count",
       "alert count",
       "kill switch state",
-      "Odblokuj aplikacj\u0119, aby zobaczy\u0107 szczeg\u00f3\u0142y"
+      "Odblokuj aplikację, aby zobaczyć szczegóły"
     ]
   },
   "failure_matrix": [
@@ -4241,7 +4259,12 @@
     "Core IPC REACHABLE requires CORE_HANDSHAKE and CONFIRMED_CURRENT",
     "CORE_HANDSHAKE with Core IPC UNREACHABLE is invalid",
     "Core-mutating commands use only REACHABLE CORE_HANDSHAKE CONFIRMED_CURRENT state cases",
-    "ordinary CLOSE_DESKTOP_SHELL cannot close a pending restart without a confirmed running TrayAgent"
+    "ordinary CLOSE_DESKTOP_SHELL cannot close a pending restart without a confirmed running TrayAgent",
+    "provisioned DeviceInstallation identity is distinct from M0.10 TRUSTED security designation",
+    "RuntimeSession may exist while startup readiness is SETUP_REQUIRED",
+    "external product provisioning boundary is the only first-run bootstrap issuer; Bootstrapper and CoreHost cannot self-issue",
+    "valid first-run bootstrap authority does not set READY",
+    "first-run bootstrap authority cannot authorize normal privileged operations or LIVE"
   ],
   "legacy_conflicts": [
     "Existing Desktop RuntimeService lives inside GUI process and conflicts with future CoreHost ownership",
@@ -5058,5 +5081,317 @@
       "CORE_HANDSHAKE",
       "TRAY_SUPERVISOR"
     ]
+  },
+  "first_run_bootstrap_authority_contract": {
+    "status": "closed",
+    "authority_owner": "external_product_provisioning_boundary",
+    "consumer": "CoreHost",
+    "nature": "ephemeral protected security/provisioning handoff; not a durable M0.2 entity",
+    "implementation_neutral_examples": [
+      "protected installer handoff",
+      "package provisioning",
+      "SaaS or device provisioning",
+      "other product provisioning mechanism"
+    ],
+    "non_authorities": [
+      "bootstrapper",
+      "tray_agent",
+      "desktop_shell",
+      "raw_caller",
+      "caller_boolean",
+      "self_hash",
+      "ordinary_RuntimeSession",
+      "arbitrary_local_admin_claim"
+    ],
+    "bootstrapper_role": {
+      "mode": "transport_and_discovery_only",
+      "may_pass": "opaque protected reference",
+      "cannot": [
+        "mint",
+        "accept",
+        "elevate"
+      ]
+    },
+    "identity_boundary": {
+      "provisioned_identity_fields": [
+        "account_id",
+        "device_installation_id"
+      ],
+      "canonical_state_store_identity_required": true,
+      "does_not_imply": [
+        "device_TRUSTED",
+        "operator_authenticated",
+        "PIN_verified",
+        "LIVE_authorized"
+      ],
+      "RuntimeSession_during_SETUP_REQUIRED": true,
+      "noncanonical_alias_forbidden": true
+    },
+    "claim_schema": {
+      "ordered_fields": [
+        "account_id",
+        "device_installation_id",
+        "intended_operator_id",
+        "bootstrap_generation",
+        "bootstrap_revision",
+        "issued_at_utc",
+        "expires_at_utc",
+        "challenge_fingerprint_sha256",
+        "provisioning_context_fingerprint_sha256",
+        "claim_fingerprint_sha256"
+      ],
+      "ephemeral_key": "claim_fingerprint_sha256",
+      "durable_bootstrap_id": false,
+      "fingerprint_input_fields": [
+        "account_id",
+        "device_installation_id",
+        "intended_operator_id",
+        "bootstrap_generation",
+        "bootstrap_revision",
+        "issued_at_utc",
+        "expires_at_utc",
+        "challenge_fingerprint_sha256",
+        "provisioning_context_fingerprint_sha256"
+      ]
+    },
+    "acceptance_authority": {
+      "required": "claim fingerprint resolves through a pre-existing Core-visible accepted provisioning membership registry established independently before caller claim validation",
+      "public_validator_inputs": [
+        "untrusted claim",
+        "opaque Core authority state reference",
+        "now_utc",
+        "requested authority purpose"
+      ],
+      "public_validator_excludes": [
+        "caller-owned registry",
+        "caller-created membership binding",
+        "caller-created Core state projection"
+      ],
+      "membership_schema": "ProvisioningMembershipBinding",
+      "registry_binding": [
+        "claim_fingerprint_sha256",
+        "complete_claim_content_fingerprint_sha256",
+        "authority_source",
+        "provisioning_context_fingerprint_sha256",
+        "exact accepted immutable claim content"
+      ],
+      "authority_source": "external_product_provisioning_boundary",
+      "owner_string_alone_authority": false,
+      "hash_semantics": "integrity only; recomputed self-hash cannot create membership",
+      "nominal_type_semantics": "dataclass, JSON shape, owner string or state fingerprint alone is not authority",
+      "boolean_authority": false,
+      "CoreHost_may_mint": false,
+      "registry_key_binding": "registry key == binding.claim_fingerprint_sha256 == claim.claim_fingerprint_sha256"
+    },
+    "eligibility": {
+      "startup_readiness": "SETUP_REQUIRED",
+      "exact_bindings": [
+        "resolved account_id",
+        "resolved device_installation_id",
+        "intended first operator_id",
+        "bootstrap generation",
+        "bootstrap revision",
+        "provisioning membership"
+      ],
+      "required_absence": [
+        "accepted/current first OperatorIdentity for bootstrap scope",
+        "completed initial-security setup",
+        "consumed bootstrap generation"
+      ],
+      "time_rule": "canonical UTC issued_at_utc <= now_utc <= expires_at_utc and expires_at_utc > issued_at_utc",
+      "caller_first_run_flag_authority": false
+    },
+    "one_shot_transition": {
+      "input": "accepted provisioning membership plus exact current PRE_INITIAL_SECURITY Core state and SETUP_REQUIRED",
+      "output": "BootstrapTransitionResult with INITIAL_SECURITY_ESTABLISHMENT_AUTHORIZED and INITIAL_SECURITY_ESTABLISHMENT_ONLY purpose plus atomically derived post-state consumption",
+      "consumed_schema": "ConsumedBootstrapAuthority",
+      "consumes": [
+        "account_id",
+        "device_installation_id",
+        "bootstrap_generation",
+        "bootstrap_revision",
+        "claim_fingerprint_sha256",
+        "challenge_fingerprint_sha256"
+      ],
+      "semantic_atomicity": "compare current state, authorize and append exact consumed binding as one semantic transition; at most one success per accepted claim",
+      "does_not_set_readiness": "READY"
+    },
+    "terminal_fencing": {
+      "replay": false,
+      "modified_claim_recomputed_hash_reuses_membership": false,
+      "after_completed_setup": false,
+      "second_device_enrollment": false,
+      "reinstall_or_recovery_bypass": false,
+      "forbidden_authorizations": [
+        "ordinary privileged operations",
+        "RiskPolicy",
+        "kill switch",
+        "ProductCapabilities",
+        "exchange operations",
+        "ExecutionLease",
+        "LIVE"
+      ],
+      "one_shot_rule": "exact consumed binding or terminal completed lifecycle denies reuse",
+      "caller_cannot_clear_consumption": true
+    },
+    "failure_outcome": {
+      "missing_or_invalid": "SETUP_REQUIRED remains; deny bootstrap",
+      "side_effects_forbidden": [
+        "private exchange connection",
+        "exchange-secret loading",
+        "strategy start",
+        "order entry"
+      ]
+    },
+    "audit_boundary": {
+      "uses": "canonical M0.2 AuditEvent; M0.7 causation/correlation when available",
+      "ordering": "RuntimeSession is created after process-lock ownership and may exist before bootstrap validation; no artificial pre-RuntimeSession event requirement",
+      "allowed": [
+        "account_id",
+        "device_installation_id",
+        "intended_operator_id",
+        "claim/reference fingerprint",
+        "bootstrap generation",
+        "reason code",
+        "causation_id",
+        "correlation_id"
+      ],
+      "forbidden": [
+        "raw bootstrap secret",
+        "PIN",
+        "biometric material",
+        "API credentials",
+        "protected provisioning payload"
+      ]
+    },
+    "milestone_ownership": {
+      "M0.3": "pre-existing provisioning authority handoff, startup ordering and one-shot scope",
+      "M0.10": "first OperatorIdentity acceptance, initial TRUSTED designation, PIN verifier, optional platform biometric semantics and first Core-issued authentication proof",
+      "M0.11": "durably atomic compare-and-consume, persistence, migrations, backup and crash recovery for accepted/current membership and consumed facts"
+    },
+    "invariants": [
+      "DeviceInstallation identity is not M0.10 TRUSTED designation",
+      "Bootstrapper transports but never issues or accepts authority",
+      "CoreHost consumes but cannot self-issue provisioning membership",
+      "valid bootstrap does not mean READY",
+      "current LIVE remains denied",
+      "no caller boolean or self-hash authority"
+    ],
+    "startup_identity_resolution": {
+      "mode_source": "accepted/current installation state; never caller first_run boolean",
+      "EXISTING_INSTALLATION": "resolve canonical account_id, device_installation_id and state-store identity from accepted local/Core state under later persistence boundary; first-run provisioning handoff not required again",
+      "FIRST_INSTALLATION": "only when accepted installation identity is absent, external product provisioning handoff supplies canonical account_id and device_installation_id for state-store/process-lock scope and later setup",
+      "common_non_implications": [
+        "device_TRUSTED",
+        "operator_authenticated",
+        "PIN_verified",
+        "LIVE_authorized"
+      ]
+    },
+    "executable_schemas": {
+      "FirstRunBootstrapClaim": [
+        "account_id",
+        "device_installation_id",
+        "intended_operator_id",
+        "bootstrap_generation",
+        "bootstrap_revision",
+        "issued_at_utc",
+        "expires_at_utc",
+        "challenge_fingerprint_sha256",
+        "provisioning_context_fingerprint_sha256",
+        "claim_fingerprint_sha256"
+      ],
+      "ProvisioningMembershipBinding": [
+        "claim_fingerprint_sha256",
+        "complete_claim_content_fingerprint_sha256",
+        "authority_source",
+        "provisioning_context_fingerprint_sha256"
+      ],
+      "ConsumedBootstrapAuthority": [
+        "account_id",
+        "device_installation_id",
+        "bootstrap_generation",
+        "bootstrap_revision",
+        "claim_fingerprint_sha256",
+        "challenge_fingerprint_sha256"
+      ],
+      "CoreCurrentBootstrapState": [
+        "state_fingerprint_sha256",
+        "account_id",
+        "device_installation_id",
+        "intended_operator_id",
+        "startup_readiness",
+        "initial_security_lifecycle",
+        "first_operator_presence",
+        "expected_generation",
+        "expected_revision",
+        "consumed_authorities",
+        "state_revision"
+      ],
+      "BootstrapTransitionResult": [
+        "outcome",
+        "authority_purpose",
+        "pre_state_fingerprint_sha256",
+        "post_state_fingerprint_sha256",
+        "consumed_authority"
+      ]
+    },
+    "core_current_state_authority": {
+      "schema": "CoreCurrentBootstrapState",
+      "lifecycle_states": [
+        "PRE_INITIAL_SECURITY",
+        "INITIAL_SECURITY_COMPLETED"
+      ],
+      "readiness_states": [
+        "SETUP_REQUIRED"
+      ],
+      "acceptance": "opaque state reference must resolve in pre-existing Core-owned accepted registry and be the exact current designation for account/device scope",
+      "caller_projection_authority": false,
+      "stale_accepted_history_authority": false,
+      "state_fingerprint_input_fields": [
+        "account_id",
+        "device_installation_id",
+        "intended_operator_id",
+        "startup_readiness",
+        "initial_security_lifecycle",
+        "first_operator_presence",
+        "expected_generation",
+        "expected_revision",
+        "consumed_authorities",
+        "state_revision"
+      ],
+      "first_operator_presence_states": [
+        "ABSENT",
+        "PRESENT"
+      ],
+      "lifecycle_presence_invariants": {
+        "PRE_INITIAL_SECURITY": "ABSENT",
+        "INITIAL_SECURITY_COMPLETED": "PRESENT"
+      },
+      "future_m010_fence": "accepting first OperatorIdentity must replace current PRE_INITIAL_SECURITY/ABSENT designation; historical PRE may remain audit-only"
+    },
+    "authority_purpose_registry": [
+      "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    ],
+    "scope_consumer_policy": {
+      "allowed": "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+      "all_other_purposes": "BOOTSTRAP_SCOPE_DENIED",
+      "result_alone_authority": false,
+      "requires_current_post_state": true,
+      "requires_exact_pre_to_post_transition": true
+    },
+    "transition_result_authority": {
+      "transport_object_authority": false,
+      "nominal_type_authority": false,
+      "caller_created_success_authority": false,
+      "consumer_revalidation": [
+        "exact accepted historical PRE registry key/internal/recomputed fingerprint",
+        "exact accepted and current POST registry key/internal/recomputed fingerprint",
+        "exact PRE to POST single-consumption transition",
+        "exact new ConsumedBootstrapAuthority binding"
+      ],
+      "registry_key_equals_internal_state_fingerprint": true,
+      "consumed_history_validation": "every entry fully validates canonical IDs, positive non-bool generation/revision, lowercase SHA-256, state scope, uniqueness and generation uniqueness"
+    }
   }
 }

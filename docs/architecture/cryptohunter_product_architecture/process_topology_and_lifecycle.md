@@ -338,3 +338,46 @@ Intent `applicability` is an aggregate of axis values used by its `state_cases`;
 `EXIT_TRAY_AGENT` includes `TRAY_SUPERVISOR` in its applicability observation-source aggregate because its explicit Tray-supervisor current cases use that source.  `inactive_core` is the only `EXIT_TRAY_AGENT` state case that may skip secondary confirmation: it is limited to `not_started`/`stopped`, `UNREACHABLE`, `NO_ACTIVE_RUNTIME_CONFIRMED`, `INDEPENDENT_OBSERVATION_PROOF_VALIDATED`, and forbids pending restart, active runtime, and unknown runtime predicates.
 
 All other `EXIT_TRAY_AGENT` normal cases that involve active Core, unknown state, stale observation, crash, scheduled restart, restart in progress, restart exhausted, reachable Core, or Tray-supervisor current crash/restart observation require secondary confirmation.  The confirmation policy therefore says that all `UNREACHABLE` cases except machine-confirmed `inactive_core` require secondary confirmation; JSON remains the machine source of truth.
+
+## First-run bootstrap authority
+
+M0.3 zamyka implementacyjnie neutralną **external product provisioning boundary** jako pre-existing trust anchor dla pierwszego uruchomienia. Jest to ephemeral protected provisioning handoff, a nie nowa trwała encja M0.2. Przyszła implementacja może użyć chronionego handoffu instalatora, package provisioning, SaaS/device provisioning albo innego mechanizmu produktowego; M0.3 nie wybiera Windows API, TPM, Secure Enclave, kryptografii instalatora ani SaaS enrollment.
+
+Bootstrapper pełni wyłącznie rolę transport/discovery: może przenieść opaque protected reference, lecz nie może jej mintować, akceptować ani użyć do elevation. DesktopShell i TrayAgent nie są authority. CoreHost jest konsumentem i walidatorem, ale nie może sam wydać provisioning membership. Hash dowodzi integralności claimu, nie jego membership; raw caller, caller boolean, self-hash, zwykły RuntimeSession ani arbitrary local-admin claim nie mogą ustanowić authority.
+
+Provisioning handoff wiąże exact M0.2 `account_id`, `device_installation_id` i intended first `operator_id`, generation/revision, canonical UTC validity window, challenge fingerprint oraz provisioning-context fingerprint. Fingerprint kompletnego immutable content jest ephemeral key. Core wymaga exact immutable membership w pre-existing registry widocznym z external product provisioning boundary. Nie istnieje durable bootstrap authorization ID.
+
+Provisioned `DeviceInstallation` identity umożliwia bezpieczne rozstrzygnięcie canonical state-store identity i process lock. Nie oznacza stanu M0.10 `TRUSTED`, authenticated operatora, verified PIN ani LIVE authorization. RuntimeSession może istnieć w ograniczonym control-plane podczas `SETUP_REQUIRED`.
+
+Bootstrap eligibility jest wyprowadzane wyłącznie z accepted Core/product state: `SETUP_REQUIRED`, exact account/device/operator/generation/revision, brak accepted first OperatorIdentity, brak completed initial-security setup i brak consumed generation. Valid claim autoryzuje dokładnie jeden późniejszy M0.10 initial-security establishment transition; nie ustawia `READY`. Consumption fence obejmuje generation, revision, claim fingerprint i challenge fingerprint. Replay, zmieniony claim z nowym self-hashem, completed setup, second-device enrollment oraz reinstall/recovery bypass są zabronione.
+
+Bootstrap authority nie autoryzuje normalnych privileged operations, RiskPolicy, kill switch, ProductCapabilities, exchange operations, ExecutionLease ani LIVE. Missing/invalid authority pozostawia `SETUP_REQUIRED` i zabrania private exchange connection, exchange-secret loading, strategy start oraz order entry.
+
+### Startup ordering
+
+1. Pre-existing provisioning handoff dostarcza bezpieczną canonical account/device/state-store identity bez przyznawania trust.
+2. Core przejmuje process lock; przegrany contender nie otwiera mutable store i nie tworzy RuntimeSession.
+3. Po locku Core tworzy RuntimeSession, otwiera store i sprawdza integrity.
+4. Core wyprowadza readiness; dopiero dla `SETUP_REQUIRED` waliduje external provisioning membership.
+5. Valid bootstrap udostępnia wyłącznie późniejszą bramkę M0.10, nadal nie `READY`.
+6. Secret references, connections i trading pozostają za setup/security/readiness gates.
+
+Bootstrap acceptance, rejection i późniejsze completion używają canonical M0.2 `AuditEvent`; po utworzeniu RuntimeSession audit może go referencjonować. Gdy M0.7 jest dostępne, zachowuje causation/correlation. Safe payload może zawierać canonical IDs, reference fingerprint, generation i reason code, ale nigdy raw bootstrap secret, PIN, biometric material, API credentials ani protected provisioning payload.
+
+M0.10 pozostaje właścicielem first OperatorIdentity acceptance, initial device `TRUSTED` designation, PIN verifier, optional platform biometric semantics i pierwszego Core-issued AuthenticationProof. M0.11 pozostaje właścicielem durability, migrations, backup i crash recovery accepted/consumed facts.
+
+### Exact executable authority closure
+
+Public bootstrap validation consumes only an untrusted claim, an opaque reference to pre-existing current Core state, canonical current time and the single closed purpose `INITIAL_SECURITY_ESTABLISHMENT_ONLY`. It never accepts a caller-owned registry, membership binding or Core-state projection. A nominal owner string is insufficient. `ProvisioningMembershipBinding` exact-binds the claim fingerprint, complete immutable claim-content fingerprint, external authority source and provisioning-context fingerprint; the accepted claim content is independently held by the Core-visible provisioning boundary.
+
+`CoreCurrentBootstrapState` is also pre-existing Core authority: an opaque reference must resolve in the accepted registry and be the exact current designation for its account/device scope. A caller-created `SETUP_REQUIRED` record, a recomputed state hash, cleared consumption, or accepted-but-stale history has no authority.
+
+The pure transition compares the current PRE state and membership, then derives one POST state containing an exact `ConsumedBootstrapAuthority`. The consumed fence includes account, device, generation, revision, claim fingerprint and challenge fingerprint. The returned `BootstrapTransitionResult` is usable only for `INITIAL_SECURITY_ESTABLISHMENT_ONLY`; it cannot be consumed as normal privileged, policy, lease or LIVE authority. M0.3 specifies semantic compare-and-consume; M0.11 must later make accepted/current designation and consumption durably atomic and crash-safe.
+
+Startup identity resolution has two derived modes. For an existing installation, canonical account/device/state-store identity resolves from accepted local/Core state under the later persistence boundary and does not require the first-run handoff again. Only when accepted installation identity is absent may the external provisioning handoff supply canonical identity for first-installation process-lock scope. Neither mode grants M0.10 device trust or authentication authority.
+
+### Transition-result revalidation and first-operator absence
+
+`BootstrapTransitionResult` is an untrusted transport object: its nominal type, success strings and content alone are never authority. The initial-security consumer re-resolves an exact accepted historical PRE state and an exact accepted/current POST state, requires registry keys to equal internal and recomputed state fingerprints, proves a single-field-set-preserving PRE→POST transition with exactly one appended consumed binding, and verifies that binding against the current POST history.
+
+Every consumed-history entry is fully validated for canonical account/device IDs, positive non-boolean generation/revision, lowercase SHA-256 fingerprints, exact state scope, tuple ordering, exact uniqueness and generation uniqueness. `CoreCurrentBootstrapState.first_operator_presence` is closed to `ABSENT|PRESENT`: `PRE_INITIAL_SECURITY` requires `ABSENT`, while `INITIAL_SECURITY_COMPLETED` requires `PRESENT`. A future M0.10 first-operator acceptance must replace the current PRE/ABSENT designation; historical PRE remains audit-only.
