@@ -1,0 +1,1099 @@
+{
+  "schema_version": "1.0.0",
+  "m0_element": "M0.9",
+  "status": "closed",
+  "authority": {
+    "owner": "CoreHost",
+    "attestation": "this JSON is untrusted until independently validated with all dependency fingerprints",
+    "execution_equation": [
+      "upstream capability and readiness",
+      "accepted M0.7 command/order",
+      "accepted Core M0.9 policy and ALLOW decision",
+      "no applicable ACTIVE kill switch",
+      "valid exact ExecutionLease",
+      "exact M0.8 reservation",
+      "M0.7 idempotency reservation and accepted plan"
+    ],
+    "non_authorities": [
+      "UI",
+      "Tray",
+      "raw JSON",
+      "self-hash",
+      "venue capability",
+      "credential",
+      "risk_ok",
+      "risk_passed",
+      "approved"
+    ]
+  },
+  "source_of_truth": {
+    "machine_contract": "this file after independent validation",
+    "reference_model": "tests only; pure and non-production",
+    "runtime": "not implemented"
+  },
+  "scope_hierarchy": {
+    "environment_required": true,
+    "no_cross_environment_inheritance": true,
+    "applicable_order": [
+      "PRODUCT_SYSTEM",
+      "WORKSPACE",
+      "PORTFOLIO",
+      "EXCHANGE_ACCOUNT",
+      "STRATEGY_INSTANCE",
+      "INSTRUMENT",
+      "EXECUTION_ROUTE"
+    ],
+    "composition": "PRODUCT_SYSTEM is the root policy scope. WORKSPACE is its child. PORTFOLIO is a WORKSPACE child and EXCHANGE_ACCOUNT its child. STRATEGY_INSTANCE, INSTRUMENT and EXECUTION_ROUTE are WORKSPACE-owned intersecting qualifiers, applicable only when their exact IDs occur in the evaluated command; they are incomparable peers, not invented parents. Exact ancestry and qualifiers come from accepted upstream projections.",
+    "applicability": "same concrete environment and exact ancestor/qualifier identity only",
+    "ordering": "fixed applicable_order then scope_id then policy revision; never container iteration",
+    "deny": "any applicable DENY dominates",
+    "incomparable_conflict": "two applicable policies at the same exact scope identity and revision with unequal semantic fingerprints => POLICY_CONFLICT"
+  },
+  "risk_policy_contract": {
+    "projection": "PrevalidatedRiskPolicyContext",
+    "identity": [
+      "risk_policy_id",
+      "revision",
+      "environment",
+      "scope_type",
+      "scope_id",
+      "action",
+      "limits",
+      "semantic_fingerprint_sha256"
+    ],
+    "immutability": "identity, revision, limits and fingerprints fixed for one evaluation",
+    "raw_policy_authority": false,
+    "self_hash_authority": false,
+    "upstream_identity": "M0.2 RiskPolicy: risk_policy_id, prefix rpol, UUIDv7",
+    "action_registry": [
+      "ALLOW",
+      "DENY"
+    ],
+    "coverage": "at least one applicable current accepted policy with explicit ALLOW or DENY is required; zero applicable policies is RISK_CONTEXT_INCOMPLETE",
+    "semantic_fingerprint_input": [
+      "risk_policy_id",
+      "revision",
+      "environment",
+      "scope_type",
+      "scope_id",
+      "action",
+      "limits"
+    ],
+    "accepted_context_types": [
+      "RiskPolicyRecord",
+      "CoreAcceptedContentBinding",
+      "PrevalidatedRiskPolicyContext"
+    ],
+    "enabled_limit_validation": "before composition: canonical rpol UUIDv7, positive non-bool revision, closed environment/scope/action, exact scope ID prefix, supported limit name, Fraction-only threshold and exact AssetReference unit; known unsupported or unknown names return UNSUPPORTED_RISK_SEMANTICS"
+  },
+  "risk_policy_authority_boundary": {
+    "acceptance_owner": "CoreHost",
+    "required": "a validated PrevalidatedRiskPolicyContext whose complete record/history content, semantic fingerprints, current designations, context fingerprint and CoreAcceptedContentBinding independently validate; a nominal class name alone is not authority",
+    "authentication_deferred_to": "M0.10",
+    "failure": "TRUSTED_CONTEXT_FAILURE",
+    "nominal_membership": "pre-existing Core membership identifier is an independent reference-model input; hashes prove integrity and cannot self-enroll"
+  },
+  "effective_policy_resolution": {
+    "steps": [
+      "validate every accepted context and concrete environment",
+      "select exact ancestors and exact command qualifiers",
+      "reject duplicate exact scope/revision with different semantics",
+      "apply any DENY",
+      "for each required supported limit take minimum threshold for maximum limits and maximum threshold for minimum limits",
+      "sort results by closed limit registry order and supplying scope order"
+    ],
+    "maximum": "minimum exact threshold",
+    "minimum": "maximum exact threshold",
+    "missing_required_input": "INCOMPLETE",
+    "unsupported": "UNSUPPORTED_RISK_SEMANTICS",
+    "no_implicit_default": true,
+    "current_revision": "exactly one designated current revision per (risk_policy_id, environment, scope_type, scope_id); two designations conflict; accepted newer history makes designation of an older revision a rollback conflict; missing, duplicate or semantically conflicting designated record fails POLICY_CONFLICT",
+    "deny": "any applicable current DENY produces RISK_DENIED before numeric composition",
+    "coverage": "zero applicable current accepted policies is RISK_CONTEXT_INCOMPLETE; optional absence of a limit is authorized only by explicit ALLOW policy semantics",
+    "effective_set_fence": "SHA-256 over closed-scope-ordered immutable bindings of every effective policy ID, current revision, action and recomputed semantic fingerprint",
+    "ordering": "current applicable policies are ordered only by scope_hierarchy.applicable_order, then scope_id, then revision; input record/current container order is irrelevant"
+  },
+  "supported_spot_limit_registry": {
+    "MAX_ORDER_QUANTITY": {
+      "unit": "base AssetReference quantity",
+      "formula": "abs(order.quantity)",
+      "buy_sell": "same absolute quantity",
+      "fees": "excluded; fees are distinct M0.8 assets",
+      "boundary": "observed <= threshold passes",
+      "price_required": false,
+      "input_schema": "exact command economics plus accepted M0.8 per-AssetReference/per-instrument projection and accepted valuation/reservation contexts material to this limit",
+      "missing_input": "INCOMPLETE; accepted explicit zero is valid, absent fact is never zero",
+      "unit_identity": "exact M0.5 AssetReference object: venue_asset_code, canonical_display_code, asset_namespace, mapping_status"
+    },
+    "MAX_ORDER_NOTIONAL": {
+      "unit": "quote AssetReference quantity",
+      "formula": "abs(quantity) * conservative_risk_price",
+      "buy_sell": "same notional",
+      "fees": "fees added to required reservation but not order notional",
+      "boundary": "observed <= threshold passes",
+      "price_required": true,
+      "input_schema": "exact command economics plus accepted M0.8 per-AssetReference/per-instrument projection and accepted valuation/reservation contexts material to this limit",
+      "missing_input": "INCOMPLETE; accepted explicit zero is valid, absent fact is never zero",
+      "unit_identity": "exact M0.5 AssetReference object: venue_asset_code, canonical_display_code, asset_namespace, mapping_status"
+    },
+    "MAX_POST_TRADE_POSITION_QUANTITY": {
+      "unit": "base AssetReference quantity",
+      "formula": "abs(current signed SPOT inventory + signed quantity), BUY positive and SELL negative",
+      "buy_sell": "signed projection",
+      "fees": "excluded",
+      "boundary": "observed <= threshold passes",
+      "price_required": false,
+      "input_schema": "exact command economics plus accepted M0.8 per-AssetReference/per-instrument projection and accepted valuation/reservation contexts material to this limit",
+      "missing_input": "INCOMPLETE; accepted explicit zero is valid, absent fact is never zero",
+      "unit_identity": "exact M0.5 AssetReference object: venue_asset_code, canonical_display_code, asset_namespace, mapping_status"
+    },
+    "MAX_POST_TRADE_POSITION_NOTIONAL": {
+      "unit": "valuation quote AssetReference quantity",
+      "formula": "abs(current signed SPOT inventory + signed quantity) * conservative_risk_price",
+      "buy_sell": "signed projection",
+      "fees": "excluded",
+      "boundary": "observed <= threshold passes",
+      "price_required": true,
+      "input_schema": "exact command economics plus accepted M0.8 per-AssetReference/per-instrument projection and accepted valuation/reservation contexts material to this limit",
+      "missing_input": "INCOMPLETE; accepted explicit zero is valid, absent fact is never zero",
+      "unit_identity": "exact M0.5 AssetReference object: venue_asset_code, canonical_display_code, asset_namespace, mapping_status"
+    },
+    "MAX_GROSS_EXPOSURE": {
+      "unit": "valuation quote AssetReference quantity",
+      "formula": "current trusted gross exposure - current instrument absolute exposure + projected instrument absolute exposure",
+      "buy_sell": "signed position then absolute valuation",
+      "fees": "excluded",
+      "boundary": "observed <= threshold passes",
+      "price_required": true,
+      "input_schema": "accepted M0.8 total gross exposure and current/projected instrument exposure with identical reporting AssetReference, valuation basis and as_of_utc",
+      "missing_input": "INCOMPLETE; accepted explicit zero is valid, absent fact is never zero",
+      "unit_identity": "exact M0.5 AssetReference object: venue_asset_code, canonical_display_code, asset_namespace, mapping_status"
+    },
+    "MIN_AVAILABLE_CAPITAL_AFTER_RESERVATION": {
+      "unit": "exact single primary-spend AssetReference quantity",
+      "formula": "accepted PRE available_capital[ReservationRequirementProjection.asset_reference] - pure derived ReservationRequirementProjection.required_quantity exactly once; ReservationState is POST authority and is never subtracted again",
+      "buy_sell": "BUY reservation asset is exact historical Instrument quote AssetReference; SELL reservation asset is exact historical Instrument base AssetReference",
+      "fees": "only a fee included in the same single M0.8 primary-spend reservation quantity is representable; a separate third-asset pre-trade reservation is UNSUPPORTED_RISK_SEMANTICS and cannot issue a lease",
+      "boundary": "observed >= threshold passes",
+      "price_required": "BUY notional requires LIMIT price or trusted MARKET valuation; SELL base reservation does not require price unless another enabled limit does",
+      "input_schema": "exact command economics plus accepted M0.8 per-AssetReference/per-instrument projection and accepted valuation/reservation contexts material to this limit",
+      "missing_input": "INCOMPLETE; accepted explicit zero is valid, absent fact is never zero",
+      "unit_identity": "exact M0.5 AssetReference object: venue_asset_code, canonical_display_code, asset_namespace, mapping_status"
+    }
+  },
+  "unsupported_limit_registry": [
+    "LEVERAGE",
+    "MARGIN",
+    "DERIVATIVES_GREEKS",
+    "LIQUIDATION",
+    "BORROW",
+    "FUNDING",
+    "OPTION_EXERCISE",
+    "TAX",
+    "CROSS_MARGIN",
+    "DAILY_LOSS_RESET",
+    "NAV_CONCENTRATION"
+  ],
+  "exact_arithmetic_policy": {
+    "representation": "canonical decimal strings converted to exact rational/Fraction",
+    "float_forbidden": true,
+    "rounding": "none during evaluation; upstream instrument quantization must already be valid",
+    "canonical_hash": "SHA-256 of UTF-8 canonical JSON: sorted object keys, compact separators, arrays preserved"
+  },
+  "risk_input_contract": {
+    "projection": "AccountingRiskProjection",
+    "required_binding": [
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_ids",
+      "as_of_utc",
+      "reporting_asset_reference",
+      "owned_balances",
+      "available_capital",
+      "reserved_capital",
+      "inventory_exposure",
+      "valuations",
+      "reconciliation_outcomes",
+      "projection_fingerprint_sha256",
+      "accepted_membership_id"
+    ],
+    "available_outputs": [
+      "owned_balances",
+      "available_capital",
+      "reserved_capital",
+      "spot_inventory_exposure",
+      "equity_nav",
+      "gross_realized_pnl",
+      "net_realized_pnl",
+      "unrealized_pnl",
+      "valuation_completeness",
+      "reconciliation_status"
+    ],
+    "authority": "accepted immutable M0.8 projection; caller balances and mutable cache forbidden",
+    "materiality": "only values and valuation paths required by enabled limits; irrelevant zero holdings do not gate",
+    "accepted_context_types": [
+      "AccountingRiskProjection",
+      "CoreAcceptedContentBinding"
+    ],
+    "fingerprint_validation": "recompute projection fingerprint over all immutable economic content, then validate Core accepted-membership seal",
+    "asset_identity": "exact M0.5 AssetReference object: venue_asset_code, canonical_display_code, asset_namespace, mapping_status",
+    "gross_exposure": "derived by M0.9 from every accepted SPOT inventory/exposure fact and accepted valuation contexts sharing exact reporting AssetReference and as_of_utc; no caller gross scalar authority",
+    "nominal_membership": "pre-existing Core accepted projection membership is required independently of content hashes"
+  },
+  "post_state_projection_contract": {
+    "purity": "no LedgerEntry, reservation or projection mutation",
+    "formula": "accepted M0.8 state plus conservative exact order economic effect plus exact fees/reservation",
+    "limit_order_price": "canonical limit_price is conservative risk price for current LIMIT path",
+    "market_order_price": "requires an explicit accepted M0.6/M0.8 trusted valuation context bound to instrument, environment, as_of, expiry and fingerprint; absent context is INCOMPLETE",
+    "forbidden_prices": [
+      "UI price",
+      "random ticker",
+      "adapter response",
+      "implicit last trade",
+      "zero",
+      "stablecoin parity"
+    ],
+    "reservation_economics": "one accepted M0.8 capital_reservation fact/state only: BUY exact quote AssetReference quantity; SELL exact base AssetReference quantity; same-asset fee may be included in that quantity; separate third-asset reservation is unsupported/incomplete",
+    "market_economics_gate": "MARKET always requires trusted valuation sufficient to establish dispatch reservation economics, even when enabled numeric limits only mention quantity",
+    "zero_price_fallback": false
+  },
+  "valuation_reconciliation_gates": {
+    "fail_closed": [
+      "DRIFT",
+      "MISSING_INTERNAL_FACT",
+      "MISSING_EXTERNAL_FACT",
+      "UNMAPPED_ASSET",
+      "UNSUPPORTED",
+      "MISSING_VALUATION",
+      "STALE_VALUATION",
+      "UNSUPPORTED_VALUATION_PATH"
+    ],
+    "result": "RISK_CONTEXT_INCOMPLETE; no lease",
+    "material_inputs_only": true,
+    "valuation_context_fields": [
+      "subject_reference",
+      "valuation_unit",
+      "rate",
+      "source_id",
+      "observed_at_utc",
+      "effective_at_utc",
+      "as_of_utc",
+      "stale_after_utc",
+      "source_fingerprint_sha256",
+      "accepted_authority_fingerprint_sha256",
+      "context_fingerprint_sha256"
+    ],
+    "freshness": "derived as evaluated_at_utc <= stale_at_utc and matching exact scope; never a caller boolean"
+  },
+  "kill_switch_contract": {
+    "states": [
+      "INACTIVE",
+      "ACTIVE"
+    ],
+    "record_fields": [
+      "scope_type",
+      "scope_id",
+      "environment",
+      "state",
+      "source_revision",
+      "effective_at_utc",
+      "generation",
+      "accepted_authority_fingerprint_sha256",
+      "record_fingerprint_sha256"
+    ],
+    "authority": "accepted Core context; raw record is not authority",
+    "transition": "every accepted state transition strictly increments the environment/scope authority generation; generation never decreases or reuses",
+    "issuance_effect": "any applicable ACTIVE blocks issuance",
+    "existing_lease_effect": "dispatch re-resolves current switches; ACTIVE or generation/fingerprint mismatch invalidates old lease before side effect",
+    "accepted_context_types": [
+      "KillSwitchRecord",
+      "CoreAcceptedContentBinding",
+      "PrevalidatedKillSwitchContext"
+    ],
+    "generation_validation": "generation is positive and strictly increases per exact scope/environment history; duplicate/reuse/rollback or unknown state fails TRUSTED_CONTEXT_FAILURE"
+  },
+  "kill_switch_hierarchy": {
+    "applicability": "same hierarchy/qualifiers and exact environment as policy",
+    "monotonic": "any applicable ancestor or qualifier ACTIVE dominates all descendant INACTIVE states",
+    "unrelated": "different environment or non-applicable identity has no effect"
+  },
+  "generation_fencing_policy": {
+    "fence": "deterministic fingerprint over ordered applicable kill-switch records and their monotonic generations",
+    "lease_binding": "exact current kill-switch fence plus policy revision/fingerprint and accounting projection fingerprint",
+    "stale_on": [
+      "any accepted policy revision change",
+      "any applicable kill-switch transition including ACTIVE then INACTIVE",
+      "authority-relevant accounting projection change"
+    ],
+    "no_resurrection": true,
+    "fence_order": "explicit scope_hierarchy.applicable_order then scope_id; never lexical or container order"
+  },
+  "risk_decision_contract": {
+    "projection": "immutable non-durable RiskDecision",
+    "decisions": [
+      "ALLOW",
+      "DENY",
+      "INCOMPLETE"
+    ],
+    "required_fields": [
+      "command_id",
+      "command_request_fingerprint_sha256",
+      "order_id",
+      "scope_binding",
+      "environment",
+      "effective_policy_fingerprint_sha256",
+      "pre_reservation_accounting_projection_fingerprint_sha256",
+      "reservation_requirement_fingerprint_sha256",
+      "evaluated_at_utc",
+      "ordered_limit_results",
+      "kill_switch_result",
+      "kill_switch_fence_sha256",
+      "decision",
+      "decision_fingerprint_sha256"
+    ],
+    "limit_result_fields": [
+      "limit_type",
+      "effective_threshold",
+      "observed_projected_value",
+      "unit_asset_reference",
+      "supplying_policy_scope",
+      "result",
+      "reason_code"
+    ],
+    "aggregation": "any FAIL => DENY; else any INCOMPLETE => INCOMPLETE; else ALLOW",
+    "lease_rule": "only accepted ALLOW can contribute to issuance; it is never sufficient alone",
+    "accepted_context": "PrevalidatedRiskDecisionContext binds an independently recomputed immutable ALLOW RiskDecision fingerprint to the exact evaluation inputs",
+    "decision_fingerprint": "SHA-256 over every semantic RiskDecision field except decision_fingerprint_sha256; recomputed at issuance and when retrieving accepted historical decision at dispatch",
+    "rederivation": "issuance independently rederives the full PRE decision. Dispatch retrieves the exact accepted historical RiskDecision, recomputes all its semantic fields/fingerprint, requires ALLOW and matching lease binding, then revalidates current execution authority, policy/switch fences, POST accounting, reservation and lifetime; it does not reinterpret the historical PRE decision."
+  },
+  "execution_lease_contract": {
+    "entity": "ExecutionLease",
+    "identity": {
+      "field": "execution_lease_id",
+      "prefix": "lease",
+      "format": "M0.2 durable UUIDv7 identity",
+      "upstream_pointer": "/entity_kinds canonical_name=ExecutionLease",
+      "validation": "stable extraction of M0.2 entity_kinds entry canonical_name=ExecutionLease requires execution_lease_id/prefix lease/persistence true, then UUIDv7 regex"
+    },
+    "capability": "immutable, exact-bound, one-shot additional authorization; never generic",
+    "required_fields": [
+      "execution_lease_id",
+      "command_id",
+      "command_request_fingerprint_sha256",
+      "order_id",
+      "order_intent_id",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "instrument_metadata_version",
+      "execution_route_id",
+      "strategy_instance_id",
+      "source_identity",
+      "side",
+      "order_type",
+      "quantity",
+      "limit_price",
+      "time_in_force",
+      "order_expire_at_utc",
+      "effective_policy_bindings",
+      "effective_policy_fingerprint_sha256",
+      "kill_switch_bindings",
+      "kill_switch_fence_sha256",
+      "pre_reservation_accounting_projection_fingerprint_sha256",
+      "post_reservation_accounting_projection_fingerprint_sha256",
+      "risk_decision_fingerprint_sha256",
+      "reservation_source_audit_event_id",
+      "reservation_source_fingerprint_sha256",
+      "reservation_state_fingerprint_sha256",
+      "reservation_asset_reference",
+      "reservation_original_quantity",
+      "reservation_remaining_quantity",
+      "issued_at_utc",
+      "expires_at_utc",
+      "lease_fingerprint_sha256"
+    ],
+    "fingerprint": "SHA-256 over every semantic lease field except lease_fingerprint_sha256; recomputed before dispatch",
+    "partial_match_forbidden": true,
+    "distinct_identity": "each issuance receives a distinct canonical execution_lease_id"
+  },
+  "lease_issuance_conditions": [
+    "a validated PrevalidatedExecutionAuthorityContext whose complete M0.4-M0.7 content, fingerprints, accepted memberships, exact bindings and current mutable designations independently validate",
+    "exact AccountingRiskProjection fingerprint and CoreAcceptedContentBinding validate",
+    "effective accepted policy set has coverage, no DENY/conflict and an exact composite fence",
+    "accepted kill-switch history validates and no applicable ACTIVE exists",
+    "PrevalidatedRiskDecisionContext validates an immutable exact ALLOW decision and recomputed fingerprint",
+    "exact accepted M0.8 capital_reservation AuditEvent-derived accounting context binds command/order/scope/account and sufficient per-AssetReference requirements",
+    "issued_at_utc < expires_at_utc and duration <= 30 seconds"
+  ],
+  "lease_validation_conditions": {
+    "validator": "validate_execution_lease_for_dispatch",
+    "all_exact": [
+      "canonical execution_lease_id and recomputed lease fingerprint",
+      "all command, request, Order, OrderIntent, scope, economics and expiry fields",
+      "current composite effective-policy bindings/fingerprint",
+      "current composite kill-switch bindings/fence and no ACTIVE state",
+      "current accepted accounting projection and RiskDecision fingerprints",
+      "accepted M0.8 reservation source AuditEvent/fingerprint/accounting-state fingerprint and every per-AssetReference remaining requirement",
+      "exact PrevalidatedExecutionAuthorityContext for M0.4/M0.5/M0.6/M0.7",
+      "Core-owned M0.7 dispatch/idempotency state"
+    ],
+    "time_rule": "issued_at_utc <= now_utc <= expires_at_utc",
+    "fail_closed_for": [
+      "wrong command or fingerprint",
+      "wrong order or intent",
+      "wrong workspace or portfolio",
+      "wrong environment",
+      "wrong account or exchange",
+      "wrong instrument or metadata",
+      "wrong route or strategy/source",
+      "expired",
+      "stale policy, switch or accounting fence",
+      "ACTIVE kill switch",
+      "missing, foreign or insufficient reservation",
+      "upstream denial",
+      "consumed/replayed authority"
+    ]
+  },
+  "lease_lifetime": {
+    "maximum_seconds": 30,
+    "timestamps": "canonical UTC with Z; expires_at_utc > issued_at_utc",
+    "validity": "inclusive at expires_at_utc",
+    "clock": "trusted reference-model input; production clock/security deferred"
+  },
+  "one_shot_idempotency_relation_to_m07": {
+    "authority": "M0.7 command_id/fingerprint idempotency remains sole dispatch dedupe authority",
+    "same_retry": "byte-equivalent recorded replay; zero new dispatch",
+    "changed_request": "IDEMPOTENCY_CONFLICT",
+    "consumption": "successful dispatch marks exact lease/order command authority consumed in the same dispatch plan; it cannot authorize another submission",
+    "unknown": "reconcile; never resubmit",
+    "core_state": "CoreDispatchAuthorityState maps exact command_id to request fingerprint, order_id, execution_lease_id, lease fingerprint and state UNUSED/CONSUMED/UNKNOWN_RECONCILIATION; replay is returned only after exact request/order/economics match, otherwise IDEMPOTENCY_CONFLICT",
+    "atomic_authorization": "successful final validation atomically changes UNUSED to CONSUMED before returning DISPATCH_AUTHORIZED",
+    "states": [
+      "UNUSED",
+      "CONSUMED",
+      "UNKNOWN_RECONCILIATION"
+    ],
+    "replay_validation": "canonical lease ID, recomputed lease fingerprint and every immutable command/order/economic/scope binding are validated before consumed replay lookup; historical replay does not re-authorize against current policy",
+    "unknown_reconciliation": "never dispatch or resubmit; return RECONCILIATION_REQUIRED; side-effect count unchanged"
+  },
+  "reservation_relation_to_m08": {
+    "ordering": [
+      "pure risk evaluation",
+      "accepted ALLOW decision",
+      "provisional lease materialization",
+      "successful exact M0.8 order-bound reservation",
+      "final lease fingerprint/dispatch validation",
+      "M0.7 atomic idempotency reservation and accepted plan",
+      "one external side effect"
+    ],
+    "dispatchable": "only after exact reservation is present and sufficient",
+    "issuance_mutation": false,
+    "risk_is_not_reservation": true,
+    "identity": "exactly one M0.8 capital_reservation AuditEvent-derived fact and one ReservationState for one Order/command, one exact AssetReference and one quantity; no aggregate requirements and no durable reservation_id",
+    "exact_binding": [
+      "audit_event_id",
+      "source_fingerprint_sha256",
+      "command_id",
+      "order_id",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "asset_reference",
+      "original_quantity",
+      "remaining_quantity",
+      "state_fingerprint_sha256",
+      "accepted_membership_id"
+    ],
+    "provisional_object": "a non-authoritative LeaseDraft may exist after ALLOW; only the final immutable ExecutionLease created after accepted exact reservation is dispatchable",
+    "fee_boundary": "third-asset pre-trade fee reservation is not representable by current M0.8 single-asset reservation and therefore fails UNSUPPORTED_RISK_SEMANTICS; it is not required for closure of primary-spend current-SPOT limits",
+    "phases": [
+      "accepted PRE-reservation accounting projection",
+      "pure non-authoritative ReservationRequirementProjection",
+      "pure RiskDecision using PRE available minus requirement exactly once",
+      "accepted ALLOW",
+      "exact accepted M0.8 capital_reservation fact",
+      "derived accepted ReservationState",
+      "accepted POST-reservation projection proving one available-to-reserved transition",
+      "final ExecutionLease binds distinct PRE decision and current POST dispatch fingerprints"
+    ],
+    "risk_formula": "MIN_AVAILABLE uses PRE available minus derived requirement; it never subtracts accepted ReservationState from POST available",
+    "transition_proof": "POST available == PRE available - fact.quantity and POST reserved == PRE reserved + fact.quantity for exactly the same scope/account/environment/AssetReference; fact.quantity == requirement.required_quantity; ReservationState binds fact and remaining quantity",
+    "exact_fact_fields": [
+      "audit_event_id",
+      "source_type",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "effective_at_utc",
+      "provenance",
+      "source_fingerprint_sha256",
+      "exchange_account_id",
+      "asset_reference",
+      "quantity",
+      "order_id",
+      "command_id"
+    ],
+    "reservation_state_fields": [
+      "command_id",
+      "order_id",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "asset_reference",
+      "original_quantity",
+      "remaining_quantity",
+      "source_audit_event_id",
+      "source_fingerprint_sha256",
+      "state_fingerprint_sha256",
+      "accepted_membership_id"
+    ]
+  },
+  "environment_isolation": {
+    "environments": [
+      "PAPER",
+      "TESTNET",
+      "LIVE"
+    ],
+    "exact": "policy, switch, decision, accounting projection, reservation and lease bind one equal environment",
+    "substitution": false,
+    "fallback": false
+  },
+  "live_target_policy": {
+    "current": "constructed only by current-edition upstream fixture carrying exact M0.4 LIVE_BLOCKED_BY_EDITION and M0.6 POLICY_BLOCKED; no boolean override",
+    "future": "separate pre-existing hypothetical future ProductCapabilities, M0.5 instrument/account, READY M0.6 route and accepted M0.7 command projections with independent nominal memberships; no magic result value alone grants authority",
+    "fixture": "tests may provide nominal prevalidated future capability only; real upstream unchanged"
+  },
+  "m010_boundary": {
+    "deferred": [
+      "operator identity proof",
+      "PIN",
+      "biometrics",
+      "device trust",
+      "secrets",
+      "credential storage",
+      "authorization mechanism for policy/switch changes"
+    ],
+    "m09_only": "names nominal prevalidated authority contexts; no fake admin/user ID"
+  },
+  "m011_boundary": {
+    "must_persist_before_production": [
+      "accepted risk policy revisions and membership",
+      "kill-switch state and monotonic generations",
+      "issued/consumed lease state required for one-shot correctness",
+      "audit references"
+    ],
+    "reference_model": "in-memory only",
+    "production_crash_safety_claimed": false
+  },
+  "failure_registry": [
+    "RISK_DENIED",
+    "RISK_CONTEXT_INCOMPLETE",
+    "KILL_SWITCH_ACTIVE",
+    "LEASE_NOT_ISSUED",
+    "LEASE_EXPIRED",
+    "LEASE_STALE",
+    "LEASE_SCOPE_MISMATCH",
+    "LEASE_ALREADY_CONSUMED",
+    "POLICY_CONFLICT",
+    "TRUSTED_CONTEXT_FAILURE",
+    "UNSUPPORTED_RISK_SEMANTICS",
+    "RESERVATION_INVALID",
+    "UPSTREAM_AUTHORITY_DENIED",
+    "IDEMPOTENCY_CONFLICT",
+    "REPLAY_SUCCESS",
+    "CONTRACT_INCONSISTENT"
+  ],
+  "cross_contract_dependencies": [
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/public_trading_environments",
+      "content_fingerprint_sha256": "b0114e386bf72439199ec8155d65a57dc7e00cabe79dba805f53221ba7713103"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/entity_kinds",
+      "content_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/relationships",
+      "content_fingerprint_sha256": "03c64a8159cd7ae7f1103b029234c858d0cf86898d9dc0b652e1043667fc11a9"
+    },
+    {
+      "contract": "canonical_domain_vocabulary.json",
+      "json_pointer": "/identifier_policy",
+      "content_fingerprint_sha256": "44726b4e51c53722ebbc95212d708521007c59cb54292ea7bc5b970320031d20"
+    },
+    {
+      "contract": "process_topology_and_lifecycle.json",
+      "json_pointer": "/authority_boundaries",
+      "content_fingerprint_sha256": "6a491a4910109f2859f39c871a1111baf9f8cd052919ec419174ad557e136a0d"
+    },
+    {
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/execution_environments",
+      "content_fingerprint_sha256": "61f5dd195aa69c646dc296c2d8c0f2ce97683979e3ef6ddc35b0adaa269a809b"
+    },
+    {
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/ProductCapabilities",
+      "content_fingerprint_sha256": "fd8cd8b62827b96d52bd6870985f7e2438a0306cd267048b7745472157877605"
+    },
+    {
+      "contract": "environment_and_product_capabilities.json",
+      "json_pointer": "/capability_trust_policy",
+      "content_fingerprint_sha256": "a8a66584a0fc48b8a0170a86fb03c92f65e592dbdcb317fd3f47d1fe5e8e8a35"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/exchange_account_contract",
+      "content_fingerprint_sha256": "f1f7b18513a53d107b6effe169e793e74f5c70c8df6261a25ee96a3012c51ed4"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/instrument_contract",
+      "content_fingerprint_sha256": "a3b72fe19c84c63ab7702a00f4ad7e8b7f2b4cb6f093daffce4d4433f883f98c"
+    },
+    {
+      "contract": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/asset_reference_contract",
+      "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae"
+    },
+    {
+      "contract": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/execution_route_contract",
+      "content_fingerprint_sha256": "a855a114e6b19b8218f9975d64fb04b9dac86e28a208e9e7d3a4976773de0a12"
+    },
+    {
+      "contract": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/route_readiness_contract",
+      "content_fingerprint_sha256": "92dda02de1e327d248bc9e987701b33279534f48b57ac2a97104c8380d7c4c33"
+    },
+    {
+      "contract": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/live_execution_authority_policy",
+      "content_fingerprint_sha256": "eb2034a4691a18f3037b2a5f93d1fb41fcb38ef67c6c43c5dfff891dd35fe1de"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/command_registry/SUBMIT_ORDER",
+      "content_fingerprint_sha256": "864bc27bf55228d08b6592f2042a3f9a1f447eae661382bde0b380602369d748"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/closed_request_policy",
+      "content_fingerprint_sha256": "f3a523b01cbce2bafabeaad261777e3a97fc4f60db751deee0e77cb912f93e7c"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/idempotency_contract",
+      "content_fingerprint_sha256": "43ba37d976eb5948970d289cc71cd06da82cb90803f9e5f61cc84109f00e9a62"
+    },
+    {
+      "contract": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/environment_execution_boundary",
+      "content_fingerprint_sha256": "423939e49b651d91a8a4b70d0ba0d64275886c5c3b23544ef2e822956eb153db"
+    },
+    {
+      "contract": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/accounting_economic_fact_schema_registry/capital_reservation",
+      "content_fingerprint_sha256": "534ac4bec8ab864378e7b5900afc7e1634e5cbbeed443571ccb160e8c9ea1932"
+    },
+    {
+      "contract": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/reservation_protocol",
+      "content_fingerprint_sha256": "b3579e387a02b9f291468f5cc89a9ed650e4024a538cbb7f6f0c0818ed0c4641"
+    },
+    {
+      "contract": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/balance_model",
+      "content_fingerprint_sha256": "082ab812c1cfb4cd4e0f21de698129b59a8a034910fe1149461d12b9fd7f2fff"
+    },
+    {
+      "contract": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/rebuild_protocol",
+      "content_fingerprint_sha256": "e6bade298e6debc1c2972824f3b8fe2a177e15690e24868cde49e052648314a3"
+    },
+    {
+      "contract": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/environment_policy",
+      "content_fingerprint_sha256": "4499550489e137353a08ecb4f06b43c0e62d5bcf588cd9cb07ea8dd3a28f02ba"
+    },
+    {
+      "contract": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/m09_outputs",
+      "content_fingerprint_sha256": "42a97f0a077226763cc77a75c7eab0ef2879031f8fd87010268d2ab35d8403f8"
+    },
+    {
+      "contract": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/valuation_protocol",
+      "content_fingerprint_sha256": "5328a34d1ad389dd19b84027a48cfb0476d2eba4614b684ffe8bd55e03469d4a"
+    },
+    {
+      "contract": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/reconciliation_protocol",
+      "content_fingerprint_sha256": "747ad52f8c2d2f6983d80e5bf9219802bfb382fb02aebda697a946e6ab911ce1"
+    }
+  ],
+  "forbidden_scope": [
+    "runtime implementation",
+    "exchange adapter or side effect",
+    "real LIVE execution",
+    "M0.10 identity/secrets",
+    "M0.11 persistence",
+    "caller boolean authority",
+    "cross-environment fallback",
+    "float arithmetic"
+  ],
+  "contract_inconsistent_scope": "only machine-contract semantic drift, schema corruption, missing dependency root or dependency fingerprint mismatch; never ordinary risk denial",
+  "closure_conditions": [
+    "deterministic exact hierarchy and effective policy",
+    "closed executable SPOT limits and fail-closed unsupported registry",
+    "monotonic hierarchical kill switch fences old leases without resurrection",
+    "policy/accounting revisions fence old leases",
+    "exact short-lived durable M0.2 ExecutionLease identity and one-shot binding",
+    "M0.7 idempotency and M0.8 reservation ordering preserved",
+    "exact environment isolation and future-capable upstream-gated LIVE",
+    "no boolean, UI, fake security or fake persistence authority",
+    "every directly interpreted dependency root fingerprint-attested",
+    "no caller acceptance/freshness/upstream/consumed boolean or scalar reservation shadow-authority",
+    "PRE risk and POST dispatch accounting fingerprints are distinct and exact M0.8 transition-attested",
+    "every authority-bearing executable dataclass and registry binding schema equals its machine declaration"
+  ],
+  "executable_boundary_schemas": {
+    "CoreAcceptedContentBinding": [
+      "membership_id",
+      "content_fingerprint_sha256"
+    ],
+    "CoreCurrentProductDesignation": [
+      "environment",
+      "membership_id"
+    ],
+    "CoreCurrentRouteDesignation": [
+      "environment",
+      "execution_route_id",
+      "membership_id"
+    ],
+    "AssetReference": [
+      "venue_asset_code",
+      "canonical_display_code",
+      "asset_namespace",
+      "mapping_status"
+    ],
+    "M07SubmitOrderRequest": [
+      "command_id",
+      "operation_type",
+      "authority_context_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "strategy_instance_id",
+      "source_type",
+      "instrument_id",
+      "execution_route_id",
+      "correlation_id",
+      "causation_id",
+      "idempotency_key",
+      "order_intent_id",
+      "order_id",
+      "side",
+      "order_type",
+      "quantity",
+      "limit_price",
+      "time_in_force",
+      "expire_at_utc"
+    ],
+    "CoreAcceptedCommandProjection": [
+      "entries",
+      "membership_id"
+    ],
+    "M07PrevalidatedAcceptedCommandContext": [
+      "request",
+      "request_fingerprint_sha256",
+      "membership_id",
+      "context_fingerprint_sha256"
+    ],
+    "ProductCapabilitiesProjection": [
+      "environment",
+      "authorized_operations",
+      "edition_policy",
+      "semantic_fingerprint_sha256",
+      "membership_id"
+    ],
+    "InstrumentProjection": [
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "metadata_version",
+      "base_asset_reference",
+      "quote_asset_reference",
+      "semantic_fingerprint_sha256",
+      "membership_id"
+    ],
+    "RouteProjection": [
+      "environment",
+      "execution_route_id",
+      "strategy_instance_id",
+      "source_type",
+      "readiness",
+      "semantic_fingerprint_sha256",
+      "membership_id"
+    ],
+    "PrevalidatedExecutionAuthorityContext": [
+      "product",
+      "instrument",
+      "route",
+      "command",
+      "context_fingerprint_sha256"
+    ],
+    "RiskPolicyRecord": [
+      "risk_policy_id",
+      "revision",
+      "environment",
+      "scope_type",
+      "scope_id",
+      "action",
+      "limits",
+      "semantic_fingerprint_sha256"
+    ],
+    "PrevalidatedRiskPolicyContext": [
+      "records",
+      "current",
+      "membership_id",
+      "context_fingerprint_sha256"
+    ],
+    "KillSwitchRecord": [
+      "scope_type",
+      "scope_id",
+      "environment",
+      "state",
+      "source_revision",
+      "effective_at_utc",
+      "generation",
+      "accepted_authority_fingerprint_sha256",
+      "record_fingerprint_sha256"
+    ],
+    "PrevalidatedKillSwitchContext": [
+      "history",
+      "membership_id",
+      "context_fingerprint_sha256"
+    ],
+    "ValuationContext": [
+      "subject_reference",
+      "valuation_unit",
+      "rate",
+      "source_id",
+      "observed_at_utc",
+      "effective_at_utc",
+      "as_of_utc",
+      "stale_after_utc",
+      "source_fingerprint_sha256",
+      "accepted_authority_fingerprint_sha256",
+      "context_fingerprint_sha256"
+    ],
+    "InventoryExposure": [
+      "instrument_id",
+      "environment",
+      "asset_reference",
+      "quantity",
+      "as_of_utc"
+    ],
+    "AccountingRiskProjection": [
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_ids",
+      "as_of_utc",
+      "reporting_asset_reference",
+      "owned_balances",
+      "available_capital",
+      "reserved_capital",
+      "inventory_exposure",
+      "valuations",
+      "reconciliation_outcomes",
+      "projection_fingerprint_sha256",
+      "accepted_membership_id"
+    ],
+    "ReservationRequirementProjection": [
+      "command_id",
+      "order_id",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "asset_reference",
+      "required_quantity",
+      "derivation_fingerprint_sha256"
+    ],
+    "CapitalReservationFact": [
+      "audit_event_id",
+      "source_type",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "effective_at_utc",
+      "provenance",
+      "source_fingerprint_sha256",
+      "exchange_account_id",
+      "asset_reference",
+      "quantity",
+      "order_id",
+      "command_id"
+    ],
+    "ReservationState": [
+      "command_id",
+      "order_id",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "asset_reference",
+      "original_quantity",
+      "remaining_quantity",
+      "source_audit_event_id",
+      "source_fingerprint_sha256",
+      "state_fingerprint_sha256",
+      "accepted_membership_id"
+    ],
+    "RiskDecision": [
+      "command_id",
+      "command_request_fingerprint_sha256",
+      "order_id",
+      "scope_binding",
+      "environment",
+      "effective_policy_fingerprint_sha256",
+      "pre_reservation_accounting_projection_fingerprint_sha256",
+      "reservation_requirement_fingerprint_sha256",
+      "evaluated_at_utc",
+      "ordered_limit_results",
+      "kill_switch_result",
+      "kill_switch_fence_sha256",
+      "decision",
+      "decision_fingerprint_sha256"
+    ],
+    "PrevalidatedRiskDecisionContext": [
+      "decision",
+      "membership_id"
+    ],
+    "CoreAcceptedDecisionBinding": [
+      "decision_fingerprint_sha256",
+      "decision"
+    ],
+    "ExecutionLease": [
+      "execution_lease_id",
+      "command_id",
+      "command_request_fingerprint_sha256",
+      "order_id",
+      "order_intent_id",
+      "workspace_id",
+      "portfolio_id",
+      "environment",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "instrument_metadata_version",
+      "execution_route_id",
+      "strategy_instance_id",
+      "source_identity",
+      "side",
+      "order_type",
+      "quantity",
+      "limit_price",
+      "time_in_force",
+      "order_expire_at_utc",
+      "effective_policy_bindings",
+      "effective_policy_fingerprint_sha256",
+      "kill_switch_bindings",
+      "kill_switch_fence_sha256",
+      "pre_reservation_accounting_projection_fingerprint_sha256",
+      "post_reservation_accounting_projection_fingerprint_sha256",
+      "risk_decision_fingerprint_sha256",
+      "reservation_source_audit_event_id",
+      "reservation_source_fingerprint_sha256",
+      "reservation_state_fingerprint_sha256",
+      "reservation_asset_reference",
+      "reservation_original_quantity",
+      "reservation_remaining_quantity",
+      "issued_at_utc",
+      "expires_at_utc",
+      "lease_fingerprint_sha256"
+    ],
+    "CoreDispatchRecord": [
+      "command_request_fingerprint_sha256",
+      "order_id",
+      "execution_lease_id",
+      "lease_fingerprint_sha256",
+      "state"
+    ],
+    "CoreIssuedExecutionLeaseProjection": [
+      "execution_lease_id",
+      "lease_fingerprint_sha256",
+      "command_id",
+      "order_id"
+    ],
+    "CoreDispatchAuthorityState": [
+      "records",
+      "side_effect_count"
+    ],
+    "EffectivePolicy": [
+      "bindings",
+      "limits",
+      "fingerprint_sha256"
+    ],
+    "LimitResult": [
+      "limit_type",
+      "effective_threshold",
+      "observed_projected_value",
+      "unit_asset_reference",
+      "supplying_policy_scope",
+      "result",
+      "reason_code"
+    ]
+  },
+  "core_authority_registries": {
+    "accepted_content": {
+      "model": "CoreAcceptedContentBinding",
+      "key": "membership_id",
+      "value": "content_fingerprint_sha256",
+      "semantics": "immutable exact-content acceptance; integrity hash alone is not acceptance"
+    },
+    "current_product": {
+      "model": "CoreCurrentProductDesignation",
+      "key": "environment",
+      "value": "currently designated accepted membership_id"
+    },
+    "current_route": {
+      "model": "CoreCurrentRouteDesignation",
+      "key": [
+        "environment",
+        "execution_route_id"
+      ],
+      "value": "currently designated accepted membership_id"
+    },
+    "accepted_decisions": {
+      "model": "CoreAcceptedDecisionBinding",
+      "key": "decision_fingerprint_sha256",
+      "value": "exact immutable RiskDecision"
+    },
+    "issued_leases": {
+      "model": "CoreIssuedExecutionLeaseProjection",
+      "key": "execution_lease_id",
+      "value": "exact issued lease identity/fingerprint/command/order binding"
+    },
+    "dispatch_state": {
+      "model": "CoreDispatchAuthorityState",
+      "key": "command_id",
+      "value": "CoreDispatchRecord and one-shot side_effect_count"
+    }
+  }
+}
