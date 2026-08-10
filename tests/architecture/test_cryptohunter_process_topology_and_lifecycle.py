@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from copy import deepcopy
 from collections import Counter
+from dataclasses import asdict, dataclass, fields, replace
+from datetime import UTC, datetime, timedelta
 from itertools import combinations
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Mapping, cast
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = (
@@ -39,7 +46,7 @@ REQUIRED_SHUTDOWN_FIELDS = {
 
 
 def load_contract() -> dict:
-    return json.loads(CONTRACT.read_text(encoding="utf-8"))
+    return cast(dict[Any, Any], json.loads(CONTRACT.read_text(encoding="utf-8")))
 
 
 def roles_by_name(data: dict) -> dict:
@@ -2273,3 +2280,1316 @@ def test_intent_evaluation_routes() -> None:
 def test_contract_contains_no_values_that_look_like_real_secrets() -> None:
     raw = CONTRACT.read_text(encoding="utf-8")
     assert not SECRET_RE.search(raw)
+
+
+# Independent immutable expectation and pure M0.3 first-run bootstrap reference model.
+def _bootstrap_freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _bootstrap_freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_bootstrap_freeze(item) for item in value)
+    return value
+
+
+FIRST_RUN_BOOTSTRAP_EXPECTED = _bootstrap_freeze(
+    json.loads(r"""{
+  "status": "closed",
+  "authority_owner": "external_product_provisioning_boundary",
+  "consumer": "CoreHost",
+  "nature": "ephemeral protected security/provisioning handoff; not a durable M0.2 entity",
+  "implementation_neutral_examples": [
+    "protected installer handoff",
+    "package provisioning",
+    "SaaS or device provisioning",
+    "other product provisioning mechanism"
+  ],
+  "non_authorities": [
+    "bootstrapper",
+    "tray_agent",
+    "desktop_shell",
+    "raw_caller",
+    "caller_boolean",
+    "self_hash",
+    "ordinary_RuntimeSession",
+    "arbitrary_local_admin_claim"
+  ],
+  "bootstrapper_role": {
+    "mode": "transport_and_discovery_only",
+    "may_pass": "opaque protected reference",
+    "cannot": [
+      "mint",
+      "accept",
+      "elevate"
+    ]
+  },
+  "identity_boundary": {
+    "provisioned_identity_fields": [
+      "account_id",
+      "device_installation_id"
+    ],
+    "canonical_state_store_identity_required": true,
+    "does_not_imply": [
+      "device_TRUSTED",
+      "operator_authenticated",
+      "PIN_verified",
+      "LIVE_authorized"
+    ],
+    "RuntimeSession_during_SETUP_REQUIRED": true,
+    "noncanonical_alias_forbidden": true
+  },
+  "claim_schema": {
+    "ordered_fields": [
+      "account_id",
+      "device_installation_id",
+      "intended_operator_id",
+      "bootstrap_generation",
+      "bootstrap_revision",
+      "issued_at_utc",
+      "expires_at_utc",
+      "challenge_fingerprint_sha256",
+      "provisioning_context_fingerprint_sha256",
+      "claim_fingerprint_sha256"
+    ],
+    "ephemeral_key": "claim_fingerprint_sha256",
+    "durable_bootstrap_id": false,
+    "fingerprint_input_fields": [
+      "account_id",
+      "device_installation_id",
+      "intended_operator_id",
+      "bootstrap_generation",
+      "bootstrap_revision",
+      "issued_at_utc",
+      "expires_at_utc",
+      "challenge_fingerprint_sha256",
+      "provisioning_context_fingerprint_sha256"
+    ]
+  },
+  "acceptance_authority": {
+    "required": "claim fingerprint resolves through a pre-existing Core-visible accepted provisioning membership registry established independently before caller claim validation",
+    "public_validator_inputs": [
+      "untrusted claim",
+      "opaque Core authority state reference",
+      "now_utc",
+      "requested authority purpose"
+    ],
+    "public_validator_excludes": [
+      "caller-owned registry",
+      "caller-created membership binding",
+      "caller-created Core state projection"
+    ],
+    "membership_schema": "ProvisioningMembershipBinding",
+    "registry_binding": [
+      "claim_fingerprint_sha256",
+      "complete_claim_content_fingerprint_sha256",
+      "authority_source",
+      "provisioning_context_fingerprint_sha256",
+      "exact accepted immutable claim content"
+    ],
+    "authority_source": "external_product_provisioning_boundary",
+    "owner_string_alone_authority": false,
+    "hash_semantics": "integrity only; recomputed self-hash cannot create membership",
+    "nominal_type_semantics": "dataclass, JSON shape, owner string or state fingerprint alone is not authority",
+    "boolean_authority": false,
+    "CoreHost_may_mint": false,
+    "registry_key_binding": "registry key == binding.claim_fingerprint_sha256 == claim.claim_fingerprint_sha256"
+  },
+  "eligibility": {
+    "startup_readiness": "SETUP_REQUIRED",
+    "exact_bindings": [
+      "resolved account_id",
+      "resolved device_installation_id",
+      "intended first operator_id",
+      "bootstrap generation",
+      "bootstrap revision",
+      "provisioning membership"
+    ],
+    "required_absence": [
+      "accepted/current first OperatorIdentity for bootstrap scope",
+      "completed initial-security setup",
+      "consumed bootstrap generation"
+    ],
+    "time_rule": "canonical UTC issued_at_utc <= now_utc <= expires_at_utc and expires_at_utc > issued_at_utc",
+    "caller_first_run_flag_authority": false
+  },
+  "one_shot_transition": {
+    "input": "accepted provisioning membership plus exact current PRE_INITIAL_SECURITY Core state and SETUP_REQUIRED",
+    "output": "BootstrapTransitionResult with INITIAL_SECURITY_ESTABLISHMENT_AUTHORIZED and INITIAL_SECURITY_ESTABLISHMENT_ONLY purpose plus atomically derived post-state consumption",
+    "consumed_schema": "ConsumedBootstrapAuthority",
+    "consumes": [
+      "account_id",
+      "device_installation_id",
+      "bootstrap_generation",
+      "bootstrap_revision",
+      "claim_fingerprint_sha256",
+      "challenge_fingerprint_sha256"
+    ],
+    "semantic_atomicity": "compare current state, authorize and append exact consumed binding as one semantic transition; at most one success per accepted claim",
+    "does_not_set_readiness": "READY"
+  },
+  "terminal_fencing": {
+    "replay": false,
+    "modified_claim_recomputed_hash_reuses_membership": false,
+    "after_completed_setup": false,
+    "second_device_enrollment": false,
+    "reinstall_or_recovery_bypass": false,
+    "forbidden_authorizations": [
+      "ordinary privileged operations",
+      "RiskPolicy",
+      "kill switch",
+      "ProductCapabilities",
+      "exchange operations",
+      "ExecutionLease",
+      "LIVE"
+    ],
+    "one_shot_rule": "exact consumed binding or terminal completed lifecycle denies reuse",
+    "caller_cannot_clear_consumption": true
+  },
+  "failure_outcome": {
+    "missing_or_invalid": "SETUP_REQUIRED remains; deny bootstrap",
+    "side_effects_forbidden": [
+      "private exchange connection",
+      "exchange-secret loading",
+      "strategy start",
+      "order entry"
+    ]
+  },
+  "audit_boundary": {
+    "uses": "canonical M0.2 AuditEvent; M0.7 causation/correlation when available",
+    "ordering": "RuntimeSession is created after process-lock ownership and may exist before bootstrap validation; no artificial pre-RuntimeSession event requirement",
+    "allowed": [
+      "account_id",
+      "device_installation_id",
+      "intended_operator_id",
+      "claim/reference fingerprint",
+      "bootstrap generation",
+      "reason code",
+      "causation_id",
+      "correlation_id"
+    ],
+    "forbidden": [
+      "raw bootstrap secret",
+      "PIN",
+      "biometric material",
+      "API credentials",
+      "protected provisioning payload"
+    ]
+  },
+  "milestone_ownership": {
+    "M0.3": "pre-existing provisioning authority handoff, startup ordering and one-shot scope",
+    "M0.10": "first OperatorIdentity acceptance, initial TRUSTED designation, PIN verifier, optional platform biometric semantics and first Core-issued authentication proof",
+    "M0.11": "durably atomic compare-and-consume, persistence, migrations, backup and crash recovery for accepted/current membership and consumed facts"
+  },
+  "invariants": [
+    "DeviceInstallation identity is not M0.10 TRUSTED designation",
+    "Bootstrapper transports but never issues or accepts authority",
+    "CoreHost consumes but cannot self-issue provisioning membership",
+    "valid bootstrap does not mean READY",
+    "current LIVE remains denied",
+    "no caller boolean or self-hash authority"
+  ],
+  "startup_identity_resolution": {
+    "mode_source": "accepted/current installation state; never caller first_run boolean",
+    "EXISTING_INSTALLATION": "resolve canonical account_id, device_installation_id and state-store identity from accepted local/Core state under later persistence boundary; first-run provisioning handoff not required again",
+    "FIRST_INSTALLATION": "only when accepted installation identity is absent, external product provisioning handoff supplies canonical account_id and device_installation_id for state-store/process-lock scope and later setup",
+    "common_non_implications": [
+      "device_TRUSTED",
+      "operator_authenticated",
+      "PIN_verified",
+      "LIVE_authorized"
+    ]
+  },
+  "executable_schemas": {
+    "FirstRunBootstrapClaim": [
+      "account_id",
+      "device_installation_id",
+      "intended_operator_id",
+      "bootstrap_generation",
+      "bootstrap_revision",
+      "issued_at_utc",
+      "expires_at_utc",
+      "challenge_fingerprint_sha256",
+      "provisioning_context_fingerprint_sha256",
+      "claim_fingerprint_sha256"
+    ],
+    "ProvisioningMembershipBinding": [
+      "claim_fingerprint_sha256",
+      "complete_claim_content_fingerprint_sha256",
+      "authority_source",
+      "provisioning_context_fingerprint_sha256"
+    ],
+    "ConsumedBootstrapAuthority": [
+      "account_id",
+      "device_installation_id",
+      "bootstrap_generation",
+      "bootstrap_revision",
+      "claim_fingerprint_sha256",
+      "challenge_fingerprint_sha256"
+    ],
+    "CoreCurrentBootstrapState": [
+      "state_fingerprint_sha256",
+      "account_id",
+      "device_installation_id",
+      "intended_operator_id",
+      "startup_readiness",
+      "initial_security_lifecycle",
+      "first_operator_presence",
+      "expected_generation",
+      "expected_revision",
+      "consumed_authorities",
+      "state_revision"
+    ],
+    "BootstrapTransitionResult": [
+      "outcome",
+      "authority_purpose",
+      "pre_state_fingerprint_sha256",
+      "post_state_fingerprint_sha256",
+      "consumed_authority"
+    ]
+  },
+  "core_current_state_authority": {
+    "schema": "CoreCurrentBootstrapState",
+    "lifecycle_states": [
+      "PRE_INITIAL_SECURITY",
+      "INITIAL_SECURITY_COMPLETED"
+    ],
+    "readiness_states": [
+      "SETUP_REQUIRED"
+    ],
+    "acceptance": "opaque state reference must resolve in pre-existing Core-owned accepted registry and be the exact current designation for account/device scope",
+    "caller_projection_authority": false,
+    "stale_accepted_history_authority": false,
+    "state_fingerprint_input_fields": [
+      "account_id",
+      "device_installation_id",
+      "intended_operator_id",
+      "startup_readiness",
+      "initial_security_lifecycle",
+      "first_operator_presence",
+      "expected_generation",
+      "expected_revision",
+      "consumed_authorities",
+      "state_revision"
+    ],
+    "first_operator_presence_states": [
+      "ABSENT",
+      "PRESENT"
+    ],
+    "lifecycle_presence_invariants": {
+      "PRE_INITIAL_SECURITY": "ABSENT",
+      "INITIAL_SECURITY_COMPLETED": "PRESENT"
+    },
+    "future_m010_fence": "accepting first OperatorIdentity must replace current PRE_INITIAL_SECURITY/ABSENT designation; historical PRE may remain audit-only"
+  },
+  "authority_purpose_registry": [
+    "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+  ],
+  "scope_consumer_policy": {
+    "allowed": "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+    "all_other_purposes": "BOOTSTRAP_SCOPE_DENIED",
+    "result_alone_authority": false,
+    "requires_current_post_state": true,
+    "requires_exact_pre_to_post_transition": true
+  },
+  "transition_result_authority": {
+    "transport_object_authority": false,
+    "nominal_type_authority": false,
+    "caller_created_success_authority": false,
+    "consumer_revalidation": [
+      "exact accepted historical PRE registry key/internal/recomputed fingerprint",
+      "exact accepted and current POST registry key/internal/recomputed fingerprint",
+      "exact PRE to POST single-consumption transition",
+      "exact new ConsumedBootstrapAuthority binding"
+    ],
+    "registry_key_equals_internal_state_fingerprint": true,
+    "consumed_history_validation": "every entry fully validates canonical IDs, positive non-bool generation/revision, lowercase SHA-256, state scope, uniqueness and generation uniqueness"
+  }
+}""")
+)
+
+
+def _bootstrap_thaw(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _bootstrap_thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_bootstrap_thaw(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True)
+class FirstRunBootstrapClaim:
+    account_id: str
+    device_installation_id: str
+    intended_operator_id: str
+    bootstrap_generation: int
+    bootstrap_revision: int
+    issued_at_utc: str
+    expires_at_utc: str
+    challenge_fingerprint_sha256: str
+    provisioning_context_fingerprint_sha256: str
+    claim_fingerprint_sha256: str
+
+
+@dataclass(frozen=True)
+class ProvisioningMembershipBinding:
+    claim_fingerprint_sha256: str
+    complete_claim_content_fingerprint_sha256: str
+    authority_source: str
+    provisioning_context_fingerprint_sha256: str
+
+
+@dataclass(frozen=True)
+class ConsumedBootstrapAuthority:
+    account_id: str
+    device_installation_id: str
+    bootstrap_generation: int
+    bootstrap_revision: int
+    claim_fingerprint_sha256: str
+    challenge_fingerprint_sha256: str
+
+
+@dataclass(frozen=True)
+class CoreCurrentBootstrapState:
+    state_fingerprint_sha256: str
+    account_id: str
+    device_installation_id: str
+    intended_operator_id: str
+    startup_readiness: str
+    initial_security_lifecycle: str
+    first_operator_presence: str
+    expected_generation: int
+    expected_revision: int
+    consumed_authorities: tuple[ConsumedBootstrapAuthority, ...]
+    state_revision: int
+
+
+@dataclass(frozen=True)
+class BootstrapTransitionResult:
+    outcome: str
+    authority_purpose: str | None
+    pre_state_fingerprint_sha256: str | None
+    post_state_fingerprint_sha256: str | None
+    consumed_authority: ConsumedBootstrapAuthority | None
+
+
+BOOTSTRAP_AUTHORITY_DATACLASSES = {
+    "FirstRunBootstrapClaim": FirstRunBootstrapClaim,
+    "ProvisioningMembershipBinding": ProvisioningMembershipBinding,
+    "ConsumedBootstrapAuthority": ConsumedBootstrapAuthority,
+    "CoreCurrentBootstrapState": CoreCurrentBootstrapState,
+    "BootstrapTransitionResult": BootstrapTransitionResult,
+}
+
+# These registries model pre-existing Core-visible authority only. They are not persistence.
+_ACCEPTED_PROVISIONING_MEMBERSHIPS: dict[str, ProvisioningMembershipBinding] = {}
+_ACCEPTED_PROVISIONING_CLAIMS: dict[str, FirstRunBootstrapClaim] = {}
+_ACCEPTED_CORE_STATES: dict[str, CoreCurrentBootstrapState] = {}
+_CURRENT_CORE_STATE_BY_SCOPE: dict[tuple[str, str], str] = {}
+
+
+def _canonical_json(value: Any) -> bytes:
+    if isinstance(value, tuple):
+        value = list(value)
+    if hasattr(value, "__dataclass_fields__"):
+        value = asdict(value)
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _fingerprint(value: Any) -> str:
+    return hashlib.sha256(_canonical_json(value)).hexdigest()
+
+
+def _claim_content(claim: FirstRunBootstrapClaim) -> dict[str, Any]:
+    content = asdict(claim)
+    content.pop("claim_fingerprint_sha256")
+    return content
+
+
+def _claim_fingerprint(claim: FirstRunBootstrapClaim) -> str:
+    return _fingerprint(_claim_content(claim))
+
+
+def _state_content(state: CoreCurrentBootstrapState) -> dict[str, Any]:
+    content = asdict(state)
+    content.pop("state_fingerprint_sha256")
+    return content
+
+
+def _state_fingerprint(state: CoreCurrentBootstrapState) -> str:
+    return _fingerprint(_state_content(state))
+
+
+def _canonical_utc(value: str) -> datetime | None:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value):
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def _canonical_id(value: object, prefix: str) -> bool:
+    return (
+        isinstance(value, str)
+        and re.fullmatch(
+            rf"{prefix}_[0-9a-f]{{8}}-[0-9a-f]{{4}}-7[0-9a-f]{{3}}-[89ab][0-9a-f]{{3}}-[0-9a-f]{{12}}",
+            value,
+        )
+        is not None
+    )
+
+
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _trusted_provisioning_fixture(
+    claim: FirstRunBootstrapClaim, state: CoreCurrentBootstrapState
+) -> str:
+    """Establish authority before public validation; never called by the validator."""
+    _ACCEPTED_PROVISIONING_MEMBERSHIPS.clear()
+    _ACCEPTED_PROVISIONING_CLAIMS.clear()
+    _ACCEPTED_CORE_STATES.clear()
+    _CURRENT_CORE_STATE_BY_SCOPE.clear()
+    binding = ProvisioningMembershipBinding(
+        claim.claim_fingerprint_sha256,
+        _fingerprint(_claim_content(claim)),
+        "external_product_provisioning_boundary",
+        claim.provisioning_context_fingerprint_sha256,
+    )
+    _ACCEPTED_PROVISIONING_MEMBERSHIPS[claim.claim_fingerprint_sha256] = binding
+    _ACCEPTED_PROVISIONING_CLAIMS[claim.claim_fingerprint_sha256] = claim
+    _ACCEPTED_CORE_STATES[state.state_fingerprint_sha256] = state
+    _CURRENT_CORE_STATE_BY_SCOPE[(state.account_id, state.device_installation_id)] = (
+        state.state_fingerprint_sha256
+    )
+    return state.state_fingerprint_sha256
+
+
+def _denied(outcome: str) -> BootstrapTransitionResult:
+    return BootstrapTransitionResult(outcome, None, None, None, None)
+
+
+def validate_consumed_bootstrap_authority(
+    item: object, state: CoreCurrentBootstrapState | None = None
+) -> bool:
+    if not isinstance(item, ConsumedBootstrapAuthority):
+        return False
+    if not all(
+        (
+            _canonical_id(item.account_id, "acct"),
+            _canonical_id(item.device_installation_id, "dev"),
+            _positive_int(item.bootstrap_generation),
+            _positive_int(item.bootstrap_revision),
+            isinstance(item.claim_fingerprint_sha256, str)
+            and re.fullmatch(r"[0-9a-f]{64}", item.claim_fingerprint_sha256),
+            isinstance(item.challenge_fingerprint_sha256, str)
+            and re.fullmatch(r"[0-9a-f]{64}", item.challenge_fingerprint_sha256),
+        )
+    ):
+        return False
+    return state is None or (item.account_id, item.device_installation_id) == (
+        state.account_id,
+        state.device_installation_id,
+    )
+
+
+def _validate_consumed_history(state: CoreCurrentBootstrapState) -> bool:
+    items = state.consumed_authorities
+    if not isinstance(items, tuple) or not all(
+        validate_consumed_bootstrap_authority(item, state) for item in items
+    ):
+        return False
+    return len(items) == len(set(items)) and len(
+        {item.bootstrap_generation for item in items}
+    ) == len(items)
+
+
+def _accepted_state(reference: object) -> tuple[str, CoreCurrentBootstrapState | None]:
+    if not isinstance(reference, str) or not re.fullmatch(r"[0-9a-f]{64}", reference):
+        return "MALFORMED_CORE_BOOTSTRAP_STATE", None
+    state = _ACCEPTED_CORE_STATES.get(reference)
+    if state is None:
+        return "BOOTSTRAP_AUTHORITY_DENIED", None
+    if state.state_fingerprint_sha256 != reference or _state_fingerprint(state) != reference:
+        return "CONTRACT_INCONSISTENT", None
+    return "VALID", state
+
+
+def authorize_and_consume_first_run_bootstrap(
+    claim: object, core_state_reference: object, now_utc: object, requested_purpose: object
+) -> BootstrapTransitionResult:
+    if not isinstance(claim, FirstRunBootstrapClaim):
+        return _denied("BOOTSTRAP_AUTHORITY_DENIED")
+    if not isinstance(core_state_reference, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", core_state_reference
+    ):
+        return _denied("MALFORMED_CORE_BOOTSTRAP_STATE")
+    if not isinstance(now_utc, str) or not isinstance(requested_purpose, str):
+        return _denied("MALFORMED_BOOTSTRAP_INPUT")
+    state_status, state = _accepted_state(core_state_reference)
+    if state is None:
+        return _denied(state_status)
+    current_ref = _CURRENT_CORE_STATE_BY_SCOPE.get((state.account_id, state.device_installation_id))
+    if current_ref != core_state_reference:
+        current = _ACCEPTED_CORE_STATES.get(current_ref or "")
+        if current and any(
+            item.claim_fingerprint_sha256 == claim.claim_fingerprint_sha256
+            for item in current.consumed_authorities
+        ):
+            return _denied("BOOTSTRAP_REPLAY_DENIED")
+        return _denied("STALE_CORE_BOOTSTRAP_STATE")
+    if not all(
+        (
+            _canonical_id(state.account_id, "acct"),
+            _canonical_id(state.device_installation_id, "dev"),
+            _canonical_id(state.intended_operator_id, "op"),
+        )
+    ):
+        return _denied("MALFORMED_CORE_BOOTSTRAP_STATE")
+    lifecycle_presence = {"PRE_INITIAL_SECURITY": "ABSENT", "INITIAL_SECURITY_COMPLETED": "PRESENT"}
+    if (
+        state.startup_readiness != "SETUP_REQUIRED"
+        or lifecycle_presence.get(state.initial_security_lifecycle) != state.first_operator_presence
+    ):
+        return _denied("MALFORMED_CORE_BOOTSTRAP_STATE")
+    if not all(
+        (
+            _positive_int(state.expected_generation),
+            _positive_int(state.expected_revision),
+            _positive_int(state.state_revision),
+        )
+    ):
+        return _denied("MALFORMED_CORE_BOOTSTRAP_STATE")
+    if not _validate_consumed_history(state):
+        return _denied("MALFORMED_CORE_BOOTSTRAP_STATE")
+    if requested_purpose != "INITIAL_SECURITY_ESTABLISHMENT_ONLY":
+        return _denied("BOOTSTRAP_SCOPE_DENIED")
+    if state.initial_security_lifecycle == "INITIAL_SECURITY_COMPLETED":
+        return _denied("BOOTSTRAP_NOT_ELIGIBLE")
+    if not all(
+        (
+            _canonical_id(claim.account_id, "acct"),
+            _canonical_id(claim.device_installation_id, "dev"),
+            _canonical_id(claim.intended_operator_id, "op"),
+        )
+    ):
+        return _denied("MALFORMED_BOOTSTRAP_CLAIM")
+    if not _positive_int(claim.bootstrap_generation) or not _positive_int(claim.bootstrap_revision):
+        return _denied("MALFORMED_BOOTSTRAP_CLAIM")
+    hashes = (
+        claim.challenge_fingerprint_sha256,
+        claim.provisioning_context_fingerprint_sha256,
+        claim.claim_fingerprint_sha256,
+    )
+    if not all(isinstance(item, str) and re.fullmatch(r"[0-9a-f]{64}", item) for item in hashes):
+        return _denied("MALFORMED_BOOTSTRAP_CLAIM")
+    issued, expires, now = (
+        _canonical_utc(claim.issued_at_utc),
+        _canonical_utc(claim.expires_at_utc),
+        _canonical_utc(now_utc),
+    )
+    if issued is None or expires is None or now is None or expires <= issued:
+        return _denied("MALFORMED_BOOTSTRAP_CLAIM")
+    if now < issued:
+        return _denied("BOOTSTRAP_NOT_YET_VALID")
+    if now > expires:
+        return _denied("BOOTSTRAP_EXPIRED")
+    if _claim_fingerprint(claim) != claim.claim_fingerprint_sha256:
+        return _denied("BOOTSTRAP_AUTHORITY_DENIED")
+    binding = _ACCEPTED_PROVISIONING_MEMBERSHIPS.get(claim.claim_fingerprint_sha256)
+    accepted_claim = _ACCEPTED_PROVISIONING_CLAIMS.get(claim.claim_fingerprint_sha256)
+    if binding is None or accepted_claim != claim:
+        return _denied("BOOTSTRAP_AUTHORITY_DENIED")
+    if (
+        binding.claim_fingerprint_sha256 != claim.claim_fingerprint_sha256
+        or binding.authority_source != "external_product_provisioning_boundary"
+        or binding.complete_claim_content_fingerprint_sha256 != _fingerprint(_claim_content(claim))
+        or binding.provisioning_context_fingerprint_sha256
+        != claim.provisioning_context_fingerprint_sha256
+    ):
+        return _denied("BOOTSTRAP_AUTHORITY_DENIED")
+    exact = (
+        claim.account_id,
+        claim.device_installation_id,
+        claim.intended_operator_id,
+        claim.bootstrap_generation,
+        claim.bootstrap_revision,
+    )
+    expected = (
+        state.account_id,
+        state.device_installation_id,
+        state.intended_operator_id,
+        state.expected_generation,
+        state.expected_revision,
+    )
+    if exact != expected:
+        return _denied("BOOTSTRAP_BINDING_DENIED")
+    consumed = ConsumedBootstrapAuthority(
+        claim.account_id,
+        claim.device_installation_id,
+        claim.bootstrap_generation,
+        claim.bootstrap_revision,
+        claim.claim_fingerprint_sha256,
+        claim.challenge_fingerprint_sha256,
+    )
+    if consumed in state.consumed_authorities or any(
+        item.bootstrap_generation == consumed.bootstrap_generation
+        for item in state.consumed_authorities
+    ):
+        return _denied("BOOTSTRAP_REPLAY_DENIED")
+    post = replace(
+        state,
+        state_fingerprint_sha256="0" * 64,
+        consumed_authorities=state.consumed_authorities + (consumed,),
+        state_revision=state.state_revision + 1,
+    )
+    post = replace(post, state_fingerprint_sha256=_state_fingerprint(post))
+    _ACCEPTED_CORE_STATES[post.state_fingerprint_sha256] = post
+    _CURRENT_CORE_STATE_BY_SCOPE[(post.account_id, post.device_installation_id)] = (
+        post.state_fingerprint_sha256
+    )
+    return BootstrapTransitionResult(
+        "INITIAL_SECURITY_ESTABLISHMENT_AUTHORIZED",
+        "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+        state.state_fingerprint_sha256,
+        post.state_fingerprint_sha256,
+        consumed,
+    )
+
+
+def consume_bootstrap_result_for_purpose(result: object, purpose: object) -> str:
+    if (
+        not isinstance(result, BootstrapTransitionResult)
+        or result.outcome != "INITIAL_SECURITY_ESTABLISHMENT_AUTHORIZED"
+        or purpose != "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        or result.authority_purpose != purpose
+        or not isinstance(result.consumed_authority, ConsumedBootstrapAuthority)
+    ):
+        return "BOOTSTRAP_SCOPE_DENIED"
+    pre_status, pre = _accepted_state(result.pre_state_fingerprint_sha256)
+    post_status, post = _accepted_state(result.post_state_fingerprint_sha256)
+    if pre_status != "VALID" or post_status != "VALID" or pre is None or post is None:
+        return "BOOTSTRAP_SCOPE_DENIED"
+    if (
+        _CURRENT_CORE_STATE_BY_SCOPE.get((post.account_id, post.device_installation_id))
+        != result.post_state_fingerprint_sha256
+    ):
+        return "BOOTSTRAP_SCOPE_DENIED"
+    stable_fields = (
+        "account_id",
+        "device_installation_id",
+        "intended_operator_id",
+        "startup_readiness",
+        "initial_security_lifecycle",
+        "first_operator_presence",
+        "expected_generation",
+        "expected_revision",
+    )
+    if any(getattr(pre, field) != getattr(post, field) for field in stable_fields):
+        return "BOOTSTRAP_SCOPE_DENIED"
+    if post.state_revision != pre.state_revision + 1:
+        return "BOOTSTRAP_SCOPE_DENIED"
+    if len(post.consumed_authorities) != len(pre.consumed_authorities) + 1:
+        return "BOOTSTRAP_SCOPE_DENIED"
+    if post.consumed_authorities[:-1] != pre.consumed_authorities:
+        return "BOOTSTRAP_SCOPE_DENIED"
+    if post.consumed_authorities[-1] != result.consumed_authority:
+        return "BOOTSTRAP_SCOPE_DENIED"
+    if not _validate_consumed_history(pre) or not _validate_consumed_history(post):
+        return "BOOTSTRAP_SCOPE_DENIED"
+    return "BOOTSTRAP_PURPOSE_ACCEPTED"
+
+
+def _bootstrap_claim() -> FirstRunBootstrapClaim:
+    claim = FirstRunBootstrapClaim(
+        "acct_018f0000-0000-7000-8000-000000000001",
+        "dev_018f0000-0000-7000-8000-000000000002",
+        "op_018f0000-0000-7000-8000-000000000003",
+        1,
+        1,
+        "2026-08-10T10:00:00Z",
+        "2026-08-10T10:05:00Z",
+        "a" * 64,
+        "b" * 64,
+        "0" * 64,
+    )
+    return replace(claim, claim_fingerprint_sha256=_claim_fingerprint(claim))
+
+
+def _bootstrap_state() -> CoreCurrentBootstrapState:
+    claim = _bootstrap_claim()
+    state = CoreCurrentBootstrapState(
+        "0" * 64,
+        claim.account_id,
+        claim.device_installation_id,
+        claim.intended_operator_id,
+        "SETUP_REQUIRED",
+        "PRE_INITIAL_SECURITY",
+        "ABSENT",
+        1,
+        1,
+        (),
+        1,
+    )
+    return replace(state, state_fingerprint_sha256=_state_fingerprint(state))
+
+
+def _genuine_authority() -> tuple[FirstRunBootstrapClaim, str]:
+    claim, state = _bootstrap_claim(), _bootstrap_state()
+    return claim, _trusted_provisioning_fixture(claim, state)
+
+
+def validate_bootstrap_machine_root(root: object) -> str:
+    return (
+        "VALID"
+        if root == _bootstrap_thaw(FIRST_RUN_BOOTSTRAP_EXPECTED)
+        else "CONTRACT_INCONSISTENT"
+    )
+
+
+def test_bootstrap_machine_root_and_all_authority_schemas_are_exact() -> None:
+    root = load_contract()["first_run_bootstrap_authority_contract"]
+    assert validate_bootstrap_machine_root(root) == "VALID"
+    schemas = root["executable_schemas"]
+    assert set(schemas) == set(BOOTSTRAP_AUTHORITY_DATACLASSES)
+    for name, model in BOOTSTRAP_AUTHORITY_DATACLASSES.items():
+        assert schemas[name] == [field.name for field in fields(model)]
+
+
+@pytest.mark.parametrize("raw", [{}, {"bootstrap": True}, {"trusted": True}, {"accepted": True}])
+def test_raw_caller_boolean_shadows_and_nominal_types_are_denied(raw: object) -> None:
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            raw, raw, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+
+
+def test_fake_registry_membership_and_owner_string_cannot_be_public_authority() -> None:
+    claim = _bootstrap_claim()
+    fake = ProvisioningMembershipBinding(
+        claim.claim_fingerprint_sha256,
+        _fingerprint(_claim_content(claim)),
+        "external_product_provisioning_boundary",
+        claim.provisioning_context_fingerprint_sha256,
+    )
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim, fake, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "MALFORMED_CORE_BOOTSTRAP_STATE"
+    )
+
+
+def test_self_hash_without_preexisting_membership_is_denied() -> None:
+    _ACCEPTED_PROVISIONING_MEMBERSHIPS.clear()
+    _ACCEPTED_PROVISIONING_CLAIMS.clear()
+    _ACCEPTED_CORE_STATES.clear()
+    _CURRENT_CORE_STATE_BY_SCOPE.clear()
+    claim = _bootstrap_claim()
+    state = _bootstrap_state()
+    _ACCEPTED_CORE_STATES[state.state_fingerprint_sha256] = state
+    _CURRENT_CORE_STATE_BY_SCOPE[(state.account_id, state.device_installation_id)] = (
+        state.state_fingerprint_sha256
+    )
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim,
+            state.state_fingerprint_sha256,
+            "2026-08-10T10:01:00Z",
+            "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+
+
+def test_genuine_preexisting_membership_pre_to_consumed_then_replay_denied() -> None:
+    claim, pre_ref = _genuine_authority()
+    first = authorize_and_consume_first_run_bootstrap(
+        claim, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    )
+    assert first.outcome == "INITIAL_SECURITY_ESTABLISHMENT_AUTHORIZED"
+    assert first.consumed_authority == ConsumedBootstrapAuthority(
+        claim.account_id,
+        claim.device_installation_id,
+        1,
+        1,
+        claim.claim_fingerprint_sha256,
+        claim.challenge_fingerprint_sha256,
+    )
+    assert first.post_state_fingerprint_sha256 != pre_ref
+    second = authorize_and_consume_first_run_bootstrap(
+        claim, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    )
+    assert second.outcome == "BOOTSTRAP_REPLAY_DENIED"
+
+
+@pytest.mark.parametrize("state_input", [{}, object(), True, "bad"])
+def test_malformed_or_caller_created_core_state_fails_without_exception(
+    state_input: object,
+) -> None:
+    claim, _ = _genuine_authority()
+    assert authorize_and_consume_first_run_bootstrap(
+        claim, state_input, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    ).outcome in {"BOOTSTRAP_AUTHORITY_DENIED", "MALFORMED_CORE_BOOTSTRAP_STATE"}
+
+
+def test_caller_created_setup_required_state_and_recomputed_hash_is_not_registered_authority() -> (
+    None
+):
+    claim, _ = _genuine_authority()
+    fake = replace(_bootstrap_state(), state_fingerprint_sha256="0" * 64, state_revision=2)
+    fake = replace(fake, state_fingerprint_sha256=_state_fingerprint(fake))
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim,
+            fake.state_fingerprint_sha256,
+            "2026-08-10T10:01:00Z",
+            "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("startup_readiness", "UNKNOWN"),
+        ("expected_revision", True),
+        ("expected_generation", 0),
+        ("consumed_authorities", []),
+        ("state_revision", False),
+    ],
+)
+def test_malformed_registered_core_state_fails_closed(field: str, value: Any) -> None:
+    claim, state = _bootstrap_claim(), _bootstrap_state()
+    bad = replace(state, **{field: value}, state_fingerprint_sha256="0" * 64)  # type: ignore[arg-type]
+    bad = replace(bad, state_fingerprint_sha256=_state_fingerprint(bad))
+    ref = _trusted_provisioning_fixture(claim, bad)
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim, ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "MALFORMED_CORE_BOOTSTRAP_STATE"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("account_id", "acct_018f0000-0000-7000-8000-000000000099"),
+        ("device_installation_id", "dev_018f0000-0000-7000-8000-000000000099"),
+        ("bootstrap_revision", 2),
+        ("challenge_fingerprint_sha256", "c" * 64),
+    ],
+)
+def test_claim_substitutions_cannot_reuse_genuine_membership(field: str, value: Any) -> None:
+    original, pre_ref = _genuine_authority()
+    changed = replace(original, **{field: value}, claim_fingerprint_sha256="0" * 64)  # type: ignore[arg-type]
+    changed = replace(changed, claim_fingerprint_sha256=_claim_fingerprint(changed))
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            changed, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+
+
+def test_fake_new_binding_for_modified_claim_is_not_preexisting_authority() -> None:
+    original, pre_ref = _genuine_authority()
+    changed = replace(
+        original,
+        intended_operator_id="op_018f0000-0000-7000-8000-000000000099",
+        claim_fingerprint_sha256="0" * 64,
+    )
+    changed = replace(changed, claim_fingerprint_sha256=_claim_fingerprint(changed))
+    fake = ProvisioningMembershipBinding(
+        changed.claim_fingerprint_sha256,
+        _fingerprint(_claim_content(changed)),
+        "external_product_provisioning_boundary",
+        changed.provisioning_context_fingerprint_sha256,
+    )
+    del fake
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            changed, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+
+
+def test_wrong_authority_source_and_modified_accepted_content_are_denied() -> None:
+    claim, ref = _genuine_authority()
+    binding = _ACCEPTED_PROVISIONING_MEMBERSHIPS[claim.claim_fingerprint_sha256]
+    _ACCEPTED_PROVISIONING_MEMBERSHIPS[claim.claim_fingerprint_sha256] = replace(
+        binding, authority_source="CoreHost"
+    )
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim, ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+    claim, ref = _genuine_authority()
+    _ACCEPTED_PROVISIONING_CLAIMS[claim.claim_fingerprint_sha256] = replace(
+        claim, expires_at_utc="2026-08-10T10:04:00Z"
+    )
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim, ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+
+
+def test_completed_setup_stale_state_and_cleared_consumption_cannot_restore_authority() -> None:
+    claim, pre_ref = _genuine_authority()
+    first = authorize_and_consume_first_run_bootstrap(
+        claim, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    )
+    post = _ACCEPTED_CORE_STATES[cast(str, first.post_state_fingerprint_sha256)]
+    forged = replace(
+        post,
+        state_fingerprint_sha256="0" * 64,
+        consumed_authorities=(),
+        initial_security_lifecycle="PRE_INITIAL_SECURITY",
+    )
+    forged = replace(forged, state_fingerprint_sha256=_state_fingerprint(forged))
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim,
+            forged.state_fingerprint_sha256,
+            "2026-08-10T10:01:00Z",
+            "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+    completed = replace(
+        post,
+        state_fingerprint_sha256="0" * 64,
+        initial_security_lifecycle="INITIAL_SECURITY_COMPLETED",
+        first_operator_presence="PRESENT",
+    )
+    completed = replace(completed, state_fingerprint_sha256=_state_fingerprint(completed))
+    _ACCEPTED_CORE_STATES[completed.state_fingerprint_sha256] = completed
+    _CURRENT_CORE_STATE_BY_SCOPE[(completed.account_id, completed.device_installation_id)] = (
+        completed.state_fingerprint_sha256
+    )
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim,
+            completed.state_fingerprint_sha256,
+            "2026-08-10T10:01:00Z",
+            "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+        ).outcome
+        == "BOOTSTRAP_NOT_ELIGIBLE"
+    )
+
+
+@pytest.mark.parametrize(
+    "purpose",
+    [
+        "ORDINARY_PRIVILEGED_OPERATION",
+        "RISK_POLICY",
+        "KILL_SWITCH",
+        "PRODUCT_CAPABILITIES",
+        "EXECUTION_LEASE",
+        "LIVE",
+    ],
+)
+def test_successful_bootstrap_cannot_escape_initial_security_purpose(purpose: str) -> None:
+    claim, pre_ref = _genuine_authority()
+    result = authorize_and_consume_first_run_bootstrap(
+        claim, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    )
+    assert consume_bootstrap_result_for_purpose(result, purpose) == "BOOTSTRAP_SCOPE_DENIED"
+
+
+def test_existing_installation_startup_does_not_require_first_run_handoff() -> None:
+    root = load_contract()["first_run_bootstrap_authority_contract"]
+    existing = root["startup_identity_resolution"]["EXISTING_INSTALLATION"]
+    assert "first-run provisioning handoff not required again" in existing
+    assert (
+        "accepted/current installation state; never caller first_run boolean"
+        == root["startup_identity_resolution"]["mode_source"]
+    )
+
+
+def test_device_identity_remains_distinct_from_trusted_designation() -> None:
+    root = load_contract()["first_run_bootstrap_authority_contract"]
+    assert "device_TRUSTED" in root["identity_boundary"]["does_not_imply"]
+    assert "device_TRUSTED" in root["startup_identity_resolution"]["common_non_implications"]
+
+
+def test_startup_order_and_losing_contender_remain_fail_closed() -> None:
+    data = load_contract()
+    steps = {item["step_id"]: item["order"] for item in data["startup_sequence"]}
+    assert (
+        steps["resolve_device_installation_and_state_store_identity"]
+        < steps["acquire_local_process_lock"]
+        < steps["create_runtime_session"]
+        < steps["open_state_store"]
+        < steps["verify_integrity"]
+        < steps["determine_startup_readiness"]
+        < steps["validate_first_run_bootstrap_authority_if_required"]
+    )
+    busy = next(item for item in data["startup_sequence"] if item["step_id"] == "handle_lock_busy")
+    assert all(
+        text in busy["description"]
+        for text in (
+            "do not open mutable state store",
+            "do not create RuntimeSession",
+            "do not initialize adapters",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ("acceptance_authority", "required", "self hash is enough"),
+        ("acceptance_authority", "CoreHost_may_mint", True),
+        ("acceptance_authority", "registry_binding", ["claim_fingerprint_sha256"]),
+        ("one_shot_transition", "consumes", ["bootstrap_generation"]),
+        ("terminal_fencing", "one_shot_rule", "reusable"),
+        ("terminal_fencing", "after_completed_setup", True),
+        ("terminal_fencing", "forbidden_authorizations", ["LIVE"]),
+        (
+            "startup_identity_resolution",
+            "EXISTING_INSTALLATION",
+            "requires first-run provisioning handoff",
+        ),
+        ("identity_boundary", "does_not_imply", ["operator_authenticated"]),
+        ("transition_result_authority", "nominal_type_authority", True),
+        ("scope_consumer_policy", "requires_current_post_state", False),
+        ("scope_consumer_policy", "requires_exact_pre_to_post_transition", False),
+        ("acceptance_authority", "registry_key_binding", "dict key only"),
+        ("transition_result_authority", "registry_key_equals_internal_state_fingerprint", False),
+        ("transition_result_authority", "consumed_history_validation", "nominal type only"),
+        ("core_current_state_authority", "first_operator_presence_states", ["PRESENT"]),
+        (
+            "core_current_state_authority",
+            "lifecycle_presence_invariants",
+            {"PRE_INITIAL_SECURITY": "PRESENT"},
+        ),
+    ],
+)
+def test_bootstrap_semantic_machine_mutations_fail_contract_attestation(
+    mutation: tuple[str, str, Any],
+) -> None:
+    root = deepcopy(load_contract()["first_run_bootstrap_authority_contract"])
+    section, field, value = mutation
+    root[section][field] = value
+    assert validate_bootstrap_machine_root(root) == "CONTRACT_INCONSISTENT"
+
+
+def test_bootstrap_root_remains_exactly_compatible_with_m02() -> None:
+    vocabulary = json.loads(
+        (
+            ROOT
+            / "docs/architecture/cryptohunter_product_architecture/canonical_domain_vocabulary.json"
+        ).read_text()
+    )
+    entities = {item["canonical_name"]: item for item in vocabulary["entity_kinds"]}
+    assert (
+        entities["CryptoHunterAccount"]["id_field"],
+        entities["CryptoHunterAccount"]["id_prefix"],
+    ) == ("account_id", "acct")
+    assert (
+        entities["DeviceInstallation"]["id_field"],
+        entities["DeviceInstallation"]["id_prefix"],
+        entities["DeviceInstallation"]["parent"],
+    ) == ("device_installation_id", "dev", "CryptoHunterAccount")
+    assert (
+        entities["OperatorIdentity"]["id_field"],
+        entities["OperatorIdentity"]["id_prefix"],
+        entities["OperatorIdentity"]["parent"],
+    ) == ("operator_id", "op", "CryptoHunterAccount")
+    relationships = {
+        (item["from"], item["to"], item["cardinality"]) for item in vocabulary["relationships"]
+    }
+    assert ("DeviceInstallation", "RuntimeSession", "one_to_many") in relationships
+    assert ("DeviceInstallation", "AuditEvent", "one_to_many") in relationships
+    assert vocabulary["identifier_policy"]["persistent_id_format"] == "<prefix>_<uuidv7>"
+
+
+def test_manual_success_transition_result_is_not_authority() -> None:
+    consumed = ConsumedBootstrapAuthority(
+        "acct_018f0000-0000-7000-8000-000000000001",
+        "dev_018f0000-0000-7000-8000-000000000002",
+        1,
+        1,
+        "a" * 64,
+        "b" * 64,
+    )
+    forged = BootstrapTransitionResult(
+        "INITIAL_SECURITY_ESTABLISHMENT_AUTHORIZED",
+        "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+        "c" * 64,
+        "d" * 64,
+        consumed,
+    )
+    assert (
+        consume_bootstrap_result_for_purpose(forged, "INITIAL_SECURITY_ESTABLISHMENT_ONLY")
+        == "BOOTSTRAP_SCOPE_DENIED"
+    )
+
+
+def test_genuine_transition_result_is_revalidated_and_accepted() -> None:
+    claim, pre_ref = _genuine_authority()
+    result = authorize_and_consume_first_run_bootstrap(
+        claim, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    )
+    assert (
+        consume_bootstrap_result_for_purpose(result, "INITIAL_SECURITY_ESTABLISHMENT_ONLY")
+        == "BOOTSTRAP_PURPOSE_ACCEPTED"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("pre_state_fingerprint_sha256", "f" * 64),
+        ("post_state_fingerprint_sha256", "e" * 64),
+        ("consumed_authority", None),
+    ],
+)
+def test_genuine_transition_result_tamper_is_denied(field: str, value: Any) -> None:
+    claim, pre_ref = _genuine_authority()
+    result = authorize_and_consume_first_run_bootstrap(
+        claim, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    )
+    assert (
+        consume_bootstrap_result_for_purpose(
+            replace(result, **{field: value}), "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        )
+        == "BOOTSTRAP_SCOPE_DENIED"
+    )  # type: ignore[arg-type]
+
+
+def test_different_consumed_binding_and_noncurrent_post_are_denied() -> None:
+    claim, pre_ref = _genuine_authority()
+    result = authorize_and_consume_first_run_bootstrap(
+        claim, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    )
+    assert result.consumed_authority is not None
+    wrong = replace(result.consumed_authority, bootstrap_revision=2)
+    assert (
+        consume_bootstrap_result_for_purpose(
+            replace(result, consumed_authority=wrong), "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        )
+        == "BOOTSTRAP_SCOPE_DENIED"
+    )
+    _CURRENT_CORE_STATE_BY_SCOPE[(claim.account_id, claim.device_installation_id)] = pre_ref
+    assert (
+        consume_bootstrap_result_for_purpose(result, "INITIAL_SECURITY_ESTABLISHMENT_ONLY")
+        == "BOOTSTRAP_SCOPE_DENIED"
+    )
+
+
+def test_self_hashed_unaccepted_post_and_coordinated_extra_post_mutation_are_denied() -> None:
+    claim, pre_ref = _genuine_authority()
+    result = authorize_and_consume_first_run_bootstrap(
+        claim, pre_ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    )
+    post = _ACCEPTED_CORE_STATES[cast(str, result.post_state_fingerprint_sha256)]
+    forged = replace(post, state_fingerprint_sha256="0" * 64, expected_revision=2)
+    forged = replace(forged, state_fingerprint_sha256=_state_fingerprint(forged))
+    forged_result = replace(result, post_state_fingerprint_sha256=forged.state_fingerprint_sha256)
+    assert (
+        consume_bootstrap_result_for_purpose(forged_result, "INITIAL_SECURITY_ESTABLISHMENT_ONLY")
+        == "BOOTSTRAP_SCOPE_DENIED"
+    )
+    _ACCEPTED_CORE_STATES[forged.state_fingerprint_sha256] = forged
+    _CURRENT_CORE_STATE_BY_SCOPE[(forged.account_id, forged.device_installation_id)] = (
+        forged.state_fingerprint_sha256
+    )
+    assert (
+        consume_bootstrap_result_for_purpose(forged_result, "INITIAL_SECURITY_ESTABLISHMENT_ONLY")
+        == "BOOTSTRAP_SCOPE_DENIED"
+    )
+
+
+def test_membership_internal_claim_fingerprint_is_exact() -> None:
+    claim, ref = _genuine_authority()
+    binding = _ACCEPTED_PROVISIONING_MEMBERSHIPS[claim.claim_fingerprint_sha256]
+    _ACCEPTED_PROVISIONING_MEMBERSHIPS[claim.claim_fingerprint_sha256] = replace(
+        binding, claim_fingerprint_sha256="c" * 64
+    )
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim, ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "BOOTSTRAP_AUTHORITY_DENIED"
+    )
+
+
+def test_core_registry_key_must_equal_internal_and_recomputed_fingerprint() -> None:
+    claim, ref = _genuine_authority()
+    state = _ACCEPTED_CORE_STATES[ref]
+    changed = replace(state, state_fingerprint_sha256="0" * 64, state_revision=2)
+    changed = replace(changed, state_fingerprint_sha256=_state_fingerprint(changed))
+    _ACCEPTED_CORE_STATES[ref] = changed
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim, ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "CONTRACT_INCONSISTENT"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("account_id", "acct_bad"),
+        ("device_installation_id", "dev_bad"),
+        ("bootstrap_generation", True),
+        ("bootstrap_generation", 0),
+        ("bootstrap_revision", True),
+        ("bootstrap_revision", 0),
+        ("claim_fingerprint_sha256", "bad"),
+        ("challenge_fingerprint_sha256", "bad"),
+    ],
+)
+def test_consumed_authority_full_validation(field: str, value: Any) -> None:
+    valid = ConsumedBootstrapAuthority(
+        "acct_018f0000-0000-7000-8000-000000000001",
+        "dev_018f0000-0000-7000-8000-000000000002",
+        1,
+        1,
+        "a" * 64,
+        "b" * 64,
+    )
+    assert not validate_consumed_bootstrap_authority(replace(valid, **{field: value}))  # type: ignore[arg-type]
+
+
+def test_consumed_history_scope_duplicates_and_generation_collisions_fail() -> None:
+    state = _bootstrap_state()
+    valid = ConsumedBootstrapAuthority(
+        state.account_id, state.device_installation_id, 1, 1, "a" * 64, "b" * 64
+    )
+    wrong_account = replace(valid, account_id="acct_018f0000-0000-7000-8000-000000000099")
+    wrong_device = replace(valid, device_installation_id="dev_018f0000-0000-7000-8000-000000000099")
+    assert not validate_consumed_bootstrap_authority(wrong_account, state)
+    assert not validate_consumed_bootstrap_authority(wrong_device, state)
+    assert not _validate_consumed_history(replace(state, consumed_authorities=(valid, valid)))
+    collision = replace(valid, bootstrap_revision=2, claim_fingerprint_sha256="c" * 64)
+    assert not _validate_consumed_history(replace(state, consumed_authorities=(valid, collision)))
+
+
+def test_pre_lifecycle_requires_first_operator_absent() -> None:
+    claim, state = (
+        _bootstrap_claim(),
+        replace(
+            _bootstrap_state(), state_fingerprint_sha256="0" * 64, first_operator_presence="PRESENT"
+        ),
+    )
+    state = replace(state, state_fingerprint_sha256=_state_fingerprint(state))
+    ref = _trusted_provisioning_fixture(claim, state)
+    assert (
+        authorize_and_consume_first_run_bootstrap(
+            claim, ref, "2026-08-10T10:01:00Z", "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+        ).outcome
+        == "MALFORMED_CORE_BOOTSTRAP_STATE"
+    )
