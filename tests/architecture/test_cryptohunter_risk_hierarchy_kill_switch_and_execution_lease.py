@@ -3150,6 +3150,37 @@ def test_contract_and_dependencies_exact() -> None:
     assert validate_contract(json.loads(CONTRACT.read_text())) == "VALID"
 
 
+def test_contract_rejects_stale_risk_policy_fingerprint_field_name() -> None:
+    contract = json.loads(CONTRACT.read_text())
+    fields = contract["risk_policy_contract"]["semantic_fingerprint_input"]
+    fields[fields.index("limits")] = "enabled_limits"
+    assert validate_contract(contract) == "CONTRACT_INCONSISTENT"
+
+
+def test_contract_rejects_policy_order_without_revision() -> None:
+    contract = json.loads(CONTRACT.read_text())
+    contract["effective_policy_resolution"]["ordering"] = (
+        "current applicable policies are ordered only by "
+        "scope_hierarchy.applicable_order, then scope_id; input record/current "
+        "container order is irrelevant"
+    )
+    assert validate_contract(contract) == "CONTRACT_INCONSISTENT"
+
+
+def test_contract_rejects_missing_effective_policy_schema() -> None:
+    contract = json.loads(CONTRACT.read_text())
+    del contract["executable_boundary_schemas"]["EffectivePolicy"]
+    assert validate_contract(contract) == "CONTRACT_INCONSISTENT"
+
+
+def test_contract_rejects_weakened_policy_collision_semantics() -> None:
+    contract = json.loads(CONTRACT.read_text())
+    contract["scope_hierarchy"]["incomparable_conflict"] = (
+        "policies at the same exact scope identity and revision may compose"
+    )
+    assert validate_contract(contract) == "CONTRACT_INCONSISTENT"
+
+
 def test_all_executable_schemas_equal_machine() -> None:
     schemas = thaw(EXPECTED_PROTOCOLS["executable_boundary_schemas"])
     local_dataclasses = {
