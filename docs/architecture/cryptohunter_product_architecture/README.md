@@ -113,3 +113,12 @@ runtime'u, exchange side effects, M0.10 security ani M0.11 persistence.
 
 - [risk_hierarchy_kill_switch_and_execution_lease.md](risk_hierarchy_kill_switch_and_execution_lease.md)
 - [risk_hierarchy_kill_switch_and_execution_lease.json](risk_hierarchy_kill_switch_and_execution_lease.json)
+
+## Status M0.10 — closed
+
+M0.10 zamyka Core-owned identity, device trust, PIN, platform-biometric assertion, Core-issued short-lived authentication proof, non-resurrectable proof fencing epochs, Core-policy-derived operation entitlement, actual-mutation-bound session-generation fencing, non-resurrectable current-security-epoch-fenced, fresh-distinct-ID, installation/policy-scoped LiveAccessGrant oraz external secret-reference oraz LiveAccessGrant security semantics bez implementacji runtime'u i persistence.
+
+## Artefakty M0.10
+
+- [identity_device_authentication_and_secrets.md](identity_device_authentication_and_secrets.md)
+- [identity_device_authentication_and_secrets.json](identity_device_authentication_and_secrets.json)
