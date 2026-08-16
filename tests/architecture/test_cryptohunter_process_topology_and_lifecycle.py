@@ -3593,3 +3593,1191 @@ def test_pre_lifecycle_requires_first_operator_absent() -> None:
         ).outcome
         == "MALFORMED_CORE_BOOTSTRAP_STATE"
     )
+
+
+# Pure semantic model for the M0.3 protected external restore-freshness boundary.
+@dataclass(frozen=True)
+class RestoreFreshnessAuthority:
+    account_id: str
+    device_installation_id: str
+    state_store_identity_fingerprint_sha256: str
+    lifecycle: str
+    committed_generation: int | None
+    committed_state_fingerprint_sha256: str | None
+    prepared_generation: int | None
+    prepared_state_fingerprint_sha256: str | None
+    prepared_transaction_fingerprint_sha256: str | None
+    authority_revision: int
+    authority_source: str
+    content_fingerprint_sha256: str
+
+
+@dataclass(frozen=True)
+class _LocalDurableStateEvidence:
+    account_id: str
+    device_installation_id: str
+    state_store_identity_fingerprint_sha256: str
+    generation: int
+    state_fingerprint_sha256: str
+    transaction_fingerprint_sha256: str
+    durability_state: str
+    evidence_revision: int
+    evidence_fingerprint_sha256: str
+
+
+_RESTORE_AUTHORITIES: dict[str, RestoreFreshnessAuthority] = {}
+_CURRENT_RESTORE_AUTHORITY_BY_SCOPE: dict[tuple[str, str, str], str] = {}
+_RETIRED_RESTORE_AUTHORITY_REFERENCES: set[str] = set()
+_LOCAL_DURABLE_EVIDENCE: dict[str, _LocalDurableStateEvidence] = {}
+_CURRENT_LOCAL_EVIDENCE_BY_SCOPE: dict[tuple[str, str, str], str] = {}
+_RESTORE_AVAILABLE = True
+
+
+def _sha(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _positive(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _scope() -> tuple[str, str, str]:
+    return (
+        "acct_018f0000-0000-7000-8000-000000000001",
+        "dev_018f0000-0000-7000-8000-000000000002",
+        "c" * 64,
+    )
+
+
+def _authority_content(value: RestoreFreshnessAuthority) -> tuple[object, ...]:
+    return tuple(
+        getattr(value, f.name) for f in fields(value) if f.name != "content_fingerprint_sha256"
+    )
+
+
+def _authority_fingerprint(value: RestoreFreshnessAuthority) -> str:
+    return _fingerprint(_authority_content(value))
+
+
+def _evidence_content(value: _LocalDurableStateEvidence) -> tuple[object, ...]:
+    return tuple(
+        getattr(value, f.name) for f in fields(value) if f.name != "evidence_fingerprint_sha256"
+    )
+
+
+def _evidence_fingerprint(value: _LocalDurableStateEvidence) -> str:
+    return _fingerprint(_evidence_content(value))
+
+
+def _valid_scope(value: object) -> bool:
+    uuidv7 = r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+    return (
+        isinstance(value, tuple)
+        and len(value) == 3
+        and isinstance(value[0], str)
+        and re.fullmatch(rf"acct_{uuidv7}", value[0]) is not None
+        and isinstance(value[1], str)
+        and re.fullmatch(rf"dev_{uuidv7}", value[1]) is not None
+        and _sha(value[2])
+    )
+
+
+def _valid_authority(value: RestoreFreshnessAuthority) -> bool:
+    committed_absent = (
+        value.committed_generation is None and value.committed_state_fingerprint_sha256 is None
+    )
+    committed_present = _positive(value.committed_generation) and _sha(
+        value.committed_state_fingerprint_sha256
+    )
+    prepared_absent = (
+        value.prepared_generation is None
+        and value.prepared_state_fingerprint_sha256 is None
+        and value.prepared_transaction_fingerprint_sha256 is None
+    )
+    prepared_present = (
+        _positive(value.prepared_generation)
+        and _sha(value.prepared_state_fingerprint_sha256)
+        and _sha(value.prepared_transaction_fingerprint_sha256)
+    )
+    lifecycle_ok = bool(
+        value.lifecycle == "UNINITIALIZED"
+        and committed_absent
+        and prepared_absent
+        or value.lifecycle == "PREPARED"
+        and prepared_present
+        and (
+            committed_absent
+            and value.prepared_generation == 1
+            or committed_present
+            and value.prepared_generation == cast(int, value.committed_generation) + 1
+        )
+        or value.lifecycle == "COMMITTED"
+        and committed_present
+        and prepared_absent
+    )
+    return (
+        _valid_scope(
+            (
+                value.account_id,
+                value.device_installation_id,
+                value.state_store_identity_fingerprint_sha256,
+            )
+        )
+        and lifecycle_ok
+        and _positive(value.authority_revision)
+        and value.authority_source == "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY"
+        and value.content_fingerprint_sha256 == _authority_fingerprint(value)
+    )
+
+
+def _valid_evidence(value: _LocalDurableStateEvidence) -> bool:
+    return (
+        _valid_scope(
+            (
+                value.account_id,
+                value.device_installation_id,
+                value.state_store_identity_fingerprint_sha256,
+            )
+        )
+        and _positive(value.generation)
+        and _sha(value.state_fingerprint_sha256)
+        and _sha(value.transaction_fingerprint_sha256)
+        and value.durability_state == "DURABLE_COMMITTED"
+        and _positive(value.evidence_revision)
+        and value.evidence_fingerprint_sha256 == _evidence_fingerprint(value)
+    )
+
+
+def _install_protected_fixture(value: RestoreFreshnessAuthority, kind: str) -> str:
+    if _scope() in _CURRENT_RESTORE_AUTHORITY_BY_SCOPE:
+        raise ValueError("initial protected membership already exists for scope")
+    value = replace(value, content_fingerprint_sha256=_authority_fingerprint(value))
+    reference = _fingerprint((kind, value.content_fingerprint_sha256))
+    _RESTORE_AUTHORITIES[reference] = value
+    _CURRENT_RESTORE_AUTHORITY_BY_SCOPE[_scope_from_authority(value)] = reference
+    return reference
+
+
+def _initial_protected_scope_membership_fixture() -> str:
+    value = RestoreFreshnessAuthority(
+        *_scope(),
+        "UNINITIALIZED",
+        None,
+        None,
+        None,
+        None,
+        None,
+        1,
+        "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+        "0" * 64,
+    )
+    return _install_protected_fixture(value, "initial-protected-scope-membership")
+
+
+def _preexisting_committed_restore_authority_fixture(
+    generation: int, state_fingerprint: str
+) -> str:
+    # TEST SETUP ONLY; NOT A LEGAL PROVISIONING OR ADVANCE TRANSITION.
+    value = RestoreFreshnessAuthority(
+        *_scope(),
+        "COMMITTED",
+        generation,
+        state_fingerprint,
+        None,
+        None,
+        None,
+        1,
+        "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+        "0" * 64,
+    )
+    return _install_protected_fixture(value, "preexisting-committed-test-setup")
+
+
+def _trusted_external_reference_replacement_fixture(old_reference: object) -> str | None:
+    current = _resolve_authority(old_reference)
+    if current is None or current.lifecycle not in {"UNINITIALIZED", "COMMITTED"}:
+        return None
+    replacement = replace(
+        current,
+        authority_revision=current.authority_revision + 1,
+        content_fingerprint_sha256="0" * 64,
+    )
+    replacement = replace(
+        replacement, content_fingerprint_sha256=_authority_fingerprint(replacement)
+    )
+    new_reference = _fingerprint(
+        (
+            "protected-reference-replacement",
+            cast(str, old_reference),
+            replacement.content_fingerprint_sha256,
+        )
+    )
+    _RESTORE_AUTHORITIES[new_reference] = replacement
+    _RETIRED_RESTORE_AUTHORITY_REFERENCES.add(cast(str, old_reference))
+    _CURRENT_RESTORE_AUTHORITY_BY_SCOPE[_scope_from_authority(replacement)] = new_reference
+    return new_reference
+
+
+def _malformed_protected_authority_fixture(value: RestoreFreshnessAuthority) -> str:
+    value = replace(value, content_fingerprint_sha256=_authority_fingerprint(value))
+    reference = _fingerprint(
+        ("malformed-protected-scope-membership", value.content_fingerprint_sha256)
+    )
+    _RESTORE_AUTHORITIES[reference] = value
+    _CURRENT_RESTORE_AUTHORITY_BY_SCOPE[_scope_from_authority(value)] = reference
+    return reference
+
+
+def _trusted_local_durable_evidence_fixture(
+    generation: int,
+    state_fingerprint: str,
+    transaction_fingerprint: str,
+    *,
+    scope: tuple[str, str, str] | None = None,
+    durability_state: str = "DURABLE_COMMITTED",
+    make_current: bool = True,
+) -> str:
+    exact_scope = _scope() if scope is None else scope
+    value = _LocalDurableStateEvidence(
+        *exact_scope,
+        generation,
+        state_fingerprint,
+        transaction_fingerprint,
+        durability_state,
+        1,
+        "0" * 64,
+    )
+    value = replace(value, evidence_fingerprint_sha256=_evidence_fingerprint(value))
+    reference = _fingerprint(
+        ("local-durable-evidence", value.evidence_fingerprint_sha256, len(_LOCAL_DURABLE_EVIDENCE))
+    )
+    _LOCAL_DURABLE_EVIDENCE[reference] = value
+    if make_current:
+        _CURRENT_LOCAL_EVIDENCE_BY_SCOPE[exact_scope] = reference
+    return reference
+
+
+def _resolve_authority(reference: object) -> RestoreFreshnessAuthority | None:
+    if not _RESTORE_AVAILABLE or not isinstance(reference, str):
+        return None
+    value = _RESTORE_AUTHORITIES.get(reference)
+    if reference in _RETIRED_RESTORE_AUTHORITY_REFERENCES:
+        return None
+    if value is None or not _valid_authority(value):
+        return None
+    return (
+        value
+        if _CURRENT_RESTORE_AUTHORITY_BY_SCOPE.get(_scope_from_authority(value)) == reference
+        else None
+    )
+
+
+def _resolve_current_evidence(reference: object) -> _LocalDurableStateEvidence | None:
+    if not isinstance(reference, str):
+        return None
+    value = _LOCAL_DURABLE_EVIDENCE.get(reference)
+    if value is None or not _valid_evidence(value):
+        return None
+    scope = (
+        value.account_id,
+        value.device_installation_id,
+        value.state_store_identity_fingerprint_sha256,
+    )
+    return value if _CURRENT_LOCAL_EVIDENCE_BY_SCOPE.get(scope) == reference else None
+
+
+def prepare_restore_transition(
+    reference: object,
+    scope: object,
+    expected_generation: object,
+    expected_state_fingerprint: object,
+    next_generation: object,
+    candidate_state_fingerprint: object,
+    transaction_fingerprint: object,
+) -> str:
+    current = _resolve_authority(reference)
+    if current is None:
+        return "RESTORE_AUTHORITY_UNAVAILABLE_OR_DENIED"
+    if not _valid_scope(scope) or scope != _scope_from_authority(current):
+        return "RESTORE_SCOPE_MISMATCH"
+    if (
+        not _positive(next_generation)
+        or not _sha(candidate_state_fingerprint)
+        or not _sha(transaction_fingerprint)
+    ):
+        return "RESTORE_CANDIDATE_MALFORMED"
+    if current.lifecycle == "UNINITIALIZED":
+        if (
+            expected_generation is not None
+            or expected_state_fingerprint is not None
+            or next_generation != 1
+        ):
+            return "RESTORE_GENESIS_DENIED"
+    else:
+        if current.lifecycle == "PREPARED":
+            pending = (
+                current.prepared_generation,
+                current.prepared_state_fingerprint_sha256,
+                current.prepared_transaction_fingerprint_sha256,
+            )
+            candidate = (next_generation, candidate_state_fingerprint, transaction_fingerprint)
+            if current.committed_generation is None:
+                if expected_generation is not None or expected_state_fingerprint is not None:
+                    return "RESTORE_EXPECTED_CURRENT_MISMATCH"
+            elif (
+                expected_generation != current.committed_generation
+                or expected_state_fingerprint != current.committed_state_fingerprint_sha256
+            ):
+                return "RESTORE_EXPECTED_CURRENT_MISMATCH"
+            return "RESTORE_PREPARED" if pending == candidate else "RESTORE_INCOMPATIBLE_PREPARE"
+        if (
+            expected_generation != current.committed_generation
+            or expected_state_fingerprint != current.committed_state_fingerprint_sha256
+        ):
+            return "RESTORE_EXPECTED_CURRENT_MISMATCH"
+        if next_generation != cast(int, current.committed_generation) + 1:
+            return "RESTORE_GENERATION_DENIED"
+    updated = replace(
+        current,
+        lifecycle="PREPARED",
+        prepared_generation=cast(int, next_generation),
+        prepared_state_fingerprint_sha256=cast(str, candidate_state_fingerprint),
+        prepared_transaction_fingerprint_sha256=cast(str, transaction_fingerprint),
+        authority_revision=current.authority_revision + 1,
+        content_fingerprint_sha256="0" * 64,
+    )
+    _RESTORE_AUTHORITIES[cast(str, reference)] = replace(
+        updated, content_fingerprint_sha256=_authority_fingerprint(updated)
+    )
+    return "RESTORE_PREPARED"
+
+
+def _scope_from_authority(value: RestoreFreshnessAuthority) -> tuple[str, str, str]:
+    return (
+        value.account_id,
+        value.device_installation_id,
+        value.state_store_identity_fingerprint_sha256,
+    )
+
+
+def finalize_restore_transition(
+    reference: object, scope: object, evidence_reference: object
+) -> str:
+    current = _resolve_authority(reference)
+    evidence = _resolve_current_evidence(evidence_reference)
+    if (
+        current is None
+        or current.lifecycle != "PREPARED"
+        or evidence is None
+        or not _valid_scope(scope)
+    ):
+        return "RESTORE_FINALIZE_DENIED"
+    exact = (
+        evidence.account_id,
+        evidence.device_installation_id,
+        evidence.state_store_identity_fingerprint_sha256,
+        evidence.generation,
+        evidence.state_fingerprint_sha256,
+        evidence.transaction_fingerprint_sha256,
+    )
+    required = (
+        *_scope_from_authority(current),
+        current.prepared_generation,
+        current.prepared_state_fingerprint_sha256,
+        current.prepared_transaction_fingerprint_sha256,
+    )
+    if scope != _scope_from_authority(current) or exact != required:
+        return "RESTORE_FINALIZE_DENIED"
+    updated = replace(
+        current,
+        lifecycle="COMMITTED",
+        committed_generation=evidence.generation,
+        committed_state_fingerprint_sha256=evidence.state_fingerprint_sha256,
+        prepared_generation=None,
+        prepared_state_fingerprint_sha256=None,
+        prepared_transaction_fingerprint_sha256=None,
+        authority_revision=current.authority_revision + 1,
+        content_fingerprint_sha256="0" * 64,
+    )
+    _RESTORE_AUTHORITIES[cast(str, reference)] = replace(
+        updated, content_fingerprint_sha256=_authority_fingerprint(updated)
+    )
+    return "RESTORE_FINALIZED"
+
+
+def abort_restore_transition(reference: object, scope: object, evidence_reference: object) -> str:
+    current = _resolve_authority(reference)
+    evidence = _resolve_current_evidence(evidence_reference)
+    if (
+        current is None
+        or current.lifecycle != "PREPARED"
+        or current.committed_generation is None
+        or evidence is None
+        or not _valid_scope(scope)
+    ):
+        return "RESTORE_ABORT_DENIED"
+    exact = (
+        *_scope_from_authority(current),
+        current.committed_generation,
+        current.committed_state_fingerprint_sha256,
+    )
+    observed = (
+        evidence.account_id,
+        evidence.device_installation_id,
+        evidence.state_store_identity_fingerprint_sha256,
+        evidence.generation,
+        evidence.state_fingerprint_sha256,
+    )
+    if scope != _scope_from_authority(current) or observed != exact:
+        return "RESTORE_ABORT_DENIED"
+    updated = replace(
+        current,
+        lifecycle="COMMITTED",
+        prepared_generation=None,
+        prepared_state_fingerprint_sha256=None,
+        prepared_transaction_fingerprint_sha256=None,
+        authority_revision=current.authority_revision + 1,
+        content_fingerprint_sha256="0" * 64,
+    )
+    _RESTORE_AUTHORITIES[cast(str, reference)] = replace(
+        updated, content_fingerprint_sha256=_authority_fingerprint(updated)
+    )
+    return "RESTORE_ABORTED"
+
+
+def reconcile_restore_authority(
+    reference: object, scope: object, evidence_reference: object
+) -> str:
+    current = _resolve_authority(reference)
+    evidence = _resolve_current_evidence(evidence_reference)
+    if current is None or not _valid_scope(scope) or scope != _scope_from_authority(current):
+        return "NO_READY_AUTHORITY"
+    if current.lifecycle == "UNINITIALIZED":
+        return "NO_CURRENT_STATESTORE_AUTHORITY"
+    if (
+        current.lifecycle == "PREPARED"
+        and current.committed_generation is None
+        and evidence is None
+    ):
+        return "GENESIS_PENDING_RECOVERY_REQUIRED"
+    if evidence is None:
+        return "FAIL_CLOSED_AUTHORITATIVE_RESTORE_REQUIRED"
+    local = (evidence.generation, evidence.state_fingerprint_sha256)
+    committed = (current.committed_generation, current.committed_state_fingerprint_sha256)
+    pending = (
+        current.prepared_generation,
+        current.prepared_state_fingerprint_sha256,
+        current.prepared_transaction_fingerprint_sha256,
+    )
+    if current.lifecycle == "COMMITTED" and local == committed:
+        return "CURRENT_AUTHORITY"
+    if current.lifecycle == "PREPARED" and local == committed:
+        return "ABORT_PENDING_THROUGH_PROTECTED_PROTOCOL"
+    if (
+        current.lifecycle == "PREPARED"
+        and (
+            evidence.generation,
+            evidence.state_fingerprint_sha256,
+            evidence.transaction_fingerprint_sha256,
+        )
+        == pending
+    ):
+        return "FINALIZE_MATCHING_PENDING"
+    return "FAIL_CLOSED_AUTHORITATIVE_RESTORE_REQUIRED"
+
+
+@pytest.fixture(autouse=True)
+def _clear_restore_authority_model() -> None:
+    global _RESTORE_AVAILABLE
+    _RESTORE_AUTHORITIES.clear()
+    _CURRENT_RESTORE_AUTHORITY_BY_SCOPE.clear()
+    _RETIRED_RESTORE_AUTHORITY_REFERENCES.clear()
+    _LOCAL_DURABLE_EVIDENCE.clear()
+    _CURRENT_LOCAL_EVIDENCE_BY_SCOPE.clear()
+    _RESTORE_AVAILABLE = True
+
+
+def test_restore_machine_root_closes_genesis_evidence_abort_and_separation() -> None:
+    root = load_contract()["restore_freshness_authority_contract"]
+    assert root["authority_owner"] == "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY"
+    assert root["scope_membership_lifecycle"]["states"] == [
+        "UNINITIALIZED",
+        "PREPARED",
+        "COMMITTED",
+    ]
+    assert (
+        root["local_durable_evidence_handoff"]["owner"]
+        == "M0.11 local durable StateStore observation boundary"
+    )
+    assert root["separation"]["not_first_run_bootstrap_authority"] is True
+
+
+def test_legal_genesis_requires_durable_evidence_and_reaches_committed_one() -> None:
+    ref = _initial_protected_scope_membership_fixture()
+    assert (
+        reconcile_restore_authority(ref, _scope(), "missing") == "NO_CURRENT_STATESTORE_AUTHORITY"
+    )
+    assert (
+        prepare_restore_transition(ref, _scope(), None, None, 1, "a" * 64, "b" * 64)
+        == "RESTORE_PREPARED"
+    )
+    assert finalize_restore_transition(ref, _scope(), "missing") == "RESTORE_FINALIZE_DENIED"
+    evidence = _trusted_local_durable_evidence_fixture(1, "a" * 64, "b" * 64)
+    assert finalize_restore_transition(ref, _scope(), evidence) == "RESTORE_FINALIZED"
+    assert _RESTORE_AUTHORITIES[ref].committed_generation == 1
+    assert reconcile_restore_authority(ref, _scope(), evidence) == "CURRENT_AUTHORITY"
+
+
+@pytest.mark.parametrize(
+    "expected_generation,expected_state,next_generation",
+    [(0, None, 1), (None, "a" * 64, 1), (None, None, 0), (None, None, True), (None, None, 2)],
+)
+def test_genesis_rejects_fake_previous_authority_and_nonexact_one(
+    expected_generation: object, expected_state: object, next_generation: object
+) -> None:
+    ref = _initial_protected_scope_membership_fixture()
+    assert prepare_restore_transition(
+        ref, _scope(), expected_generation, expected_state, next_generation, "a" * 64, "b" * 64
+    ) in {"RESTORE_GENESIS_DENIED", "RESTORE_CANDIDATE_MALFORMED"}
+
+
+def test_matching_strings_without_durable_membership_cannot_finalize() -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "b" * 64, "d" * 64)
+    manual = _LocalDurableStateEvidence(
+        *_scope(), 2, "b" * 64, "d" * 64, "DURABLE_COMMITTED", 1, "0" * 64
+    )
+    manual = replace(manual, evidence_fingerprint_sha256=_evidence_fingerprint(manual))
+    assert finalize_restore_transition(ref, _scope(), manual) == "RESTORE_FINALIZE_DENIED"
+    assert (
+        finalize_restore_transition(ref, _scope(), manual.evidence_fingerprint_sha256)
+        == "RESTORE_FINALIZE_DENIED"
+    )
+    assert _RESTORE_AUTHORITIES[ref].lifecycle == "PREPARED"
+    assert _RESTORE_AUTHORITIES[ref].committed_generation == 1
+
+
+@pytest.mark.parametrize(
+    "scope,generation,state,transaction,durability,current",
+    [
+        (
+            ("acct_wrong", _scope()[1], _scope()[2]),
+            2,
+            "b" * 64,
+            "d" * 64,
+            "DURABLE_COMMITTED",
+            True,
+        ),
+        ((_scope()[0], "dev_wrong", _scope()[2]), 2, "b" * 64, "d" * 64, "DURABLE_COMMITTED", True),
+        ((_scope()[0], _scope()[1], "e" * 64), 2, "b" * 64, "d" * 64, "DURABLE_COMMITTED", True),
+        (_scope(), 3, "b" * 64, "d" * 64, "DURABLE_COMMITTED", True),
+        (_scope(), 2, "e" * 64, "d" * 64, "DURABLE_COMMITTED", True),
+        (_scope(), 2, "b" * 64, "e" * 64, "DURABLE_COMMITTED", True),
+        (_scope(), 2, "b" * 64, "d" * 64, "PREPARED_ONLY", True),
+        (_scope(), 2, "b" * 64, "d" * 64, "DURABLE_COMMITTED", False),
+    ],
+)
+def test_wrong_non_durable_and_stale_evidence_cannot_finalize(
+    scope: tuple[str, str, str],
+    generation: int,
+    state: str,
+    transaction: str,
+    durability: str,
+    current: bool,
+) -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "b" * 64, "d" * 64)
+    evidence = _trusted_local_durable_evidence_fixture(
+        generation,
+        state,
+        transaction,
+        scope=scope,
+        durability_state=durability,
+        make_current=current,
+    )
+    assert finalize_restore_transition(ref, _scope(), evidence) == "RESTORE_FINALIZE_DENIED"
+    assert _RESTORE_AUTHORITIES[ref].committed_generation == 1
+
+
+def test_exact_accepted_current_durable_evidence_finalizes_existing_installation() -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "b" * 64, "d" * 64)
+    evidence = _trusted_local_durable_evidence_fixture(2, "b" * 64, "d" * 64)
+    assert finalize_restore_transition(ref, _scope(), evidence) == "RESTORE_FINALIZED"
+
+
+def test_executable_abort_clears_pending_and_allows_different_candidate() -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    committed = _trusted_local_durable_evidence_fixture(1, "a" * 64, "c" * 64)
+    prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "b" * 64, "d" * 64)
+    assert (
+        reconcile_restore_authority(ref, _scope(), committed)
+        == "ABORT_PENDING_THROUGH_PROTECTED_PROTOCOL"
+    )
+    revision = _RESTORE_AUTHORITIES[ref].authority_revision
+    assert abort_restore_transition(ref, _scope(), committed) == "RESTORE_ABORTED"
+    after = _RESTORE_AUTHORITIES[ref]
+    assert (after.committed_generation, after.committed_state_fingerprint_sha256) == (1, "a" * 64)
+    assert (
+        after.prepared_generation,
+        after.prepared_state_fingerprint_sha256,
+        after.prepared_transaction_fingerprint_sha256,
+    ) == (None, None, None)
+    assert after.authority_revision == revision + 1
+    assert after.content_fingerprint_sha256 == _authority_fingerprint(after)
+    assert (
+        prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "e" * 64, "f" * 64)
+        == "RESTORE_PREPARED"
+    )
+
+
+@pytest.mark.parametrize(
+    "case", ["no_pending", "candidate", "wrong_scope", "caller", "wrong_committed"]
+)
+def test_abort_denials_do_not_clear_or_advance(case: str) -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    committed = _trusted_local_durable_evidence_fixture(1, "a" * 64, "c" * 64)
+    if case == "no_pending":
+        assert abort_restore_transition(ref, _scope(), committed) == "RESTORE_ABORT_DENIED"
+        return
+    prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "b" * 64, "d" * 64)
+    evidence: object = committed
+    scope: object = _scope()
+    if case == "candidate":
+        evidence = _trusted_local_durable_evidence_fixture(2, "b" * 64, "d" * 64)
+    if case == "wrong_scope":
+        scope = (_scope()[0], _scope()[1], "e" * 64)
+    if case == "caller":
+        evidence = _LocalDurableStateEvidence(
+            *_scope(), 1, "a" * 64, "c" * 64, "DURABLE_COMMITTED", 1, "e" * 64
+        )
+    if case == "wrong_committed":
+        evidence = _trusted_local_durable_evidence_fixture(1, "e" * 64, "c" * 64)
+    assert abort_restore_transition(ref, scope, evidence) == "RESTORE_ABORT_DENIED"
+    assert _RESTORE_AUTHORITIES[ref].prepared_generation == 2
+    assert _RESTORE_AUTHORITIES[ref].committed_generation == 1
+
+
+def test_crash_after_local_commit_before_finalize_recovers_by_exact_evidence() -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "b" * 64, "d" * 64)
+    evidence = _trusted_local_durable_evidence_fixture(2, "b" * 64, "d" * 64)
+    assert reconcile_restore_authority(ref, _scope(), evidence) == "FINALIZE_MATCHING_PENDING"
+    assert finalize_restore_transition(ref, _scope(), evidence) == "RESTORE_FINALIZED"
+
+
+def test_committed_anchor_cannot_repeat_genesis_or_return_uninitialized() -> None:
+    ref = _preexisting_committed_restore_authority_fixture(3, "a" * 64)
+    assert (
+        prepare_restore_transition(ref, _scope(), None, None, 1, "b" * 64, "d" * 64)
+        == "RESTORE_EXPECTED_CURRENT_MISMATCH"
+    )
+    assert _RESTORE_AUTHORITIES[ref].lifecycle == "COMMITTED"
+
+
+def test_missing_membership_is_not_uninitialized_and_cannot_be_self_provisioned() -> None:
+    assert reconcile_restore_authority("missing", _scope(), "missing") == "NO_READY_AUTHORITY"
+    uninitialized = _initial_protected_scope_membership_fixture()
+    assert (
+        reconcile_restore_authority(uninitialized, _scope(), "missing")
+        == "NO_CURRENT_STATESTORE_AUTHORITY"
+    )
+
+
+def test_full_b1_rollback_after_legal_advances_is_denied() -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    old = _trusted_local_durable_evidence_fixture(1, "a" * 64, "c" * 64)
+    for generation, state, transaction in ((2, "b" * 64, "d" * 64), (3, "e" * 64, "f" * 64)):
+        current = _RESTORE_AUTHORITIES[ref]
+        assert (
+            prepare_restore_transition(
+                ref,
+                _scope(),
+                current.committed_generation,
+                current.committed_state_fingerprint_sha256,
+                generation,
+                state,
+                transaction,
+            )
+            == "RESTORE_PREPARED"
+        )
+        evidence = _trusted_local_durable_evidence_fixture(generation, state, transaction)
+        assert finalize_restore_transition(ref, _scope(), evidence) == "RESTORE_FINALIZED"
+    _CURRENT_LOCAL_EVIDENCE_BY_SCOPE[_scope()] = old
+    assert (
+        reconcile_restore_authority(ref, _scope(), old)
+        == "FAIL_CLOSED_AUTHORITATIVE_RESTORE_REQUIRED"
+    )
+    assert _RESTORE_AUTHORITIES[ref].committed_generation == 3
+
+
+@pytest.mark.parametrize(
+    "function,args",
+    [
+        (
+            prepare_restore_transition,
+            (object(), object(), object(), object(), object(), object(), object()),
+        ),
+        (finalize_restore_transition, (object(), object(), object())),
+        (abort_restore_transition, (object(), object(), object())),
+        (reconcile_restore_authority, (object(), object(), object())),
+    ],
+)
+def test_malformed_protocol_inputs_fail_closed_without_python_exception(
+    function: Any, args: tuple[object, ...]
+) -> None:
+    assert function(*args) in {
+        "RESTORE_AUTHORITY_UNAVAILABLE_OR_DENIED",
+        "RESTORE_FINALIZE_DENIED",
+        "RESTORE_ABORT_DENIED",
+        "NO_READY_AUTHORITY",
+    }
+
+
+def test_non_authorities_implementation_neutrality_handoff_and_live_denial() -> None:
+    root = load_contract()["restore_freshness_authority_contract"]
+    assert {
+        "BackupEnvelope",
+        "first_run_bootstrap_authority_contract",
+        "RuntimeSession",
+        "DesktopShell",
+        "TrayAgent",
+    } <= set(root["non_authorities"])
+    assert "implementation_mechanisms_not_selected_by_contract" in root["location"]
+    assert root["location"]["conforming_implementation_may_use_any_mechanism"] is True
+    assert root["milestone_ownership"]["M0.11_may_mint_M0.3_membership"] is False
+    assert root["current_live_policy"] == "DENIED"
+
+
+@pytest.mark.parametrize(
+    "external_generation,local_generation,local_state",
+    [(2, 1, "a" * 64), (4, 1, "a" * 64), (1, 2, "b" * 64)],
+)
+def test_external_ahead_and_store_ahead_without_pending_remain_fail_closed(
+    external_generation: int, local_generation: int, local_state: str
+) -> None:
+    external_state = "e" * 64 if external_generation > 1 else "a" * 64
+    ref = _preexisting_committed_restore_authority_fixture(external_generation, external_state)
+    evidence = _trusted_local_durable_evidence_fixture(local_generation, local_state, "d" * 64)
+    assert (
+        reconcile_restore_authority(ref, _scope(), evidence)
+        == "FAIL_CLOSED_AUTHORITATIVE_RESTORE_REQUIRED"
+    )
+
+
+@pytest.mark.parametrize(
+    "next_generation",
+    [0, True, 1, 3],
+)
+def test_existing_committed_generation_cannot_rollback_skip_or_repeat(
+    next_generation: object,
+) -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    assert prepare_restore_transition(
+        ref, _scope(), 1, "a" * 64, next_generation, "b" * 64, "d" * 64
+    ) in {"RESTORE_CANDIDATE_MALFORMED", "RESTORE_GENERATION_DENIED"}
+
+
+def test_incompatible_second_prepare_and_missing_external_authority_remain_denied() -> None:
+    ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    assert (
+        prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "b" * 64, "d" * 64)
+        == "RESTORE_PREPARED"
+    )
+    assert (
+        prepare_restore_transition(ref, _scope(), 1, "a" * 64, 2, "e" * 64, "f" * 64)
+        == "RESTORE_INCOMPATIBLE_PREPARE"
+    )
+    assert (
+        prepare_restore_transition("missing", _scope(), None, None, 1, "b" * 64, "d" * 64)
+        == "RESTORE_AUTHORITY_UNAVAILABLE_OR_DENIED"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"lifecycle": "UNINITIALIZED", "prepared_state_fingerprint_sha256": "a" * 64},
+        {"lifecycle": "UNINITIALIZED", "prepared_transaction_fingerprint_sha256": "b" * 64},
+        {
+            "lifecycle": "PREPARED",
+            "committed_state_fingerprint_sha256": "c" * 64,
+            "prepared_generation": 1,
+            "prepared_state_fingerprint_sha256": "a" * 64,
+            "prepared_transaction_fingerprint_sha256": "b" * 64,
+        },
+        {
+            "lifecycle": "COMMITTED",
+            "committed_generation": 1,
+            "committed_state_fingerprint_sha256": "c" * 64,
+            "prepared_state_fingerprint_sha256": "a" * 64,
+        },
+        {
+            "lifecycle": "COMMITTED",
+            "committed_generation": 1,
+            "committed_state_fingerprint_sha256": "c" * 64,
+            "prepared_transaction_fingerprint_sha256": "b" * 64,
+        },
+        {"lifecycle": "COMMITTED", "committed_generation": 1},
+        {"lifecycle": "COMMITTED", "committed_state_fingerprint_sha256": "c" * 64},
+        {"lifecycle": "PREPARED", "prepared_generation": 1},
+        {
+            "lifecycle": "PREPARED",
+            "prepared_state_fingerprint_sha256": "a" * 64,
+            "prepared_transaction_fingerprint_sha256": "b" * 64,
+        },
+        {"lifecycle": "UNKNOWN"},
+    ],
+)
+def test_recomputed_hash_cannot_legalize_malformed_authority_projection(
+    mutation: dict[str, object],
+) -> None:
+    base_ref = _initial_protected_scope_membership_fixture()
+    malformed = replace(
+        _RESTORE_AUTHORITIES[base_ref],
+        **mutation,  # type: ignore[arg-type]
+        content_fingerprint_sha256="0" * 64,
+    )
+    reference = _malformed_protected_authority_fixture(malformed)
+    assert _resolve_authority(reference) is None
+    assert (
+        prepare_restore_transition(reference, _scope(), None, None, 1, "a" * 64, "b" * 64)
+        == "RESTORE_AUTHORITY_UNAVAILABLE_OR_DENIED"
+    )
+    assert reconcile_restore_authority(reference, _scope(), "missing") == "NO_READY_AUTHORITY"
+
+
+def test_genesis_crash_without_local_evidence_retains_exact_pending_fence() -> None:
+    ref = _initial_protected_scope_membership_fixture()
+    assert (
+        prepare_restore_transition(ref, _scope(), None, None, 1, "a" * 64, "b" * 64)
+        == "RESTORE_PREPARED"
+    )
+    pending = _RESTORE_AUTHORITIES[ref]
+    assert (
+        reconcile_restore_authority(ref, _scope(), "missing") == "GENESIS_PENDING_RECOVERY_REQUIRED"
+    )
+    assert abort_restore_transition(ref, _scope(), "missing") == "RESTORE_ABORT_DENIED"
+    assert (
+        prepare_restore_transition(ref, _scope(), None, None, 1, "c" * 64, "d" * 64)
+        == "RESTORE_INCOMPATIBLE_PREPARE"
+    )
+    assert _RESTORE_AUTHORITIES[ref] == pending
+
+
+def test_genesis_pending_resumes_only_with_exact_durable_evidence() -> None:
+    ref = _initial_protected_scope_membership_fixture()
+    prepare_restore_transition(ref, _scope(), None, None, 1, "a" * 64, "b" * 64)
+    evidence = _trusted_local_durable_evidence_fixture(1, "a" * 64, "b" * 64)
+    assert reconcile_restore_authority(ref, _scope(), evidence) == "FINALIZE_MATCHING_PENDING"
+    assert finalize_restore_transition(ref, _scope(), evidence) == "RESTORE_FINALIZED"
+    assert _RESTORE_AUTHORITIES[ref].lifecycle == "COMMITTED"
+
+
+def test_genesis_local_mismatch_fails_closed_and_preserves_pending() -> None:
+    ref = _initial_protected_scope_membership_fixture()
+    prepare_restore_transition(ref, _scope(), None, None, 1, "a" * 64, "b" * 64)
+    pending = _RESTORE_AUTHORITIES[ref]
+    mismatch = _trusted_local_durable_evidence_fixture(1, "c" * 64, "d" * 64)
+    assert (
+        reconcile_restore_authority(ref, _scope(), mismatch)
+        == "FAIL_CLOSED_AUTHORITATIVE_RESTORE_REQUIRED"
+    )
+    assert finalize_restore_transition(ref, _scope(), mismatch) == "RESTORE_FINALIZE_DENIED"
+    assert abort_restore_transition(ref, _scope(), mismatch) == "RESTORE_ABORT_DENIED"
+    assert (
+        prepare_restore_transition(ref, _scope(), None, None, 1, "c" * 64, "d" * 64)
+        == "RESTORE_INCOMPATIBLE_PREPARE"
+    )
+    assert _RESTORE_AUTHORITIES[ref] == pending
+
+
+@pytest.mark.parametrize(
+    "genesis,expected_generation,expected_state,expected_outcome",
+    [
+        (True, None, None, "RESTORE_PREPARED"),
+        (True, 9, None, "RESTORE_EXPECTED_CURRENT_MISMATCH"),
+        (True, None, "f" * 64, "RESTORE_EXPECTED_CURRENT_MISMATCH"),
+        (False, 1, "a" * 64, "RESTORE_PREPARED"),
+        (False, 9, "a" * 64, "RESTORE_EXPECTED_CURRENT_MISMATCH"),
+        (False, 1, "f" * 64, "RESTORE_EXPECTED_CURRENT_MISMATCH"),
+    ],
+)
+def test_idempotent_prepare_retry_requires_exact_expected_current(
+    genesis: bool,
+    expected_generation: int | None,
+    expected_state: str | None,
+    expected_outcome: str,
+) -> None:
+    ref = (
+        _initial_protected_scope_membership_fixture()
+        if genesis
+        else _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    )
+    initial_generation = None if genesis else 1
+    initial_state = None if genesis else "a" * 64
+    next_generation = 1 if genesis else 2
+    assert (
+        prepare_restore_transition(
+            ref,
+            _scope(),
+            initial_generation,
+            initial_state,
+            next_generation,
+            "b" * 64,
+            "d" * 64,
+        )
+        == "RESTORE_PREPARED"
+    )
+    pending = _RESTORE_AUTHORITIES[ref]
+    assert (
+        prepare_restore_transition(
+            ref,
+            _scope(),
+            expected_generation,
+            expected_state,
+            next_generation,
+            "b" * 64,
+            "d" * 64,
+        )
+        == expected_outcome
+    )
+    assert _RESTORE_AUTHORITIES[ref] == pending
+
+
+def test_trusted_external_replacement_then_legal_g1_g2_g3_denies_old_b1() -> None:
+    old_ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    old_b1 = _trusted_local_durable_evidence_fixture(1, "a" * 64, "b" * 64)
+    new_ref = _trusted_external_reference_replacement_fixture(old_ref)
+    assert isinstance(new_ref, str)
+    assert _RESTORE_AUTHORITIES[new_ref].committed_generation == 1
+    assert _RESTORE_AUTHORITIES[new_ref].committed_state_fingerprint_sha256 == "a" * 64
+    for generation, state, transaction in ((2, "c" * 64, "d" * 64), (3, "e" * 64, "f" * 64)):
+        current = _RESTORE_AUTHORITIES[new_ref]
+        assert (
+            prepare_restore_transition(
+                new_ref,
+                _scope(),
+                current.committed_generation,
+                current.committed_state_fingerprint_sha256,
+                generation,
+                state,
+                transaction,
+            )
+            == "RESTORE_PREPARED"
+        )
+        evidence = _trusted_local_durable_evidence_fixture(generation, state, transaction)
+        assert finalize_restore_transition(new_ref, _scope(), evidence) == "RESTORE_FINALIZED"
+    _CURRENT_LOCAL_EVIDENCE_BY_SCOPE[_scope()] = old_b1
+    assert reconcile_restore_authority(old_ref, _scope(), old_b1) == "NO_READY_AUTHORITY"
+    assert (
+        reconcile_restore_authority(new_ref, _scope(), old_b1)
+        == "FAIL_CLOSED_AUTHORITATIVE_RESTORE_REQUIRED"
+    )
+
+
+def test_stale_external_reference_cannot_prepare_finalize_abort_or_reconcile() -> None:
+    old_ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    committed = _trusted_local_durable_evidence_fixture(1, "a" * 64, "b" * 64)
+    new_ref = _trusted_external_reference_replacement_fixture(old_ref)
+    assert isinstance(new_ref, str)
+    old_snapshot = _RESTORE_AUTHORITIES[old_ref]
+    assert (
+        prepare_restore_transition(old_ref, _scope(), 1, "a" * 64, 2, "c" * 64, "d" * 64)
+        == "RESTORE_AUTHORITY_UNAVAILABLE_OR_DENIED"
+    )
+    assert finalize_restore_transition(old_ref, _scope(), committed) == "RESTORE_FINALIZE_DENIED"
+    assert abort_restore_transition(old_ref, _scope(), committed) == "RESTORE_ABORT_DENIED"
+    assert reconcile_restore_authority(old_ref, _scope(), committed) == "NO_READY_AUTHORITY"
+    assert _RESTORE_AUTHORITIES[old_ref] == old_snapshot
+    assert _CURRENT_RESTORE_AUTHORITY_BY_SCOPE[_scope()] == new_ref
+
+
+def test_public_consumer_cannot_reselect_stale_current_designation() -> None:
+    old_ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    new_ref = _trusted_external_reference_replacement_fixture(old_ref)
+    assert isinstance(new_ref, str)
+    public = {
+        name for name, value in globals().items() if callable(value) and not name.startswith("_")
+    }
+    assert (
+        not {
+            "set_current_restore_authority",
+            "select_current_membership",
+            "replace_restore_authority",
+            "rotate_anchor",
+            "force_current",
+            "prefer_newer",
+        }
+        & public
+    )
+    assert _resolve_authority(old_ref) is None
+    assert _resolve_authority(new_ref) == _RESTORE_AUTHORITIES[new_ref]
+
+
+@pytest.mark.parametrize(
+    "account_id,device_installation_id",
+    [
+        ("acct_wrong", _scope()[1]),
+        (_scope()[0], "dev_wrong"),
+        ("acct_", _scope()[1]),
+        (_scope()[0], "dev_"),
+        ("acct_018F0000-0000-7000-8000-000000000001", _scope()[1]),
+        (_scope()[0], "dev_018F0000-0000-7000-8000-000000000002"),
+        ("acct_018f0000-0000-4000-8000-000000000001", _scope()[1]),
+        (_scope()[0], "dev_018f0000-0000-7000-7000-000000000002"),
+        ("acct_018f0000-0000-7000-8000-00000000001", _scope()[1]),
+        (_scope()[0], "dev_018f0000-0000-7000-8000-000000000002x"),
+        ("dev_018f0000-0000-7000-8000-000000000001", _scope()[1]),
+        (_scope()[0], "acct_018f0000-0000-7000-8000-000000000002"),
+    ],
+)
+def test_recomputed_hash_cannot_legalize_noncanonical_m02_scope(
+    account_id: str, device_installation_id: str
+) -> None:
+    valid_ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    malformed = replace(
+        _RESTORE_AUTHORITIES[valid_ref],
+        account_id=account_id,
+        device_installation_id=device_installation_id,
+        content_fingerprint_sha256="0" * 64,
+    )
+    reference = _malformed_protected_authority_fixture(malformed)
+    evidence = _trusted_local_durable_evidence_fixture(
+        1,
+        "a" * 64,
+        "b" * 64,
+        scope=(account_id, device_installation_id, _scope()[2]),
+    )
+    assert _resolve_authority(reference) is None
+    assert _resolve_current_evidence(evidence) is None
+    assert (
+        prepare_restore_transition(
+            reference,
+            (account_id, device_installation_id, _scope()[2]),
+            1,
+            "a" * 64,
+            2,
+            "b" * 64,
+            "c" * 64,
+        )
+        == "RESTORE_AUTHORITY_UNAVAILABLE_OR_DENIED"
+    )
+    assert finalize_restore_transition(reference, _scope(), evidence) == "RESTORE_FINALIZE_DENIED"
+    assert abort_restore_transition(reference, _scope(), evidence) == "RESTORE_ABORT_DENIED"
+    assert reconcile_restore_authority(reference, _scope(), evidence) == "NO_READY_AUTHORITY"
+
+
+def test_exact_canonical_m02_uuidv7_scope_remains_valid_for_authority_and_evidence() -> None:
+    reference = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    evidence = _trusted_local_durable_evidence_fixture(1, "a" * 64, "b" * 64)
+    assert _resolve_authority(reference) == _RESTORE_AUTHORITIES[reference]
+    assert _resolve_current_evidence(evidence) == _LOCAL_DURABLE_EVIDENCE[evidence]
+    assert reconcile_restore_authority(reference, _scope(), evidence) == "CURRENT_AUTHORITY"
+
+
+def test_reference_replacement_api_cannot_accept_generation_or_state_candidate() -> None:
+    assert _trusted_external_reference_replacement_fixture.__code__.co_argcount == 1
+    old_ref = _preexisting_committed_restore_authority_fixture(3, "c" * 64)
+    with pytest.raises(ValueError, match="already exists"):
+        _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    with pytest.raises(ValueError, match="already exists"):
+        _preexisting_committed_restore_authority_fixture(3, "x" * 64)
+    assert _resolve_authority(old_ref) == _RESTORE_AUTHORITIES[old_ref]
+    assert _RESTORE_AUTHORITIES[old_ref].committed_generation == 3
+    assert _RESTORE_AUTHORITIES[old_ref].committed_state_fingerprint_sha256 == "c" * 64
+
+
+@pytest.mark.parametrize("genesis", [True, False])
+def test_ordinary_reference_replacement_is_denied_while_prepared(genesis: bool) -> None:
+    reference = (
+        _initial_protected_scope_membership_fixture()
+        if genesis
+        else _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    )
+    expected_generation = None if genesis else 1
+    expected_state = None if genesis else "a" * 64
+    next_generation = 1 if genesis else 2
+    prepare_restore_transition(
+        reference,
+        _scope(),
+        expected_generation,
+        expected_state,
+        next_generation,
+        "b" * 64,
+        "d" * 64,
+    )
+    pending = _RESTORE_AUTHORITIES[reference]
+    assert _trusted_external_reference_replacement_fixture(reference) is None
+    assert _RESTORE_AUTHORITIES[reference] == pending
+    assert _resolve_authority(reference) == pending
+
+
+def test_uninitialized_reference_replacement_preserves_empty_projection_and_genesis() -> None:
+    old_ref = _initial_protected_scope_membership_fixture()
+    new_ref = _trusted_external_reference_replacement_fixture(old_ref)
+    assert isinstance(new_ref, str)
+    replacement = _RESTORE_AUTHORITIES[new_ref]
+    assert replacement.lifecycle == "UNINITIALIZED"
+    assert replacement.committed_generation is None
+    assert replacement.committed_state_fingerprint_sha256 is None
+    assert replacement.prepared_generation is None
+    assert replacement.prepared_state_fingerprint_sha256 is None
+    assert replacement.prepared_transaction_fingerprint_sha256 is None
+    assert _resolve_authority(old_ref) is None
+    assert (
+        prepare_restore_transition(new_ref, _scope(), None, None, 1, "a" * 64, "b" * 64)
+        == "RESTORE_PREPARED"
+    )
+
+
+def test_retired_reference_survives_current_map_rollback_corruption_and_denies_all_operations() -> (
+    None
+):
+    old_ref = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    b1 = _trusted_local_durable_evidence_fixture(1, "a" * 64, "b" * 64)
+    new_ref = _trusted_external_reference_replacement_fixture(old_ref)
+    assert isinstance(new_ref, str)
+    assert old_ref in _RETIRED_RESTORE_AUTHORITY_REFERENCES
+    old_snapshot, new_snapshot = _RESTORE_AUTHORITIES[old_ref], _RESTORE_AUTHORITIES[new_ref]
+    _CURRENT_RESTORE_AUTHORITY_BY_SCOPE[_scope()] = old_ref  # corruption simulation only
+    assert _resolve_authority(old_ref) is None
+    assert reconcile_restore_authority(old_ref, _scope(), b1) == "NO_READY_AUTHORITY"
+    assert (
+        prepare_restore_transition(old_ref, _scope(), 1, "a" * 64, 2, "c" * 64, "d" * 64)
+        == "RESTORE_AUTHORITY_UNAVAILABLE_OR_DENIED"
+    )
+    assert finalize_restore_transition(old_ref, _scope(), b1) == "RESTORE_FINALIZE_DENIED"
+    assert abort_restore_transition(old_ref, _scope(), b1) == "RESTORE_ABORT_DENIED"
+    assert _RESTORE_AUTHORITIES[old_ref] == old_snapshot
+    assert _RESTORE_AUTHORITIES[new_ref] == new_snapshot
+
+
+def test_replacement_chain_retires_every_predecessor_terminally() -> None:
+    r1 = _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    r2 = _trusted_external_reference_replacement_fixture(r1)
+    assert isinstance(r2, str)
+    r3 = _trusted_external_reference_replacement_fixture(r2)
+    assert isinstance(r3, str)
+    assert {r1, r2} <= _RETIRED_RESTORE_AUTHORITY_REFERENCES
+    assert _resolve_authority(r3) == _RESTORE_AUTHORITIES[r3]
+    for retired in (r1, r2):
+        _CURRENT_RESTORE_AUTHORITY_BY_SCOPE[_scope()] = retired  # corruption simulation only
+        assert _resolve_authority(retired) is None
+    _CURRENT_RESTORE_AUTHORITY_BY_SCOPE[_scope()] = r3
+    assert _resolve_authority(r3) == _RESTORE_AUTHORITIES[r3]
+
+
+def test_initial_and_preexisting_fixtures_have_disjoint_test_only_semantics() -> None:
+    initial = _initial_protected_scope_membership_fixture()
+    assert _RESTORE_AUTHORITIES[initial].lifecycle == "UNINITIALIZED"
+    assert _RESTORE_AUTHORITIES[initial].committed_generation is None
+    with pytest.raises(ValueError, match="already exists"):
+        _preexisting_committed_restore_authority_fixture(1, "a" * 64)
+    public = {
+        name for name, value in globals().items() if callable(value) and not name.startswith("_")
+    }
+    assert (
+        not {"unretire_reference", "restore_old_reference", "clear_retired", "reuse_reference"}
+        & public
+    )

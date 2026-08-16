@@ -5393,5 +5393,498 @@
       "registry_key_equals_internal_state_fingerprint": true,
       "consumed_history_validation": "every entry fully validates canonical IDs, positive non-bool generation/revision, lowercase SHA-256, state scope, uniqueness and generation uniqueness"
     }
+  },
+  "restore_freshness_authority_contract": {
+    "status": "closed",
+    "authority_owner": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+    "consumer": "CoreHost trusted protocol path only",
+    "nature": "protected persistent external StateStore freshness fence; implementation-neutral and outside every restorable artifact",
+    "scope": {
+      "ordered_fields": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256"
+      ],
+      "bindings": "canonical account_id and device_installation_id plus SHA-256 fingerprint derived from the canonical M0.3-resolved state-store identity; never an arbitrary caller path",
+      "new_M0.2_entity": false,
+      "canonical_validation": {
+        "source": "M0.2 /identifier_policy and /entity_kinds (read-only upstream contract)",
+        "persistent_id_format": "<prefix>_<uuidv7>",
+        "uuidv7_regex": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "account_id": "exact acct_<uuidv7>",
+        "device_installation_id": "exact dev_<uuidv7>",
+        "state_store_identity_fingerprint_sha256": "exact lowercase SHA-256",
+        "same_validation_required_for_local_durable_evidence": true,
+        "prefix_only_validation_sufficient": false
+      }
+    },
+    "protected_state_projection": {
+      "ordered_fields": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+        "lifecycle",
+        "committed_generation",
+        "committed_state_fingerprint_sha256",
+        "prepared_generation",
+        "prepared_state_fingerprint_sha256",
+        "prepared_transaction_fingerprint_sha256",
+        "authority_revision",
+        "authority_source",
+        "content_fingerprint_sha256"
+      ],
+      "optional_fields": [
+        "committed_generation",
+        "committed_state_fingerprint_sha256",
+        "prepared_generation",
+        "prepared_state_fingerprint_sha256",
+        "prepared_transaction_fingerprint_sha256"
+      ],
+      "authority_source": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+      "generation_rule": "when present, positive non-bool integer; generation 0 is never authority",
+      "exact_lifecycle_field_presence": {
+        "UNINITIALIZED": {
+          "committed_generation": null,
+          "committed_state_fingerprint_sha256": null,
+          "prepared_generation": null,
+          "prepared_state_fingerprint_sha256": null,
+          "prepared_transaction_fingerprint_sha256": null
+        },
+        "PREPARED_GENESIS": {
+          "committed_generation": null,
+          "committed_state_fingerprint_sha256": null,
+          "prepared_generation": "exactly 1",
+          "prepared_state_fingerprint_sha256": "canonical SHA-256 required",
+          "prepared_transaction_fingerprint_sha256": "canonical SHA-256 required"
+        },
+        "PREPARED_NORMAL": {
+          "committed_generation": "positive non-bool G required",
+          "committed_state_fingerprint_sha256": "canonical SHA-256 required",
+          "prepared_generation": "exactly G + 1",
+          "prepared_state_fingerprint_sha256": "canonical SHA-256 required",
+          "prepared_transaction_fingerprint_sha256": "canonical SHA-256 required"
+        },
+        "COMMITTED": {
+          "committed_generation": "positive non-bool required",
+          "committed_state_fingerprint_sha256": "canonical SHA-256 required",
+          "prepared_generation": null,
+          "prepared_state_fingerprint_sha256": null,
+          "prepared_transaction_fingerprint_sha256": null
+        },
+        "dangling_optional_fields": "semantic class MALFORMED_PROTECTED_AUTHORITY; fail closed through existing controlled M0.3 denial/no-READY outcomes"
+      }
+    },
+    "location": {
+      "must_be_outside": [
+        "restorable canonical StateStore",
+        "BackupEnvelope",
+        "normal user-editable config",
+        "UI state",
+        "Tray state"
+      ],
+      "platform_requirement": "future implementation must provide a conforming mechanism; otherwise authoritative restore fails closed",
+      "implementation_mechanisms_not_selected_by_contract": [
+        "TPM",
+        "Secure Enclave",
+        "Windows API",
+        "macOS Keychain",
+        "Linux secret service",
+        "SaaS",
+        "hardware counter",
+        "keyring",
+        "cryptographic primitive"
+      ],
+      "conforming_implementation_may_use_any_mechanism": true,
+      "implementation_choice_is_domain_authority": false
+    },
+    "compare_and_advance": {
+      "coverage": "after genesis, every authoritative StateStore semantic transaction participates; no caller boolean classification",
+      "committed_generation_never_decreases": true,
+      "next_generation": "exact committed_generation + 1; no skip and no rollback",
+      "same_generation_different_content": "denied",
+      "fingerprint_semantics": "integrity only, never protected membership"
+    },
+    "prepare_protocol": {
+      "trusted_caller": "Core-owned trusted protocol path",
+      "requires": [
+        "exact scope match",
+        "expected committed generation equals protected current",
+        "expected committed state fingerprint equals protected current",
+        "next generation equals committed generation + 1",
+        "canonical candidate state fingerprint",
+        "canonical candidate transaction fingerprint",
+        "no incompatible protected pending transition"
+      ],
+      "effect": "creates exact protected pending membership; PREPARED is not committed/current StateStore authority",
+      "modes": [
+        "GENESIS: UNINITIALIZED -> PREPARED 1",
+        "NORMAL: COMMITTED G -> PREPARED G+1"
+      ],
+      "idempotent_retry": {
+        "GENESIS": "exact same pending candidate accepted only with expected_generation and expected_state_fingerprint both absent",
+        "NORMAL": "exact same pending candidate accepted only with expected generation/fingerprint equal protected committed current",
+        "wrong_expected_current": "RESTORE_EXPECTED_CURRENT_MISMATCH before idempotent success evaluation",
+        "different_candidate": "RESTORE_INCOMPATIBLE_PREPARE; existing pending retained"
+      }
+    },
+    "local_commit_handoff": {
+      "owner": "M0.11",
+      "requirements": [
+        "all-or-nothing durable local semantic commit",
+        "persist exact prepared generation",
+        "persist exact prepared state fingerprint",
+        "exact-bind candidate transaction fingerprint",
+        "do not acknowledge success before required durability point"
+      ],
+      "storage_engine_selected": false,
+      "cross_resource_ACID_claimed": false
+    },
+    "finalize_protocol": {
+      "requires": "opaque local evidence reference resolves exact accepted current DURABLE_COMMITTED evidence whose scope, generation, state fingerprint and transaction fingerprint equal existing protected PREPARED membership",
+      "fingerprint_alone_sufficient": false,
+      "effect": [
+        "committed_generation becomes prepared_generation",
+        "committed state fingerprint becomes prepared state fingerprint",
+        "pending membership terminally cleared/finalized",
+        "previous generation can never regain current authority"
+      ],
+      "caller_supplied_matching_strings_sufficient": false
+    },
+    "protected_abort_protocol": {
+      "transition": "PREPARED over COMMITTED G -> COMMITTED G with pending terminally cleared",
+      "requires": [
+        "existing protected PREPARED G+1 over COMMITTED G",
+        "exact scope",
+        "opaque reference to accepted current DURABLE_COMMITTED local observation of exact committed G and committed state fingerprint",
+        "no accepted current durable observation of candidate G+1"
+      ],
+      "effect": [
+        "committed generation and fingerprint unchanged",
+        "all prepared fields cleared",
+        "authority revision increases",
+        "content fingerprint recomputed"
+      ],
+      "raw_caller_values_sufficient": false,
+      "caller_created_or_self_hashed_evidence_authority": false
+    },
+    "crash_matrix": {
+      "A_before_prepare": {
+        "external": "COMMITTED G",
+        "store": "G",
+        "outcome": "NORMAL_RECOVERY"
+      },
+      "B_after_prepare_before_local_commit": {
+        "external": "PREPARED G+1 over COMMITTED G",
+        "store": "exact G",
+        "outcome": "accepted current durable observation of exact committed G permits executable protected ABORT; pending clears and committed remains G"
+      },
+      "C_after_local_commit_before_finalize": {
+        "external": "PREPARED G+1",
+        "store": "exact G+1 matching state and transaction fingerprints",
+        "outcome": "accepted current DURABLE_COMMITTED evidence exact-matching protected pending permits FINALIZE"
+      },
+      "D_external_committed_ahead": {
+        "external": "COMMITTED G+1",
+        "store": "G",
+        "outcome": "FAIL_CLOSED_AUTHORITATIVE_RESTORE_REQUIRED; no READY"
+      },
+      "E_store_ahead_without_pending": {
+        "external": "COMMITTED G",
+        "store": "G+1 without matching PREPARED",
+        "outcome": "CONTRACT_OR_RECOVERY_INCONSISTENT_FAIL_CLOSED; no auto-promotion"
+      },
+      "F_pending_fingerprint_mismatch": {
+        "external": "PREPARED G+1",
+        "store": "G+1 mismatch",
+        "outcome": "FAIL_CLOSED; zero finalize"
+      },
+      "G_external_ahead_beyond_protocol": {
+        "outcome": "FAIL_CLOSED"
+      },
+      "H_external_unavailable": {
+        "outcome": "NO_AUTHORITATIVE_RESTORE_OR_READY"
+      },
+      "I_GENESIS_AFTER_PREPARE_BEFORE_LOCAL_COMMIT": {
+        "external": "PREPARED generation 1 over UNINITIALIZED membership",
+        "local_durable_evidence": "absent",
+        "outcome": "GENESIS_PENDING_RECOVERY_REQUIRED; no READY; pending retained; ordinary abort denied; different candidate denied"
+      },
+      "J_GENESIS_AFTER_LOCAL_COMMIT_BEFORE_FINALIZE": {
+        "external": "PREPARED generation 1 over UNINITIALIZED membership",
+        "local_durable_evidence": "accepted/current exact DURABLE_COMMITTED generation 1 matching state and transaction",
+        "outcome": "FINALIZE_MATCHING_PENDING"
+      },
+      "K_GENESIS_LOCAL_MISMATCH": {
+        "external": "PREPARED generation 1 over UNINITIALIZED membership",
+        "local_durable_evidence": "accepted/current but generation, state or transaction differs from pending",
+        "outcome": "FAIL_CLOSED; no finalize; no ordinary abort to UNINITIALIZED; trusted external recovery required"
+      }
+    },
+    "backup_rollback": {
+      "invariant": "cryptographically valid B1 at G cannot become current after protected authority legally commits G+N",
+      "BackupEnvelope_role": "candidate persisted state only",
+      "history_import": "M0.11 responsibility; authority promotion remains denied",
+      "cannot_resurrect": [
+        "consumed bootstrap",
+        "revoked DeviceInstallation",
+        "revoked OperatorIdentity",
+        "old PIN/security/session epoch",
+        "revoked LiveAccessGrant",
+        "older kill-switch state/generation",
+        "consumed ExecutionLease",
+        "old command idempotency outcome",
+        "old environment/current capability authority"
+      ]
+    },
+    "startup_restore_consumer_rules": {
+      "ordering_unchanged": [
+        "resolve_device_installation_and_state_store_identity",
+        "acquire_local_process_lock",
+        "create_runtime_session",
+        "open_state_store",
+        "verify_integrity",
+        "determine_startup_readiness"
+      ],
+      "freshness_check": "subordinate to StateStore integrity, recovery and readiness; no mutable store before process lock",
+      "READY_requires": "available, valid, exact-scope protected authority and successful freshness reconciliation"
+    },
+    "failure_outcomes": {
+      "authority_missing_or_unavailable": "fail closed; no READY/current authority; backup cannot reconstruct, select or mint authority",
+      "malformed_scope_mismatched_corrupted_reset_or_regressed": "fail closed; require trusted provisioning/recovery path",
+      "Core_forbidden": [
+        "rebuild anchor from backup",
+        "choose highest backup generation",
+        "trust local admin claim",
+        "treat self-hash as membership",
+        "enter READY with current authority"
+      ],
+      "missing_scope_membership": "distinct from UNINITIALIZED; no authority/READY and cannot be reconstructed from backup or first-run claim",
+      "malformed_projection_mapping": "M0.3 executable returns existing controlled denial/no-READY outcomes; M0.11 later owns mapping to its final persistence failure registry; no M0.11 failure taxonomy is defined here"
+    },
+    "non_authorities": [
+      "CoreHost arbitrary setter",
+      "Bootstrapper",
+      "DesktopShell",
+      "TrayAgent",
+      "raw caller",
+      "local admin nominal claim",
+      "fingerprint_or_signature_alone",
+      "BackupEnvelope",
+      "first_run_bootstrap_authority_contract",
+      "RuntimeSession"
+    ],
+    "forbidden_operations": [
+      "mint protected membership",
+      "raise or lower anchor arbitrarily",
+      "skip compare/prepare/finalize",
+      "finalize absent PREPARED membership",
+      "replace external authority with backup"
+    ],
+    "separation": {
+      "not_first_run_bootstrap_authority": true,
+      "first_run": "ephemeral one-shot INITIAL_SECURITY_ESTABLISHMENT_ONLY handoff; never durable restore counter",
+      "restore_freshness": "persistent protected freshness fence; does not authenticate operator or establish trust",
+      "bootstrap_generation_is_restore_counter": false,
+      "shared_future_infrastructure_possible": "implementation may share broader provisioning infrastructure, but bootstrap claim/reference and generation never constitute restore membership/generation"
+    },
+    "does_not_grant": [
+      "authenticated_operator",
+      "device_TRUSTED",
+      "PIN_verified",
+      "biometric_verified",
+      "admin_role",
+      "operation_entitlement",
+      "LiveAccessGrant",
+      "RiskDecision",
+      "ExecutionLease",
+      "kill_switch_reset",
+      "ProductCapability",
+      "LIVE_execution_permission"
+    ],
+    "current_live_policy": "DENIED",
+    "milestone_ownership": {
+      "M0.3": [
+        "existence and semantics of protected external freshness authority",
+        "exact scope",
+        "monotonic compare/prepare/finalize protocol",
+        "non-authority rules"
+      ],
+      "M0.11": [
+        "StateStore metadata carrying matching generation/fingerprints",
+        "durable local semantic transactions",
+        "BackupEnvelope",
+        "restore candidate validation",
+        "recovery orchestration",
+        "migration interaction",
+        "failure registry",
+        "history-only recovery",
+        "consumption of M0.3 freshness authority"
+      ],
+      "M0.11_may_mint_M0.3_membership": false,
+      "preserved": [
+        "M0.10 security ownership",
+        "M0.9 risk/lease ownership",
+        "M0.4 ProductCapabilities ownership",
+        "M0.8 accounting ownership"
+      ]
+    },
+    "scope_membership_lifecycle": {
+      "states": [
+        "UNINITIALIZED",
+        "PREPARED",
+        "COMMITTED"
+      ],
+      "membership_owner": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+      "membership_preexists_genesis": true,
+      "membership_scope": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256"
+      ],
+      "membership_may_be_minted_by": [
+        "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY trusted provisioning/recovery path"
+      ],
+      "membership_may_not_be_minted_by": [
+        "CoreHost",
+        "M0.11",
+        "Bootstrapper",
+        "DesktopShell",
+        "TrayAgent",
+        "raw caller",
+        "BackupEnvelope",
+        "first_run_bootstrap_authority_contract"
+      ],
+      "MISSING": "no protected scope membership; no READY or self-provisioning; trusted external provisioning/recovery required",
+      "UNINITIALIZED": "protected exact-scope membership exists; committed generation and fingerprint are absent; no StateStore authority and no READY",
+      "PREPARED": "protected pending membership exists; candidate is not current authority",
+      "COMMITTED": "positive committed generation and exact state fingerprint are current freshness authority",
+      "forbidden_transitions": [
+        "COMMITTED to UNINITIALIZED",
+        "COMMITTED history to repeated genesis"
+      ]
+    },
+    "genesis_protocol": {
+      "transition": "UNINITIALIZED -> PREPARED generation 1 -> accepted current DURABLE_COMMITTED local evidence -> COMMITTED generation 1",
+      "prepare_requires": [
+        "pre-existing exact protected scope membership",
+        "Core-owned trusted protocol path",
+        "absent committed generation and fingerprint",
+        "next generation exactly 1",
+        "canonical candidate state fingerprint",
+        "canonical candidate transaction fingerprint"
+      ],
+      "finalize_requires": "accepted current M0.11-owned durable local evidence exact-bound to protected PREPARED generation 1",
+      "preseeded_committed_generation_1_required": false,
+      "generation_0_authority": false,
+      "first_run_bootstrap_mints_membership": false,
+      "crash_recovery": "RESUME_EXACT_PENDING_FAIL_CLOSED",
+      "ordinary_Core_or_M0.11_abort": false,
+      "missing_local_evidence": "GENESIS_PENDING_RECOVERY_REQUIRED; no READY; retain exact pending; no different generation-1 candidate; no transition to UNINITIALIZED",
+      "exact_local_evidence": "FINALIZE_MATCHING_PENDING then legal FINALIZE to COMMITTED 1",
+      "mismatching_local_evidence": "FAIL_CLOSED; retain pending; no finalize or ordinary abort; trusted external recovery required",
+      "future_pending_clear": "requires separate protected external recovery authority; absence of local evidence is not proof that durable generation 1 never existed"
+    },
+    "local_durable_evidence_handoff": {
+      "owner": "M0.11 local durable StateStore observation boundary",
+      "nature": "implementation-neutral trusted evidence of the required local durability point; not M0.2 entity, external authority, or membership minter",
+      "ordered_fields": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+        "generation",
+        "state_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+        "durability_state",
+        "evidence_revision",
+        "evidence_fingerprint_sha256"
+      ],
+      "required_durability_state": "DURABLE_COMMITTED",
+      "acceptance": "opaque reference resolves exact accepted and current membership in a private Core/M0.11-owned durable-observation registry",
+      "caller_object_authority": false,
+      "self_hash_authority": false,
+      "caller_booleans_forbidden": [
+        "durable",
+        "fsync_ok",
+        "committed",
+        "is_current",
+        "trusted"
+      ]
+    },
+    "protected_current_designation": {
+      "protected_membership_current_key": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256"
+      ],
+      "exactly_one_current_membership_per_scope": true,
+      "accepted_registry_semantics": "opaque references may retain protected historical records; acceptance and valid content fingerprint do not imply current authority",
+      "authority_critical_resolution_requires": [
+        "opaque reference exists in protected accepted registry",
+        "record is structurally and semantically valid",
+        "scope is canonical",
+        "reference equals exact protected current designation for record scope"
+      ],
+      "historical_or_stale_membership_reference_is_not_authority": true,
+      "current_designation_owner": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+      "transitions_preserve_same_current_reference": [
+        "UNINITIALIZED -> PREPARED -> COMMITTED",
+        "COMMITTED G -> PREPARED G+1 -> COMMITTED G+1",
+        "normal protected ABORT"
+      ],
+      "trusted_external_replacement": {
+        "allowed_current_lifecycles": [
+          "UNINITIALIZED",
+          "COMMITTED"
+        ],
+        "PREPARED": "DENIED until legally FINALIZED or, where allowed, normally ABORTED",
+        "replacement_preserves_freshness_projection": true,
+        "exact_preserved_fields": [
+          "account_id",
+          "device_installation_id",
+          "state_store_identity_fingerprint_sha256",
+          "lifecycle",
+          "committed_generation",
+          "committed_state_fingerprint_sha256",
+          "prepared_generation",
+          "prepared_state_fingerprint_sha256",
+          "prepared_transaction_fingerprint_sha256"
+        ],
+        "replacement_may_change_committed_generation": false,
+        "replacement_may_change_committed_state": false,
+        "replacement_may_clear_or_change_pending": false,
+        "replacement_may_return_committed_to_uninitialized": false,
+        "replacement_may_skip_generation": false,
+        "replacement_may_rollback_generation": false,
+        "historical_reference_never_becomes_current_again": true,
+        "authority_revision": "membership-local revision may advance for rotation but cannot weaken freshness projection",
+        "consumer_content_parameters": "none; only exact current old opaque reference is accepted by the private external-boundary model",
+        "replaced_reference_terminal_state": "RETIRED",
+        "retired_reference_is_authority": false,
+        "retired_reference_may_be_reselected": false,
+        "current_reference_must_not_be_retired": true,
+        "replacement_transition_semantically_atomic": true,
+        "retirement_owner": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+        "designation_mapping_and_retirement_state_share_protected_boundary": true,
+        "semantic_atomicity": "PRE: exact current non-retired stable OLD; POST: OLD terminal RETIRED, NEW accepted and sole current, exact freshness projection preserved; torn or corrupt observation fails closed",
+        "torn_observations": {
+          "current_points_to_RETIRED": "NO_AUTHORITY_FAIL_CLOSED",
+          "current_points_to_missing_reference": "NO_AUTHORITY_FAIL_CLOSED",
+          "malformed_replacement_history": "FAIL_CLOSED; no Core/M0.11 auto-heal"
+        }
+      },
+      "caller_may_select_current_membership": false,
+      "backup_may_select_current_membership": false,
+      "CoreHost_may_select_current_membership": false,
+      "M0.11_may_select_or_mint_current_membership": false,
+      "designation_mapping_location": "scope -> current protected reference is protected state inside EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY; outside StateStore, BackupEnvelope, user config, Core registry authority and M0.11 mutable state",
+      "operations": {
+        "INITIAL_EXTERNAL_SCOPE_MEMBERSHIP_PROVISIONING": "only when no current membership exists; establishes exact-scope UNINITIALIZED membership, never magic committed generation",
+        "NORMAL_FRESHNESS_ADVANCE": "only COMMITTED G -> PREPARED G+1 -> accepted current durable local G+1 -> FINALIZE -> COMMITTED G+1",
+        "PROTECTED_REFERENCE_REPLACEMENT": "changes opaque reference identity only; exact freshness projection is copied and unchanged"
+      },
+      "designation_rollback": "rollback of current mapping to historical reference is protected-authority rollback and fails closed; direct private mutation is corruption simulation, never legal transition",
+      "retirement_state_location": "protected external boundary only; outside StateStore, BackupEnvelope, Core/M0.11 mutable state and user config",
+      "no_anchor_recursion": "conforming protected boundary supplies designation plus terminal retirement; no further anchor layer selected"
+    }
   }
 }
