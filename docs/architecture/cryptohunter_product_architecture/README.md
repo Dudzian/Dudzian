@@ -24,6 +24,8 @@ M0.2 jest kolejną warstwą źródła prawdy po zamkniętym M0.1: definiuje kano
 
 ## Status M0.3 — closed
 
+Closed M0.3 includes the protected external restore-freshness authority contract that M0.11 will consume later.
+
 M0.3 definiuje kontrakt topologii procesów i lifecycle’u aplikacji: role CoreHost/TrayAgent/DesktopShell/Bootstrapper, zasady IPC/discovery, background po zamknięciu GUI, shutdown intents, first-run readiness, autostart oraz failure/restart policy. M0.3 jest zamkniętym kontraktem i nie implementuje osobnych procesów, tray, QML, proto ani Windows Service.
 
 ## Artefakty M0.3
