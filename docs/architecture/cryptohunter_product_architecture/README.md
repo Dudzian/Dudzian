@@ -124,3 +124,17 @@ M0.10 zamyka Core-owned identity, device trust, PIN, platform-biometric assertio
 
 - [identity_device_authentication_and_secrets.md](identity_device_authentication_and_secrets.md)
 - [identity_device_authentication_and_secrets.json](identity_device_authentication_and_secrets.json)
+
+## Status M0.11 — CLOSED
+
+M0.11 zamyka neutralny implementacyjnie, projekcyjny kontrakt reprezentacji persistence, zamknięty i ściśle wykonywalnie walidowany kontrakt architektoniczny persistence, versioning, migrations, backup i recovery. Nie implementuje produkcyjnego silnika persistence, adaptera bazy danych ani UI.
+
+## Artefakty M0.11
+
+- [persistence_versioning_migrations_backup_and_recovery.json](persistence_versioning_migrations_backup_and_recovery.json) — kanoniczne maszynowe źródło prawdy.
+- [persistence_versioning_migrations_backup_and_recovery.md](persistence_versioning_migrations_backup_and_recovery.md) — dokładna projekcja Markdown.
+- [test_cryptohunter_persistence_versioning_migrations_backup_and_recovery.py](../../../tests/architecture/test_cryptohunter_persistence_versioning_migrations_backup_and_recovery.py) — wykonywalny model semantyczny i testy adwersarialne.
+
+W M0.11 nośnik `PersistenceRecord` ma wykonywalne klucze wyprowadzane z faktów kanonicznych, walidację payloadu zależną od kategorii oraz dwustopniową rewalidację kandydata restore; chroniony `PREPARE G+1` pozostaje nieodwracalnym progiem świeżości podczas recovery.
+Bezpośrednie rekordy upstream są walidowane według rzeczywistych zamkniętych pól i reguł wskazanego kontraktu upstream; ogólny `semantic_object`/`canonical_fields` nie jest nośnikiem sukcesu.
+Immutable history przechowuje zamknięty upstream payload/projection i recomputed payload fingerprint; fact oraz direct carriers wykonują literalne kontrakty typów, prefixów, kluczy i nested schemas.

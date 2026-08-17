@@ -1,0 +1,6667 @@
+# M0.11 — Persistence, versioning, migrations, backup and recovery
+
+**Status: CLOSED.** Dokument jest dokładną projekcją źródła maszynowego.
+
+## `schema_version`
+
+```json
+"1.0.0"
+```
+
+## `m0_element`
+
+```json
+"M0.11"
+```
+
+## `status`
+
+```json
+"CLOSED"
+```
+
+## `scope`
+
+```json
+[
+  "persistence",
+  "versioning",
+  "migrations",
+  "backup",
+  "recovery"
+]
+```
+
+## `dependency_manifest`
+
+```json
+{
+  "authority_dependencies": [
+    {
+      "milestone": "M0.2",
+      "artifact": "canonical_domain_vocabulary.json",
+      "json_pointer": "/entity_kinds",
+      "content_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1"
+    },
+    {
+      "milestone": "M0.2",
+      "artifact": "canonical_domain_vocabulary.json",
+      "json_pointer": "/relationships",
+      "content_fingerprint_sha256": "03c64a8159cd7ae7f1103b029234c858d0cf86898d9dc0b652e1043667fc11a9"
+    },
+    {
+      "milestone": "M0.2",
+      "artifact": "canonical_domain_vocabulary.json",
+      "json_pointer": "/identifier_policy",
+      "content_fingerprint_sha256": "44726b4e51c53722ebbc95212d708521007c59cb54292ea7bc5b970320031d20"
+    },
+    {
+      "milestone": "M0.3",
+      "artifact": "process_topology_and_lifecycle.json",
+      "json_pointer": "/startup_sequence",
+      "content_fingerprint_sha256": "45aad456ada1f5bf0b0c9498b2eaea11dba64d95eca36d84960dab205b7acc9b"
+    },
+    {
+      "milestone": "M0.3",
+      "artifact": "process_topology_and_lifecycle.json",
+      "json_pointer": "/single_instance_policy",
+      "content_fingerprint_sha256": "5e8cc0b1c55f7fb7d55c03c7a0183c7991a357414e47884608e57bd39a9133f0"
+    },
+    {
+      "milestone": "M0.3",
+      "artifact": "process_topology_and_lifecycle.json",
+      "json_pointer": "/first_run_bootstrap_authority_contract",
+      "content_fingerprint_sha256": "df90a7d0d6972db16fee67bea285c60758e75615c2f583b57e5a62b0f7df752b"
+    },
+    {
+      "milestone": "M0.3",
+      "artifact": "process_topology_and_lifecycle.json",
+      "json_pointer": "/restore_freshness_authority_contract",
+      "content_fingerprint_sha256": "e18d62bb5c74e6c484fa38363367cae60b45974b2a8449d2b988ace42b2f59e7"
+    },
+    {
+      "milestone": "M0.4",
+      "artifact": "environment_and_product_capabilities.json",
+      "json_pointer": "/execution_environments",
+      "content_fingerprint_sha256": "61f5dd195aa69c646dc296c2d8c0f2ce97683979e3ef6ddc35b0adaa269a809b"
+    },
+    {
+      "milestone": "M0.4",
+      "artifact": "environment_and_product_capabilities.json",
+      "json_pointer": "/ProductCapabilities",
+      "content_fingerprint_sha256": "fd8cd8b62827b96d52bd6870985f7e2438a0306cd267048b7745472157877605"
+    },
+    {
+      "milestone": "M0.4",
+      "artifact": "environment_and_product_capabilities.json",
+      "json_pointer": "/persistence_and_recovery",
+      "content_fingerprint_sha256": "93dd41e77414fe45d0d61cc7561ab9910708e11f8c67e25de49e4817f30b4dd0"
+    },
+    {
+      "milestone": "M0.5",
+      "artifact": "exchange_accounts_and_instruments.json",
+      "json_pointer": "/credential_profile_contract",
+      "content_fingerprint_sha256": "4fd7629e1161d250471bfbf22976674a1794fe508af1f455fdc057e7a533786a"
+    },
+    {
+      "milestone": "M0.6",
+      "artifact": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/route_readiness_contract",
+      "content_fingerprint_sha256": "92dda02de1e327d248bc9e987701b33279534f48b57ac2a97104c8380d7c4c33"
+    },
+    {
+      "milestone": "M0.6",
+      "artifact": "strategy_market_data_and_execution_routing.json",
+      "json_pointer": "/live_execution_authority_policy",
+      "content_fingerprint_sha256": "eb2034a4691a18f3037b2a5f93d1fb41fcb38ef67c6c43c5dfff891dd35fe1de"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/event_contract",
+      "content_fingerprint_sha256": "c63d514a4546161798de2f7f90441821cd71653fba433c3577c6d7b630e4b6b2"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/idempotency_contract",
+      "content_fingerprint_sha256": "43ba37d976eb5948970d289cc71cd06da82cb90803f9e5f61cc84109f00e9a62"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/order_lifecycle",
+      "content_fingerprint_sha256": "48a514419aaa0863078e69ffc50c3acd4b37a06d873d257275fb68874cc840dd"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/environment_execution_boundary",
+      "content_fingerprint_sha256": "423939e49b651d91a8a4b70d0ba0d64275886c5c3b23544ef2e822956eb153db"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "json_pointer": "/failure_taxonomy",
+      "content_fingerprint_sha256": "18ac187a1c4da0510081770c0b34dca14630bc4d01fcdb922a1ce2b2d180e5d7"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/ledger_entry_schema",
+      "content_fingerprint_sha256": "c83f9bb9315ae1abf2a4720488c9f0677e9e15c5ec80dd54e1905f669614c0c3"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/batch_protocol",
+      "content_fingerprint_sha256": "ebde020efa94623496ace7092caf535a311295b3986141662150658c7c1e799a"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/rebuild_protocol",
+      "content_fingerprint_sha256": "e6bade298e6debc1c2972824f3b8fe2a177e15690e24868cde49e052648314a3"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/reservation_protocol",
+      "content_fingerprint_sha256": "b3579e387a02b9f291468f5cc89a9ed650e4024a538cbb7f6f0c0818ed0c4641"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/environment_policy",
+      "content_fingerprint_sha256": "4499550489e137353a08ecb4f06b43c0e62d5bcf588cd9cb07ea8dd3a28f02ba"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "json_pointer": "/reconciliation_protocol",
+      "content_fingerprint_sha256": "747ad52f8c2d2f6983d80e5bf9219802bfb382fb02aebda697a946e6ab911ce1"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/risk_policy_contract",
+      "content_fingerprint_sha256": "8aeaf58a9325a5dae08e460827af7174b4ab928d1166e3492b6f3e1427885ee4"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/kill_switch_contract",
+      "content_fingerprint_sha256": "31e8ff723ed8258bb3693a43228095fb70c4ff209aac2697b7d4e7d7aaf281a9"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/execution_lease_contract",
+      "content_fingerprint_sha256": "92f2ac9a03ce3f6a4e419d3240b79e5affd0f620d70d96dd33c06c658b19a66a"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/one_shot_idempotency_relation_to_m07",
+      "content_fingerprint_sha256": "ccc15c7dfa8b9a970cba414089cf54bd7a8828f51e6693ed7b0084041e6bc564"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/generation_fencing_policy",
+      "content_fingerprint_sha256": "6931e73f8a4de1396d5ae5dc6344aad682eeb84705d40518b23a2af5ec371264"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/lease_validation_conditions",
+      "content_fingerprint_sha256": "a7be0c34785ab77e77f7da0f9556b156de3337116bfd22fbe26ae64527eb0bff"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/lease_lifetime",
+      "content_fingerprint_sha256": "551e466c10b27c06c0b5fa888c3d13fea93c2a030af09c714e87f93c9b481e44"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/environment_isolation",
+      "content_fingerprint_sha256": "5d05ed7fe05c2912456a5c08c16204ea6b0b5c45a241092ac284978970cfd2a7"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/live_target_policy",
+      "content_fingerprint_sha256": "8b65c729b4867729fba91eaf52f1238322e843dc9012dad572b212d379c1caf2"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/m011_boundary",
+      "content_fingerprint_sha256": "14344f8dafe83064d9b824a0746d7009cd03529a4e0b7c8c216077bfde8eb18c"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "json_pointer": "/core_authority_registries",
+      "content_fingerprint_sha256": "2b5c65cd7a6d6db01c185460abb18087be4f69ae5e7508adb7ba8bf02aecbb48"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/authority",
+      "content_fingerprint_sha256": "e52f768bf23a47c08191cd17041231eac1fffc12f4de0dd6d6b0946e2919acf0"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/registries",
+      "content_fingerprint_sha256": "c9fd15a72c6da56cda1a9c83afdf61e374fa817d992bb6c6850ba97b7ae26948"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/biometric_policy",
+      "content_fingerprint_sha256": "1edac9c6719c11347470529f4ff995cc8f6af451cdc46832fedcb80860efbbef"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/proof_policy",
+      "content_fingerprint_sha256": "811e80629e97f9afe16be1636927066577c39d1fe5211067bbaee52a88d30c97"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/pin_policy",
+      "content_fingerprint_sha256": "1edf009a03d7b18598cc7d338e09a79d78fcf9f532340c7dbee4cc4524196729"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/secret_reference_policy",
+      "content_fingerprint_sha256": "4bdd848dc95fbb850fb1262b8429811682ec5671c88dbe333b055d1fcb9d9b88"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/live_policy",
+      "content_fingerprint_sha256": "24bd271e45010951362df4af162a68a4040ffb63716e13f0a1030e22074c9b6f"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/audit_safe_payload",
+      "content_fingerprint_sha256": "bbaf62ef1b0cb3c4c09836991180e9183b52578ffc09024f4621b633f7551cbf"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/core_owned_registry_semantics",
+      "content_fingerprint_sha256": "5320a2fd20df9849b30960ad822b2eb88608033472139b703120382d611043ac"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/proof_fencing_epoch_policy",
+      "content_fingerprint_sha256": "e3d7a6eed6e930df2da8c5179967a990e12e780ac7802029fd4b672cde7a152d"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/transition_binding_invariants",
+      "content_fingerprint_sha256": "988f1d0fe7cb67d01043e8cbbd46a5d0199ee4062ce94373244b42bc44c434ab"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/deferred_to_m011",
+      "content_fingerprint_sha256": "2f68517ccb65a43be6177650677b9b227f68f11ca2c3fdff58184719c8767cb0"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "json_pointer": "/executable_boundary_schemas",
+      "content_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db"
+    }
+  ],
+  "count": 48,
+  "fingerprint_canonicalization": "UTF-8 JSON, sorted keys, compact separators, ensure_ascii=false; SHA-256 of exact RFC6901 value",
+  "m0_1_authority_allowed": false
+}
+```
+
+## `discovery_evidence`
+
+```json
+{
+  "M0.1": {
+    "role": "NON_AUTHORITATIVE_CURRENT_STATE_EVIDENCE",
+    "artifact": "current_state_inventory.json"
+  }
+}
+```
+
+## `authority_model`
+
+```json
+{
+  "owns": [
+    "durability",
+    "schema versioning",
+    "migration durability",
+    "backup candidate format",
+    "recovery gates"
+  ],
+  "does_not_own": [
+    "domain authority",
+    "M0.3 protected membership",
+    "ProductCapabilities",
+    "LiveAccessGrant",
+    "RiskDecision",
+    "ExecutionLease"
+  ],
+  "live_current": "DENIED",
+  "testnet_to_live_fallback": false
+}
+```
+
+## `state_store_contract`
+
+```json
+{
+  "record": "StateStoreMetadata",
+  "classification": "DURABLE AUTHORITATIVE CURRENT STATE",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "account_id",
+      "device_installation_id",
+      "state_store_schema_version",
+      "state_store_identity_fingerprint_sha256",
+      "environment",
+      "protected_freshness_generation",
+      "state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "history_tail_fingerprint_sha256"
+    ],
+    "properties": {
+      "account_id": "canonical M0.2 AccountId",
+      "device_installation_id": "canonical M0.2 DeviceInstallationId",
+      "state_store_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_store_identity_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "environment": {
+        "enum": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "protected_freshness_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "history_tail_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "unknown_authority_fields": "DENY",
+  "pin_verifier_record": "full canonical M0.10 PinVerifierRecord durable; raw PIN forbidden"
+}
+```
+
+## `durability_classification`
+
+```json
+{
+  "closed_classes": [
+    "DURABLE AUTHORITATIVE CURRENT STATE",
+    "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "DERIVED / REBUILDABLE",
+    "EPHEMERAL RUNTIME",
+    "EXTERNAL AUTHORITY / REFERENCE ONLY",
+    "SECRET PAYLOAD OUTSIDE DOMAIN"
+  ],
+  "records": {
+    "StateStoreMetadata": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "CryptoHunterAccount current record": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "DeviceInstallation current identity/lifecycle": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "OperatorIdentity current designation/state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "OperatorIdentity revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "LiveAccessGrant current designation/state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "LiveAccessGrant accepted revisions/history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "Workspace": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "Portfolio canonical accounting state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "Portfolio balance/P&L/NAV projections": "DERIVED / REBUILDABLE",
+    "ExchangeAccount": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "CredentialProfile metadata/reference": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "TradingUniverse current version/designation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "TradingUniverse version history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "StrategyDefinition accepted revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "StrategyDefinition current designation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "StrategyInstance current lifecycle/config": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "routing configuration/current designation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "routing readiness/reachability projection": "DERIVED / REBUILDABLE",
+    "RiskPolicy accepted revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "RiskPolicy current designation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "RiskBudget current state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "kill-switch state/generation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "kill-switch transition history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "Command accepted request": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "Event": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "OrderIntent": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "Order canonical lifecycle state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "Order lifecycle events/history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "Fill": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "LedgerEntry": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "reservation current state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "reservation transition history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "RiskDecision": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "ExecutionLease immutable record": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "ExecutionLease one-shot state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "ExecutionLease restart fence": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "RuntimeSession active process manifestation": "EPHEMERAL RUNTIME",
+    "RuntimeSession canonical identity/history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "SessionSecurityState current generation/state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "SessionSecurityState revision history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "PinVerifierRecord accepted revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "PinVerifierRecord current designation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "DeviceTrust/security revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "DeviceTrust current designation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "platform enrollment revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "AuthenticationProof": "EPHEMERAL RUNTIME",
+    "CoreIssuedAuthenticationProofBinding": "EPHEMERAL RUNTIME",
+    "PlatformBiometricAssertion": "EPHEMERAL RUNTIME",
+    "CoreAcceptedPlatformBiometricAssertionBinding": "EPHEMERAL RUNTIME",
+    "SecretMetadataProjection": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "secure-store payload": "SECRET PAYLOAD OUTSIDE DOMAIN",
+    "bootstrap consumed fence": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "bootstrap accepted/consumption history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "M0.3 restore freshness membership": "EXTERNAL AUTHORITY / REFERENCE ONLY",
+    "M0.3 current designation": "EXTERNAL AUTHORITY / REFERENCE ONLY",
+    "M0.3 retirement state": "EXTERNAL AUTHORITY / REFERENCE ONLY",
+    "LocalDurableStateEvidence payload": "DERIVED / REBUILDABLE",
+    "LocalDurableEvidence accepted/current registry/designation": "EPHEMERAL RUNTIME",
+    "Migration current state/designation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "Migration transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "SecretHandoff current state/designation": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "SecretHandoff transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
+  }
+}
+```
+
+## `transaction_protocol`
+
+```json
+{
+  "steps": [
+    "RESOLVE_EXACT_CURRENT_M0.3_AUTHORITY",
+    "M0.3_PREPARE_G_PLUS_1",
+    "PREPARE_LOCAL_SEMANTIC_TRANSACTION",
+    "ALL_OR_NOTHING_LOCAL_DURABLE_COMMIT_G_PLUS_1",
+    "TRUSTED_OBSERVER_PUBLISH_PROCESS_LOCAL_EVIDENCE",
+    "M0.3_FINALIZE",
+    "SUCCESS_AFTER_REQUIRED_DURABILITY_AND_FINALITY"
+  ],
+  "cross_resource_acid_claim": false,
+  "crash_matrix": {
+    "BEFORE_PREPARE": "NO_MUTATION_SAFE_RETRY_AFTER_FULL_VALIDATION",
+    "LOCAL_COMMIT_BEFORE_EVIDENCE": "RESTART_REBUILD_G_PLUS_1_FINALIZE_NO_SECOND_BUSINESS_COMMIT",
+    "EVIDENCE_BEFORE_FINALIZE": "RESTART_LOSES_REF_REBUILDS_AND_FINALIZES",
+    "FINALIZE_BEFORE_ACK": "CANONICAL_IDEMPOTENCY_OUTCOME_NO_REPEAT",
+    "GENESIS_PREPARED_NO_EVIDENCE": "GENESIS_PENDING_RECOVERY_REQUIRED_NO_ORDINARY_ABORT",
+    "PREPARED_LOCAL_G_AFTER_RESTART": "PREPARED_PENDING_RECOVERY_REQUIRED_NO_ABORT",
+    "LOCAL_G_PLUS_1_MATCHING_PENDING": "REBUILD_G_PLUS_1_EVIDENCE_AND_FINALIZE",
+    "LOCAL_G_PLUS_1_WAS_DURABLE_THEN_LOST_AND_G_RESTORED": "PREPARED_PENDING_RECOVERY_REQUIRED_NO_ABORT"
+  }
+}
+```
+
+## `protected_freshness_handoff`
+
+```json
+{
+  "owner": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+  "scope": [
+    "account_id",
+    "device_installation_id",
+    "state_store_identity_fingerprint_sha256"
+  ],
+  "forbidden": [
+    "mint membership",
+    "select current membership",
+    "retire/unretire membership",
+    "reference replacement",
+    "set protected generation",
+    "restore authority from backup"
+  ],
+  "m0_11_recovery_abort_policy": "NO_ORDINARY_NORMAL_ABORT_AFTER_PREPARE; reconstructed evidence G never clears pending G+1"
+}
+```
+
+## `startup_recovery_model`
+
+```json
+{
+  "evidence_policy": {
+    "local_durable_evidence_persisted_in_StateStore": false,
+    "local_durable_evidence_included_in_state_fingerprint": false,
+    "local_durable_evidence_included_in_BackupEnvelope": false,
+    "local_evidence_current_designation_persisted": false,
+    "local_evidence_registry_process_local": true,
+    "local_evidence_rebuild_source": "verified current durable StateStore observation",
+    "evidence_publication_is_StateStore_semantic_transaction": false,
+    "evidence_publication_advances_protected_freshness_generation": false
+  },
+  "trusted_observation_gates": [
+    "exact scope",
+    "StateStore integrity",
+    "authoritative/history integrity",
+    "durability confirmation",
+    "generation",
+    "state fingerprint",
+    "transaction fingerprint",
+    "current observed durable commit"
+  ],
+  "registry_restart": "EMPTY"
+}
+```
+
+## `runtime_session_persistence`
+
+```json
+{
+  "active_process": "EPHEMERAL RUNTIME",
+  "canonical_identity_history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+  "order": [
+    "create current runtime_session_id before StateStore open",
+    "recover writable StateStore",
+    "durably publish current RuntimeSession history",
+    "READY"
+  ],
+  "old_history_preserved": true,
+  "old_process_restored": false
+}
+```
+
+## `execution_lease_recovery`
+
+```json
+{
+  "authority": "M0.9",
+  "one_shot_states": [
+    "UNUSED",
+    "CONSUMED",
+    "UNKNOWN_RECONCILIATION"
+  ],
+  "restart_fence": [
+    "NONE",
+    "RESTART_FENCED"
+  ],
+  "pre_restart_unused": "RESTART_FENCED -> LEASE_STALE",
+  "consumed": "TERMINAL",
+  "unknown": "RECONCILIATION_REQUIRED_NO_BLIND_RESUBMIT"
+}
+```
+
+## `idempotency_and_accounting_recovery`
+
+```json
+{
+  "durable": [
+    "idempotency request fingerprint",
+    "canonical outcome",
+    "command/event relationship",
+    "order lifecycle",
+    "Fill",
+    "LedgerEntry",
+    "reservation state",
+    "reconciliation state"
+  ],
+  "invariants": [
+    "no repeated side effect",
+    "no duplicate Fill/Ledger",
+    "no double reservation release/consume"
+  ],
+  "reservation_id_added": false
+}
+```
+
+## `schema_versioning`
+
+```json
+{
+  "versions": [
+    "StateStore schema version",
+    "BackupEnvelope schema version"
+  ],
+  "forbidden": [
+    "global_version",
+    "component_version"
+  ],
+  "future_schema": "FAIL_CLOSED"
+}
+```
+
+## `migration_protocol`
+
+```json
+{
+  "record": "MigrationRecord",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "migration_id",
+      "source_schema_version",
+      "target_schema_version",
+      "ordered_path",
+      "scope",
+      "environment",
+      "pre_state_fingerprint_sha256",
+      "post_state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "protected_freshness_generation",
+      "rollback_policy"
+    ],
+    "properties": {
+      "migration_id": "canonical durable identifier",
+      "source_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "target_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "ordered_path": {
+        "type": "array"
+      },
+      "scope": [
+        "account_id",
+        "device_installation_id"
+      ],
+      "environment": {
+        "enum": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "pre_state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "post_state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "protected_freshness_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "rollback_policy": {
+        "const": "FORWARD_ONLY"
+      }
+    }
+  },
+  "states": [
+    "PREPARED",
+    "APPLYING",
+    "DURABLE_MIGRATED",
+    "COMPLETED",
+    "FAILED"
+  ],
+  "rollback_policy": "FORWARD_ONLY",
+  "authoritative_change_requires_m0_3_freshness": true,
+  "partial_state_promoted": false,
+  "restart": "IDEMPOTENT_RESUME",
+  "durable_lifecycle": {
+    "transition_record": "MigrationTransitionRecord",
+    "transition_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "migration_id",
+        "transition_revision",
+        "previous_state",
+        "state",
+        "transaction_fingerprint_sha256",
+        "state_fingerprint_sha256",
+        "protected_freshness_generation",
+        "transition_fingerprint_sha256"
+      ],
+      "properties": {
+        "migration_id": {
+          "type": "string"
+        },
+        "transition_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "boolean_allowed": false
+        },
+        "previous_state": {
+          "enum": [
+            null,
+            "PREPARED",
+            "APPLYING",
+            "DURABLE_MIGRATED",
+            "COMPLETED",
+            "FAILED"
+          ]
+        },
+        "state": {
+          "enum": [
+            "PREPARED",
+            "APPLYING",
+            "DURABLE_MIGRATED",
+            "COMPLETED",
+            "FAILED"
+          ]
+        },
+        "transaction_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "protected_freshness_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "boolean_allowed": false
+        },
+        "transition_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "current_record": "MigrationCurrentState",
+    "current_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "migration_id",
+        "current_transition_revision",
+        "state",
+        "authoritative_state_fingerprint_sha256",
+        "protected_freshness_generation",
+        "designation_fingerprint_sha256"
+      ],
+      "properties": {
+        "migration_id": {
+          "type": "string"
+        },
+        "current_transition_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "boolean_allowed": false
+        },
+        "state": {
+          "enum": [
+            "PREPARED",
+            "APPLYING",
+            "DURABLE_MIGRATED",
+            "COMPLETED",
+            "FAILED"
+          ]
+        },
+        "authoritative_state_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "protected_freshness_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "boolean_allowed": false
+        },
+        "designation_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "allowed_transitions": {
+      "PREPARED": [
+        "APPLYING",
+        "FAILED"
+      ],
+      "APPLYING": [
+        "DURABLE_MIGRATED",
+        "FAILED"
+      ],
+      "DURABLE_MIGRATED": [
+        "COMPLETED",
+        "FAILED"
+      ],
+      "COMPLETED": [],
+      "FAILED": []
+    },
+    "revision_policy": "positive contiguous revisions beginning at 1; identical duplicate is idempotent; conflicting tie, gap, or current mismatch fails closed",
+    "fingerprint_canonicalization": {
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "json": "sorted keys, compact separators, ensure_ascii=false",
+      "transition_projection": "all exact transition fields except transition_fingerprint_sha256",
+      "current_projection": "all exact current fields except designation_fingerprint_sha256"
+    }
+  },
+  "lifecycle_authority": {
+    "current": "MigrationCurrentState only",
+    "history": "MigrationTransitionRecord only",
+    "MigrationRecord": "immutable descriptor/plan; no state field"
+  }
+}
+```
+
+## `backup_contract`
+
+```json
+{
+  "candidate_only": true,
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "backup_envelope_schema_version",
+      "state_store_schema_version",
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "environment",
+      "local_protected_freshness_generation",
+      "state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "history_tail_fingerprint_sha256",
+      "canonical_durable_records",
+      "immutable_recovery_history",
+      "envelope_fingerprint_sha256",
+      "integrity_metadata"
+    ],
+    "properties": {
+      "backup_envelope_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_store_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "account_id": "canonical M0.2 AccountId",
+      "device_installation_id": "canonical M0.2 DeviceInstallationId",
+      "state_store_identity_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "environment": {
+        "enum": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "local_protected_freshness_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "history_tail_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "canonical_durable_records": {
+        "type": "array"
+      },
+      "immutable_recovery_history": {
+        "type": "array"
+      },
+      "envelope_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "integrity_metadata": {
+        "type": "object"
+      }
+    }
+  },
+  "contains": [
+    "canonical durable records",
+    "immutable recovery history",
+    "PinVerifierRecord including verifier",
+    "integrity metadata"
+  ],
+  "excludes": [
+    "M0.3 protected membership",
+    "M0.3 current external reference",
+    "M0.3 retirement registry",
+    "M0.3 external generation source of truth",
+    "LocalDurableStateEvidence payload",
+    "local evidence opaque references",
+    "local evidence accepted registry",
+    "local evidence current designation",
+    "raw PIN",
+    "API secret/password/private key/bearer token",
+    "secure-store payload",
+    "biometric material",
+    "AuthenticationProof authority",
+    "PlatformBiometricAssertion authority"
+  ],
+  "forbidden_record_kinds": [
+    "M0.3ProtectedMembership",
+    "M0.3CurrentReference",
+    "M0.3RetirementState",
+    "LocalDurableStateEvidence",
+    "LocalEvidenceRegistry",
+    "LocalEvidenceReference",
+    "LocalEvidenceCurrentDesignation",
+    "AuthenticationProof",
+    "CoreIssuedAuthenticationProofBinding",
+    "PlatformBiometricAssertion",
+    "CoreAcceptedPlatformBiometricAssertionBinding",
+    "SecureStorePayload"
+  ],
+  "forbidden_payload_fields": [
+    "raw_pin",
+    "api_secret",
+    "password",
+    "private_key",
+    "bearer_token",
+    "secure_store_payload",
+    "biometric_material",
+    "verifier"
+  ],
+  "pin_verifier_exception": "verifier allowed only as direct field of canonical PinVerifierRecord; forbidden in every other record and integrity metadata",
+  "envelope_fingerprint_canonicalization": {
+    "algorithm": "SHA-256",
+    "encoding": "UTF-8",
+    "json": "sorted keys, compact separators, ensure_ascii=false",
+    "projection": "all exact BackupEnvelope fields except envelope_fingerprint_sha256"
+  },
+  "representation_categories": [
+    "DIRECT_UPSTREAM_SCHEMA",
+    "M011_PERSISTENCE_PROJECTION_OF_UPSTREAM_FACTS",
+    "M011_CURRENT_DESIGNATION_PROJECTION",
+    "M011_IMMUTABLE_HISTORY_WRAPPER",
+    "M011_ENTITY_IDENTITY_PROJECTION",
+    "M011_LOCAL_SCHEMA",
+    "EXCLUDED_NON_DURABLE"
+  ],
+  "persistence_record_contract": {
+    "schema": "PersistenceRecord",
+    "domain_authority": false,
+    "self_hash_membership": false,
+    "deserialization_establishes_current_authority": false,
+    "record_key_policy": "existing canonical ID or exact upstream compound key/fingerprint plus revision/generation/designation discriminator; no new domain ID",
+    "category_validator_required": true,
+    "restore_promotion_later": true
+  },
+  "category_validation_strategy": {
+    "DIRECT_UPSTREAM_SCHEMA": "exact upstream closed payload/record contract validator",
+    "M011_PERSISTENCE_PROJECTION_OF_UPSTREAM_FACTS": "UpstreamFactsProjection exact schema plus per-field upstream source bindings",
+    "M011_CURRENT_DESIGNATION_PROJECTION": "CurrentDesignationProjection plus accepted-history/current-binding/monotonic validation",
+    "M011_IMMUTABLE_HISTORY_WRAPPER": "exact upstream immutable payload validator plus payload fingerprint",
+    "M011_ENTITY_IDENTITY_PROJECTION": "PersistentEntityIdentityProjection plus M0.2 entity/ID/relationship validation",
+    "M011_LOCAL_SCHEMA": "exact M0.11 executable boundary schema",
+    "EXCLUDED_NON_DURABLE": "no carrier"
+  },
+  "representation_registry": {
+    "StateStoreMetadata": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_LOCAL_SCHEMA",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/StateStoreMetadata",
+      "semantic_object_or_invariant": "StateStoreMetadata",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "StateStoreMetadata",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "457852623c8ff0e081541c9f71d1f815e23b1d622d5df635d048c23984b6633b",
+      "record_key_strategy": "STATE_STORE_SCOPE_GENERATION"
+    },
+    "CryptoHunterAccount current record": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_ENTITY_IDENTITY_PROJECTION",
+      "semantic_owner_milestone": "M0.2",
+      "semantic_artifact": "canonical_domain_vocabulary.json",
+      "semantic_json_pointer": "/entity_kinds",
+      "semantic_object_or_invariant": "CryptoHunterAccount current record",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "PersistentEntityIdentityProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+      "record_key_strategy": "CANONICAL_ENTITY_ID",
+      "payload_contract": {
+        "required_fields": [
+          "entity_kind",
+          "entity_id",
+          "parent_scope_bindings"
+        ],
+        "field_sources": {
+          "entity_kind": "/entity_kinds",
+          "entity_id": "/identifier_policy",
+          "parent_scope_bindings": "/relationships"
+        }
+      }
+    },
+    "DeviceInstallation current identity/lifecycle": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_PERSISTENCE_PROJECTION_OF_UPSTREAM_FACTS",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "DeviceInstallation current identity/lifecycle",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "UpstreamFactsProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+      "record_key_strategy": "FACT_SCOPE_OBJECT_GENERATION",
+      "fact_binding": {
+        "required_fact_fields": [
+          "account_id",
+          "device_installation_id",
+          "lifecycle_state",
+          "identity_revision",
+          "security_generation"
+        ],
+        "field_sources": {
+          "account_id": "/executable_boundary_schemas",
+          "device_installation_id": "/executable_boundary_schemas",
+          "lifecycle_state": "/executable_boundary_schemas",
+          "identity_revision": "/executable_boundary_schemas",
+          "security_generation": "/executable_boundary_schemas"
+        },
+        "scope_binding": "account_id",
+        "monotonic_fields": [
+          "identity_revision",
+          "security_generation"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false,
+            "id_prefix": "acct"
+          },
+          "device_installation_id": {
+            "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false,
+            "id_prefix": "dev"
+          },
+          "lifecycle_state": {
+            "type": "enum",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false,
+            "values": [
+              "ACTIVE",
+              "RETIRED"
+            ]
+          },
+          "identity_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "security_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          }
+        },
+        "record_key_object_fields": [
+          "account_id",
+          "device_installation_id",
+          "identity_revision",
+          "security_generation"
+        ]
+      }
+    },
+    "OperatorIdentity current designation/state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "OperatorIdentity current designation/state",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/executable_boundary_schemas",
+          "current_reference": "/executable_boundary_schemas",
+          "current_revision": "/executable_boundary_schemas",
+          "current_generation": "/executable_boundary_schemas",
+          "content_fingerprint_sha256": "/executable_boundary_schemas"
+        }
+      }
+    },
+    "OperatorIdentity revisions": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "OperatorIdentity revisions",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/executable_boundary_schemas",
+          "object_id": "/executable_boundary_schemas",
+          "scope_key": "/executable_boundary_schemas",
+          "revision": "/executable_boundary_schemas",
+          "state": "/executable_boundary_schemas",
+          "content_fingerprint_sha256": "/executable_boundary_schemas"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "operator_id",
+          "account_id",
+          "identity_revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "operator_id": {
+            "type": "canonical_id",
+            "id_prefix": "op",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "identity_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "operator_id"
+        ],
+        "scope_fields": [
+          "account_id"
+        ],
+        "revision_generation_fields": [
+          "identity_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "LiveAccessGrant current designation/state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "LiveAccessGrant current designation/state",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/executable_boundary_schemas",
+          "current_reference": "/executable_boundary_schemas",
+          "current_revision": "/executable_boundary_schemas",
+          "current_generation": "/executable_boundary_schemas",
+          "content_fingerprint_sha256": "/executable_boundary_schemas"
+        }
+      }
+    },
+    "LiveAccessGrant accepted revisions/history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "LiveAccessGrant accepted revisions/history",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/executable_boundary_schemas",
+          "object_id": "/executable_boundary_schemas",
+          "scope_key": "/executable_boundary_schemas",
+          "revision": "/executable_boundary_schemas",
+          "state": "/executable_boundary_schemas",
+          "content_fingerprint_sha256": "/executable_boundary_schemas"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "grant_id",
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "grant_revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "grant_id": {
+            "type": "canonical_id",
+            "id_prefix": "grant",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "operator_id": {
+            "type": "canonical_id",
+            "id_prefix": "op",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "device_installation_id": {
+            "type": "canonical_id",
+            "id_prefix": "dev",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "grant_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "grant_id"
+        ],
+        "scope_fields": [
+          "account_id",
+          "device_installation_id"
+        ],
+        "revision_generation_fields": [
+          "grant_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "Workspace": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_ENTITY_IDENTITY_PROJECTION",
+      "semantic_owner_milestone": "M0.2",
+      "semantic_artifact": "canonical_domain_vocabulary.json",
+      "semantic_json_pointer": "/entity_kinds",
+      "semantic_object_or_invariant": "Workspace",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "PersistentEntityIdentityProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+      "record_key_strategy": "CANONICAL_ENTITY_ID",
+      "payload_contract": {
+        "required_fields": [
+          "entity_kind",
+          "entity_id",
+          "parent_scope_bindings"
+        ],
+        "field_sources": {
+          "entity_kind": "/entity_kinds",
+          "entity_id": "/identifier_policy",
+          "parent_scope_bindings": "/relationships"
+        }
+      }
+    },
+    "Portfolio canonical accounting state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_PERSISTENCE_PROJECTION_OF_UPSTREAM_FACTS",
+      "semantic_owner_milestone": "M0.8",
+      "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
+      "semantic_json_pointer": "/rebuild_protocol",
+      "semantic_object_or_invariant": "Portfolio canonical accounting state",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "UpstreamFactsProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "e6bade298e6debc1c2972824f3b8fe2a177e15690e24868cde49e052648314a3",
+      "record_key_strategy": "FACT_SCOPE_OBJECT_GENERATION",
+      "fact_binding": {
+        "required_fact_fields": [
+          "account_id",
+          "workspace_id",
+          "portfolio_id",
+          "environment",
+          "accounting_generation",
+          "ledger_tail_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "account_id": "/rebuild_protocol",
+          "workspace_id": "/rebuild_protocol",
+          "portfolio_id": "/rebuild_protocol",
+          "environment": "/rebuild_protocol",
+          "accounting_generation": "/rebuild_protocol",
+          "ledger_tail_fingerprint_sha256": "/rebuild_protocol"
+        },
+        "scope_binding": "account_id",
+        "monotonic_fields": [
+          "accounting_generation"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "source_pointer": "/rebuild_protocol",
+            "nullable": false,
+            "id_prefix": "acct"
+          },
+          "workspace_id": {
+            "type": "canonical_id",
+            "source_pointer": "/rebuild_protocol",
+            "nullable": false,
+            "id_prefix": "ws"
+          },
+          "portfolio_id": {
+            "type": "canonical_id",
+            "source_pointer": "/rebuild_protocol",
+            "nullable": false,
+            "id_prefix": "port"
+          },
+          "environment": {
+            "type": "enum",
+            "source_pointer": "/rebuild_protocol",
+            "nullable": false,
+            "values": [
+              "PAPER",
+              "TESTNET",
+              "LIVE"
+            ]
+          },
+          "accounting_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/rebuild_protocol",
+            "nullable": false
+          },
+          "ledger_tail_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/rebuild_protocol",
+            "nullable": false
+          }
+        },
+        "record_key_object_fields": [
+          "account_id",
+          "workspace_id",
+          "portfolio_id",
+          "environment",
+          "accounting_generation"
+        ]
+      }
+    },
+    "Portfolio balance/P&L/NAV projections": {
+      "durability_class": "DERIVED / REBUILDABLE",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.8",
+      "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
+      "semantic_json_pointer": "/rebuild_protocol",
+      "semantic_object_or_invariant": "Portfolio balance/P&L/NAV projections",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "ExchangeAccount": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.5",
+      "semantic_artifact": "exchange_accounts_and_instruments.json",
+      "semantic_json_pointer": "/exchange_account_contract",
+      "semantic_object_or_invariant": "ExchangeAccount",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "f1f7b18513a53d107b6effe169e793e74f5c70c8df6261a25ee96a3012c51ed4",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "ExchangeAccount"
+    },
+    "CredentialProfile metadata/reference": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.5",
+      "semantic_artifact": "exchange_accounts_and_instruments.json",
+      "semantic_json_pointer": "/credential_profile_contract",
+      "semantic_object_or_invariant": "CredentialProfile metadata/reference",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "4fd7629e1161d250471bfbf22976674a1794fe508af1f455fdc057e7a533786a",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "CredentialProfile metadata/reference"
+    },
+    "TradingUniverse current version/designation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.5",
+      "semantic_artifact": "exchange_accounts_and_instruments.json",
+      "semantic_json_pointer": "/trading_universe_contract",
+      "semantic_object_or_invariant": "TradingUniverse current version/designation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "632ef17479bafeba77469220be6ef2ac9eb97a1e204aaf026e73b20862c400de",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/trading_universe_contract",
+          "current_reference": "/trading_universe_contract",
+          "current_revision": "/trading_universe_contract",
+          "current_generation": "/trading_universe_contract",
+          "content_fingerprint_sha256": "/trading_universe_contract"
+        }
+      }
+    },
+    "TradingUniverse version history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.5",
+      "semantic_artifact": "exchange_accounts_and_instruments.json",
+      "semantic_json_pointer": "/trading_universe_contract",
+      "semantic_object_or_invariant": "TradingUniverse version history",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "632ef17479bafeba77469220be6ef2ac9eb97a1e204aaf026e73b20862c400de",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/trading_universe_contract",
+          "object_id": "/trading_universe_contract",
+          "scope_key": "/trading_universe_contract",
+          "revision": "/trading_universe_contract",
+          "state": "/trading_universe_contract",
+          "content_fingerprint_sha256": "/trading_universe_contract"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "trading_universe_id",
+          "workspace_id",
+          "environment",
+          "universe_version",
+          "instrument_ids",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "trading_universe_id": {
+            "type": "canonical_id",
+            "id_prefix": "univ",
+            "source_pointer": "/trading_universe_contract",
+            "nullable": false
+          },
+          "workspace_id": {
+            "type": "canonical_id",
+            "id_prefix": "ws",
+            "source_pointer": "/trading_universe_contract",
+            "nullable": false
+          },
+          "environment": {
+            "type": "enum",
+            "values": [
+              "PAPER",
+              "TESTNET",
+              "LIVE"
+            ],
+            "source_pointer": "/trading_universe_contract",
+            "nullable": false
+          },
+          "universe_version": {
+            "type": "positive_integer",
+            "source_pointer": "/trading_universe_contract",
+            "nullable": false
+          },
+          "instrument_ids": {
+            "type": "array_of_canonical_id",
+            "id_prefix": "instr",
+            "source_pointer": "/trading_universe_contract",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/trading_universe_contract",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "trading_universe_id"
+        ],
+        "scope_fields": [
+          "workspace_id",
+          "environment"
+        ],
+        "revision_generation_fields": [
+          "universe_version"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "StrategyDefinition accepted revisions": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.6",
+      "semantic_artifact": "strategy_market_data_and_execution_routing.json",
+      "semantic_json_pointer": "/strategy_definition_contract",
+      "semantic_object_or_invariant": "StrategyDefinition accepted revisions",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "c85c745f41f5ad6085a0ba25014b740822972bc2596cecb74aa8f7f77fdc367f",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/strategy_definition_contract",
+          "object_id": "/strategy_definition_contract",
+          "scope_key": "/strategy_definition_contract",
+          "revision": "/strategy_definition_contract",
+          "state": "/strategy_definition_contract",
+          "content_fingerprint_sha256": "/strategy_definition_contract"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "strategy_definition_id",
+          "workspace_id",
+          "definition_revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "strategy_definition_id": {
+            "type": "canonical_id",
+            "id_prefix": "stratdef",
+            "source_pointer": "/strategy_definition_contract",
+            "nullable": false
+          },
+          "workspace_id": {
+            "type": "canonical_id",
+            "id_prefix": "ws",
+            "source_pointer": "/strategy_definition_contract",
+            "nullable": false
+          },
+          "definition_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/strategy_definition_contract",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/strategy_definition_contract",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/strategy_definition_contract",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "strategy_definition_id"
+        ],
+        "scope_fields": [
+          "workspace_id"
+        ],
+        "revision_generation_fields": [
+          "definition_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "StrategyDefinition current designation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.6",
+      "semantic_artifact": "strategy_market_data_and_execution_routing.json",
+      "semantic_json_pointer": "/strategy_definition_contract",
+      "semantic_object_or_invariant": "StrategyDefinition current designation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "c85c745f41f5ad6085a0ba25014b740822972bc2596cecb74aa8f7f77fdc367f",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/strategy_definition_contract",
+          "current_reference": "/strategy_definition_contract",
+          "current_revision": "/strategy_definition_contract",
+          "current_generation": "/strategy_definition_contract",
+          "content_fingerprint_sha256": "/strategy_definition_contract"
+        }
+      }
+    },
+    "StrategyInstance current lifecycle/config": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.6",
+      "semantic_artifact": "strategy_market_data_and_execution_routing.json",
+      "semantic_json_pointer": "/record_schemas/StrategyInstance",
+      "semantic_object_or_invariant": "StrategyInstance current lifecycle/config",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "25beb64c4743e1ba95714092c11bbc52f601016ca1a2c616ebca59429d2f25fc",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "StrategyInstance current lifecycle/config"
+    },
+    "routing configuration/current designation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.6",
+      "semantic_artifact": "strategy_market_data_and_execution_routing.json",
+      "semantic_json_pointer": "/route_readiness_contract",
+      "semantic_object_or_invariant": "routing configuration/current designation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "92dda02de1e327d248bc9e987701b33279534f48b57ac2a97104c8380d7c4c33",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/route_readiness_contract",
+          "current_reference": "/route_readiness_contract",
+          "current_revision": "/route_readiness_contract",
+          "current_generation": "/route_readiness_contract",
+          "content_fingerprint_sha256": "/route_readiness_contract"
+        }
+      }
+    },
+    "routing readiness/reachability projection": {
+      "durability_class": "DERIVED / REBUILDABLE",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.6",
+      "semantic_artifact": "strategy_market_data_and_execution_routing.json",
+      "semantic_json_pointer": "/route_readiness_contract",
+      "semantic_object_or_invariant": "routing readiness/reachability projection",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "RiskPolicy accepted revisions": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/risk_policy_contract",
+      "semantic_object_or_invariant": "RiskPolicy accepted revisions",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "8aeaf58a9325a5dae08e460827af7174b4ab928d1166e3492b6f3e1427885ee4",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/risk_policy_contract",
+          "object_id": "/risk_policy_contract",
+          "scope_key": "/risk_policy_contract",
+          "revision": "/risk_policy_contract",
+          "state": "/risk_policy_contract",
+          "content_fingerprint_sha256": "/risk_policy_contract"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "risk_policy_id",
+          "account_id",
+          "policy_revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "risk_policy_id": {
+            "type": "canonical_id",
+            "id_prefix": "rpol",
+            "source_pointer": "/risk_policy_contract",
+            "nullable": false
+          },
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/risk_policy_contract",
+            "nullable": false
+          },
+          "policy_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/risk_policy_contract",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/risk_policy_contract",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/risk_policy_contract",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "risk_policy_id"
+        ],
+        "scope_fields": [
+          "account_id"
+        ],
+        "revision_generation_fields": [
+          "policy_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "RiskPolicy current designation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/risk_policy_contract",
+      "semantic_object_or_invariant": "RiskPolicy current designation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "8aeaf58a9325a5dae08e460827af7174b4ab928d1166e3492b6f3e1427885ee4",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/risk_policy_contract",
+          "current_reference": "/risk_policy_contract",
+          "current_revision": "/risk_policy_contract",
+          "current_generation": "/risk_policy_contract",
+          "content_fingerprint_sha256": "/risk_policy_contract"
+        }
+      }
+    },
+    "RiskBudget current state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_PERSISTENCE_PROJECTION_OF_UPSTREAM_FACTS",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/risk_input_contract",
+      "semantic_object_or_invariant": "RiskBudget current state",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "UpstreamFactsProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "9afe5d44e5e88cc34409cf514e300ba151c5ba39fe9d49efbcc04d8bb8736c1c",
+      "record_key_strategy": "FACT_SCOPE_OBJECT_GENERATION",
+      "fact_binding": {
+        "required_fact_fields": [
+          "account_id",
+          "workspace_id",
+          "portfolio_id",
+          "environment",
+          "risk_scope_key",
+          "budget_state",
+          "risk_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "account_id": "/risk_input_contract",
+          "workspace_id": "/risk_input_contract",
+          "portfolio_id": "/risk_input_contract",
+          "environment": "/risk_input_contract",
+          "risk_scope_key": "/risk_input_contract",
+          "budget_state": "/risk_input_contract",
+          "risk_generation": "/risk_input_contract",
+          "content_fingerprint_sha256": "/risk_input_contract"
+        },
+        "scope_binding": "account_id",
+        "monotonic_fields": [
+          "risk_generation"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "source_pointer": "/risk_input_contract",
+            "nullable": false,
+            "id_prefix": "acct"
+          },
+          "workspace_id": {
+            "type": "canonical_id",
+            "source_pointer": "/risk_input_contract",
+            "nullable": false,
+            "id_prefix": "ws"
+          },
+          "portfolio_id": {
+            "type": "canonical_id",
+            "source_pointer": "/risk_input_contract",
+            "nullable": false,
+            "id_prefix": "port"
+          },
+          "environment": {
+            "type": "enum",
+            "source_pointer": "/risk_input_contract",
+            "nullable": false,
+            "values": [
+              "PAPER",
+              "TESTNET",
+              "LIVE"
+            ]
+          },
+          "risk_scope_key": {
+            "type": "compound_scope",
+            "source_pointer": "/risk_input_contract",
+            "nullable": false,
+            "components": [
+              "account_id",
+              "workspace_id",
+              "portfolio_id",
+              "environment"
+            ]
+          },
+          "budget_state": {
+            "type": "enum",
+            "source_pointer": "/risk_input_contract",
+            "nullable": false,
+            "values": [
+              "ACTIVE",
+              "EXHAUSTED",
+              "SUSPENDED"
+            ]
+          },
+          "risk_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/risk_input_contract",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/risk_input_contract",
+            "nullable": false
+          }
+        },
+        "record_key_object_fields": [
+          "account_id",
+          "workspace_id",
+          "portfolio_id",
+          "environment",
+          "risk_scope_key",
+          "risk_generation"
+        ]
+      }
+    },
+    "kill-switch state/generation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/kill_switch_contract",
+      "semantic_object_or_invariant": "kill-switch state/generation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "31e8ff723ed8258bb3693a43228095fb70c4ff209aac2697b7d4e7d7aaf281a9",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "kill-switch state/generation"
+    },
+    "kill-switch transition history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/kill_switch_contract",
+      "semantic_object_or_invariant": "kill-switch transition history",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "31e8ff723ed8258bb3693a43228095fb70c4ff209aac2697b7d4e7d7aaf281a9",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/kill_switch_contract",
+          "object_id": "/kill_switch_contract",
+          "scope_key": "/kill_switch_contract",
+          "revision": "/kill_switch_contract",
+          "state": "/kill_switch_contract",
+          "content_fingerprint_sha256": "/kill_switch_contract"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "scope_type",
+          "scope_id",
+          "environment",
+          "source_revision",
+          "generation",
+          "state",
+          "record_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "scope_type": {
+            "type": "non_empty_string",
+            "source_pointer": "/kill_switch_contract",
+            "nullable": false
+          },
+          "scope_id": {
+            "type": "non_empty_string",
+            "source_pointer": "/kill_switch_contract",
+            "nullable": false
+          },
+          "environment": {
+            "type": "enum",
+            "values": [
+              "PAPER",
+              "TESTNET",
+              "LIVE"
+            ],
+            "source_pointer": "/kill_switch_contract",
+            "nullable": false
+          },
+          "source_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/kill_switch_contract",
+            "nullable": false
+          },
+          "generation": {
+            "type": "non_empty_string",
+            "source_pointer": "/kill_switch_contract",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/kill_switch_contract",
+            "nullable": false
+          },
+          "record_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/kill_switch_contract",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "scope_id"
+        ],
+        "scope_fields": [
+          "scope_type",
+          "scope_id",
+          "environment"
+        ],
+        "revision_generation_fields": [
+          "source_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "Command accepted request": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.7",
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/command_registry",
+      "semantic_object_or_invariant": "Command accepted request",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "5f9e89f2b07dc3f6164513fcdc33f5a46098779b4e4a83d8bf38ab7dfc8fd7a7",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "Command accepted request"
+    },
+    "Event": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.7",
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/event_contract",
+      "semantic_object_or_invariant": "Event",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "c63d514a4546161798de2f7f90441821cd71653fba433c3577c6d7b630e4b6b2",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "Event"
+    },
+    "OrderIntent": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.7",
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/command_registry/SUBMIT_ORDER",
+      "semantic_object_or_invariant": "OrderIntent",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "864bc27bf55228d08b6592f2042a3f9a1f447eae661382bde0b380602369d748",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "OrderIntent"
+    },
+    "Order canonical lifecycle state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.7",
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/order_lifecycle",
+      "semantic_object_or_invariant": "Order canonical lifecycle state",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "48a514419aaa0863078e69ffc50c3acd4b37a06d873d257275fb68874cc840dd",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/order_lifecycle",
+          "current_reference": "/order_lifecycle",
+          "current_revision": "/order_lifecycle",
+          "current_generation": "/order_lifecycle",
+          "content_fingerprint_sha256": "/order_lifecycle"
+        }
+      }
+    },
+    "Order lifecycle events/history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.7",
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/order_lifecycle",
+      "semantic_object_or_invariant": "Order lifecycle events/history",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "48a514419aaa0863078e69ffc50c3acd4b37a06d873d257275fb68874cc840dd",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/order_lifecycle",
+          "object_id": "/order_lifecycle",
+          "scope_key": "/order_lifecycle",
+          "revision": "/order_lifecycle",
+          "state": "/order_lifecycle",
+          "content_fingerprint_sha256": "/order_lifecycle"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "audit_event_id",
+          "order_id",
+          "workspace_id",
+          "portfolio_id",
+          "environment",
+          "aggregate_version",
+          "event_type",
+          "event_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "audit_event_id": {
+            "type": "canonical_id",
+            "id_prefix": "evt",
+            "source_pointer": "/order_lifecycle",
+            "nullable": false
+          },
+          "order_id": {
+            "type": "canonical_id",
+            "id_prefix": "ord",
+            "source_pointer": "/order_lifecycle",
+            "nullable": false
+          },
+          "workspace_id": {
+            "type": "canonical_id",
+            "id_prefix": "ws",
+            "source_pointer": "/order_lifecycle",
+            "nullable": false
+          },
+          "portfolio_id": {
+            "type": "canonical_id",
+            "id_prefix": "port",
+            "source_pointer": "/order_lifecycle",
+            "nullable": false
+          },
+          "environment": {
+            "type": "enum",
+            "values": [
+              "PAPER",
+              "TESTNET",
+              "LIVE"
+            ],
+            "source_pointer": "/order_lifecycle",
+            "nullable": false
+          },
+          "aggregate_version": {
+            "type": "positive_integer",
+            "source_pointer": "/order_lifecycle",
+            "nullable": false
+          },
+          "event_type": {
+            "type": "non_empty_string",
+            "source_pointer": "/order_lifecycle",
+            "nullable": false
+          },
+          "event_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/order_lifecycle",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "audit_event_id"
+        ],
+        "scope_fields": [
+          "workspace_id",
+          "portfolio_id",
+          "environment"
+        ],
+        "revision_generation_fields": [
+          "aggregate_version"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "Fill": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.7",
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/fill_contract",
+      "semantic_object_or_invariant": "Fill",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "1846393d14f684fc2462eb12b5d92f9c18cfa8a0163b2a2f41fe88c913324d1b",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "Fill"
+    },
+    "LedgerEntry": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.8",
+      "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
+      "semantic_json_pointer": "/ledger_entry_schema",
+      "semantic_object_or_invariant": "LedgerEntry",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "c83f9bb9315ae1abf2a4720488c9f0677e9e15c5ec80dd54e1905f669614c0c3",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "LedgerEntry"
+    },
+    "reservation current state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.8",
+      "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
+      "semantic_json_pointer": "/reservation_protocol",
+      "semantic_object_or_invariant": "reservation current state",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "b3579e387a02b9f291468f5cc89a9ed650e4024a538cbb7f6f0c0818ed0c4641",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/reservation_protocol",
+          "current_reference": "/reservation_protocol",
+          "current_revision": "/reservation_protocol",
+          "current_generation": "/reservation_protocol",
+          "content_fingerprint_sha256": "/reservation_protocol"
+        }
+      }
+    },
+    "reservation transition history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.8",
+      "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
+      "semantic_json_pointer": "/reservation_protocol",
+      "semantic_object_or_invariant": "reservation transition history",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "b3579e387a02b9f291468f5cc89a9ed650e4024a538cbb7f6f0c0818ed0c4641",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/reservation_protocol",
+          "object_id": "/reservation_protocol",
+          "scope_key": "/reservation_protocol",
+          "revision": "/reservation_protocol",
+          "state": "/reservation_protocol",
+          "content_fingerprint_sha256": "/reservation_protocol"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "account_id",
+          "workspace_id",
+          "portfolio_id",
+          "environment",
+          "source_audit_event_id",
+          "transition_revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/reservation_protocol",
+            "nullable": false
+          },
+          "workspace_id": {
+            "type": "canonical_id",
+            "id_prefix": "ws",
+            "source_pointer": "/reservation_protocol",
+            "nullable": false
+          },
+          "portfolio_id": {
+            "type": "canonical_id",
+            "id_prefix": "port",
+            "source_pointer": "/reservation_protocol",
+            "nullable": false
+          },
+          "environment": {
+            "type": "enum",
+            "values": [
+              "PAPER",
+              "TESTNET",
+              "LIVE"
+            ],
+            "source_pointer": "/reservation_protocol",
+            "nullable": false
+          },
+          "source_audit_event_id": {
+            "type": "canonical_id",
+            "id_prefix": "evt",
+            "source_pointer": "/reservation_protocol",
+            "nullable": false
+          },
+          "transition_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/reservation_protocol",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/reservation_protocol",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/reservation_protocol",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "account_id"
+        ],
+        "scope_fields": [
+          "account_id",
+          "workspace_id",
+          "portfolio_id",
+          "environment"
+        ],
+        "revision_generation_fields": [
+          "transition_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "RiskDecision": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/RiskDecision",
+      "semantic_object_or_invariant": "RiskDecision",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "7eccd54c17ee9def7a4f151ec684fd8623f36299a1e6f5dfa1c3716c7a46d92a",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "RiskDecision"
+    },
+    "ExecutionLease immutable record": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/ExecutionLease",
+      "semantic_object_or_invariant": "ExecutionLease immutable record",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "ad15be8435c150c2b1bc914cb899442b2f6bc4e28e37120b487734722cadeefe",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "ExecutionLease immutable record"
+    },
+    "ExecutionLease one-shot state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/ExecutionLease",
+      "semantic_object_or_invariant": "ExecutionLease one-shot state",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "ad15be8435c150c2b1bc914cb899442b2f6bc4e28e37120b487734722cadeefe",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/executable_boundary_schemas/ExecutionLease",
+          "current_reference": "/executable_boundary_schemas/ExecutionLease",
+          "current_revision": "/executable_boundary_schemas/ExecutionLease",
+          "current_generation": "/executable_boundary_schemas/ExecutionLease",
+          "content_fingerprint_sha256": "/executable_boundary_schemas/ExecutionLease"
+        }
+      }
+    },
+    "ExecutionLease restart fence": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.9",
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/ExecutionLease",
+      "semantic_object_or_invariant": "ExecutionLease restart fence",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "ad15be8435c150c2b1bc914cb899442b2f6bc4e28e37120b487734722cadeefe",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/executable_boundary_schemas/ExecutionLease",
+          "current_reference": "/executable_boundary_schemas/ExecutionLease",
+          "current_revision": "/executable_boundary_schemas/ExecutionLease",
+          "current_generation": "/executable_boundary_schemas/ExecutionLease",
+          "content_fingerprint_sha256": "/executable_boundary_schemas/ExecutionLease"
+        }
+      }
+    },
+    "RuntimeSession active process manifestation": {
+      "durability_class": "EPHEMERAL RUNTIME",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.3",
+      "semantic_artifact": "process_topology_and_lifecycle.json",
+      "semantic_json_pointer": "/first_run_bootstrap_authority_contract",
+      "semantic_object_or_invariant": "RuntimeSession active process manifestation",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "RuntimeSession canonical identity/history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.3",
+      "semantic_artifact": "process_topology_and_lifecycle.json",
+      "semantic_json_pointer": "/first_run_bootstrap_authority_contract",
+      "semantic_object_or_invariant": "RuntimeSession canonical identity/history",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "df90a7d0d6972db16fee67bea285c60758e75615c2f583b57e5a62b0f7df752b",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/first_run_bootstrap_authority_contract",
+          "object_id": "/first_run_bootstrap_authority_contract",
+          "scope_key": "/first_run_bootstrap_authority_contract",
+          "revision": "/first_run_bootstrap_authority_contract",
+          "state": "/first_run_bootstrap_authority_contract",
+          "content_fingerprint_sha256": "/first_run_bootstrap_authority_contract"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "runtime_session_id",
+          "account_id",
+          "device_installation_id",
+          "session_revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "runtime_session_id": {
+            "type": "canonical_id",
+            "id_prefix": "sess",
+            "source_pointer": "/first_run_bootstrap_authority_contract",
+            "nullable": false
+          },
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/first_run_bootstrap_authority_contract",
+            "nullable": false
+          },
+          "device_installation_id": {
+            "type": "canonical_id",
+            "id_prefix": "dev",
+            "source_pointer": "/first_run_bootstrap_authority_contract",
+            "nullable": false
+          },
+          "session_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/first_run_bootstrap_authority_contract",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/first_run_bootstrap_authority_contract",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/first_run_bootstrap_authority_contract",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "runtime_session_id"
+        ],
+        "scope_fields": [
+          "account_id",
+          "device_installation_id"
+        ],
+        "revision_generation_fields": [
+          "session_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "SessionSecurityState current generation/state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/SessionSecurityState",
+      "semantic_object_or_invariant": "SessionSecurityState current generation/state",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "d00e3866c3106a98e7c2a1aa06c36442c4fcf29c8fca117e51b07ff1249a3a9a",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "SessionSecurityState current generation/state"
+    },
+    "SessionSecurityState revision history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/SessionSecurityState",
+      "semantic_object_or_invariant": "SessionSecurityState revision history",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "d00e3866c3106a98e7c2a1aa06c36442c4fcf29c8fca117e51b07ff1249a3a9a",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/executable_boundary_schemas/SessionSecurityState",
+          "object_id": "/executable_boundary_schemas/SessionSecurityState",
+          "scope_key": "/executable_boundary_schemas/SessionSecurityState",
+          "revision": "/executable_boundary_schemas/SessionSecurityState",
+          "state": "/executable_boundary_schemas/SessionSecurityState",
+          "content_fingerprint_sha256": "/executable_boundary_schemas/SessionSecurityState"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "runtime_session_id",
+          "state",
+          "session_generation",
+          "security_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            "nullable": false
+          },
+          "operator_id": {
+            "type": "canonical_id",
+            "id_prefix": "op",
+            "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            "nullable": false
+          },
+          "device_installation_id": {
+            "type": "canonical_id",
+            "id_prefix": "dev",
+            "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            "nullable": false
+          },
+          "runtime_session_id": {
+            "type": "canonical_id",
+            "id_prefix": "sess",
+            "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            "nullable": false
+          },
+          "session_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            "nullable": false
+          },
+          "security_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "account_id"
+        ],
+        "scope_fields": [
+          "account_id",
+          "device_installation_id"
+        ],
+        "revision_generation_fields": [
+          "session_generation",
+          "security_generation"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "PinVerifierRecord accepted revisions": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+      "semantic_object_or_invariant": "PinVerifierRecord accepted revisions",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "526f1ecdf3d3b497c52fcd45bed9620d5d6d7aeb1c7f09693a5192e4086cae04",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/executable_boundary_schemas/PinVerifierRecord",
+          "object_id": "/executable_boundary_schemas/PinVerifierRecord",
+          "scope_key": "/executable_boundary_schemas/PinVerifierRecord",
+          "revision": "/executable_boundary_schemas/PinVerifierRecord",
+          "state": "/executable_boundary_schemas/PinVerifierRecord",
+          "content_fingerprint_sha256": "/executable_boundary_schemas/PinVerifierRecord"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "account_id",
+          "operator_id",
+          "pin_revision",
+          "state",
+          "verifier",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "nullable": false
+          },
+          "operator_id": {
+            "type": "canonical_id",
+            "id_prefix": "op",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "nullable": false
+          },
+          "pin_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "nullable": false
+          },
+          "verifier": {
+            "type": "non_empty_object",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "account_id"
+        ],
+        "scope_fields": [
+          "account_id"
+        ],
+        "revision_generation_fields": [
+          "pin_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "PinVerifierRecord current designation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+      "semantic_object_or_invariant": "PinVerifierRecord current designation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "526f1ecdf3d3b497c52fcd45bed9620d5d6d7aeb1c7f09693a5192e4086cae04",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/executable_boundary_schemas/PinVerifierRecord",
+          "current_reference": "/executable_boundary_schemas/PinVerifierRecord",
+          "current_revision": "/executable_boundary_schemas/PinVerifierRecord",
+          "current_generation": "/executable_boundary_schemas/PinVerifierRecord",
+          "content_fingerprint_sha256": "/executable_boundary_schemas/PinVerifierRecord"
+        }
+      }
+    },
+    "DeviceTrust/security revisions": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+      "semantic_object_or_invariant": "DeviceTrust/security revisions",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "911d85d0951c8b807c4e4b7f042073ad15ad4863d1807916a89fedab353f53bb",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/executable_boundary_schemas/DeviceTrustProjection",
+          "object_id": "/executable_boundary_schemas/DeviceTrustProjection",
+          "scope_key": "/executable_boundary_schemas/DeviceTrustProjection",
+          "revision": "/executable_boundary_schemas/DeviceTrustProjection",
+          "state": "/executable_boundary_schemas/DeviceTrustProjection",
+          "content_fingerprint_sha256": "/executable_boundary_schemas/DeviceTrustProjection"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "account_id",
+          "device_installation_id",
+          "trust_revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+            "nullable": false
+          },
+          "device_installation_id": {
+            "type": "canonical_id",
+            "id_prefix": "dev",
+            "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+            "nullable": false
+          },
+          "trust_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "account_id"
+        ],
+        "scope_fields": [
+          "account_id",
+          "device_installation_id"
+        ],
+        "revision_generation_fields": [
+          "trust_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "DeviceTrust current designation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+      "semantic_object_or_invariant": "DeviceTrust current designation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "911d85d0951c8b807c4e4b7f042073ad15ad4863d1807916a89fedab353f53bb",
+      "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+      "payload_contract": {
+        "required_fields": [
+          "scope_key",
+          "current_reference",
+          "current_revision",
+          "current_generation",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "scope_key": "/executable_boundary_schemas/DeviceTrustProjection",
+          "current_reference": "/executable_boundary_schemas/DeviceTrustProjection",
+          "current_revision": "/executable_boundary_schemas/DeviceTrustProjection",
+          "current_generation": "/executable_boundary_schemas/DeviceTrustProjection",
+          "content_fingerprint_sha256": "/executable_boundary_schemas/DeviceTrustProjection"
+        }
+      }
+    },
+    "platform enrollment revisions": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/biometric_policy",
+      "semantic_object_or_invariant": "platform enrollment revisions",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "1edac9c6719c11347470529f4ff995cc8f6af451cdc46832fedcb80860efbbef",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "semantic_object",
+          "object_id",
+          "scope_key",
+          "revision",
+          "state",
+          "content_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "semantic_object": "/biometric_policy",
+          "object_id": "/biometric_policy",
+          "scope_key": "/biometric_policy",
+          "revision": "/biometric_policy",
+          "state": "/biometric_policy",
+          "content_fingerprint_sha256": "/biometric_policy"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "account_id",
+          "device_installation_id",
+          "enrollment_revision",
+          "state",
+          "platform_reference_fingerprint_sha256",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "id_prefix": "acct",
+            "source_pointer": "/biometric_policy",
+            "nullable": false
+          },
+          "device_installation_id": {
+            "type": "canonical_id",
+            "id_prefix": "dev",
+            "source_pointer": "/biometric_policy",
+            "nullable": false
+          },
+          "enrollment_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/biometric_policy",
+            "nullable": false
+          },
+          "state": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "ACTIVE",
+              "COMMITTED",
+              "CONSUMED",
+              "LOCKED",
+              "RECORDED",
+              "REVOKED",
+              "RETIRED",
+              "TRUSTED"
+            ],
+            "source_pointer": "/biometric_policy",
+            "nullable": false
+          },
+          "platform_reference_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/biometric_policy",
+            "nullable": false
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/biometric_policy",
+            "nullable": false
+          }
+        },
+        "canonical_object_identity_fields": [
+          "account_id"
+        ],
+        "scope_fields": [
+          "account_id",
+          "device_installation_id"
+        ],
+        "revision_generation_fields": [
+          "enrollment_revision"
+        ],
+        "nullable_fields": [],
+        "legal_immutable_state_field": "state",
+        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+      }
+    },
+    "AuthenticationProof": {
+      "durability_class": "EPHEMERAL RUNTIME",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "AuthenticationProof",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "CoreIssuedAuthenticationProofBinding": {
+      "durability_class": "EPHEMERAL RUNTIME",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "CoreIssuedAuthenticationProofBinding",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "PlatformBiometricAssertion": {
+      "durability_class": "EPHEMERAL RUNTIME",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "PlatformBiometricAssertion",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "CoreAcceptedPlatformBiometricAssertionBinding": {
+      "durability_class": "EPHEMERAL RUNTIME",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "CoreAcceptedPlatformBiometricAssertionBinding",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "SecretMetadataProjection": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/SecretMetadataProjection",
+      "semantic_object_or_invariant": "SecretMetadataProjection",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "eec388e6568803e5d66c0c8d7e1cbf63d9f5567149617799807cbc354a2c65cc",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "SecretMetadataProjection"
+    },
+    "secure-store payload": {
+      "durability_class": "SECRET PAYLOAD OUTSIDE DOMAIN",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "secure-store payload",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "bootstrap consumed fence": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_CURRENT_DESIGNATION_PROJECTION",
+      "semantic_owner_milestone": "M0.3",
+      "semantic_artifact": "process_topology_and_lifecycle.json",
+      "semantic_json_pointer": "/first_run_bootstrap_authority_contract/executable_schemas/CoreCurrentBootstrapState",
+      "semantic_object_or_invariant": "CoreCurrentBootstrapState",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "CurrentDesignationProjection",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "4e3a709ba5a2b0821433d75999b268563a9b6bddea812f17f1e41274ce17c58b",
+      "record_key_strategy": "BOOTSTRAP_SCOPE_STATE_REVISION"
+    },
+    "bootstrap accepted/consumption history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_owner_milestone": "M0.3",
+      "semantic_artifact": "process_topology_and_lifecycle.json",
+      "semantic_json_pointer": "/first_run_bootstrap_authority_contract/executable_schemas/ConsumedBootstrapAuthority",
+      "semantic_object_or_invariant": "ConsumedBootstrapAuthority",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "20585120d9bad1b6e2670c1cb886536cccb675b3dd4a2cd967524b26cb674c22",
+      "record_key_strategy": "BOOTSTRAP_SCOPE_GENERATION_REVISION_CLAIM"
+    },
+    "M0.3 restore freshness membership": {
+      "durability_class": "EXTERNAL AUTHORITY / REFERENCE ONLY",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.3",
+      "semantic_artifact": "process_topology_and_lifecycle.json",
+      "semantic_json_pointer": "/restore_freshness_authority_contract",
+      "semantic_object_or_invariant": "M0.3 restore freshness membership",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "semantic_contract_fingerprint_sha256": "e18d62bb5c74e6c484fa38363367cae60b45974b2a8449d2b988ace42b2f59e7",
+      "record_key_strategy": "NONE"
+    },
+    "M0.3 current designation": {
+      "durability_class": "EXTERNAL AUTHORITY / REFERENCE ONLY",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.3",
+      "semantic_artifact": "process_topology_and_lifecycle.json",
+      "semantic_json_pointer": "/restore_freshness_authority_contract",
+      "semantic_object_or_invariant": "M0.3 current designation",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "semantic_contract_fingerprint_sha256": "e18d62bb5c74e6c484fa38363367cae60b45974b2a8449d2b988ace42b2f59e7",
+      "record_key_strategy": "NONE"
+    },
+    "M0.3 retirement state": {
+      "durability_class": "EXTERNAL AUTHORITY / REFERENCE ONLY",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.3",
+      "semantic_artifact": "process_topology_and_lifecycle.json",
+      "semantic_json_pointer": "/restore_freshness_authority_contract",
+      "semantic_object_or_invariant": "M0.3 retirement state",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "semantic_contract_fingerprint_sha256": "e18d62bb5c74e6c484fa38363367cae60b45974b2a8449d2b988ace42b2f59e7",
+      "record_key_strategy": "NONE"
+    },
+    "LocalDurableStateEvidence payload": {
+      "durability_class": "DERIVED / REBUILDABLE",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "LocalDurableStateEvidence payload",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "LocalDurableEvidence accepted/current registry/designation": {
+      "durability_class": "EPHEMERAL RUNTIME",
+      "representation_category": "EXCLUDED_NON_DURABLE",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_object_or_invariant": "LocalDurableEvidence accepted/current registry/designation",
+      "carrier_strategy": "NONE",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "NO_PERSISTED_CARRIER",
+      "record_key_strategy": "NONE"
+    },
+    "Migration current state/designation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_LOCAL_SCHEMA",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/MigrationCurrentState",
+      "semantic_object_or_invariant": "Migration current state/designation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "MigrationCurrentState",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "373f053dc554f96e6b5bf0cb71e7e247c9063c2054aaa27a71644675abeae9d1",
+      "record_key_strategy": "MIGRATION_ID_CURRENT_REVISION"
+    },
+    "Migration transition/history revisions": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_LOCAL_SCHEMA",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/MigrationTransitionRecord",
+      "semantic_object_or_invariant": "Migration transition/history revisions",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "MigrationTransitionRecord",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "dbfb4057660044098fabce44b2b641b75ad61926fd88fff9029eac3fa3f08cca",
+      "record_key_strategy": "MIGRATION_ID_TRANSITION_REVISION"
+    },
+    "SecretHandoff current state/designation": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "M011_LOCAL_SCHEMA",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/SecretHandoffCurrentState",
+      "semantic_object_or_invariant": "SecretHandoff current state/designation",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "SecretHandoffCurrentState",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "80d6392f1101f7c33d047f87fa1a9c0506ebce58d9936b82c7537b8a6e811247",
+      "record_key_strategy": "HANDOFF_ID_CURRENT_REVISION"
+    },
+    "SecretHandoff transition/history revisions": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_LOCAL_SCHEMA",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/SecretHandoffTransitionRecord",
+      "semantic_object_or_invariant": "SecretHandoff transition/history revisions",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "SecretHandoffTransitionRecord",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "bc3f5ebe91ed245b3b360d003ef4f1ada7d48f62ac6b15c4ac103b2794f3d864",
+      "record_key_strategy": "HANDOFF_ID_TRANSITION_REVISION"
+    }
+  },
+  "canonical_durable_records": "array of exact PersistenceRecord carriers for durable current facts",
+  "immutable_recovery_history": "array of exact PersistenceRecord carriers for immutable history facts",
+  "synthetic_record_kinds_forbidden": true,
+  "persistence_record_validation_stages": {
+    "STAGE_1_INTRINSIC_CARRIER": [
+      "exact field/source/category",
+      "derived record_key",
+      "payload fingerprint",
+      "category-specific exact payload validation"
+    ],
+    "STAGE_2_RESTORE_RELATIONAL": [
+      "accepted/history membership",
+      "current binding",
+      "monotonic generation",
+      "revocation/retirement",
+      "bootstrap consumed-set equality",
+      "M0.3 freshness"
+    ],
+    "stage_1_establishes_authority": false,
+    "stage_2_requires_m0_3_freshness": true
+  },
+  "record_key_policy": {
+    "authority": "existing canonical payload facts only",
+    "prose_aspect_key_forbidden": true,
+    "arbitrary_nonempty_key_forbidden": true,
+    "collision_requirement": "different canonical object/revision/designation facts produce different keys"
+  },
+  "direct_upstream_validator_registry": {
+    "ExchangeAccount": {
+      "semantic_artifact": "exchange_accounts_and_instruments.json",
+      "semantic_json_pointer": "/exchange_account_contract",
+      "exact_fields": [
+        "exchange_account_id",
+        "portfolio_id",
+        "exchange_id",
+        "environment",
+        "market_type",
+        "display_name",
+        "lifecycle_state",
+        "connection_state",
+        "execution_authorization",
+        "external_account_identity_state",
+        "external_account_reference",
+        "external_subaccount_reference",
+        "active_credential_profile_id",
+        "account_capability_snapshot_id",
+        "created_at_utc",
+        "retired_at_utc"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "prefix": "port"
+        },
+        "exchange_id": {
+          "type": "non_empty_string"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "market_type": {
+          "type": "non_empty_string"
+        },
+        "display_name": {
+          "type": "non_empty_string"
+        },
+        "lifecycle_state": {
+          "type": "non_empty_string"
+        },
+        "connection_state": {
+          "type": "non_empty_string"
+        },
+        "execution_authorization": {
+          "type": "non_empty_string"
+        },
+        "external_account_identity_state": {
+          "type": "object",
+          "fields": [
+            "canonical_reference"
+          ],
+          "field_schemas": {
+            "canonical_reference": {
+              "type": "non_empty_string"
+            }
+          }
+        },
+        "external_account_reference": {
+          "type": "non_empty_string"
+        },
+        "external_subaccount_reference": {
+          "type": "non_empty_string"
+        },
+        "active_credential_profile_id": {
+          "type": "non_empty_string"
+        },
+        "account_capability_snapshot_id": {
+          "type": "non_empty_string"
+        },
+        "created_at_utc": {
+          "type": "timestamp"
+        },
+        "retired_at_utc": {
+          "type": "timestamp"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "exchange_account_id"
+      ]
+    },
+    "CredentialProfile metadata/reference": {
+      "semantic_artifact": "exchange_accounts_and_instruments.json",
+      "semantic_json_pointer": "/credential_profile_contract",
+      "exact_fields": [
+        "credential_profile_id",
+        "exchange_account_id",
+        "exchange_id",
+        "environment_scope",
+        "credential_purpose",
+        "secure_store_reference",
+        "public_key_identifier",
+        "permission_snapshot",
+        "lifecycle_state",
+        "created_at_utc",
+        "rotated_from_credential_profile_id",
+        "retired_at_utc"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "credential_profile_id": {
+          "type": "id",
+          "prefix": "cred"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "exchange_id": {
+          "type": "non_empty_string"
+        },
+        "environment_scope": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "credential_purpose": {
+          "type": "non_empty_string"
+        },
+        "secure_store_reference": {
+          "type": "non_empty_string"
+        },
+        "public_key_identifier": {
+          "type": "non_empty_string"
+        },
+        "permission_snapshot": {
+          "type": "array"
+        },
+        "lifecycle_state": {
+          "type": "non_empty_string"
+        },
+        "created_at_utc": {
+          "type": "timestamp"
+        },
+        "rotated_from_credential_profile_id": {
+          "type": "non_empty_string"
+        },
+        "retired_at_utc": {
+          "type": "timestamp"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "credential_profile_id"
+      ]
+    },
+    "StrategyInstance current lifecycle/config": {
+      "semantic_artifact": "strategy_market_data_and_execution_routing.json",
+      "semantic_json_pointer": "/record_schemas/StrategyInstance",
+      "exact_fields": [
+        "strategy_instance_id",
+        "workspace_id",
+        "portfolio_id",
+        "strategy_definition_id",
+        "strategy_definition_version",
+        "exchange_account_id",
+        "trading_universe_id",
+        "market_data_route_id",
+        "execution_route_id",
+        "lifecycle_state"
+      ],
+      "nullable_fields": [
+        "market_data_route_id",
+        "execution_route_id"
+      ],
+      "upstream_field_schemas": {
+        "strategy_instance_id": {
+          "type": "id",
+          "prefix": "stratinst"
+        },
+        "workspace_id": {
+          "type": "id",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "prefix": "port"
+        },
+        "strategy_definition_id": {
+          "type": "id",
+          "prefix": "stratdef"
+        },
+        "strategy_definition_version": {
+          "type": "positive_integer"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "trading_universe_id": {
+          "type": "id",
+          "prefix": "univ"
+        },
+        "market_data_route_id": {
+          "type": "non_empty_string"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "prefix": "xroute"
+        },
+        "lifecycle_state": {
+          "type": "non_empty_string"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "strategy_instance_id"
+      ]
+    },
+    "kill-switch state/generation": {
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/kill_switch_contract",
+      "exact_fields": [
+        "scope_type",
+        "scope_id",
+        "environment",
+        "state",
+        "source_revision",
+        "effective_at_utc",
+        "generation",
+        "accepted_authority_fingerprint_sha256",
+        "record_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "scope_type": {
+          "type": "non_empty_string"
+        },
+        "scope_id": {
+          "type": "non_empty_string"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "state": {
+          "type": "non_empty_string"
+        },
+        "source_revision": {
+          "type": "positive_integer"
+        },
+        "effective_at_utc": {
+          "type": "timestamp"
+        },
+        "generation": {
+          "type": "non_empty_string"
+        },
+        "accepted_authority_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "record_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "scope_type",
+        "scope_id",
+        "environment",
+        "generation"
+      ]
+    },
+    "Command accepted request": {
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/command_registry",
+      "exact_fields": [
+        "command_id",
+        "operation_type",
+        "authority_context_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "strategy_instance_id",
+        "source_type",
+        "instrument_id",
+        "execution_route_id",
+        "correlation_id",
+        "causation_id",
+        "idempotency_key",
+        "order_intent_id",
+        "order_id",
+        "side",
+        "order_type",
+        "quantity",
+        "limit_price",
+        "time_in_force",
+        "expire_at_utc"
+      ],
+      "nullable_fields": [
+        "strategy_instance_id",
+        "causation_id",
+        "limit_price",
+        "expire_at_utc"
+      ],
+      "upstream_field_schemas": {
+        "command_id": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "operation_type": {
+          "type": "constant",
+          "value": "SUBMIT_ORDER"
+        },
+        "authority_context_id": {
+          "type": "id",
+          "id_kind": "AuthorityContext",
+          "prefix": "authctx"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "id_kind": "Workspace",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "id_kind": "Portfolio",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "id_kind": "ExchangeAccount",
+          "prefix": "xacc"
+        },
+        "strategy_instance_id": {
+          "type": "id",
+          "id_kind": "StrategyInstance",
+          "prefix": "sinst"
+        },
+        "source_type": {
+          "type": "enum",
+          "values": [
+            "STRATEGY_INSTANCE",
+            "OPERATOR",
+            "SYSTEM_RECONCILIATION"
+          ]
+        },
+        "instrument_id": {
+          "type": "id",
+          "id_kind": "Instrument",
+          "prefix": "instr"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "id_kind": "ExecutionRoute",
+          "prefix": "xroute"
+        },
+        "correlation_id": {
+          "type": "id",
+          "id_kind": "Correlation",
+          "prefix": "corr"
+        },
+        "causation_id": {
+          "type": "id",
+          "id_kind": "Causation",
+          "prefix": "cause"
+        },
+        "idempotency_key": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "order_intent_id": {
+          "type": "id",
+          "id_kind": "OrderIntent",
+          "prefix": "oint"
+        },
+        "order_id": {
+          "type": "id",
+          "id_kind": "Order",
+          "prefix": "ord"
+        },
+        "side": {
+          "type": "enum",
+          "values": [
+            "BUY",
+            "SELL"
+          ]
+        },
+        "order_type": {
+          "type": "enum",
+          "values": [
+            "MARKET",
+            "LIMIT"
+          ]
+        },
+        "quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "limit_price": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "time_in_force": {
+          "type": "enum",
+          "values": [
+            "GTC",
+            "IOC",
+            "FOK",
+            "GTD"
+          ]
+        },
+        "expire_at_utc": {
+          "type": "timestamp"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "command_id"
+      ]
+    },
+    "Event": {
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/event_contract",
+      "exact_fields": [
+        "audit_event_id",
+        "event_type",
+        "order_id",
+        "aggregate_version",
+        "correlation_id",
+        "causation_id",
+        "command_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "execution_route_id",
+        "occurred_at_utc",
+        "safe_payload",
+        "event_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "audit_event_id": {
+          "type": "id",
+          "prefix": "evt"
+        },
+        "event_type": {
+          "type": "non_empty_string"
+        },
+        "order_id": {
+          "type": "id",
+          "prefix": "ord"
+        },
+        "aggregate_version": {
+          "type": "positive_integer"
+        },
+        "correlation_id": {
+          "type": "id",
+          "prefix": "corr"
+        },
+        "causation_id": {
+          "type": "id",
+          "prefix": "cause"
+        },
+        "command_id": {
+          "type": "id",
+          "prefix": "cmd"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "exchange_id": {
+          "type": "non_empty_string"
+        },
+        "instrument_id": {
+          "type": "id",
+          "prefix": "instr"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "prefix": "xroute"
+        },
+        "occurred_at_utc": {
+          "type": "timestamp"
+        },
+        "safe_payload": {
+          "type": "event_safe_payload"
+        },
+        "event_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "audit_event_id",
+        "aggregate_version"
+      ],
+      "semantic_constraints": {
+        "event_type": {
+          "pointer": "/event_contract/event_types"
+        },
+        "safe_payload": {
+          "pointer": "/event_contract/event_schema_registry"
+        }
+      }
+    },
+    "OrderIntent": {
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/command_registry/SUBMIT_ORDER",
+      "exact_fields": [
+        "command_id",
+        "operation_type",
+        "authority_context_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "strategy_instance_id",
+        "source_type",
+        "instrument_id",
+        "execution_route_id",
+        "correlation_id",
+        "causation_id",
+        "idempotency_key",
+        "order_intent_id",
+        "order_id",
+        "side",
+        "order_type",
+        "quantity",
+        "limit_price",
+        "time_in_force",
+        "expire_at_utc"
+      ],
+      "nullable_fields": [
+        "strategy_instance_id",
+        "causation_id",
+        "limit_price",
+        "expire_at_utc"
+      ],
+      "upstream_field_schemas": {
+        "command_id": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "operation_type": {
+          "type": "constant",
+          "value": "SUBMIT_ORDER"
+        },
+        "authority_context_id": {
+          "type": "id",
+          "id_kind": "AuthorityContext",
+          "prefix": "authctx"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "id_kind": "Workspace",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "id_kind": "Portfolio",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "id_kind": "ExchangeAccount",
+          "prefix": "xacc"
+        },
+        "strategy_instance_id": {
+          "type": "id",
+          "id_kind": "StrategyInstance",
+          "prefix": "sinst"
+        },
+        "source_type": {
+          "type": "enum",
+          "values": [
+            "STRATEGY_INSTANCE",
+            "OPERATOR",
+            "SYSTEM_RECONCILIATION"
+          ]
+        },
+        "instrument_id": {
+          "type": "id",
+          "id_kind": "Instrument",
+          "prefix": "instr"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "id_kind": "ExecutionRoute",
+          "prefix": "xroute"
+        },
+        "correlation_id": {
+          "type": "id",
+          "id_kind": "Correlation",
+          "prefix": "corr"
+        },
+        "causation_id": {
+          "type": "id",
+          "id_kind": "Causation",
+          "prefix": "cause"
+        },
+        "idempotency_key": {
+          "type": "id",
+          "id_kind": "Command",
+          "prefix": "cmd"
+        },
+        "order_intent_id": {
+          "type": "id",
+          "id_kind": "OrderIntent",
+          "prefix": "oint"
+        },
+        "order_id": {
+          "type": "id",
+          "id_kind": "Order",
+          "prefix": "ord"
+        },
+        "side": {
+          "type": "enum",
+          "values": [
+            "BUY",
+            "SELL"
+          ]
+        },
+        "order_type": {
+          "type": "enum",
+          "values": [
+            "MARKET",
+            "LIMIT"
+          ]
+        },
+        "quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "limit_price": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "time_in_force": {
+          "type": "enum",
+          "values": [
+            "GTC",
+            "IOC",
+            "FOK",
+            "GTD"
+          ]
+        },
+        "expire_at_utc": {
+          "type": "timestamp"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "order_intent_id"
+      ]
+    },
+    "Fill": {
+      "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "semantic_json_pointer": "/fill_contract",
+      "exact_fields": [
+        "fill_id",
+        "order_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "instrument_metadata_version",
+        "execution_route_id",
+        "venue_trade_id",
+        "side",
+        "executed_quantity",
+        "execution_price",
+        "executed_at_utc",
+        "fee_kind",
+        "fee_quantity",
+        "fee_asset_reference",
+        "fill_fingerprint_sha256"
+      ],
+      "nullable_fields": [
+        "fee_asset_reference"
+      ],
+      "upstream_field_schemas": {
+        "fill_id": {
+          "type": "id",
+          "prefix": "fill"
+        },
+        "order_id": {
+          "type": "id",
+          "prefix": "ord"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "exchange_id": {
+          "type": "non_empty_string"
+        },
+        "instrument_id": {
+          "type": "id",
+          "prefix": "instr"
+        },
+        "instrument_metadata_version": {
+          "type": "positive_integer"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "prefix": "xroute"
+        },
+        "venue_trade_id": {
+          "type": "non_empty_string"
+        },
+        "side": {
+          "type": "enum",
+          "values": [
+            "BUY",
+            "SELL"
+          ]
+        },
+        "executed_quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "execution_price": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "executed_at_utc": {
+          "type": "timestamp"
+        },
+        "fee_kind": {
+          "type": "enum",
+          "values": [
+            "NONE",
+            "CHARGE"
+          ]
+        },
+        "fee_quantity": {
+          "type": "decimal",
+          "constraint": "non_negative"
+        },
+        "fee_asset_reference": {
+          "type": "asset_reference",
+          "fields": [
+            "venue_asset_code",
+            "canonical_display_code",
+            "asset_namespace",
+            "mapping_status"
+          ],
+          "field_schemas": {
+            "venue_asset_code": {
+              "type": "non_empty_string"
+            },
+            "canonical_display_code": {
+              "type": "non_empty_string"
+            },
+            "asset_namespace": {
+              "type": "non_empty_string"
+            },
+            "mapping_status": {
+              "type": "enum",
+              "values": [
+                "EXACT",
+                "EXPLICIT_ALIAS"
+              ]
+            }
+          },
+          "rules": [
+            "exact M0.5 asset-reference value object",
+            "AMBIGUOUS and UNKNOWN forbidden",
+            "no default to base, quote, or settlement asset"
+          ]
+        },
+        "fill_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "fill_id"
+      ],
+      "semantic_constraints": {
+        "side": {
+          "values": [
+            "BUY",
+            "SELL"
+          ]
+        },
+        "fee_kind": {
+          "values": [
+            "NONE",
+            "CHARGE"
+          ]
+        },
+        "fee_semantics": {
+          "pointer": "/fill_contract/fee_semantics"
+        }
+      }
+    },
+    "LedgerEntry": {
+      "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
+      "semantic_json_pointer": "/ledger_entry_schema",
+      "exact_fields": [
+        "ledger_entry_id",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "exchange_account_id",
+        "strategy_instance_id",
+        "asset_reference",
+        "account_role",
+        "direction",
+        "quantity",
+        "source_type",
+        "accounting_source_identity",
+        "accounting_source_fingerprint_sha256",
+        "accounting_rule_version",
+        "posting_index",
+        "posting_role",
+        "batch_fingerprint_sha256",
+        "effective_at_utc",
+        "append_sequence",
+        "order_id",
+        "fill_id",
+        "audit_event_id",
+        "correction_reason"
+      ],
+      "nullable_fields": [
+        "exchange_account_id",
+        "strategy_instance_id",
+        "order_id",
+        "fill_id",
+        "audit_event_id",
+        "correction_reason"
+      ],
+      "upstream_field_schemas": {
+        "ledger_entry_id": {
+          "type": "id",
+          "prefix": "led"
+        },
+        "workspace_id": {
+          "type": "id",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "prefix": "port"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "strategy_instance_id": {
+          "type": "id",
+          "prefix": "stratinst"
+        },
+        "asset_reference": {
+          "type": "asset_reference",
+          "fields": [
+            "venue_asset_code",
+            "canonical_display_code",
+            "asset_namespace",
+            "mapping_status"
+          ],
+          "field_schemas": {
+            "venue_asset_code": {
+              "type": "non_empty_string"
+            },
+            "canonical_display_code": {
+              "type": "non_empty_string"
+            },
+            "asset_namespace": {
+              "type": "non_empty_string"
+            },
+            "mapping_status": {
+              "type": "enum",
+              "values": [
+                "EXACT",
+                "EXPLICIT_ALIAS"
+              ]
+            }
+          }
+        },
+        "account_role": {
+          "type": "non_empty_string"
+        },
+        "direction": {
+          "type": "non_empty_string"
+        },
+        "quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "source_type": {
+          "type": "non_empty_string"
+        },
+        "accounting_source_identity": {
+          "type": "non_empty_string"
+        },
+        "accounting_source_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "accounting_rule_version": {
+          "type": "positive_integer"
+        },
+        "posting_index": {
+          "type": "positive_integer"
+        },
+        "posting_role": {
+          "type": "non_empty_string"
+        },
+        "batch_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "effective_at_utc": {
+          "type": "timestamp"
+        },
+        "append_sequence": {
+          "type": "positive_integer"
+        },
+        "order_id": {
+          "type": "id",
+          "prefix": "ord"
+        },
+        "fill_id": {
+          "type": "id",
+          "prefix": "fill"
+        },
+        "audit_event_id": {
+          "type": "id",
+          "prefix": "evt"
+        },
+        "correction_reason": {
+          "type": "non_empty_string"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "ledger_entry_id",
+        "append_sequence"
+      ],
+      "semantic_constraints": {
+        "direction": {
+          "pointer": "/ledger_entry_schema/direction_registry"
+        },
+        "posting_role": {
+          "pointer": "/ledger_entry_schema/posting_role_registry"
+        }
+      }
+    },
+    "RiskDecision": {
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/RiskDecision",
+      "exact_fields": [
+        "command_id",
+        "command_request_fingerprint_sha256",
+        "order_id",
+        "scope_binding",
+        "environment",
+        "effective_policy_fingerprint_sha256",
+        "pre_reservation_accounting_projection_fingerprint_sha256",
+        "reservation_requirement_fingerprint_sha256",
+        "evaluated_at_utc",
+        "ordered_limit_results",
+        "kill_switch_result",
+        "kill_switch_fence_sha256",
+        "decision",
+        "decision_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "command_id": {
+          "type": "id",
+          "prefix": "cmd"
+        },
+        "command_request_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "order_id": {
+          "type": "id",
+          "prefix": "ord"
+        },
+        "scope_binding": {
+          "type": "object",
+          "fields": [
+            "canonical_reference"
+          ],
+          "field_schemas": {
+            "canonical_reference": {
+              "type": "non_empty_string"
+            }
+          }
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "effective_policy_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "pre_reservation_accounting_projection_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "reservation_requirement_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "evaluated_at_utc": {
+          "type": "timestamp"
+        },
+        "ordered_limit_results": {
+          "type": "array"
+        },
+        "kill_switch_result": {
+          "type": "non_empty_string"
+        },
+        "kill_switch_fence_sha256": {
+          "type": "sha256_hex"
+        },
+        "decision": {
+          "type": "non_empty_string"
+        },
+        "decision_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "command_id",
+        "decision_fingerprint_sha256"
+      ],
+      "semantic_constraints": {
+        "decision": {
+          "pointer": "/risk_decision_contract/decisions"
+        }
+      }
+    },
+    "ExecutionLease immutable record": {
+      "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/ExecutionLease",
+      "exact_fields": [
+        "execution_lease_id",
+        "command_id",
+        "command_request_fingerprint_sha256",
+        "order_id",
+        "order_intent_id",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "instrument_metadata_version",
+        "execution_route_id",
+        "strategy_instance_id",
+        "source_identity",
+        "side",
+        "order_type",
+        "quantity",
+        "limit_price",
+        "time_in_force",
+        "order_expire_at_utc",
+        "effective_policy_bindings",
+        "effective_policy_fingerprint_sha256",
+        "kill_switch_bindings",
+        "kill_switch_fence_sha256",
+        "pre_reservation_accounting_projection_fingerprint_sha256",
+        "post_reservation_accounting_projection_fingerprint_sha256",
+        "risk_decision_fingerprint_sha256",
+        "reservation_source_audit_event_id",
+        "reservation_source_fingerprint_sha256",
+        "reservation_state_fingerprint_sha256",
+        "reservation_asset_reference",
+        "reservation_original_quantity",
+        "reservation_remaining_quantity",
+        "issued_at_utc",
+        "expires_at_utc",
+        "lease_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "execution_lease_id": {
+          "type": "id",
+          "prefix": "lease"
+        },
+        "command_id": {
+          "type": "id",
+          "prefix": "cmd"
+        },
+        "command_request_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "order_id": {
+          "type": "id",
+          "prefix": "ord"
+        },
+        "order_intent_id": {
+          "type": "id",
+          "prefix": "oint"
+        },
+        "workspace_id": {
+          "type": "id",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "prefix": "port"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "exchange_id": {
+          "type": "non_empty_string"
+        },
+        "instrument_id": {
+          "type": "id",
+          "prefix": "instr"
+        },
+        "instrument_metadata_version": {
+          "type": "positive_integer"
+        },
+        "execution_route_id": {
+          "type": "id",
+          "prefix": "xroute"
+        },
+        "strategy_instance_id": {
+          "type": "id",
+          "prefix": "stratinst"
+        },
+        "source_identity": {
+          "type": "object",
+          "fields": [
+            "canonical_reference"
+          ],
+          "field_schemas": {
+            "canonical_reference": {
+              "type": "non_empty_string"
+            }
+          }
+        },
+        "side": {
+          "type": "non_empty_string"
+        },
+        "order_type": {
+          "type": "non_empty_string"
+        },
+        "quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "limit_price": {
+          "type": "non_empty_string"
+        },
+        "time_in_force": {
+          "type": "non_empty_string"
+        },
+        "order_expire_at_utc": {
+          "type": "timestamp"
+        },
+        "effective_policy_bindings": {
+          "type": "array"
+        },
+        "effective_policy_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "kill_switch_bindings": {
+          "type": "array"
+        },
+        "kill_switch_fence_sha256": {
+          "type": "sha256_hex"
+        },
+        "pre_reservation_accounting_projection_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "post_reservation_accounting_projection_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "risk_decision_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "reservation_source_audit_event_id": {
+          "type": "non_empty_string"
+        },
+        "reservation_source_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "reservation_state_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "reservation_asset_reference": {
+          "type": "asset_reference",
+          "fields": [
+            "venue_asset_code",
+            "canonical_display_code",
+            "asset_namespace",
+            "mapping_status"
+          ],
+          "field_schemas": {
+            "venue_asset_code": {
+              "type": "non_empty_string"
+            },
+            "canonical_display_code": {
+              "type": "non_empty_string"
+            },
+            "asset_namespace": {
+              "type": "non_empty_string"
+            },
+            "mapping_status": {
+              "type": "enum",
+              "values": [
+                "EXACT",
+                "EXPLICIT_ALIAS"
+              ]
+            }
+          }
+        },
+        "reservation_original_quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "reservation_remaining_quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "issued_at_utc": {
+          "type": "timestamp"
+        },
+        "expires_at_utc": {
+          "type": "timestamp"
+        },
+        "lease_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "execution_lease_id"
+      ]
+    },
+    "SessionSecurityState current generation/state": {
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/SessionSecurityState",
+      "exact_fields": [
+        "account_id",
+        "operator_id",
+        "device_installation_id",
+        "runtime_session_id",
+        "state",
+        "session_generation",
+        "security_generation",
+        "content_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "account_id": {
+          "type": "id",
+          "prefix": "acct"
+        },
+        "operator_id": {
+          "type": "id",
+          "prefix": "op"
+        },
+        "device_installation_id": {
+          "type": "id",
+          "prefix": "dev"
+        },
+        "runtime_session_id": {
+          "type": "id",
+          "prefix": "sess"
+        },
+        "state": {
+          "type": "non_empty_string"
+        },
+        "session_generation": {
+          "type": "positive_integer"
+        },
+        "security_generation": {
+          "type": "positive_integer"
+        },
+        "content_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "account_id",
+        "operator_id",
+        "device_installation_id",
+        "runtime_session_id",
+        "session_generation",
+        "security_generation"
+      ],
+      "semantic_constraints": {
+        "state": {
+          "pointer": "/registries/session_states"
+        }
+      }
+    },
+    "SecretMetadataProjection": {
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/SecretMetadataProjection",
+      "exact_fields": [
+        "secret_reference",
+        "secret_kind",
+        "exchange_account_id",
+        "credential_profile_id",
+        "exchange_id",
+        "environment",
+        "permitted_operations",
+        "secret_revision",
+        "state",
+        "content_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "secret_reference": {
+          "type": "non_empty_string"
+        },
+        "secret_kind": {
+          "type": "enum",
+          "values": [
+            "API_KEY",
+            "API_SECRET",
+            "PASSPHRASE",
+            "PRIVATE_KEY"
+          ]
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "credential_profile_id": {
+          "type": "id",
+          "prefix": "cred"
+        },
+        "exchange_id": {
+          "type": "non_empty_string"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "permitted_operations": {
+          "type": "array"
+        },
+        "secret_revision": {
+          "type": "positive_integer"
+        },
+        "state": {
+          "type": "non_empty_string"
+        },
+        "content_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "secret_reference",
+        "secret_revision"
+      ],
+      "semantic_constraints": {
+        "secret_kind": {
+          "pointer": "/registries/secret_kinds"
+        },
+        "state": {
+          "pointer": "/registries/secret_states"
+        },
+        "secret_reference": {
+          "pointer": "/secret_reference_policy"
+        }
+      }
+    }
+  },
+  "direct_upstream_schema_policy": {
+    "placeholder_semantic_object_canonical_fields_forbidden": true,
+    "every_direct_row_resolves_exact_upstream_fields": true,
+    "recomputed_carrier_hash_cannot_bypass_payload_validator": true
+  },
+  "lifecycle_record_key_discriminators": {
+    "MIGRATION_ID_TRANSITION_REVISION": "migration-transition",
+    "MIGRATION_ID_CURRENT_REVISION": "migration-current",
+    "HANDOFF_ID_TRANSITION_REVISION": "handoff-transition",
+    "HANDOFF_ID_CURRENT_REVISION": "handoff-current"
+  }
+}
+```
+
+## `restore_contract`
+
+```json
+{
+  "result": "RestoreValidationResult is transport/result only, never authority",
+  "promotion_gates": [
+    "envelope integrity/version",
+    "exact scope",
+    "exact environment",
+    "canonical IDs/history consistency",
+    "external M0.3 current membership",
+    "protected authority available, well-formed, current and non-retired",
+    "generation/state fingerprint comparison",
+    "monotonic security/risk/accounting fences",
+    "migration through M0.3 freshness if required",
+    "durable local restore",
+    "fresh process-local LocalDurableStateEvidence",
+    "external reconciliation/finalization",
+    "promotion after all gates"
+  ],
+  "b1": "external G+N rejects durable candidate G as BACKUP_ROLLBACK_DETECTED",
+  "never_resurrect": [
+    "consumed bootstrap",
+    "retired M0.3 reference",
+    "revoked DeviceInstallation",
+    "revoked OperatorIdentity",
+    "old PIN revision/security_generation",
+    "stale SessionSecurityState",
+    "revoked LiveAccessGrant ID",
+    "consumed ExecutionLease",
+    "lower kill-switch generation",
+    "stale idempotency outcome"
+  ],
+  "external_authority_observation": {
+    "common_required": [
+      "available",
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "environment",
+      "membership_state",
+      "lifecycle"
+    ],
+    "membership_state": [
+      "CURRENT",
+      "RETIRED"
+    ],
+    "lifecycle": [
+      "UNINITIALIZED",
+      "PREPARED",
+      "COMMITTED"
+    ],
+    "field_presence_by_lifecycle": {
+      "UNINITIALIZED": {
+        "required": [],
+        "forbidden": [
+          "committed_generation",
+          "committed_state_fingerprint_sha256",
+          "prepared_generation",
+          "prepared_state_fingerprint_sha256",
+          "prepared_transaction_fingerprint_sha256"
+        ]
+      },
+      "PREPARED": {
+        "cases": {
+          "GENESIS": {
+            "required": [
+              "prepared_generation",
+              "prepared_state_fingerprint_sha256",
+              "prepared_transaction_fingerprint_sha256"
+            ],
+            "forbidden": [
+              "committed_generation",
+              "committed_state_fingerprint_sha256"
+            ],
+            "constraints": [
+              "prepared_generation == 1",
+              "ordinary abort forbidden"
+            ]
+          },
+          "NORMAL": {
+            "required": [
+              "committed_generation",
+              "committed_state_fingerprint_sha256",
+              "prepared_generation",
+              "prepared_state_fingerprint_sha256",
+              "prepared_transaction_fingerprint_sha256"
+            ],
+            "constraints": [
+              "committed_generation positive non-bool",
+              "prepared_generation == committed_generation + 1",
+              "ordinary abort requires exact accepted/current evidence G and post-abort observation"
+            ]
+          }
+        }
+      },
+      "COMMITTED": {
+        "required": [
+          "committed_generation",
+          "committed_state_fingerprint_sha256"
+        ],
+        "forbidden": [
+          "prepared_generation",
+          "prepared_state_fingerprint_sha256",
+          "prepared_transaction_fingerprint_sha256"
+        ]
+      }
+    },
+    "variant_discriminator": "For PREPARED: absence of both committed fields means GENESIS; presence of both means NORMAL; partial presence fails closed"
+  },
+  "generation_matrix": {
+    "COMMITTED_candidate_behind": "BACKUP_ROLLBACK_DETECTED",
+    "COMMITTED_exact_matching": "CONTINUE_REMAINING_GATES",
+    "COMMITTED_exact_mismatch": "BACKUP_ROLLBACK_DETECTED",
+    "COMMITTED_candidate_ahead_without_PREPARED": "CONTRACT_INCONSISTENT",
+    "PREPARED_exact_pending_match": "REBUILD_FRESH_EVIDENCE_THEN_FINALIZE_MATCHING_PENDING",
+    "PREPARED_candidate_at_committed": "RECOVERY_REQUIRED_PENDING_RETAINED_NO_ABORT",
+    "GENESIS_PREPARED_1_without_durable": "GENESIS_PENDING_RECOVERY_REQUIRED",
+    "candidate_ahead_of_prepared": "CONTRACT_INCONSISTENT",
+    "same_generation_content_mismatch": "BACKUP_ROLLBACK_DETECTED",
+    "candidate_self_declares_freshness": false,
+    "UNINITIALIZED_candidate_generation_1_without_PREPARE": "CONTRACT_INCONSISTENT",
+    "GENESIS_PREPARED_1_no_local_durable": "GENESIS_PENDING_RECOVERY_REQUIRED",
+    "GENESIS_PREPARED_1_exact_durable": "REBUILD_FRESH_EVIDENCE_THEN_FINALIZE_MATCHING_PENDING",
+    "GENESIS_PREPARED_1_mismatch": "BACKUP_ROLLBACK_DETECTED_PENDING_PRESERVED",
+    "NORMAL_PREPARED_candidate_at_committed": "RECOVERY_REQUIRED_PENDING_RETAINED_NO_ABORT",
+    "LOCAL_G_PLUS_1_WAS_DURABLE_THEN_LOST_AND_G_RESTORED": "RECOVERY_REQUIRED_PENDING_RETAINED_NO_ABORT"
+  }
+}
+```
+
+## `secret_persistence_boundary`
+
+```json
+{
+  "domain_store": "canonical metadata/references only",
+  "payload": "external protected secure store",
+  "common_acid_claim": false,
+  "reference_grammar": "exact M0.10",
+  "audit_excludes": [
+    "raw PIN",
+    "verifier",
+    "secret payload"
+  ]
+}
+```
+
+## `external_resource_handoff`
+
+```json
+{
+  "record": "SecretHandoffRecord",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "handoff_id",
+      "scope",
+      "operation",
+      "old_reference",
+      "new_reference",
+      "metadata_fingerprint_sha256",
+      "operation_fingerprint_sha256",
+      "reconciliation_metadata"
+    ],
+    "properties": {
+      "handoff_id": "canonical durable identifier",
+      "scope": [
+        "account_id",
+        "device_installation_id"
+      ],
+      "operation": {
+        "type": "string"
+      },
+      "old_reference": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "new_reference": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "metadata_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "operation_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "reconciliation_metadata": {
+        "type": "object"
+      }
+    }
+  },
+  "states": [
+    "PREPARED",
+    "COMMITTED",
+    "CLEANUP_PENDING",
+    "UNKNOWN_RECONCILIATION"
+  ],
+  "secret_payload_fields": 0,
+  "unknown_outcome": "RECONCILIATION_REQUIRED_NO_BLIND_RETRY",
+  "durable_lifecycle": {
+    "transition_record": "SecretHandoffTransitionRecord",
+    "transition_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "handoff_id",
+        "transition_revision",
+        "previous_state",
+        "state",
+        "operation_fingerprint_sha256",
+        "metadata_fingerprint_sha256",
+        "transition_fingerprint_sha256"
+      ],
+      "properties": {
+        "handoff_id": {
+          "type": "string"
+        },
+        "transition_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "boolean_allowed": false
+        },
+        "previous_state": {
+          "enum": [
+            null,
+            "PREPARED",
+            "COMMITTED",
+            "CLEANUP_PENDING",
+            "UNKNOWN_RECONCILIATION"
+          ]
+        },
+        "state": {
+          "enum": [
+            "PREPARED",
+            "COMMITTED",
+            "CLEANUP_PENDING",
+            "UNKNOWN_RECONCILIATION"
+          ]
+        },
+        "operation_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "metadata_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "transition_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "current_record": "SecretHandoffCurrentState",
+    "current_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "handoff_id",
+        "current_transition_revision",
+        "state",
+        "operation_fingerprint_sha256",
+        "designation_fingerprint_sha256"
+      ],
+      "properties": {
+        "handoff_id": {
+          "type": "string"
+        },
+        "current_transition_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "boolean_allowed": false
+        },
+        "state": {
+          "enum": [
+            "PREPARED",
+            "COMMITTED",
+            "CLEANUP_PENDING",
+            "UNKNOWN_RECONCILIATION"
+          ]
+        },
+        "operation_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "designation_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "allowed_transitions": {
+      "PREPARED": [
+        "COMMITTED",
+        "UNKNOWN_RECONCILIATION"
+      ],
+      "COMMITTED": [
+        "CLEANUP_PENDING"
+      ],
+      "CLEANUP_PENDING": [],
+      "UNKNOWN_RECONCILIATION": []
+    },
+    "revision_policy": "positive contiguous revisions beginning at 1; identical duplicate is idempotent; conflicting tie, gap, or current mismatch fails closed",
+    "fingerprint_canonicalization": {
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "json": "sorted keys, compact separators, ensure_ascii=false",
+      "transition_projection": "all exact transition fields except transition_fingerprint_sha256",
+      "current_projection": "all exact current fields except designation_fingerprint_sha256"
+    }
+  },
+  "lifecycle_authority": {
+    "current": "SecretHandoffCurrentState only",
+    "history": "SecretHandoffTransitionRecord only",
+    "SecretHandoffRecord": "immutable descriptor; no state field"
+  }
+}
+```
+
+## `writer_concurrency`
+
+```json
+{
+  "topology_owner": "M0.3 process lock",
+  "authoritative_writers": 1,
+  "read_projection": "transaction-consistent",
+  "second_core": [
+    "no mutable StateStore open",
+    "no RuntimeSession creation"
+  ],
+  "UI_Tray_authority": false,
+  "database_lock_technology_is_domain_semantics": false
+}
+```
+
+## `failure_registry`
+
+```json
+{
+  "closed_codes": [
+    "STATE_STORE_UNAVAILABLE",
+    "STATE_STORE_PERMISSION_DENIED",
+    "STATE_STORE_CAPACITY_EXHAUSTED",
+    "TRANSACTION_FAILED",
+    "DURABILITY_CONFIRMATION_FAILED",
+    "AUTHORITATIVE_STATE_CORRUPT",
+    "IMMUTABLE_HISTORY_CORRUPT",
+    "CURRENT_DESIGNATION_CORRUPT",
+    "DERIVED_PROJECTION_STALE",
+    "SCHEMA_MISMATCH",
+    "MIGRATION_REQUIRED",
+    "UNSUPPORTED_STATESTORE_SCHEMA",
+    "UNSUPPORTED_BACKUP_SCHEMA",
+    "MIGRATION_PATH_UNAVAILABLE",
+    "MIGRATION_FAILED",
+    "LOCK_CONTENTION",
+    "CONCURRENT_WRITER",
+    "RECOVERY_REQUIRED",
+    "RECOVERY_FAILED",
+    "BACKUP_INTEGRITY_FAILED",
+    "BACKUP_SCOPE_MISMATCH",
+    "BACKUP_ENVIRONMENT_MISMATCH",
+    "BACKUP_ROLLBACK_DETECTED",
+    "RESTORE_REJECTED",
+    "SECRET_REFERENCE_INVALID",
+    "SECRET_REFERENCE_UNAVAILABLE",
+    "SECRET_HANDOFF_FAILED",
+    "ENVIRONMENT_SCOPE_MISMATCH",
+    "MONOTONIC_FENCE_ROLLBACK",
+    "IDEMPOTENCY_CONFLICT",
+    "RECONCILIATION_REQUIRED",
+    "CONTRACT_INCONSISTENT"
+  ],
+  "outcome_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "code",
+      "failure_class",
+      "retryability",
+      "mutation_acknowledged",
+      "recovery_required",
+      "safe_diagnostic_class"
+    ],
+    "properties": {
+      "code": {
+        "enum": [
+          "STATE_STORE_UNAVAILABLE",
+          "STATE_STORE_PERMISSION_DENIED",
+          "STATE_STORE_CAPACITY_EXHAUSTED",
+          "TRANSACTION_FAILED",
+          "DURABILITY_CONFIRMATION_FAILED",
+          "AUTHORITATIVE_STATE_CORRUPT",
+          "IMMUTABLE_HISTORY_CORRUPT",
+          "CURRENT_DESIGNATION_CORRUPT",
+          "DERIVED_PROJECTION_STALE",
+          "SCHEMA_MISMATCH",
+          "MIGRATION_REQUIRED",
+          "UNSUPPORTED_STATESTORE_SCHEMA",
+          "UNSUPPORTED_BACKUP_SCHEMA",
+          "MIGRATION_PATH_UNAVAILABLE",
+          "MIGRATION_FAILED",
+          "LOCK_CONTENTION",
+          "CONCURRENT_WRITER",
+          "RECOVERY_REQUIRED",
+          "RECOVERY_FAILED",
+          "BACKUP_INTEGRITY_FAILED",
+          "BACKUP_SCOPE_MISMATCH",
+          "BACKUP_ENVIRONMENT_MISMATCH",
+          "BACKUP_ROLLBACK_DETECTED",
+          "RESTORE_REJECTED",
+          "SECRET_REFERENCE_INVALID",
+          "SECRET_REFERENCE_UNAVAILABLE",
+          "SECRET_HANDOFF_FAILED",
+          "ENVIRONMENT_SCOPE_MISMATCH",
+          "MONOTONIC_FENCE_ROLLBACK",
+          "IDEMPOTENCY_CONFLICT",
+          "RECONCILIATION_REQUIRED",
+          "CONTRACT_INCONSISTENT"
+        ]
+      },
+      "failure_class": {
+        "enum": [
+          "ANTI_ROLLBACK",
+          "AUTHORITY_CONFLICT",
+          "AVAILABILITY",
+          "BACKUP_VALIDATION",
+          "CONTRACT",
+          "DERIVED_STATE",
+          "DURABILITY_UNCERTAIN",
+          "ENVIRONMENT_BOUNDARY",
+          "EXTERNAL_HANDOFF",
+          "EXTERNAL_OUTCOME_UNCERTAIN",
+          "EXTERNAL_SECRET_RESOURCE",
+          "IDEMPOTENCY",
+          "INTEGRITY",
+          "MIGRATION",
+          "RECOVERY",
+          "RESTORE_VALIDATION",
+          "SECRET_METADATA",
+          "STORAGE_ACCESS",
+          "TRANSACTION",
+          "VERSIONING",
+          "VERSIONING_UNSUPPORTED"
+        ]
+      },
+      "retryability": {
+        "enum": [
+          "AFTER_EXACT_MIGRATION",
+          "AFTER_METADATA_REPAIR",
+          "AFTER_RECONCILIATION_ONLY",
+          "AFTER_RECOVERY_ONLY",
+          "AFTER_RECOVERY_OR_RECONCILIATION",
+          "CONDITIONAL",
+          "CONDITIONAL_AFTER_OPERATOR_REPAIR",
+          "NEVER_AUTOMATIC",
+          "NEVER_FOR_CHANGED_REQUEST",
+          "NEVER_FOR_SAME_CANDIDATE",
+          "NEVER_FOR_SAME_INPUT",
+          "NEVER_WHILE_CONFLICT_EXISTS",
+          "RETRY_WITH_BACKOFF",
+          "SAFE_AFTER_CONFIRMED_ABORT",
+          "SAFE_REBUILD"
+        ]
+      },
+      "mutation_acknowledged": {
+        "type": "boolean"
+      },
+      "recovery_required": {
+        "type": "boolean"
+      },
+      "safe_diagnostic_class": {
+        "enum": [
+          "BACKUP",
+          "CONCURRENCY",
+          "CONTRACT",
+          "DURABILITY",
+          "ENVIRONMENT",
+          "IDEMPOTENCY",
+          "INTEGRITY",
+          "MIGRATION",
+          "MONOTONIC_FENCE",
+          "PROJECTION",
+          "RECONCILIATION",
+          "RECOVERY",
+          "RESTORE",
+          "SECRET_HANDOFF",
+          "SECRET_REFERENCE",
+          "STORAGE",
+          "TRANSACTION",
+          "VERSION"
+        ]
+      }
+    }
+  },
+  "mapping": {
+    "UNKNOWN_RECONCILIATION": "RECONCILIATION_REQUIRED",
+    "LEGAL_OCCUPIED_LOCK": "LOCK_CONTENTION",
+    "CONFIRMED_SECOND_AUTHORITATIVE_WRITER": "CONCURRENT_WRITER",
+    "DURABILITY_UNCERTAIN": "DURABILITY_CONFIRMATION_FAILED",
+    "CONFIRMED_ABORT_NO_COMMIT": "TRANSACTION_FAILED",
+    "RESTORE_POLICY_REJECTION": "RESTORE_REJECTED",
+    "CANONICAL_CONTRACT_CONTRADICTION": "CONTRACT_INCONSISTENT"
+  },
+  "raw_diagnostics_forbidden": [
+    "Python exception",
+    "SQLite exception",
+    "OS exception",
+    "secret path",
+    "credential payload",
+    "PIN/verifier",
+    "secret value"
+  ],
+  "outcomes_by_code": {
+    "STATE_STORE_UNAVAILABLE": {
+      "failure_class": "STORAGE_ACCESS",
+      "retryability": "CONDITIONAL_AFTER_OPERATOR_REPAIR",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "STORAGE"
+    },
+    "STATE_STORE_PERMISSION_DENIED": {
+      "failure_class": "STORAGE_ACCESS",
+      "retryability": "CONDITIONAL_AFTER_OPERATOR_REPAIR",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "STORAGE"
+    },
+    "STATE_STORE_CAPACITY_EXHAUSTED": {
+      "failure_class": "STORAGE_ACCESS",
+      "retryability": "CONDITIONAL_AFTER_OPERATOR_REPAIR",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "STORAGE"
+    },
+    "TRANSACTION_FAILED": {
+      "failure_class": "TRANSACTION",
+      "retryability": "SAFE_AFTER_CONFIRMED_ABORT",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "TRANSACTION"
+    },
+    "DURABILITY_CONFIRMATION_FAILED": {
+      "failure_class": "DURABILITY_UNCERTAIN",
+      "retryability": "AFTER_RECOVERY_ONLY",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "DURABILITY"
+    },
+    "AUTHORITATIVE_STATE_CORRUPT": {
+      "failure_class": "INTEGRITY",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "INTEGRITY"
+    },
+    "IMMUTABLE_HISTORY_CORRUPT": {
+      "failure_class": "INTEGRITY",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "INTEGRITY"
+    },
+    "CURRENT_DESIGNATION_CORRUPT": {
+      "failure_class": "INTEGRITY",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "INTEGRITY"
+    },
+    "DERIVED_PROJECTION_STALE": {
+      "failure_class": "DERIVED_STATE",
+      "retryability": "SAFE_REBUILD",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "PROJECTION"
+    },
+    "SCHEMA_MISMATCH": {
+      "failure_class": "VERSIONING",
+      "retryability": "AFTER_EXACT_MIGRATION",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "VERSION"
+    },
+    "MIGRATION_REQUIRED": {
+      "failure_class": "VERSIONING",
+      "retryability": "AFTER_EXACT_MIGRATION",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "VERSION"
+    },
+    "UNSUPPORTED_STATESTORE_SCHEMA": {
+      "failure_class": "VERSIONING_UNSUPPORTED",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "VERSION"
+    },
+    "UNSUPPORTED_BACKUP_SCHEMA": {
+      "failure_class": "VERSIONING_UNSUPPORTED",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "VERSION"
+    },
+    "MIGRATION_PATH_UNAVAILABLE": {
+      "failure_class": "VERSIONING_UNSUPPORTED",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "VERSION"
+    },
+    "MIGRATION_FAILED": {
+      "failure_class": "MIGRATION",
+      "retryability": "AFTER_RECOVERY_ONLY",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "MIGRATION"
+    },
+    "LOCK_CONTENTION": {
+      "failure_class": "AVAILABILITY",
+      "retryability": "RETRY_WITH_BACKOFF",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "CONCURRENCY"
+    },
+    "CONCURRENT_WRITER": {
+      "failure_class": "AUTHORITY_CONFLICT",
+      "retryability": "NEVER_WHILE_CONFLICT_EXISTS",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "CONCURRENCY"
+    },
+    "RECOVERY_REQUIRED": {
+      "failure_class": "RECOVERY",
+      "retryability": "AFTER_RECOVERY_ONLY",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "RECOVERY"
+    },
+    "RECOVERY_FAILED": {
+      "failure_class": "RECOVERY",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "RECOVERY"
+    },
+    "BACKUP_INTEGRITY_FAILED": {
+      "failure_class": "BACKUP_VALIDATION",
+      "retryability": "NEVER_FOR_SAME_CANDIDATE",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "BACKUP"
+    },
+    "BACKUP_SCOPE_MISMATCH": {
+      "failure_class": "BACKUP_VALIDATION",
+      "retryability": "NEVER_FOR_SAME_CANDIDATE",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "BACKUP"
+    },
+    "BACKUP_ENVIRONMENT_MISMATCH": {
+      "failure_class": "BACKUP_VALIDATION",
+      "retryability": "NEVER_FOR_SAME_CANDIDATE",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "BACKUP"
+    },
+    "BACKUP_ROLLBACK_DETECTED": {
+      "failure_class": "BACKUP_VALIDATION",
+      "retryability": "NEVER_FOR_SAME_CANDIDATE",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "BACKUP"
+    },
+    "RESTORE_REJECTED": {
+      "failure_class": "RESTORE_VALIDATION",
+      "retryability": "NEVER_FOR_SAME_CANDIDATE",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "RESTORE"
+    },
+    "SECRET_REFERENCE_INVALID": {
+      "failure_class": "SECRET_METADATA",
+      "retryability": "AFTER_METADATA_REPAIR",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "SECRET_REFERENCE"
+    },
+    "SECRET_REFERENCE_UNAVAILABLE": {
+      "failure_class": "EXTERNAL_SECRET_RESOURCE",
+      "retryability": "CONDITIONAL",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "SECRET_REFERENCE"
+    },
+    "SECRET_HANDOFF_FAILED": {
+      "failure_class": "EXTERNAL_HANDOFF",
+      "retryability": "AFTER_RECOVERY_OR_RECONCILIATION",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "SECRET_HANDOFF"
+    },
+    "ENVIRONMENT_SCOPE_MISMATCH": {
+      "failure_class": "ENVIRONMENT_BOUNDARY",
+      "retryability": "NEVER_FOR_SAME_INPUT",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "ENVIRONMENT"
+    },
+    "MONOTONIC_FENCE_ROLLBACK": {
+      "failure_class": "ANTI_ROLLBACK",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "MONOTONIC_FENCE"
+    },
+    "IDEMPOTENCY_CONFLICT": {
+      "failure_class": "IDEMPOTENCY",
+      "retryability": "NEVER_FOR_CHANGED_REQUEST",
+      "mutation_acknowledged": false,
+      "recovery_required": false,
+      "safe_diagnostic_class": "IDEMPOTENCY"
+    },
+    "RECONCILIATION_REQUIRED": {
+      "failure_class": "EXTERNAL_OUTCOME_UNCERTAIN",
+      "retryability": "AFTER_RECONCILIATION_ONLY",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "RECONCILIATION"
+    },
+    "CONTRACT_INCONSISTENT": {
+      "failure_class": "CONTRACT",
+      "retryability": "NEVER_AUTOMATIC",
+      "mutation_acknowledged": false,
+      "recovery_required": true,
+      "safe_diagnostic_class": "CONTRACT"
+    }
+  },
+  "outcome_validation": "code plus all five metadata fields MUST exactly equal outcomes_by_code[code]"
+}
+```
+
+## `executable_boundary_schemas`
+
+```json
+{
+  "StateStoreMetadata": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "account_id",
+      "device_installation_id",
+      "state_store_schema_version",
+      "state_store_identity_fingerprint_sha256",
+      "environment",
+      "protected_freshness_generation",
+      "state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "history_tail_fingerprint_sha256"
+    ],
+    "properties": {
+      "account_id": "canonical M0.2 AccountId",
+      "device_installation_id": "canonical M0.2 DeviceInstallationId",
+      "state_store_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_store_identity_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "environment": {
+        "enum": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "protected_freshness_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "history_tail_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "LocalDurableStateEvidence": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "generation",
+      "state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "durability_state",
+      "evidence_revision",
+      "evidence_fingerprint_sha256"
+    ],
+    "properties": {
+      "account_id": "canonical M0.2 AccountId",
+      "device_installation_id": "canonical M0.2 DeviceInstallationId",
+      "state_store_identity_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "durability_state": {
+        "const": "DURABLE_COMMITTED"
+      },
+      "evidence_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "evidence_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "MigrationRecord": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "migration_id",
+      "source_schema_version",
+      "target_schema_version",
+      "ordered_path",
+      "scope",
+      "environment",
+      "pre_state_fingerprint_sha256",
+      "post_state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "protected_freshness_generation",
+      "rollback_policy"
+    ],
+    "properties": {
+      "migration_id": "canonical durable identifier",
+      "source_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "target_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "ordered_path": {
+        "type": "array"
+      },
+      "scope": [
+        "account_id",
+        "device_installation_id"
+      ],
+      "environment": {
+        "enum": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "pre_state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "post_state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "protected_freshness_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "rollback_policy": {
+        "const": "FORWARD_ONLY"
+      }
+    }
+  },
+  "BackupEnvelope": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "backup_envelope_schema_version",
+      "state_store_schema_version",
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "environment",
+      "local_protected_freshness_generation",
+      "state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "history_tail_fingerprint_sha256",
+      "canonical_durable_records",
+      "immutable_recovery_history",
+      "envelope_fingerprint_sha256",
+      "integrity_metadata"
+    ],
+    "properties": {
+      "backup_envelope_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_store_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "account_id": "canonical M0.2 AccountId",
+      "device_installation_id": "canonical M0.2 DeviceInstallationId",
+      "state_store_identity_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "environment": {
+        "enum": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "local_protected_freshness_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "history_tail_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "canonical_durable_records": {
+        "type": "array"
+      },
+      "immutable_recovery_history": {
+        "type": "array"
+      },
+      "envelope_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "integrity_metadata": {
+        "type": "object"
+      }
+    }
+  },
+  "SecretHandoffRecord": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "handoff_id",
+      "scope",
+      "operation",
+      "old_reference",
+      "new_reference",
+      "metadata_fingerprint_sha256",
+      "operation_fingerprint_sha256",
+      "reconciliation_metadata"
+    ],
+    "properties": {
+      "handoff_id": "canonical durable identifier",
+      "scope": [
+        "account_id",
+        "device_installation_id"
+      ],
+      "operation": {
+        "type": "string"
+      },
+      "old_reference": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "new_reference": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "metadata_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "operation_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "reconciliation_metadata": {
+        "type": "object"
+      }
+    }
+  },
+  "MigrationTransitionRecord": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "migration_id",
+      "transition_revision",
+      "previous_state",
+      "state",
+      "transaction_fingerprint_sha256",
+      "state_fingerprint_sha256",
+      "protected_freshness_generation",
+      "transition_fingerprint_sha256"
+    ],
+    "properties": {
+      "migration_id": {
+        "type": "string"
+      },
+      "transition_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "previous_state": {
+        "enum": [
+          null,
+          "PREPARED",
+          "APPLYING",
+          "DURABLE_MIGRATED",
+          "COMPLETED",
+          "FAILED"
+        ]
+      },
+      "state": {
+        "enum": [
+          "PREPARED",
+          "APPLYING",
+          "DURABLE_MIGRATED",
+          "COMPLETED",
+          "FAILED"
+        ]
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "protected_freshness_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "transition_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "MigrationCurrentState": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "migration_id",
+      "current_transition_revision",
+      "state",
+      "authoritative_state_fingerprint_sha256",
+      "protected_freshness_generation",
+      "designation_fingerprint_sha256"
+    ],
+    "properties": {
+      "migration_id": {
+        "type": "string"
+      },
+      "current_transition_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state": {
+        "enum": [
+          "PREPARED",
+          "APPLYING",
+          "DURABLE_MIGRATED",
+          "COMPLETED",
+          "FAILED"
+        ]
+      },
+      "authoritative_state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "protected_freshness_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "designation_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "SecretHandoffTransitionRecord": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "handoff_id",
+      "transition_revision",
+      "previous_state",
+      "state",
+      "operation_fingerprint_sha256",
+      "metadata_fingerprint_sha256",
+      "transition_fingerprint_sha256"
+    ],
+    "properties": {
+      "handoff_id": {
+        "type": "string"
+      },
+      "transition_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "previous_state": {
+        "enum": [
+          null,
+          "PREPARED",
+          "COMMITTED",
+          "CLEANUP_PENDING",
+          "UNKNOWN_RECONCILIATION"
+        ]
+      },
+      "state": {
+        "enum": [
+          "PREPARED",
+          "COMMITTED",
+          "CLEANUP_PENDING",
+          "UNKNOWN_RECONCILIATION"
+        ]
+      },
+      "operation_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "metadata_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "transition_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "SecretHandoffCurrentState": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "handoff_id",
+      "current_transition_revision",
+      "state",
+      "operation_fingerprint_sha256",
+      "designation_fingerprint_sha256"
+    ],
+    "properties": {
+      "handoff_id": {
+        "type": "string"
+      },
+      "current_transition_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "state": {
+        "enum": [
+          "PREPARED",
+          "COMMITTED",
+          "CLEANUP_PENDING",
+          "UNKNOWN_RECONCILIATION"
+        ]
+      },
+      "operation_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "designation_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "PersistenceRecord": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "representation_name",
+      "representation_category",
+      "semantic_owner_milestone",
+      "semantic_artifact",
+      "semantic_json_pointer",
+      "semantic_contract_fingerprint_sha256",
+      "record_key",
+      "payload",
+      "payload_fingerprint_sha256"
+    ],
+    "properties": {
+      "representation_name": {
+        "type": "string",
+        "enum": [
+          "StateStoreMetadata",
+          "CryptoHunterAccount current record",
+          "DeviceInstallation current identity/lifecycle",
+          "OperatorIdentity current designation/state",
+          "OperatorIdentity revisions",
+          "LiveAccessGrant current designation/state",
+          "LiveAccessGrant accepted revisions/history",
+          "Workspace",
+          "Portfolio canonical accounting state",
+          "Portfolio balance/P&L/NAV projections",
+          "ExchangeAccount",
+          "CredentialProfile metadata/reference",
+          "TradingUniverse current version/designation",
+          "TradingUniverse version history",
+          "StrategyDefinition accepted revisions",
+          "StrategyDefinition current designation",
+          "StrategyInstance current lifecycle/config",
+          "routing configuration/current designation",
+          "routing readiness/reachability projection",
+          "RiskPolicy accepted revisions",
+          "RiskPolicy current designation",
+          "RiskBudget current state",
+          "kill-switch state/generation",
+          "kill-switch transition history",
+          "Command accepted request",
+          "Event",
+          "OrderIntent",
+          "Order canonical lifecycle state",
+          "Order lifecycle events/history",
+          "Fill",
+          "LedgerEntry",
+          "reservation current state",
+          "reservation transition history",
+          "RiskDecision",
+          "ExecutionLease immutable record",
+          "ExecutionLease one-shot state",
+          "ExecutionLease restart fence",
+          "RuntimeSession active process manifestation",
+          "RuntimeSession canonical identity/history",
+          "SessionSecurityState current generation/state",
+          "SessionSecurityState revision history",
+          "PinVerifierRecord accepted revisions",
+          "PinVerifierRecord current designation",
+          "DeviceTrust/security revisions",
+          "DeviceTrust current designation",
+          "platform enrollment revisions",
+          "AuthenticationProof",
+          "CoreIssuedAuthenticationProofBinding",
+          "PlatformBiometricAssertion",
+          "CoreAcceptedPlatformBiometricAssertionBinding",
+          "SecretMetadataProjection",
+          "secure-store payload",
+          "bootstrap consumed fence",
+          "bootstrap accepted/consumption history",
+          "M0.3 restore freshness membership",
+          "M0.3 current designation",
+          "M0.3 retirement state",
+          "LocalDurableStateEvidence payload",
+          "LocalDurableEvidence accepted/current registry/designation",
+          "Migration current state/designation",
+          "Migration transition/history revisions",
+          "SecretHandoff current state/designation",
+          "SecretHandoff transition/history revisions"
+        ]
+      },
+      "representation_category": {
+        "enum": [
+          "DIRECT_UPSTREAM_SCHEMA",
+          "M011_PERSISTENCE_PROJECTION_OF_UPSTREAM_FACTS",
+          "M011_CURRENT_DESIGNATION_PROJECTION",
+          "M011_IMMUTABLE_HISTORY_WRAPPER",
+          "M011_ENTITY_IDENTITY_PROJECTION",
+          "M011_LOCAL_SCHEMA"
+        ]
+      },
+      "semantic_owner_milestone": {
+        "type": "string"
+      },
+      "semantic_artifact": {
+        "type": "string"
+      },
+      "semantic_json_pointer": {
+        "type": "string"
+      },
+      "semantic_contract_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "record_key": {
+        "type": "string",
+        "minLength": 1
+      },
+      "payload": {},
+      "payload_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "PersistentEntityIdentityProjection": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "entity_kind",
+      "entity_id",
+      "parent_scope_bindings"
+    ],
+    "properties": {
+      "entity_kind": {
+        "enum": [
+          "CryptoHunterAccount",
+          "Workspace"
+        ]
+      },
+      "entity_id": {
+        "type": "string"
+      },
+      "parent_scope_bindings": {
+        "type": "object"
+      }
+    }
+  },
+  "CurrentDesignationProjection": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "scope_key",
+      "current_reference",
+      "current_revision",
+      "current_generation",
+      "content_fingerprint_sha256"
+    ],
+    "properties": {
+      "scope_key": {
+        "type": "string"
+      },
+      "current_reference": {
+        "type": "string"
+      },
+      "current_revision": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "current_generation": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "content_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "UpstreamFactsProjection": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "fact_kind",
+      "scope_key",
+      "facts",
+      "source_fingerprint_sha256"
+    ],
+    "properties": {
+      "fact_kind": {
+        "type": "string"
+      },
+      "scope_key": {
+        "type": "string"
+      },
+      "facts": {
+        "type": "object"
+      },
+      "source_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  }
+}
+```
+
+## `adversarial_invariants`
+
+```json
+[
+  "malformed inputs fail closed",
+  "boolean is not positive integer",
+  "unknown fields denied",
+  "caller self-hash has no evidence membership",
+  "durability evidence is not freshness authority",
+  "durability confirmation failure never SUCCESS",
+  "LIVE current DENIED",
+  "no TESTNET to LIVE fallback",
+  "protected PREPARE G+1 is an irreversible M0.11 recovery freshness floor",
+  "reconstructed evidence G never clears pending G+1",
+  "PersistenceRecord is candidate/integrity carrier only, never authority"
+]
+```
+
+## `deferred_boundaries`
+
+```json
+[
+  "production persistence engine",
+  "SQLite/PostgreSQL",
+  "runtime DB adapters",
+  "fsync API",
+  "SQLAlchemy",
+  "runtime migrations",
+  "OS keyring",
+  "backup files",
+  "UI",
+  "telemetry",
+  "M0.12 observability"
+]
+```
+
+## `closure_conditions`
+
+```json
+{
+  "direct_dependencies": "48/48",
+  "fingerprints_independently_validated": true,
+  "architecture_only": true,
+  "all_adversarial_invariants_green": true,
+  "true_upstream_semantic_gaps": 0,
+  "representation_registry": "63/63 structured, zero true upstream semantic gaps, no synthetic record kinds"
+}
+```
