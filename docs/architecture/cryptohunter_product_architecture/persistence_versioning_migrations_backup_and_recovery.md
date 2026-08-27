@@ -1197,34 +1197,26 @@
       "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
       "semantic_owner_milestone": "M0.10",
       "semantic_artifact": "identity_device_authentication_and_secrets.json",
-      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_json_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
       "semantic_object_or_invariant": "OperatorIdentity revisions",
       "carrier_strategy": "PERSISTENCE_RECORD",
       "projection_schema_if_any": null,
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+      "semantic_contract_fingerprint_sha256": "57a5f2ddfd3e365db04e9e36e7af7982d8e8f236ec165277a1a0bd10529bc606",
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/executable_boundary_schemas",
-          "object_id": "/executable_boundary_schemas",
-          "scope_key": "/executable_boundary_schemas",
-          "revision": "/executable_boundary_schemas",
-          "state": "/executable_boundary_schemas",
-          "content_fingerprint_sha256": "/executable_boundary_schemas"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -1233,50 +1225,68 @@
           "upstream_payload_fingerprint_sha256"
         ],
         "persisted_payload_fields": [
-          "operator_id",
           "account_id",
-          "identity_revision",
+          "operator_id",
           "state",
+          "identity_revision",
+          "security_generation",
           "content_fingerprint_sha256"
         ],
         "field_contracts": {
-          "operator_id": {
-            "type": "canonical_id",
-            "id_prefix": "op",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
-          },
           "account_id": {
             "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
+            "source_path": "account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "id_prefix": "acct",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
-          "identity_revision": {
-            "type": "positive_integer",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+          "operator_id": {
+            "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
+            "source_path": "operator_id",
+            "nullable": false,
+            "semantic_role": "identity",
+            "id_prefix": "op",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "state": {
             "type": "enum",
+            "source_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
+            "source_path": "state",
+            "nullable": false,
+            "semantic_role": "lifecycle",
             "values": [
-              "ACCEPTED",
               "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
+              "REVOKED"
             ],
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/registries/identity_states"
+          },
+          "identity_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
+            "source_path": "identity_revision",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "security_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
+            "source_path": "security_generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "content_fingerprint_sha256": {
             "type": "sha256_hex",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
+            "source_path": "content_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           }
         },
         "canonical_object_identity_fields": [
@@ -1286,11 +1296,34 @@
           "account_id"
         ],
         "revision_generation_fields": [
-          "identity_revision"
+          "identity_revision",
+          "security_generation"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "content_fingerprint_sha256",
+        "semantic_fingerprint_input_fields": [
+          "account_id",
+          "operator_id",
+          "state",
+          "identity_revision",
+          "security_generation"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "identity_device_authentication_and_secrets.json",
+          "source_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "account_id",
+            "operator_id",
+            "state",
+            "identity_revision",
+            "security_generation"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
       }
     },
     "LiveAccessGrant current designation/state": {
@@ -1329,34 +1362,26 @@
       "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
       "semantic_owner_milestone": "M0.10",
       "semantic_artifact": "identity_device_authentication_and_secrets.json",
-      "semantic_json_pointer": "/executable_boundary_schemas",
+      "semantic_json_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
       "semantic_object_or_invariant": "LiveAccessGrant accepted revisions/history",
       "carrier_strategy": "PERSISTENCE_RECORD",
       "projection_schema_if_any": null,
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+      "semantic_contract_fingerprint_sha256": "b83a2d8d0bc4ccdeaa3290634522e00e05862a6bcb627f92e7178c6963d8d4ce",
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/executable_boundary_schemas",
-          "object_id": "/executable_boundary_schemas",
-          "scope_key": "/executable_boundary_schemas",
-          "revision": "/executable_boundary_schemas",
-          "state": "/executable_boundary_schemas",
-          "content_fingerprint_sha256": "/executable_boundary_schemas"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -1365,79 +1390,144 @@
           "upstream_payload_fingerprint_sha256"
         ],
         "persisted_payload_fields": [
-          "grant_id",
+          "live_access_grant_id",
           "account_id",
           "operator_id",
           "device_installation_id",
-          "grant_revision",
+          "policy_scope_fingerprint_sha256",
           "state",
+          "grant_revision",
+          "security_generation",
           "content_fingerprint_sha256"
         ],
         "field_contracts": {
-          "grant_id": {
+          "live_access_grant_id": {
             "type": "canonical_id",
-            "id_prefix": "grant",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "live_access_grant_id",
+            "nullable": false,
+            "semantic_role": "identity",
+            "id_prefix": "lgrant",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "account_id": {
             "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "id_prefix": "acct",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "operator_id": {
             "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "operator_id",
+            "nullable": false,
+            "semantic_role": "identity",
             "id_prefix": "op",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "device_installation_id": {
             "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "device_installation_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "id_prefix": "dev",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
-          "grant_revision": {
-            "type": "positive_integer",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+          "policy_scope_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "policy_scope_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "state": {
             "type": "enum",
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "state",
+            "nullable": false,
+            "semantic_role": "lifecycle",
             "values": [
-              "ACCEPTED",
               "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
+              "SUSPENDED",
+              "REVOKED"
             ],
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/registries/grant_states"
+          },
+          "grant_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "grant_revision",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "security_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "security_generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "content_fingerprint_sha256": {
             "type": "sha256_hex",
-            "source_pointer": "/executable_boundary_schemas",
-            "nullable": false
+            "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "source_path": "content_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           }
         },
         "canonical_object_identity_fields": [
-          "grant_id"
+          "live_access_grant_id"
         ],
         "scope_fields": [
           "account_id",
-          "device_installation_id"
+          "operator_id",
+          "device_installation_id",
+          "policy_scope_fingerprint_sha256"
         ],
         "revision_generation_fields": [
-          "grant_revision"
+          "grant_revision",
+          "security_generation"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "content_fingerprint_sha256",
+        "semantic_fingerprint_input_fields": [
+          "live_access_grant_id",
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "policy_scope_fingerprint_sha256",
+          "state",
+          "grant_revision",
+          "security_generation"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "identity_device_authentication_and_secrets.json",
+          "source_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "live_access_grant_id",
+            "account_id",
+            "operator_id",
+            "device_installation_id",
+            "policy_scope_fingerprint_sha256",
+            "state",
+            "grant_revision",
+            "security_generation"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
       }
     },
     "Workspace": {
@@ -1644,23 +1734,15 @@
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/trading_universe_contract",
-          "object_id": "/trading_universe_contract",
-          "scope_key": "/trading_universe_contract",
-          "revision": "/trading_universe_contract",
-          "state": "/trading_universe_contract",
-          "content_fingerprint_sha256": "/trading_universe_contract"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -1670,65 +1752,169 @@
         ],
         "persisted_payload_fields": [
           "trading_universe_id",
-          "workspace_id",
-          "environment",
-          "universe_version",
+          "exchange_account_id",
+          "version",
+          "lifecycle_state",
           "instrument_ids",
-          "content_fingerprint_sha256"
+          "created_at_utc",
+          "activated_at_utc",
+          "retired_at_utc",
+          "previous_version_id",
+          "source_catalog_snapshot_ids",
+          "content_hash",
+          "creation_reason"
         ],
         "field_contracts": {
           "trading_universe_id": {
             "type": "canonical_id",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "trading_universe_id",
+            "nullable": false,
+            "semantic_role": "identity",
             "id_prefix": "univ",
-            "source_pointer": "/trading_universe_contract",
-            "nullable": false
+            "source_artifact": "exchange_accounts_and_instruments.json"
           },
-          "workspace_id": {
+          "exchange_account_id": {
             "type": "canonical_id",
-            "id_prefix": "ws",
-            "source_pointer": "/trading_universe_contract",
-            "nullable": false
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "exchange_account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "xacc",
+            "source_artifact": "exchange_accounts_and_instruments.json"
           },
-          "environment": {
-            "type": "enum",
-            "values": [
-              "PAPER",
-              "TESTNET",
-              "LIVE"
-            ],
-            "source_pointer": "/trading_universe_contract",
-            "nullable": false
-          },
-          "universe_version": {
+          "version": {
             "type": "positive_integer",
-            "source_pointer": "/trading_universe_contract",
-            "nullable": false
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "version",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "exchange_accounts_and_instruments.json"
+          },
+          "lifecycle_state": {
+            "type": "enum",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "lifecycle_state",
+            "nullable": false,
+            "semantic_role": "lifecycle",
+            "values": [
+              "DRAFT",
+              "ACTIVE",
+              "RETIRED",
+              "REJECTED"
+            ],
+            "source_artifact": "exchange_accounts_and_instruments.json",
+            "constraint_pointer": "/trading_universe_contract/lifecycle_states"
           },
           "instrument_ids": {
             "type": "array_of_canonical_id",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "instrument_ids",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
             "id_prefix": "instr",
-            "source_pointer": "/trading_universe_contract",
-            "nullable": false
+            "source_artifact": "exchange_accounts_and_instruments.json"
           },
-          "content_fingerprint_sha256": {
+          "created_at_utc": {
+            "type": "timestamp",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "created_at_utc",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "exchange_accounts_and_instruments.json"
+          },
+          "activated_at_utc": {
+            "type": "nullable_timestamp",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "activated_at_utc",
+            "nullable": true,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "exchange_accounts_and_instruments.json"
+          },
+          "retired_at_utc": {
+            "type": "nullable_timestamp",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "retired_at_utc",
+            "nullable": true,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "exchange_accounts_and_instruments.json"
+          },
+          "previous_version_id": {
+            "type": "nullable_canonical_id",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "previous_version_id",
+            "nullable": true,
+            "semantic_role": "semantic_payload",
+            "id_prefix": "univ",
+            "source_artifact": "exchange_accounts_and_instruments.json"
+          },
+          "source_catalog_snapshot_ids": {
+            "type": "array_of_canonical_id",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "source_catalog_snapshot_ids",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "id_prefix": "catsnap",
+            "source_artifact": "exchange_accounts_and_instruments.json"
+          },
+          "content_hash": {
             "type": "sha256_hex",
-            "source_pointer": "/trading_universe_contract",
-            "nullable": false
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "content_hash",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "exchange_accounts_and_instruments.json",
+            "constraint_pointer": "/trading_universe_contract/content_hash_definition"
+          },
+          "creation_reason": {
+            "type": "non_empty_string",
+            "source_pointer": "/trading_universe_contract/record_fields",
+            "source_path": "creation_reason",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "exchange_accounts_and_instruments.json"
           }
         },
         "canonical_object_identity_fields": [
           "trading_universe_id"
         ],
         "scope_fields": [
-          "workspace_id",
-          "environment"
+          "exchange_account_id"
         ],
         "revision_generation_fields": [
-          "universe_version"
+          "version"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "content_hash",
+        "semantic_fingerprint_input_fields": [
+          "exchange_account_id",
+          "version",
+          "lifecycle_state",
+          "instrument_ids",
+          "previous_version_id",
+          "source_catalog_snapshot_ids",
+          "creation_reason"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "exchange_accounts_and_instruments.json",
+          "source_pointer": "/trading_universe_contract/content_hash_definition",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "exchange_account_id",
+            "version",
+            "lifecycle_state",
+            "instrument_ids",
+            "previous_version_id",
+            "source_catalog_snapshot_ids",
+            "creation_reason"
+          ],
+          "input_shape": "DOMAIN_SEPARATOR_NEWLINE_CANONICAL_JSON_OBJECT",
+          "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false; instrument_ids and source_catalog_snapshot_ids lexicographically sorted",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex",
+          "domain_separator_source_pointer": "/trading_universe_contract/content_hash_definition/domain_separator",
+          "domain_separator": "cryptohunter.m0.5.trading_universe.v1"
+        }
       }
     },
     "StrategyDefinition accepted revisions": {
@@ -1736,34 +1922,26 @@
       "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
       "semantic_owner_milestone": "M0.6",
       "semantic_artifact": "strategy_market_data_and_execution_routing.json",
-      "semantic_json_pointer": "/strategy_definition_contract",
+      "semantic_json_pointer": "/record_schemas/StrategyDefinition",
       "semantic_object_or_invariant": "StrategyDefinition accepted revisions",
       "carrier_strategy": "PERSISTENCE_RECORD",
       "projection_schema_if_any": null,
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "c85c745f41f5ad6085a0ba25014b740822972bc2596cecb74aa8f7f77fdc367f",
+      "semantic_contract_fingerprint_sha256": "9411f4dc01cfbf13baf0004b9f1046d799cac4ffd130a74c400991adde0de697",
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/strategy_definition_contract",
-          "object_id": "/strategy_definition_contract",
-          "scope_key": "/strategy_definition_contract",
-          "revision": "/strategy_definition_contract",
-          "state": "/strategy_definition_contract",
-          "content_fingerprint_sha256": "/strategy_definition_contract"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -1774,48 +1952,104 @@
         "persisted_payload_fields": [
           "strategy_definition_id",
           "workspace_id",
-          "definition_revision",
-          "state",
-          "content_fingerprint_sha256"
+          "strategy_type_id",
+          "definition_version",
+          "configuration",
+          "canonical_content_hash",
+          "hash_domain_separator",
+          "lifecycle_state"
         ],
         "field_contracts": {
           "strategy_definition_id": {
             "type": "canonical_id",
-            "id_prefix": "stratdef",
-            "source_pointer": "/strategy_definition_contract",
-            "nullable": false
+            "source_pointer": "/record_schemas/StrategyDefinition/exact_fields",
+            "source_path": "strategy_definition_id",
+            "nullable": false,
+            "semantic_role": "identity",
+            "id_prefix": "sdef",
+            "source_artifact": "strategy_market_data_and_execution_routing.json"
           },
           "workspace_id": {
             "type": "canonical_id",
+            "source_pointer": "/record_schemas/StrategyDefinition/exact_fields",
+            "source_path": "workspace_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "id_prefix": "ws",
-            "source_pointer": "/strategy_definition_contract",
-            "nullable": false
+            "source_artifact": "strategy_market_data_and_execution_routing.json",
+            "constraint_pointer": "/record_schemas/StrategyDefinition/entity_references"
           },
-          "definition_revision": {
+          "strategy_type_id": {
+            "type": "non_empty_string",
+            "source_pointer": "/record_schemas/StrategyDefinition/exact_fields",
+            "source_path": "strategy_type_id",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "strategy_market_data_and_execution_routing.json",
+            "constraint_pointer": "/record_schemas/StrategyDefinition/field_types"
+          },
+          "definition_version": {
             "type": "positive_integer",
-            "source_pointer": "/strategy_definition_contract",
-            "nullable": false
+            "source_pointer": "/record_schemas/StrategyDefinition/exact_fields",
+            "source_path": "definition_version",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "strategy_market_data_and_execution_routing.json",
+            "constraint_pointer": "/record_schemas/StrategyDefinition/field_types"
           },
-          "state": {
-            "type": "enum",
-            "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
+          "configuration": {
+            "type": "object",
+            "source_pointer": "/record_schemas/StrategyDefinition/exact_fields",
+            "source_path": "configuration",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "fields": [
+              "lookback",
+              "enabled"
             ],
-            "source_pointer": "/strategy_definition_contract",
-            "nullable": false
+            "field_schemas": {
+              "lookback": {
+                "type": "positive_integer"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "source_artifact": "strategy_market_data_and_execution_routing.json",
+            "constraint_pointer": "/record_schemas/StrategyDefinition/nested_schemas/configuration"
           },
-          "content_fingerprint_sha256": {
+          "canonical_content_hash": {
             "type": "sha256_hex",
-            "source_pointer": "/strategy_definition_contract",
-            "nullable": false
+            "source_pointer": "/record_schemas/StrategyDefinition/exact_fields",
+            "source_path": "canonical_content_hash",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "strategy_market_data_and_execution_routing.json",
+            "constraint_pointer": "/strategy_definition_contract/hash"
+          },
+          "hash_domain_separator": {
+            "type": "constant",
+            "source_pointer": "/record_schemas/StrategyDefinition/exact_fields",
+            "source_path": "hash_domain_separator",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "value": "cryptohunter.strategy-definition.v1\\0",
+            "source_artifact": "strategy_market_data_and_execution_routing.json",
+            "constraint_pointer": "/strategy_definition_contract/hash/domain_separator"
+          },
+          "lifecycle_state": {
+            "type": "enum",
+            "source_pointer": "/record_schemas/StrategyDefinition/exact_fields",
+            "source_path": "lifecycle_state",
+            "nullable": false,
+            "semantic_role": "lifecycle",
+            "values": [
+              "DRAFT",
+              "ACTIVE",
+              "RETIRED"
+            ],
+            "source_artifact": "strategy_market_data_and_execution_routing.json",
+            "constraint_pointer": "/record_schemas/StrategyDefinition/enum_registry/lifecycle_state"
           }
         },
         "canonical_object_identity_fields": [
@@ -1825,11 +2059,29 @@
           "workspace_id"
         ],
         "revision_generation_fields": [
-          "definition_revision"
+          "definition_version"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "canonical_content_hash",
+        "semantic_fingerprint_input_fields": [
+          "configuration"
+        ],
+        "semantic_fingerprint_domain_separator_field": "hash_domain_separator",
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "strategy_market_data_and_execution_routing.json",
+          "source_pointer": "/strategy_definition_contract/hash",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "configuration"
+          ],
+          "input_shape": "DOMAIN_SEPARATOR_BYTES_PLUS_CANONICAL_JSON_VALUE",
+          "canonicalization": "configuration exact closed object; JSON sort_keys=true, separators comma/colon, ensure_ascii=false; floats/NaN/infinity forbidden; bool is not integer",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex",
+          "domain_separator_source_pointer": "/strategy_definition_contract/hash/domain_separator",
+          "domain_separator": "cryptohunter.strategy-definition.v1\\0",
+          "domain_separator_record_field": "hash_domain_separator"
+        }
       }
     },
     "StrategyDefinition current designation": {
@@ -1940,23 +2192,15 @@
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/risk_policy_contract",
-          "object_id": "/risk_policy_contract",
-          "scope_key": "/risk_policy_contract",
-          "revision": "/risk_policy_contract",
-          "state": "/risk_policy_contract",
-          "content_fingerprint_sha256": "/risk_policy_contract"
+          "upstream_payload": "exact /risk_policy_contract identity DTO; semantic fingerprint recomputed from semantic_fingerprint_input"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_RISK_POLICY_RECORD_WITH_SEMANTIC_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -1966,63 +2210,166 @@
         ],
         "persisted_payload_fields": [
           "risk_policy_id",
-          "account_id",
-          "policy_revision",
-          "state",
-          "content_fingerprint_sha256"
+          "revision",
+          "environment",
+          "scope_type",
+          "scope_id",
+          "action",
+          "limits",
+          "semantic_fingerprint_sha256"
         ],
         "field_contracts": {
           "risk_policy_id": {
             "type": "canonical_id",
             "id_prefix": "rpol",
-            "source_pointer": "/risk_policy_contract",
-            "nullable": false
+            "source_pointer": "/risk_policy_contract/identity",
+            "source_path": "risk_policy_id",
+            "nullable": false,
+            "semantic_role": "identity",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/risk_policy_contract"
           },
-          "account_id": {
-            "type": "canonical_id",
-            "id_prefix": "acct",
-            "source_pointer": "/risk_policy_contract",
-            "nullable": false
-          },
-          "policy_revision": {
+          "revision": {
             "type": "positive_integer",
-            "source_pointer": "/risk_policy_contract",
-            "nullable": false
+            "source_pointer": "/risk_policy_contract/identity",
+            "source_path": "revision",
+            "nullable": false,
+            "semantic_role": "revision",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/risk_policy_contract"
           },
-          "state": {
+          "environment": {
             "type": "enum",
             "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
+              "PAPER",
+              "TESTNET",
+              "LIVE"
             ],
-            "source_pointer": "/risk_policy_contract",
-            "nullable": false
+            "source_pointer": "/risk_policy_contract/identity",
+            "source_path": "environment",
+            "nullable": false,
+            "semantic_role": "scope",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/public_trading_environments",
+            "constraint_artifact": "canonical_domain_vocabulary.json",
+            "constraint_projection_rule": "values = [entry.name.upper() for entry in public_trading_environments]"
           },
-          "content_fingerprint_sha256": {
+          "scope_type": {
+            "type": "enum",
+            "values": [
+              "PRODUCT_SYSTEM",
+              "WORKSPACE",
+              "PORTFOLIO",
+              "EXCHANGE_ACCOUNT",
+              "STRATEGY_INSTANCE",
+              "INSTRUMENT",
+              "EXECUTION_ROUTE"
+            ],
+            "source_pointer": "/risk_policy_contract/identity",
+            "source_path": "scope_type",
+            "nullable": false,
+            "semantic_role": "scope",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/scope_hierarchy/applicable_order"
+          },
+          "scope_id": {
+            "type": "canonical_scope_id",
+            "scope_type_field": "scope_type",
+            "source_pointer": "/risk_policy_contract/identity",
+            "source_path": "scope_id",
+            "nullable": false,
+            "semantic_role": "scope",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/risk_policy_contract",
+            "projection_rule": "PRODUCT_SYSTEM requires literal scope_id product; all other scope types require the corresponding canonical M0.2 entity ID prefix"
+          },
+          "action": {
+            "type": "enum",
+            "values": [
+              "ALLOW",
+              "DENY"
+            ],
+            "source_pointer": "/risk_policy_contract/identity",
+            "source_path": "action",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/risk_policy_contract/action_registry"
+          },
+          "limits": {
+            "type": "risk_limits",
+            "source_pointer": "/risk_policy_contract/identity",
+            "source_path": "limits",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "projection_rule": "ordered upstream tuple limits -> JSON arrays [limit_name, exact Fraction string numerator/denominator, exact AssetReference object]; canonical JSON is byte-equivalent to M0.9 normalize(tuple)",
+            "supported_limit_names": [
+              "MAX_ORDER_QUANTITY",
+              "MAX_ORDER_NOTIONAL",
+              "MAX_POST_TRADE_POSITION_QUANTITY",
+              "MAX_POST_TRADE_POSITION_NOTIONAL",
+              "MAX_GROSS_EXPOSURE",
+              "MIN_AVAILABLE_CAPITAL_AFTER_RESERVATION"
+            ],
+            "asset_reference_fields": [
+              "venue_asset_code",
+              "canonical_display_code",
+              "asset_namespace",
+              "mapping_status"
+            ],
+            "constraint_pointer": "/supported_spot_limit_registry"
+          },
+          "semantic_fingerprint_sha256": {
             "type": "sha256_hex",
-            "source_pointer": "/risk_policy_contract",
-            "nullable": false
+            "source_pointer": "/risk_policy_contract/identity",
+            "source_path": "semantic_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/risk_policy_contract"
           }
         },
         "canonical_object_identity_fields": [
           "risk_policy_id"
         ],
         "scope_fields": [
-          "account_id"
+          "environment",
+          "scope_type",
+          "scope_id"
         ],
         "revision_generation_fields": [
-          "policy_revision"
+          "revision"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_input_fields": [
+          "risk_policy_id",
+          "revision",
+          "environment",
+          "scope_type",
+          "scope_id",
+          "action",
+          "limits"
+        ],
+        "semantic_fingerprint_field": "semantic_fingerprint_sha256",
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+          "source_pointer": "/risk_policy_contract",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "risk_policy_id",
+            "revision",
+            "environment",
+            "scope_type",
+            "scope_id",
+            "action",
+            "limits"
+          ],
+          "input_shape": "ORDERED_CANONICAL_JSON_ARRAY",
+          "canonicalization": "normalize tuples/lists to JSON arrays, Fraction to numerator/denominator string, dataclass AssetReference to JSON object; sort object keys; separators comma/colon; ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
       }
     },
     "RiskPolicy current designation": {
@@ -2198,23 +2545,15 @@
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/kill_switch_contract",
-          "object_id": "/kill_switch_contract",
-          "scope_key": "/kill_switch_contract",
-          "revision": "/kill_switch_contract",
-          "state": "/kill_switch_contract",
-          "content_fingerprint_sha256": "/kill_switch_contract"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -2226,78 +2565,155 @@
           "scope_type",
           "scope_id",
           "environment",
-          "source_revision",
-          "generation",
           "state",
+          "source_revision",
+          "effective_at_utc",
+          "generation",
+          "accepted_authority_fingerprint_sha256",
           "record_fingerprint_sha256"
         ],
         "field_contracts": {
           "scope_type": {
-            "type": "non_empty_string",
-            "source_pointer": "/kill_switch_contract",
-            "nullable": false
+            "type": "enum",
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "scope_type",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "values": [
+              "PRODUCT_SYSTEM",
+              "WORKSPACE",
+              "PORTFOLIO",
+              "EXCHANGE_ACCOUNT",
+              "STRATEGY_INSTANCE",
+              "INSTRUMENT",
+              "EXECUTION_ROUTE"
+            ],
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/scope_hierarchy/applicable_order"
           },
           "scope_id": {
-            "type": "non_empty_string",
-            "source_pointer": "/kill_switch_contract",
-            "nullable": false
+            "type": "canonical_scope_id",
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "scope_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "scope_type_field": "scope_type",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/scope_hierarchy",
+            "projection_rule": "PRODUCT_SYSTEM requires literal scope_id product; all other scope types require the corresponding canonical M0.2 entity ID prefix"
           },
           "environment": {
             "type": "enum",
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "environment",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "values": [
               "PAPER",
               "TESTNET",
               "LIVE"
             ],
-            "source_pointer": "/kill_switch_contract",
-            "nullable": false
-          },
-          "source_revision": {
-            "type": "positive_integer",
-            "source_pointer": "/kill_switch_contract",
-            "nullable": false
-          },
-          "generation": {
-            "type": "non_empty_string",
-            "source_pointer": "/kill_switch_contract",
-            "nullable": false
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/public_trading_environments",
+            "constraint_artifact": "canonical_domain_vocabulary.json",
+            "constraint_projection_rule": "values = [entry.name.upper() for entry in public_trading_environments]"
           },
           "state": {
             "type": "enum",
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "state",
+            "nullable": false,
+            "semantic_role": "lifecycle",
             "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
+              "INACTIVE",
+              "ACTIVE"
             ],
-            "source_pointer": "/kill_switch_contract",
-            "nullable": false
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/kill_switch_contract/states"
+          },
+          "source_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "source_revision",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json"
+          },
+          "effective_at_utc": {
+            "type": "timestamp",
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "effective_at_utc",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json"
+          },
+          "generation": {
+            "type": "positive_integer",
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json"
+          },
+          "accepted_authority_fingerprint_sha256": {
+            "type": "non_empty_string",
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "accepted_authority_fingerprint_sha256 accepted membership reference",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "constraint_pointer": "/kill_switch_contract/authority"
           },
           "record_fingerprint_sha256": {
             "type": "sha256_hex",
-            "source_pointer": "/kill_switch_contract",
-            "nullable": false
+            "source_pointer": "/kill_switch_contract/record_fields",
+            "source_path": "record_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json"
           }
         },
-        "canonical_object_identity_fields": [
-          "scope_id"
-        ],
+        "canonical_object_identity_fields": [],
         "scope_fields": [
           "scope_type",
           "scope_id",
           "environment"
         ],
         "revision_generation_fields": [
-          "source_revision"
+          "source_revision",
+          "generation"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "record_fingerprint_sha256",
+        "semantic_fingerprint_input_fields": [
+          "scope_type",
+          "scope_id",
+          "environment",
+          "state",
+          "source_revision",
+          "effective_at_utc",
+          "generation",
+          "accepted_authority_fingerprint_sha256"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+          "source_pointer": "/kill_switch_contract",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "scope_type",
+            "scope_id",
+            "environment",
+            "state",
+            "source_revision",
+            "effective_at_utc",
+            "generation",
+            "accepted_authority_fingerprint_sha256"
+          ],
+          "input_shape": "ORDERED_CANONICAL_JSON_ARRAY",
+          "canonicalization": "ordered KillSwitchRecord semantic tuple normalized to JSON array; nested object keys sorted; separators comma/colon; ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
       }
     },
     "Command accepted request": {
@@ -2384,34 +2800,26 @@
       "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
       "semantic_owner_milestone": "M0.7",
       "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
-      "semantic_json_pointer": "/order_lifecycle",
+      "semantic_json_pointer": "/event_contract",
       "semantic_object_or_invariant": "Order lifecycle events/history",
       "carrier_strategy": "PERSISTENCE_RECORD",
       "projection_schema_if_any": null,
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "48a514419aaa0863078e69ffc50c3acd4b37a06d873d257275fb68874cc840dd",
+      "semantic_contract_fingerprint_sha256": "c63d514a4546161798de2f7f90441821cd71653fba433c3577c6d7b630e4b6b2",
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/order_lifecycle",
-          "object_id": "/order_lifecycle",
-          "scope_key": "/order_lifecycle",
-          "revision": "/order_lifecycle",
-          "state": "/order_lifecycle",
-          "content_fingerprint_sha256": "/order_lifecycle"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -2421,79 +2829,283 @@
         ],
         "persisted_payload_fields": [
           "audit_event_id",
+          "event_type",
           "order_id",
+          "aggregate_version",
+          "correlation_id",
+          "causation_id",
+          "command_id",
+          "environment",
           "workspace_id",
           "portfolio_id",
-          "environment",
-          "aggregate_version",
-          "event_type",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id",
+          "occurred_at_utc",
+          "safe_payload",
           "event_fingerprint_sha256"
         ],
         "field_contracts": {
           "audit_event_id": {
             "type": "canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "audit_event_id",
+            "nullable": false,
+            "semantic_role": "identity",
             "id_prefix": "evt",
-            "source_pointer": "/order_lifecycle",
-            "nullable": false
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/audit_event_id"
+          },
+          "event_type": {
+            "type": "enum",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "event_type",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "registry": "event_types",
+            "values": [
+              "ORDER_PLANNED",
+              "ORDER_DISPATCHED",
+              "ORDER_ACKNOWLEDGED",
+              "ORDER_REJECTED",
+              "ORDER_PARTIALLY_FILLED",
+              "ORDER_FILLED",
+              "ORDER_CANCEL_REQUESTED",
+              "ORDER_CANCEL_CONFIRMED",
+              "ORDER_CANCEL_REJECTED",
+              "ORDER_REPLACE_REQUESTED",
+              "ORDER_REPLACE_CONFIRMED",
+              "ORDER_REPLACE_REJECTED",
+              "ORDER_EXPIRED",
+              "ORDER_EXTERNAL_OUTCOME_UNKNOWN",
+              "ORDER_RECONCILIATION_OBSERVED",
+              "COMMAND_ACCEPTED",
+              "COMMAND_REJECTED",
+              "COMMAND_REPLAYED",
+              "IDEMPOTENCY_CONFLICT",
+              "EVENT_REPLAY_IGNORED",
+              "EVENT_REJECTED"
+            ],
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/event_types",
+            "type_constraint_pointer": "/event_contract/envelope_schema/field_schemas/event_type"
           },
           "order_id": {
             "type": "canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "order_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "id_prefix": "ord",
-            "source_pointer": "/order_lifecycle",
-            "nullable": false
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/order_id"
           },
-          "workspace_id": {
-            "type": "canonical_id",
-            "id_prefix": "ws",
-            "source_pointer": "/order_lifecycle",
-            "nullable": false
+          "aggregate_version": {
+            "type": "positive_integer",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "aggregate_version",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/aggregate_version"
           },
-          "portfolio_id": {
+          "correlation_id": {
             "type": "canonical_id",
-            "id_prefix": "port",
-            "source_pointer": "/order_lifecycle",
-            "nullable": false
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "correlation_id",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "id_prefix": "corr",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/correlation_id"
+          },
+          "causation_id": {
+            "type": "nullable_canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "causation_id",
+            "nullable": true,
+            "semantic_role": "semantic_payload",
+            "id_prefix": "cause",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/causation_id"
+          },
+          "command_id": {
+            "type": "nullable_canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "command_id",
+            "nullable": true,
+            "semantic_role": "semantic_payload",
+            "id_prefix": "cmd",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/command_id"
           },
           "environment": {
             "type": "enum",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "environment",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "values": [
               "PAPER",
               "TESTNET",
               "LIVE"
             ],
-            "source_pointer": "/order_lifecycle",
-            "nullable": false
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/public_trading_environments",
+            "constraint_artifact": "canonical_domain_vocabulary.json",
+            "constraint_projection_rule": "values = [entry.name.upper() for entry in public_trading_environments]"
           },
-          "aggregate_version": {
-            "type": "positive_integer",
-            "source_pointer": "/order_lifecycle",
-            "nullable": false
+          "workspace_id": {
+            "type": "canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "workspace_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "ws",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/workspace_id"
           },
-          "event_type": {
+          "portfolio_id": {
+            "type": "canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "portfolio_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "port",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/portfolio_id"
+          },
+          "exchange_account_id": {
+            "type": "canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "exchange_account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "xacc",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/exchange_account_id"
+          },
+          "exchange_id": {
             "type": "non_empty_string",
-            "source_pointer": "/order_lifecycle",
-            "nullable": false
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "exchange_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/exchange_id"
+          },
+          "instrument_id": {
+            "type": "canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "instrument_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "instr",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/instrument_id"
+          },
+          "execution_route_id": {
+            "type": "canonical_id",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "execution_route_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "xroute",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/execution_route_id"
+          },
+          "occurred_at_utc": {
+            "type": "timestamp",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "occurred_at_utc",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/occurred_at_utc"
+          },
+          "safe_payload": {
+            "type": "event_safe_payload",
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "safe_payload",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/safe_payload"
           },
           "event_fingerprint_sha256": {
             "type": "sha256_hex",
-            "source_pointer": "/order_lifecycle",
-            "nullable": false
+            "source_pointer": "/event_contract/envelope_schema/fields",
+            "source_path": "event_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+            "constraint_pointer": "/event_contract/envelope_schema/field_schemas/event_fingerprint_sha256"
           }
         },
         "canonical_object_identity_fields": [
           "audit_event_id"
         ],
         "scope_fields": [
+          "order_id",
+          "environment",
           "workspace_id",
           "portfolio_id",
-          "environment"
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
         ],
         "revision_generation_fields": [
           "aggregate_version"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "event_fingerprint_sha256",
+        "semantic_fingerprint_input_fields": [
+          "audit_event_id",
+          "event_type",
+          "order_id",
+          "aggregate_version",
+          "correlation_id",
+          "causation_id",
+          "command_id",
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id",
+          "occurred_at_utc",
+          "safe_payload"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+          "source_pointer": "/event_contract/fingerprint",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "audit_event_id",
+            "event_type",
+            "order_id",
+            "aggregate_version",
+            "correlation_id",
+            "causation_id",
+            "command_id",
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id",
+            "occurred_at_utc",
+            "safe_payload"
+          ],
+          "input_shape": "CANONICAL_NFC_JSON_OBJECT",
+          "canonicalization": "complete immutable event envelope except fingerprint; Unicode NFC; JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
       }
     },
     "Fill": {
@@ -2564,34 +3176,26 @@
       "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
       "semantic_owner_milestone": "M0.8",
       "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
-      "semantic_json_pointer": "/reservation_protocol",
+      "semantic_json_pointer": "/accounting_economic_fact_schema_registry",
       "semantic_object_or_invariant": "reservation transition history",
       "carrier_strategy": "PERSISTENCE_RECORD",
       "projection_schema_if_any": null,
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "b3579e387a02b9f291468f5cc89a9ed650e4024a538cbb7f6f0c0818ed0c4641",
+      "semantic_contract_fingerprint_sha256": "2164487407cd12746fe31e3b7be3f85046aab8da254d1dde3e6c123f01650fb9",
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/reservation_protocol",
-          "object_id": "/reservation_protocol",
-          "scope_key": "/reservation_protocol",
-          "revision": "/reservation_protocol",
-          "state": "/reservation_protocol",
-          "content_fingerprint_sha256": "/reservation_protocol"
+          "upstream_payload": "exact capital_reservation or capital_release M0.8 AccountingEconomicFact selected by literal source_type"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_DISCRIMINATED_UPSTREAM_SEMANTIC_PAYLOAD"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -2599,93 +3203,505 @@
           "upstream_payload",
           "upstream_payload_fingerprint_sha256"
         ],
-        "persisted_payload_fields": [
-          "account_id",
-          "workspace_id",
-          "portfolio_id",
-          "environment",
-          "source_audit_event_id",
-          "transition_revision",
-          "state",
-          "content_fingerprint_sha256"
-        ],
-        "field_contracts": {
-          "account_id": {
-            "type": "canonical_id",
-            "id_prefix": "acct",
-            "source_pointer": "/reservation_protocol",
-            "nullable": false
-          },
-          "workspace_id": {
-            "type": "canonical_id",
-            "id_prefix": "ws",
-            "source_pointer": "/reservation_protocol",
-            "nullable": false
-          },
-          "portfolio_id": {
-            "type": "canonical_id",
-            "id_prefix": "port",
-            "source_pointer": "/reservation_protocol",
-            "nullable": false
-          },
-          "environment": {
-            "type": "enum",
-            "values": [
-              "PAPER",
-              "TESTNET",
-              "LIVE"
+        "upstream_payload_discriminator": "source_type",
+        "upstream_payload_variants": {
+          "capital_reservation": {
+            "discriminator_value": "capital_reservation",
+            "persisted_payload_fields": [
+              "audit_event_id",
+              "source_type",
+              "workspace_id",
+              "portfolio_id",
+              "environment",
+              "effective_at_utc",
+              "provenance",
+              "source_fingerprint_sha256",
+              "exchange_account_id",
+              "asset_reference",
+              "quantity",
+              "order_id",
+              "command_id"
             ],
-            "source_pointer": "/reservation_protocol",
-            "nullable": false
+            "field_contracts": {
+              "audit_event_id": {
+                "type": "canonical_id",
+                "id_prefix": "evt",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "audit_event_id",
+                "nullable": false,
+                "semantic_role": "identity"
+              },
+              "source_type": {
+                "type": "constant",
+                "value": "capital_reservation",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "source_type",
+                "nullable": false,
+                "semantic_role": "semantic_payload",
+                "constraint_pointer": "/accounting_economic_fact_schema_registry",
+                "projection_rule": "constant equals selected registry discriminator key capital_reservation"
+              },
+              "workspace_id": {
+                "type": "canonical_id",
+                "id_prefix": "ws",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "workspace_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              },
+              "portfolio_id": {
+                "type": "canonical_id",
+                "id_prefix": "port",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "portfolio_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              },
+              "environment": {
+                "type": "enum",
+                "values": [
+                  "PAPER",
+                  "TESTNET",
+                  "LIVE"
+                ],
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "environment",
+                "nullable": false,
+                "semantic_role": "parent_scope",
+                "constraint_pointer": "/environment_policy/core",
+                "constraint_projection_rule": "exact list equality"
+              },
+              "effective_at_utc": {
+                "type": "timestamp",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "effective_at_utc",
+                "nullable": false,
+                "semantic_role": "semantic_payload"
+              },
+              "provenance": {
+                "type": "non_empty_string",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "provenance",
+                "nullable": false,
+                "semantic_role": "semantic_payload",
+                "constraint_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/constraints",
+                "projection_rule": "actual M0.8 executable validator requires type(value) is str and value is non-empty; provenance remains descriptive evidence, not authority",
+                "constraint_evidence": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::economic_fact"
+              },
+              "source_fingerprint_sha256": {
+                "type": "sha256_hex",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "source_fingerprint_sha256",
+                "nullable": false,
+                "semantic_role": "fingerprint",
+                "constraint_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/constraints",
+                "projection_rule": "SHA-256 over canonical NFC/UTF-8 JSON of complete exact DTO excluding source_fingerprint_sha256; independently accepted CoreAcceptedAccountingFactProjection membership keyed by audit_event_id is additionally required and cannot be reconstructed from this hash",
+                "authority_semantics": "INTEGRITY_PLUS_PREEXISTING_ACCEPTED_ACCOUNTING_MEMBERSHIP"
+              },
+              "exchange_account_id": {
+                "type": "canonical_id",
+                "id_prefix": "xacc",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "exchange_account_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              },
+              "asset_reference": {
+                "type": "asset_reference",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "asset_reference",
+                "nullable": false,
+                "semantic_role": "semantic_payload",
+                "fields": [
+                  "venue_asset_code",
+                  "canonical_display_code",
+                  "asset_namespace",
+                  "mapping_status"
+                ],
+                "field_schemas": {
+                  "venue_asset_code": {
+                    "type": "non_empty_string"
+                  },
+                  "canonical_display_code": {
+                    "type": "non_empty_string"
+                  },
+                  "asset_namespace": {
+                    "type": "non_empty_string"
+                  },
+                  "mapping_status": {
+                    "type": "enum",
+                    "values": [
+                      "EXACT",
+                      "EXPLICIT_ALIAS"
+                    ]
+                  }
+                },
+                "constraint_pointer": "/asset_identity",
+                "projection_rule": "AssetReference.trusted exact closed mapping; all four values exact non-empty strings; mapping_status in accepted_mapping_status; normalization none",
+                "constraint_evidence": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::AssetReference.trusted",
+                "schema_source_artifact": "exchange_accounts_and_instruments.json",
+                "schema_source_pointer": "/asset_reference_contract/fields",
+                "mapping_status_source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "mapping_status_source_pointer": "/asset_identity/accepted_mapping_status"
+              },
+              "quantity": {
+                "type": "positive_decimal",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "quantity",
+                "nullable": false,
+                "semantic_role": "semantic_payload",
+                "constraint_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/constraints",
+                "decimal_regex": "^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                "positive": true,
+                "projection_rule": "actual M0.8 decimal(value, positive=True): exact str, regex fullmatch, and value != 0"
+              },
+              "order_id": {
+                "type": "canonical_id",
+                "id_prefix": "ord",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "order_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              },
+              "command_id": {
+                "type": "canonical_id",
+                "id_prefix": "cmd",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation/exact_fields",
+                "source_path": "command_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              }
+            },
+            "semantic_fingerprint_field": "source_fingerprint_sha256",
+            "semantic_fingerprint_derivation": {
+              "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+              "source_pointer": "/accounting_economic_fact_schema_registry/capital_reservation",
+              "algorithm": "SHA-256",
+              "input_fields": [
+                "audit_event_id",
+                "source_type",
+                "workspace_id",
+                "portfolio_id",
+                "environment",
+                "effective_at_utc",
+                "provenance",
+                "exchange_account_id",
+                "asset_reference",
+                "quantity",
+                "order_id",
+                "command_id"
+              ],
+              "input_shape": "CANONICAL_NFC_JSON_OBJECT",
+              "canonicalization": "complete exact accounting economic fact excluding source_fingerprint_sha256; Unicode NFC recursively; JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+              "encoding": "UTF-8",
+              "digest_format": "lowercase_hex",
+              "authority_semantics": "pre-existing CoreAcceptedAccountingFactProjection membership must bind audit_event_id, source_type, fingerprint, workspace_id, portfolio_id and environment"
+            },
+            "restore_authority_revalidation": {
+              "accounting_membership": {
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/non_fill_authority",
+                "lookup_key_field": "audit_event_id",
+                "binding_fields": [
+                  "source_type",
+                  "source_fingerprint_sha256",
+                  "workspace_id",
+                  "portfolio_id",
+                  "environment"
+                ],
+                "binding_shape": "ORDERED_TUPLE",
+                "registry_requirement": "PREEXISTING_CORE_OWNED_OPAQUE_ACCEPTED_REGISTRY",
+                "executable_evidence": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::economic_fact"
+              },
+              "integrity_only_fields": [
+                "source_fingerprint_sha256",
+                "upstream_payload_fingerprint_sha256"
+              ],
+              "no_self_enrollment": {
+                "candidate_may_populate_registry": false,
+                "payload_or_backup_may_carry_private_seal": false,
+                "nominal_mapping_or_self_hash_grants_authority": false
+              },
+              "failure": "TRUSTED_CONTEXT_FAILURE",
+              "validation_stage": "RESTORE_TIME_SEMANTIC_AUTHORITY_REVALIDATION_AFTER_STRUCTURAL_INTEGRITY",
+              "m07_context": {
+                "kind": "M07PrevalidatedAcceptedCommandContext",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/m07_authority_boundary",
+                "contract_pointer": "/m07_authority_boundary/submit_order_consumed_fields",
+                "lookup_key_field": "command_id",
+                "operation_type_constant": "SUBMIT_ORDER",
+                "candidate_binding_fields": [
+                  "command_id",
+                  "order_id",
+                  "workspace_id",
+                  "portfolio_id",
+                  "environment",
+                  "exchange_account_id"
+                ],
+                "accepted_membership_value": "canonical M0.7 command fingerprint over exact request excluding correlation_id",
+                "requires_private_acceptance_boundary": true,
+                "executable_evidence": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::attest_m07_accepted_submit_order"
+              }
+            }
           },
-          "source_audit_event_id": {
-            "type": "canonical_id",
-            "id_prefix": "evt",
-            "source_pointer": "/reservation_protocol",
-            "nullable": false
-          },
-          "transition_revision": {
-            "type": "positive_integer",
-            "source_pointer": "/reservation_protocol",
-            "nullable": false
-          },
-          "state": {
-            "type": "enum",
-            "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
+          "capital_release": {
+            "discriminator_value": "capital_release",
+            "persisted_payload_fields": [
+              "audit_event_id",
+              "source_type",
+              "workspace_id",
+              "portfolio_id",
+              "environment",
+              "effective_at_utc",
+              "provenance",
+              "source_fingerprint_sha256",
+              "exchange_account_id",
+              "order_id",
+              "terminal_state"
             ],
-            "source_pointer": "/reservation_protocol",
-            "nullable": false
-          },
-          "content_fingerprint_sha256": {
-            "type": "sha256_hex",
-            "source_pointer": "/reservation_protocol",
-            "nullable": false
+            "field_contracts": {
+              "audit_event_id": {
+                "type": "canonical_id",
+                "id_prefix": "evt",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "audit_event_id",
+                "nullable": false,
+                "semantic_role": "identity"
+              },
+              "source_type": {
+                "type": "constant",
+                "value": "capital_release",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "source_type",
+                "nullable": false,
+                "semantic_role": "semantic_payload",
+                "constraint_pointer": "/accounting_economic_fact_schema_registry",
+                "projection_rule": "constant equals selected registry discriminator key capital_release"
+              },
+              "workspace_id": {
+                "type": "canonical_id",
+                "id_prefix": "ws",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "workspace_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              },
+              "portfolio_id": {
+                "type": "canonical_id",
+                "id_prefix": "port",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "portfolio_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              },
+              "environment": {
+                "type": "enum",
+                "values": [
+                  "PAPER",
+                  "TESTNET",
+                  "LIVE"
+                ],
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "environment",
+                "nullable": false,
+                "semantic_role": "parent_scope",
+                "constraint_pointer": "/environment_policy/core",
+                "constraint_projection_rule": "exact list equality"
+              },
+              "effective_at_utc": {
+                "type": "timestamp",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "effective_at_utc",
+                "nullable": false,
+                "semantic_role": "semantic_payload"
+              },
+              "provenance": {
+                "type": "non_empty_string",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "provenance",
+                "nullable": false,
+                "semantic_role": "semantic_payload",
+                "constraint_pointer": "/accounting_economic_fact_schema_registry/capital_release/constraints",
+                "projection_rule": "actual M0.8 executable validator requires type(value) is str and value is non-empty; provenance remains descriptive evidence, not authority",
+                "constraint_evidence": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::economic_fact"
+              },
+              "source_fingerprint_sha256": {
+                "type": "sha256_hex",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "source_fingerprint_sha256",
+                "nullable": false,
+                "semantic_role": "fingerprint",
+                "constraint_pointer": "/accounting_economic_fact_schema_registry/capital_release/constraints",
+                "projection_rule": "SHA-256 over canonical NFC/UTF-8 JSON of complete exact DTO excluding source_fingerprint_sha256; independently accepted CoreAcceptedAccountingFactProjection membership keyed by audit_event_id is additionally required and cannot be reconstructed from this hash",
+                "authority_semantics": "INTEGRITY_PLUS_PREEXISTING_ACCEPTED_ACCOUNTING_MEMBERSHIP"
+              },
+              "exchange_account_id": {
+                "type": "canonical_id",
+                "id_prefix": "xacc",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "exchange_account_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              },
+              "order_id": {
+                "type": "canonical_id",
+                "id_prefix": "ord",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "order_id",
+                "nullable": false,
+                "semantic_role": "parent_scope"
+              },
+              "terminal_state": {
+                "type": "enum",
+                "values": [
+                  "REJECTED",
+                  "CANCELLED",
+                  "EXPIRED",
+                  "FILLED",
+                  "REPLACED"
+                ],
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/accounting_economic_fact_schema_registry/capital_release/exact_fields",
+                "source_path": "terminal_state",
+                "nullable": false,
+                "semantic_role": "lifecycle",
+                "constraint_pointer": "/reservation_protocol/terminal_release",
+                "constraint_projection_rule": "exact list equality"
+              }
+            },
+            "semantic_fingerprint_field": "source_fingerprint_sha256",
+            "semantic_fingerprint_derivation": {
+              "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+              "source_pointer": "/accounting_economic_fact_schema_registry/capital_release",
+              "algorithm": "SHA-256",
+              "input_fields": [
+                "audit_event_id",
+                "source_type",
+                "workspace_id",
+                "portfolio_id",
+                "environment",
+                "effective_at_utc",
+                "provenance",
+                "exchange_account_id",
+                "order_id",
+                "terminal_state"
+              ],
+              "input_shape": "CANONICAL_NFC_JSON_OBJECT",
+              "canonicalization": "complete exact accounting economic fact excluding source_fingerprint_sha256; Unicode NFC recursively; JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+              "encoding": "UTF-8",
+              "digest_format": "lowercase_hex",
+              "authority_semantics": "pre-existing CoreAcceptedAccountingFactProjection membership must bind audit_event_id, source_type, fingerprint, workspace_id, portfolio_id and environment"
+            },
+            "restore_authority_revalidation": {
+              "accounting_membership": {
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/non_fill_authority",
+                "lookup_key_field": "audit_event_id",
+                "binding_fields": [
+                  "source_type",
+                  "source_fingerprint_sha256",
+                  "workspace_id",
+                  "portfolio_id",
+                  "environment"
+                ],
+                "binding_shape": "ORDERED_TUPLE",
+                "registry_requirement": "PREEXISTING_CORE_OWNED_OPAQUE_ACCEPTED_REGISTRY",
+                "executable_evidence": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::economic_fact"
+              },
+              "integrity_only_fields": [
+                "source_fingerprint_sha256",
+                "upstream_payload_fingerprint_sha256"
+              ],
+              "no_self_enrollment": {
+                "candidate_may_populate_registry": false,
+                "payload_or_backup_may_carry_private_seal": false,
+                "nominal_mapping_or_self_hash_grants_authority": false
+              },
+              "failure": "TRUSTED_CONTEXT_FAILURE",
+              "validation_stage": "RESTORE_TIME_SEMANTIC_AUTHORITY_REVALIDATION_AFTER_STRUCTURAL_INTEGRITY",
+              "m07_context": {
+                "kind": "M07PrevalidatedAcceptedTerminalOrderEventContext",
+                "source_artifact": "ledger_portfolio_capital_and_pnl.json",
+                "source_pointer": "/m07_authority_boundary",
+                "contract_pointer": "/m07_authority_boundary/terminal_event_attestation",
+                "lookup_key_field": "audit_event_id",
+                "candidate_binding_fields": [
+                  "audit_event_id",
+                  "order_id",
+                  "workspace_id",
+                  "portfolio_id",
+                  "environment",
+                  "exchange_account_id"
+                ],
+                "event_to_terminal_state_pointer": "/m07_authority_boundary/terminal_event_mapping",
+                "accepted_membership_binding": [
+                  "event_fingerprint_sha256",
+                  "order_id",
+                  "aggregate_version",
+                  "event_type",
+                  "terminal_state",
+                  "predecessor_state",
+                  "previous_aggregate_version"
+                ],
+                "requires_private_acceptance_and_lifecycle_boundaries": true,
+                "requires_legal_predecessor_and_contiguous_version": true,
+                "legal_predecessor_derivation": {
+                  "source_artifact": "commands_events_order_lifecycle_and_idempotency.json",
+                  "source_pointer": "/order_lifecycle/transitions",
+                  "selector": {
+                    "field": "event",
+                    "equals_field": "accepted_terminal_event.event_type"
+                  },
+                  "result_path": "sources",
+                  "result_semantics": "exact non-empty unique list of canonical M0.7 lifecycle source states",
+                  "cardinality": "EXACTLY_ONE_TRANSITION",
+                  "failure_semantics": {
+                    "missing_transition": "TRUSTED_CONTEXT_FAILURE",
+                    "duplicate_or_ambiguous_transition": "TRUSTED_CONTEXT_FAILURE",
+                    "missing_sources": "TRUSTED_CONTEXT_FAILURE",
+                    "malformed_or_duplicate_sources": "TRUSTED_CONTEXT_FAILURE",
+                    "terminal_event_without_transition": "TRUSTED_CONTEXT_FAILURE"
+                  }
+                },
+                "executable_evidence": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::attest_m07_accepted_terminal_event"
+              }
+            }
           }
         },
         "canonical_object_identity_fields": [
-          "account_id"
+          "audit_event_id"
         ],
         "scope_fields": [
-          "account_id",
           "workspace_id",
           "portfolio_id",
           "environment"
         ],
-        "revision_generation_fields": [
-          "transition_revision"
-        ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "revision_generation_fields": [],
+        "source_derivation_mode": "DISCRIMINATED_DIRECT_CLOSED_UPSTREAM_DTO"
       }
     },
     "RiskDecision": {
@@ -2799,36 +3815,28 @@
     "RuntimeSession canonical identity/history": {
       "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
       "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
-      "semantic_owner_milestone": "M0.3",
-      "semantic_artifact": "process_topology_and_lifecycle.json",
-      "semantic_json_pointer": "/first_run_bootstrap_authority_contract",
+      "semantic_owner_milestone": "M0.2",
+      "semantic_artifact": "canonical_domain_vocabulary.json",
+      "semantic_json_pointer": "/entity_kinds",
       "semantic_object_or_invariant": "RuntimeSession canonical identity/history",
       "carrier_strategy": "PERSISTENCE_RECORD",
       "projection_schema_if_any": null,
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "df90a7d0d6972db16fee67bea285c60758e75615c2f583b57e5a62b0f7df752b",
+      "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/first_run_bootstrap_authority_contract",
-          "object_id": "/first_run_bootstrap_authority_contract",
-          "scope_key": "/first_run_bootstrap_authority_contract",
-          "revision": "/first_run_bootstrap_authority_contract",
-          "state": "/first_run_bootstrap_authority_contract",
-          "content_fingerprint_sha256": "/first_run_bootstrap_authority_contract"
+          "upstream_payload": "per-field source_derivation independently resolved against M0.2 entity_kinds, relationships and identifier_policy"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -2838,71 +3846,48 @@
         ],
         "persisted_payload_fields": [
           "runtime_session_id",
-          "account_id",
-          "device_installation_id",
-          "session_revision",
-          "state",
-          "content_fingerprint_sha256"
+          "device_installation_id"
         ],
         "field_contracts": {
           "runtime_session_id": {
             "type": "canonical_id",
-            "id_prefix": "sess",
-            "source_pointer": "/first_run_bootstrap_authority_contract",
-            "nullable": false
-          },
-          "account_id": {
-            "type": "canonical_id",
-            "id_prefix": "acct",
-            "source_pointer": "/first_run_bootstrap_authority_contract",
-            "nullable": false
+            "id_prefix": "run",
+            "source_pointer": "/entity_kinds",
+            "source_path": "canonical_name=RuntimeSession.id_field + id_prefix + /identifier_policy",
+            "nullable": false,
+            "semantic_role": "identity",
+            "source_artifact": "canonical_domain_vocabulary.json",
+            "projection_rule": {
+              "select": "entity_kinds[canonical_name == RuntimeSession]",
+              "emit": "id_field with id_prefix validated by identifier_policy"
+            }
           },
           "device_installation_id": {
             "type": "canonical_id",
             "id_prefix": "dev",
-            "source_pointer": "/first_run_bootstrap_authority_contract",
-            "nullable": false
-          },
-          "session_revision": {
-            "type": "positive_integer",
-            "source_pointer": "/first_run_bootstrap_authority_contract",
-            "nullable": false
-          },
-          "state": {
-            "type": "enum",
-            "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
-            ],
-            "source_pointer": "/first_run_bootstrap_authority_contract",
-            "nullable": false
-          },
-          "content_fingerprint_sha256": {
-            "type": "sha256_hex",
-            "source_pointer": "/first_run_bootstrap_authority_contract",
-            "nullable": false
+            "source_pointer": "/relationships",
+            "source_path": "from=DeviceInstallation,to=RuntimeSession + DeviceInstallation.id_field",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "source_artifact": "canonical_domain_vocabulary.json",
+            "projection_rule": {
+              "select_relationship": "relationships[from == DeviceInstallation && to == RuntimeSession]",
+              "select_parent": "entity_kinds[canonical_name == DeviceInstallation]",
+              "emit": "parent.id_field"
+            }
           }
         },
         "canonical_object_identity_fields": [
           "runtime_session_id"
         ],
         "scope_fields": [
-          "account_id",
           "device_installation_id"
         ],
-        "revision_generation_fields": [
-          "session_revision"
-        ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "revision_generation_fields": [],
+        "source_derivation_mode": "INDEPENDENT_CANONICAL_M02_ENTITY_RELATIONSHIP_PROJECTION",
+        "upstream_revision_literal": false,
+        "upstream_state_literal": false,
+        "upstream_fingerprint_literal": false
       }
     },
     "SessionSecurityState current generation/state": {
@@ -2937,23 +3922,15 @@
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/executable_boundary_schemas/SessionSecurityState",
-          "object_id": "/executable_boundary_schemas/SessionSecurityState",
-          "scope_key": "/executable_boundary_schemas/SessionSecurityState",
-          "revision": "/executable_boundary_schemas/SessionSecurityState",
-          "state": "/executable_boundary_schemas/SessionSecurityState",
-          "content_fingerprint_sha256": "/executable_boundary_schemas/SessionSecurityState"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -2974,74 +3951,120 @@
         "field_contracts": {
           "account_id": {
             "type": "canonical_id",
-            "id_prefix": "acct",
             "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
-            "nullable": false
+            "source_path": "account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "acct",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "operator_id": {
             "type": "canonical_id",
-            "id_prefix": "op",
             "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
-            "nullable": false
+            "source_path": "operator_id",
+            "nullable": false,
+            "semantic_role": "identity",
+            "id_prefix": "op",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "device_installation_id": {
             "type": "canonical_id",
-            "id_prefix": "dev",
             "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
-            "nullable": false
+            "source_path": "device_installation_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "dev",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "runtime_session_id": {
             "type": "canonical_id",
-            "id_prefix": "sess",
             "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
-            "nullable": false
+            "source_path": "runtime_session_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "run",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "state": {
             "type": "enum",
-            "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
-            ],
             "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
-            "nullable": false
+            "source_path": "state",
+            "nullable": false,
+            "semantic_role": "lifecycle",
+            "values": [
+              "LOCKED",
+              "UNLOCKED",
+              "LOGGED_OUT"
+            ],
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/registries/session_states"
           },
           "session_generation": {
             "type": "positive_integer",
             "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
-            "nullable": false
+            "source_path": "session_generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "security_generation": {
             "type": "positive_integer",
             "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
-            "nullable": false
+            "source_path": "security_generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "content_fingerprint_sha256": {
             "type": "sha256_hex",
             "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
-            "nullable": false
+            "source_path": "content_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           }
         },
         "canonical_object_identity_fields": [
-          "account_id"
+          "runtime_session_id"
         ],
         "scope_fields": [
           "account_id",
+          "operator_id",
           "device_installation_id"
         ],
         "revision_generation_fields": [
           "session_generation",
           "security_generation"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "content_fingerprint_sha256",
+        "semantic_fingerprint_input_fields": [
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "runtime_session_id",
+          "state",
+          "session_generation",
+          "security_generation"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "identity_device_authentication_and_secrets.json",
+          "source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "account_id",
+            "operator_id",
+            "device_installation_id",
+            "runtime_session_id",
+            "state",
+            "session_generation",
+            "security_generation"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
       }
     },
     "PinVerifierRecord accepted revisions": {
@@ -3060,23 +4083,15 @@
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/executable_boundary_schemas/PinVerifierRecord",
-          "object_id": "/executable_boundary_schemas/PinVerifierRecord",
-          "scope_key": "/executable_boundary_schemas/PinVerifierRecord",
-          "revision": "/executable_boundary_schemas/PinVerifierRecord",
-          "state": "/executable_boundary_schemas/PinVerifierRecord",
-          "content_fingerprint_sha256": "/executable_boundary_schemas/PinVerifierRecord"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -3087,68 +4102,171 @@
         "persisted_payload_fields": [
           "account_id",
           "operator_id",
-          "pin_revision",
-          "state",
+          "device_installation_id",
+          "algorithm_id",
+          "parameter_policy_version",
+          "salt_reference",
           "verifier",
+          "pin_revision",
+          "failed_attempts",
+          "lockout_until_utc",
+          "security_generation",
           "content_fingerprint_sha256"
         ],
         "field_contracts": {
           "account_id": {
             "type": "canonical_id",
-            "id_prefix": "acct",
             "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
-            "nullable": false
+            "source_path": "account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "acct",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "operator_id": {
             "type": "canonical_id",
-            "id_prefix": "op",
             "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
-            "nullable": false
+            "source_path": "operator_id",
+            "nullable": false,
+            "semantic_role": "identity",
+            "id_prefix": "op",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "device_installation_id": {
+            "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "source_path": "device_installation_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "dev",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "algorithm_id": {
+            "type": "constant",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "source_path": "algorithm_id",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "value": "M010-DETERMINISTIC-REFERENCE-NOT-PRODUCTION-KDF",
+            "constraint_pointer": "/pin_policy/reference_algorithm"
+          },
+          "parameter_policy_version": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "source_path": "parameter_policy_version",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "salt_reference": {
+            "type": "non_empty_string",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "source_path": "salt_reference",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "verifier": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "source_path": "verifier",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/pin_policy/reference_algorithm"
           },
           "pin_revision": {
             "type": "positive_integer",
             "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
-            "nullable": false
+            "source_path": "pin_revision",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
-          "state": {
-            "type": "enum",
-            "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
-            ],
+          "failed_attempts": {
+            "type": "non_negative_integer",
             "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
-            "nullable": false
+            "source_path": "failed_attempts",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/pin_policy/max_failed_attempts"
           },
-          "verifier": {
-            "type": "non_empty_object",
+          "lockout_until_utc": {
+            "type": "nullable_timestamp",
             "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
-            "nullable": false
+            "source_path": "lockout_until_utc",
+            "nullable": true,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/pin_policy/success_after_lockout_expiry"
+          },
+          "security_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+            "source_path": "security_generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "content_fingerprint_sha256": {
             "type": "sha256_hex",
             "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
-            "nullable": false
+            "source_path": "content_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           }
         },
         "canonical_object_identity_fields": [
-          "account_id"
+          "operator_id"
         ],
         "scope_fields": [
-          "account_id"
+          "account_id",
+          "device_installation_id"
         ],
         "revision_generation_fields": [
-          "pin_revision"
+          "pin_revision",
+          "security_generation"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "content_fingerprint_sha256",
+        "semantic_fingerprint_input_fields": [
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "algorithm_id",
+          "parameter_policy_version",
+          "salt_reference",
+          "verifier",
+          "pin_revision",
+          "failed_attempts",
+          "lockout_until_utc",
+          "security_generation"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "identity_device_authentication_and_secrets.json",
+          "source_pointer": "/executable_boundary_schemas/PinVerifierRecord",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "account_id",
+            "operator_id",
+            "device_installation_id",
+            "algorithm_id",
+            "parameter_policy_version",
+            "salt_reference",
+            "verifier",
+            "pin_revision",
+            "failed_attempts",
+            "lockout_until_utc",
+            "security_generation"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
       }
     },
     "PinVerifierRecord current designation": {
@@ -3198,23 +4316,15 @@
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/executable_boundary_schemas/DeviceTrustProjection",
-          "object_id": "/executable_boundary_schemas/DeviceTrustProjection",
-          "scope_key": "/executable_boundary_schemas/DeviceTrustProjection",
-          "revision": "/executable_boundary_schemas/DeviceTrustProjection",
-          "state": "/executable_boundary_schemas/DeviceTrustProjection",
-          "content_fingerprint_sha256": "/executable_boundary_schemas/DeviceTrustProjection"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -3225,63 +4335,117 @@
         "persisted_payload_fields": [
           "account_id",
           "device_installation_id",
-          "trust_revision",
           "state",
+          "trust_revision",
+          "security_generation",
+          "platform_enrollment_revision",
           "content_fingerprint_sha256"
         ],
         "field_contracts": {
           "account_id": {
             "type": "canonical_id",
-            "id_prefix": "acct",
             "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
-            "nullable": false
+            "source_path": "account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "acct",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "device_installation_id": {
             "type": "canonical_id",
-            "id_prefix": "dev",
             "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
-            "nullable": false
+            "source_path": "device_installation_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "dev",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "state": {
+            "type": "enum",
+            "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+            "source_path": "state",
+            "nullable": false,
+            "semantic_role": "lifecycle",
+            "values": [
+              "ENROLLED_UNTRUSTED",
+              "TRUSTED",
+              "REVOKED",
+              "REPLACED"
+            ],
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/registries/device_trust_states"
           },
           "trust_revision": {
             "type": "positive_integer",
             "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
-            "nullable": false
+            "source_path": "trust_revision",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
-          "state": {
-            "type": "enum",
-            "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
-            ],
+          "security_generation": {
+            "type": "positive_integer",
             "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
-            "nullable": false
+            "source_path": "security_generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "platform_enrollment_revision": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+            "source_path": "platform_enrollment_revision",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "content_fingerprint_sha256": {
             "type": "sha256_hex",
             "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
-            "nullable": false
+            "source_path": "content_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           }
         },
         "canonical_object_identity_fields": [
-          "account_id"
-        ],
-        "scope_fields": [
-          "account_id",
           "device_installation_id"
         ],
-        "revision_generation_fields": [
-          "trust_revision"
+        "scope_fields": [
+          "account_id"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "revision_generation_fields": [
+          "trust_revision",
+          "security_generation",
+          "platform_enrollment_revision"
+        ],
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "content_fingerprint_sha256",
+        "semantic_fingerprint_input_fields": [
+          "account_id",
+          "device_installation_id",
+          "state",
+          "trust_revision",
+          "security_generation",
+          "platform_enrollment_revision"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "identity_device_authentication_and_secrets.json",
+          "source_pointer": "/executable_boundary_schemas/DeviceTrustProjection",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "account_id",
+            "device_installation_id",
+            "state",
+            "trust_revision",
+            "security_generation",
+            "platform_enrollment_revision"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
       }
     },
     "DeviceTrust current designation": {
@@ -3320,34 +4484,26 @@
       "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
       "semantic_owner_milestone": "M0.10",
       "semantic_artifact": "identity_device_authentication_and_secrets.json",
-      "semantic_json_pointer": "/biometric_policy",
-      "semantic_object_or_invariant": "platform enrollment revisions",
+      "semantic_json_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
+      "semantic_object_or_invariant": "CoreAcceptedPlatformBiometricAssertionBinding",
       "carrier_strategy": "PERSISTENCE_RECORD",
       "projection_schema_if_any": null,
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "1edac9c6719c11347470529f4ff995cc8f6af451cdc46832fedcb80860efbbef",
+      "semantic_contract_fingerprint_sha256": "44625bd0fe1e8d72b472dcdcfeec8be48b8730a9d6fe4bcd22edf39257d0c810",
       "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
       "payload_contract": {
         "required_fields": [
-          "semantic_object",
-          "object_id",
-          "scope_key",
-          "revision",
-          "state",
-          "content_fingerprint_sha256"
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
         ],
         "field_sources": {
-          "semantic_object": "/biometric_policy",
-          "object_id": "/biometric_policy",
-          "scope_key": "/biometric_policy",
-          "revision": "/biometric_policy",
-          "state": "/biometric_policy",
-          "content_fingerprint_sha256": "/biometric_policy"
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
         },
         "closed": true,
-        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD"
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
       },
       "immutable_fact_binding": {
         "wrapper_fields": [
@@ -3356,71 +4512,87 @@
           "upstream_payload_fingerprint_sha256"
         ],
         "persisted_payload_fields": [
+          "assertion_fingerprint_sha256",
+          "complete_assertion_content_fingerprint_sha256",
+          "authority_source",
           "account_id",
           "device_installation_id",
-          "enrollment_revision",
-          "state",
-          "platform_reference_fingerprint_sha256",
-          "content_fingerprint_sha256"
+          "platform_enrollment_revision",
+          "challenge_fingerprint_sha256"
         ],
         "field_contracts": {
+          "assertion_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
+            "source_path": "assertion_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "complete_assertion_content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
+            "source_path": "complete_assertion_content_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "authority_source": {
+            "type": "non_empty_string",
+            "source_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
+            "source_path": "authority_source",
+            "nullable": false,
+            "semantic_role": "semantic_payload",
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/biometric_policy/acceptance_authority"
+          },
           "account_id": {
             "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
+            "source_path": "account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "id_prefix": "acct",
-            "source_pointer": "/biometric_policy",
-            "nullable": false
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
           "device_installation_id": {
             "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
+            "source_path": "device_installation_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
             "id_prefix": "dev",
-            "source_pointer": "/biometric_policy",
-            "nullable": false
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
-          "enrollment_revision": {
+          "platform_enrollment_revision": {
             "type": "positive_integer",
-            "source_pointer": "/biometric_policy",
-            "nullable": false
+            "source_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
+            "source_path": "platform_enrollment_revision",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           },
-          "state": {
-            "type": "enum",
-            "values": [
-              "ACCEPTED",
-              "ACTIVE",
-              "COMMITTED",
-              "CONSUMED",
-              "LOCKED",
-              "RECORDED",
-              "REVOKED",
-              "RETIRED",
-              "TRUSTED"
-            ],
-            "source_pointer": "/biometric_policy",
-            "nullable": false
-          },
-          "platform_reference_fingerprint_sha256": {
+          "challenge_fingerprint_sha256": {
             "type": "sha256_hex",
-            "source_pointer": "/biometric_policy",
-            "nullable": false
-          },
-          "content_fingerprint_sha256": {
-            "type": "sha256_hex",
-            "source_pointer": "/biometric_policy",
-            "nullable": false
+            "source_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
+            "source_path": "challenge_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
           }
         },
         "canonical_object_identity_fields": [
-          "account_id"
+          "assertion_fingerprint_sha256"
         ],
         "scope_fields": [
           "account_id",
-          "device_installation_id"
+          "device_installation_id",
+          "challenge_fingerprint_sha256"
         ],
         "revision_generation_fields": [
-          "enrollment_revision"
+          "platform_enrollment_revision"
         ],
-        "nullable_fields": [],
-        "legal_immutable_state_field": "state",
-        "fingerprint_canonicalization": "SHA-256 canonical UTF-8 JSON of exact upstream_payload, sorted keys, compact separators, ensure_ascii=false"
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO"
       }
     },
     "AuthenticationProof": {
@@ -3537,7 +4709,28 @@
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
       "semantic_contract_fingerprint_sha256": "20585120d9bad1b6e2670c1cb886536cccb675b3dd4a2cd967524b26cb674c22",
-      "record_key_strategy": "BOOTSTRAP_SCOPE_GENERATION_REVISION_CLAIM"
+      "record_key_strategy": "BOOTSTRAP_SCOPE_GENERATION_REVISION_CLAIM",
+      "source_derivation": {
+        "mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "source_artifact": "process_topology_and_lifecycle.json",
+        "source_pointer": "/first_run_bootstrap_authority_contract/executable_schemas/ConsumedBootstrapAuthority",
+        "persisted_payload_fields": [
+          "account_id",
+          "device_installation_id",
+          "bootstrap_generation",
+          "bootstrap_revision",
+          "claim_fingerprint_sha256",
+          "challenge_fingerprint_sha256"
+        ],
+        "field_roles": {
+          "account_id": "parent_scope",
+          "device_installation_id": "parent_scope",
+          "bootstrap_generation": "revision_generation",
+          "bootstrap_revision": "revision_generation",
+          "claim_fingerprint_sha256": "identity",
+          "challenge_fingerprint_sha256": "fingerprint"
+        }
+      }
     },
     "M0.3 restore freshness membership": {
       "durability_class": "EXTERNAL AUTHORITY / REFERENCE ONLY",
@@ -3883,7 +5076,7 @@
       "upstream_field_schemas": {
         "strategy_instance_id": {
           "type": "id",
-          "prefix": "stratinst"
+          "prefix": "sinst"
         },
         "workspace_id": {
           "type": "id",
@@ -3895,7 +5088,7 @@
         },
         "strategy_definition_id": {
           "type": "id",
-          "prefix": "stratdef"
+          "prefix": "sdef"
         },
         "strategy_definition_version": {
           "type": "positive_integer"
@@ -3909,7 +5102,8 @@
           "prefix": "univ"
         },
         "market_data_route_id": {
-          "type": "non_empty_string"
+          "type": "id",
+          "prefix": "mdr"
         },
         "execution_route_id": {
           "type": "id",
@@ -4627,7 +5821,7 @@
         },
         "strategy_instance_id": {
           "type": "id",
-          "prefix": "stratinst"
+          "prefix": "sinst"
         },
         "asset_reference": {
           "type": "asset_reference",
@@ -4912,7 +6106,7 @@
         },
         "strategy_instance_id": {
           "type": "id",
-          "prefix": "stratinst"
+          "prefix": "sinst"
         },
         "source_identity": {
           "type": "object",
@@ -5053,7 +6247,7 @@
         },
         "runtime_session_id": {
           "type": "id",
-          "prefix": "sess"
+          "prefix": "run"
         },
         "state": {
           "type": "non_empty_string"
@@ -5172,6 +6366,27 @@
     "MIGRATION_ID_CURRENT_REVISION": "migration-current",
     "HANDOFF_ID_TRANSITION_REVISION": "handoff-transition",
     "HANDOFF_ID_CURRENT_REVISION": "handoff-current"
+  },
+  "restore_candidate_revalidation_orchestration": {
+    "ordered_stages": [
+      "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION",
+      "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+      "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+      "M0_3_RESTORE_FRESHNESS"
+    ],
+    "reservation_transition_history": {
+      "selector": {
+        "representation_name": "reservation transition history"
+      },
+      "required_gate": "restore_authority_revalidation selected by upstream_payload.source_type",
+      "trusted_input": "pre-existing opaque reservation authority bundle; never payload-derived or persisted",
+      "missing_authority_when_records_present": "RESTORE_REJECTED",
+      "missing_authority_when_records_absent": "ALLOWED",
+      "failure": "RESTORE_REJECTED",
+      "success": "CANDIDATE_VALID_REQUIRES_M0.3_FRESHNESS"
+    },
+    "structural_integrity_grants_authority": false,
+    "category_gates_are_conjunctive": true
   }
 }
 ```
@@ -6662,6 +7877,8 @@
   "architecture_only": true,
   "all_adversarial_invariants_green": true,
   "true_upstream_semantic_gaps": 0,
-  "representation_registry": "63/63 structured, zero true upstream semantic gaps, no synthetic record kinds"
+  "representation_registry": "63/63 structured, zero true upstream semantic gaps, no synthetic record kinds",
+  "immutable_upstream_provenance": "ALL_WRAPPERS_DIRECT_OR_LOSSLESS_COMPOSITE_SOURCE_DERIVED",
+  "immutable_history_wrapper_count": 14
 }
 ```
