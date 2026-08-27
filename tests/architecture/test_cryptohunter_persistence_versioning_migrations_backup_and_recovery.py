@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 from decimal import Decimal, InvalidOperation
 import hashlib
+import inspect
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -41,6 +44,57 @@ def _resolve_pointer(document: Any, pointer: Any) -> tuple[bool, Any]:
 def _actual_fingerprint(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _nfc(value: Any) -> Any:
+    if isinstance(value, str):
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, list):
+        return [_nfc(item) for item in value]
+    if isinstance(value, dict):
+        return {_nfc(key): _nfc(item) for key, item in value.items()}
+    return value
+
+
+def _semantic_fingerprint(binding: dict[str, Any], upstream: dict[str, Any]) -> str | None:
+    derivation = binding.get("semantic_fingerprint_derivation")
+    if not isinstance(derivation, dict):
+        return None
+    if derivation.get("algorithm") != "SHA-256":
+        return None
+    fields = derivation.get("input_fields")
+    if not isinstance(fields, list) or not all(isinstance(name, str) for name in fields):
+        return None
+    shape = derivation.get("input_shape")
+    if shape == "JSON_OBJECT":
+        return _actual_fingerprint({name: upstream[name] for name in fields})
+    if shape == "ORDERED_CANONICAL_JSON_ARRAY":
+        return _actual_fingerprint([upstream[name] for name in fields])
+    if shape == "CANONICAL_NFC_JSON_OBJECT":
+        return _actual_fingerprint(_nfc({name: upstream[name] for name in fields}))
+    if shape == "DOMAIN_SEPARATOR_NEWLINE_CANONICAL_JSON_OBJECT":
+        canonical = {name: upstream[name] for name in fields}
+        for name in ("instrument_ids", "source_catalog_snapshot_ids"):
+            if isinstance(canonical.get(name), list):
+                canonical[name] = sorted(canonical[name])
+        encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        raw = f"{derivation['domain_separator']}\n{encoded}".encode()
+        return hashlib.sha256(raw).hexdigest()
+    if shape == "DOMAIN_SEPARATOR_BYTES_PLUS_CANONICAL_JSON_VALUE":
+        if fields != ["configuration"]:
+            return None
+        configuration = upstream["configuration"]
+        if not isinstance(configuration, dict) or any(
+            isinstance(value, float) for value in configuration.values()
+        ):
+            return None
+        configuration_bytes = json.dumps(
+            configuration, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        return hashlib.sha256(
+            derivation["domain_separator"].encode() + configuration_bytes
+        ).hexdigest()
+    return None
 
 
 def _attests(entry: Any, upstream: Any) -> bool:
@@ -415,7 +469,7 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
         "semantic_owner_milestone": "M0.10",
         "semantic_artifact": "identity_device_authentication_and_secrets.json",
-        "semantic_json_pointer": "/executable_boundary_schemas",
+        "semantic_json_pointer": "/executable_boundary_schemas/OperatorIdentitySecurityProjection",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "LiveAccessGrant current designation/state": {
@@ -429,7 +483,7 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
         "semantic_owner_milestone": "M0.10",
         "semantic_artifact": "identity_device_authentication_and_secrets.json",
-        "semantic_json_pointer": "/executable_boundary_schemas",
+        "semantic_json_pointer": "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "Workspace": {
@@ -485,7 +539,7 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
         "semantic_owner_milestone": "M0.6",
         "semantic_artifact": "strategy_market_data_and_execution_routing.json",
-        "semantic_json_pointer": "/strategy_definition_contract",
+        "semantic_json_pointer": "/record_schemas/StrategyDefinition",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "StrategyDefinition current designation": {
@@ -583,7 +637,7 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
         "semantic_owner_milestone": "M0.7",
         "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
-        "semantic_json_pointer": "/order_lifecycle",
+        "semantic_json_pointer": "/event_contract",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "Fill": {
@@ -611,7 +665,7 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
         "semantic_owner_milestone": "M0.8",
         "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
-        "semantic_json_pointer": "/reservation_protocol",
+        "semantic_json_pointer": "/accounting_economic_fact_schema_registry",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "RiskDecision": {
@@ -651,9 +705,9 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
     },
     "RuntimeSession canonical identity/history": {
         "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
-        "semantic_owner_milestone": "M0.3",
-        "semantic_artifact": "process_topology_and_lifecycle.json",
-        "semantic_json_pointer": "/first_run_bootstrap_authority_contract",
+        "semantic_owner_milestone": "M0.2",
+        "semantic_artifact": "canonical_domain_vocabulary.json",
+        "semantic_json_pointer": "/entity_kinds",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "SessionSecurityState current generation/state": {
@@ -702,7 +756,7 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
         "semantic_owner_milestone": "M0.10",
         "semantic_artifact": "identity_device_authentication_and_secrets.json",
-        "semantic_json_pointer": "/biometric_policy",
+        "semantic_json_pointer": "/executable_boundary_schemas/CoreAcceptedPlatformBiometricAssertionBinding",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "AuthenticationProof": {
@@ -1315,6 +1369,10 @@ def _field_schema_valid(field: str, value: Any, schema: dict[str, Any]) -> bool:
         )
     if kind == "positive_integer":
         return _positive(value)
+    if kind == "non_negative_integer":
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    if kind == "boolean":
+        return isinstance(value, bool)
     if kind == "sha256_hex":
         return isinstance(value, str) and SHA_RE.fullmatch(value) is not None
     if kind == "enum":
@@ -1332,6 +1390,16 @@ def _field_schema_valid(field: str, value: Any, schema: dict[str, Any]) -> bool:
         )
     if kind == "timestamp":
         return isinstance(value, str) and value.endswith("Z") and "T" in value
+    if kind == "nullable_timestamp":
+        return value is None or _field_schema_valid(field, value, {"type": "timestamp"})
+    if kind == "nullable_canonical_id":
+        return value is None or _field_schema_valid(
+            field, value, {"type": "id", "prefix": schema.get("id_prefix")}
+        )
+    if kind == "non_negative_decimal":
+        return _field_schema_valid(field, value, {"type": "decimal", "constraint": "non_negative"})
+    if kind == "positive_decimal":
+        return _field_schema_valid(field, value, {"type": "decimal", "constraint": "positive"})
     if kind == "array":
         return isinstance(value, list)
     if kind == "event_safe_payload":
@@ -1353,10 +1421,28 @@ def _field_schema_valid(field: str, value: Any, schema: dict[str, Any]) -> bool:
         )
     if kind == "canonical_id":
         return _field_schema_valid(field, value, {"type": "id", "prefix": schema.get("id_prefix")})
+    if kind == "canonical_scope_id":
+        # Exact PRODUCT_SYSTEM literal versus entity prefix is checked cross-field.
+        return isinstance(value, str) and bool(value)
     if kind == "compound_scope":
         return isinstance(value, str) and bool(value)
     if kind == "non_empty_object":
         return isinstance(value, dict) and bool(value)
+    if kind == "risk_limits":
+        if not isinstance(value, list) or not value:
+            return False
+        asset_fields = set(schema.get("asset_reference_fields", []))
+        return all(
+            isinstance(item, list)
+            and len(item) == 3
+            and item[0] in schema.get("supported_limit_names", [])
+            and isinstance(item[1], str)
+            and re.fullmatch(r"-?(0|[1-9][0-9]*)/[1-9][0-9]*", item[1]) is not None
+            and isinstance(item[2], dict)
+            and set(item[2]) == asset_fields
+            and all(isinstance(v, str) and v for v in item[2].values())
+            for item in value
+        )
     if kind in {"non_empty_string", "string"}:
         return isinstance(value, str) and bool(value)
     return False
@@ -1430,16 +1516,84 @@ def _validate_immutable_projection(aspect: str, entry: dict[str, Any], payload: 
         or set(payload) != set(binding["wrapper_fields"])
         or payload.get("fact_kind") != entry["semantic_object_or_invariant"]
         or not isinstance(payload.get("upstream_payload"), dict)
-        or set(payload["upstream_payload"]) != set(binding["persisted_payload_fields"])
     ):
         return False
     upstream = payload["upstream_payload"]
-    contracts = binding["field_contracts"]
-    if not all(
-        _field_schema_valid(field, upstream[field], contracts[field])
-        for field in binding["persisted_payload_fields"]
-    ):
+    semantic_binding = binding
+    if "upstream_payload_variants" in binding:
+        discriminator = binding["upstream_payload_discriminator"]
+        variant = binding["upstream_payload_variants"].get(upstream.get(discriminator))
+        if not isinstance(variant, dict):
+            return False
+        fields = variant["persisted_payload_fields"]
+        contracts = variant["field_contracts"]
+        semantic_binding = variant
+    else:
+        fields = binding["persisted_payload_fields"]
+        contracts = binding["field_contracts"]
+    if set(upstream) != set(fields):
         return False
+    if not all(_field_schema_valid(field, upstream[field], contracts[field]) for field in fields):
+        return False
+    if aspect == "RiskPolicy accepted revisions":
+        scope_prefixes = {
+            "PRODUCT_SYSTEM": None,
+            "WORKSPACE": "ws",
+            "PORTFOLIO": "port",
+            "EXCHANGE_ACCOUNT": "xacc",
+            "STRATEGY_INSTANCE": "sinst",
+            "INSTRUMENT": "instr",
+            "EXECUTION_ROUTE": "xroute",
+        }
+        expected_prefix = scope_prefixes[upstream["scope_type"]]
+        if (expected_prefix is None and upstream["scope_id"] != "product") or (
+            expected_prefix is not None
+            and not upstream["scope_id"].startswith(expected_prefix + "_")
+        ):
+            return False
+    if aspect == "kill-switch transition history":
+        scope_prefixes = {
+            "PRODUCT_SYSTEM": None,
+            "WORKSPACE": "ws",
+            "PORTFOLIO": "port",
+            "EXCHANGE_ACCOUNT": "xacc",
+            "STRATEGY_INSTANCE": "sinst",
+            "INSTRUMENT": "instr",
+            "EXECUTION_ROUTE": "xroute",
+        }
+        expected_prefix = scope_prefixes[upstream["scope_type"]]
+        if (expected_prefix is None and upstream["scope_id"] != "product") or (
+            expected_prefix is not None
+            and not upstream["scope_id"].startswith(expected_prefix + "_")
+        ):
+            return False
+    if aspect == "Order lifecycle events/history":
+        event_contract = _source_value(entry)
+        event_schema = event_contract["event_schema_registry"].get(upstream["event_type"])
+        if not isinstance(event_schema, dict) or set(upstream["safe_payload"]) != set(
+            event_schema["safe_payload_fields"]
+        ):
+            return False
+        if not all(
+            _field_schema_valid(
+                name,
+                upstream["safe_payload"][name],
+                event_schema["field_schemas"][name],
+            )
+            for name in event_schema["safe_payload_fields"]
+        ):
+            return False
+    semantic_field = semantic_binding.get("semantic_fingerprint_field")
+    if isinstance(semantic_field, str):
+        derivation = semantic_binding.get("semantic_fingerprint_derivation", {})
+        separator_field = derivation.get("domain_separator_record_field")
+        if isinstance(separator_field, str) and upstream.get(separator_field) != derivation.get(
+            "domain_separator"
+        ):
+            return False
+        expected_fingerprint = _semantic_fingerprint(semantic_binding, upstream)
+        if expected_fingerprint is None or upstream[semantic_field] != expected_fingerprint:
+            return False
     fingerprint = payload.get("upstream_payload_fingerprint_sha256")
     return isinstance(fingerprint, str) and fingerprint == _actual_fingerprint(upstream)
 
@@ -1791,7 +1945,13 @@ def _direct_payload(aspect: str, suffix: str, revision: int) -> dict[str, Any]:
     return payload
 
 
-def _payload_for(aspect: str, *, object_suffix: str = "a", revision: int = 1) -> dict[str, Any]:
+def _payload_for(
+    aspect: str,
+    *,
+    object_suffix: str = "a",
+    revision: int = 1,
+    variant_name: str | None = None,
+) -> dict[str, Any]:
     entry = MACHINE["backup_contract"]["representation_registry"][aspect]
     category = entry["representation_category"]
     if aspect == "bootstrap consumed fence":
@@ -1879,14 +2039,36 @@ def _payload_for(aspect: str, *, object_suffix: str = "a", revision: int = 1) ->
         return _direct_payload(aspect, object_suffix, revision)
     if category == "M011_IMMUTABLE_HISTORY_WRAPPER":
         binding = entry["immutable_fact_binding"]
+        variant = None
+        if "upstream_payload_variants" in binding:
+            variants = binding["upstream_payload_variants"]
+            variant = (
+                variants[variant_name]
+                if variant_name is not None
+                else next(iter(variants.values()))
+            )
+        fields = (
+            variant["persisted_payload_fields"]
+            if variant is not None
+            else binding["persisted_payload_fields"]
+        )
+        contracts = (
+            variant["field_contracts"] if variant is not None else binding["field_contracts"]
+        )
         upstream: dict[str, Any] = {}
-        for field in binding["persisted_payload_fields"]:
-            contract = binding["field_contracts"][field]
+        for field in fields:
+            contract = contracts[field]
             kind = contract["type"]
-            if kind == "canonical_id":
+            if kind == "constant":
+                upstream[field] = contract["value"]
+            elif kind == "canonical_id":
                 upstream[field] = _canonical_fixture_id(contract["id_prefix"], object_suffix)
             elif kind == "positive_integer":
                 upstream[field] = revision
+            elif kind == "non_negative_integer":
+                upstream[field] = 0
+            elif kind == "boolean":
+                upstream[field] = True
             elif kind == "sha256_hex":
                 upstream[field] = SHA
             elif kind == "enum":
@@ -1895,21 +2077,80 @@ def _payload_for(aspect: str, *, object_suffix: str = "a", revision: int = 1) ->
                 upstream[field] = [_canonical_fixture_id(contract["id_prefix"], object_suffix)]
             elif kind == "non_empty_object":
                 upstream[field] = {"algorithm": "argon2id", "encoded_verifier": SHA}
+            elif kind in {"object", "asset_reference"}:
+                upstream[field] = {
+                    nested: (
+                        1
+                        if nested_schema["type"] == "positive_integer"
+                        else True
+                        if nested_schema["type"] == "boolean"
+                        else nested_schema["values"][0]
+                        if nested_schema["type"] == "enum"
+                        else f"canonical-{nested}"
+                    )
+                    for nested, nested_schema in contract["field_schemas"].items()
+                }
+            elif kind == "timestamp":
+                upstream[field] = "2025-01-01T00:00:00Z"
+            elif kind == "nullable_timestamp":
+                upstream[field] = None
+            elif kind == "nullable_canonical_id":
+                upstream[field] = None
+            elif kind == "non_negative_decimal":
+                upstream[field] = "1"
+            elif kind == "positive_decimal":
+                upstream[field] = "1"
+            elif kind == "boolean":
+                upstream[field] = True
+            elif kind == "event_safe_payload":
+                event_contract = _source_value(entry)
+                event_schema = event_contract["event_schema_registry"][upstream["event_type"]]
+                upstream[field] = {
+                    name: (
+                        "1"
+                        if schema["type"] == "decimal"
+                        else _canonical_fixture_id(schema["prefix"], object_suffix)
+                        if schema["type"] == "id"
+                        else schema.get("values", ["canonical"])[0]
+                    )
+                    for name, schema in event_schema["field_schemas"].items()
+                }
+            elif kind == "risk_limits":
+                upstream[field] = [
+                    [
+                        contract["supported_limit_names"][0],
+                        "1/1",
+                        {
+                            "venue_asset_code": "USD",
+                            "canonical_display_code": "USD",
+                            "asset_namespace": "ISO4217",
+                            "mapping_status": "CANONICAL",
+                        },
+                    ]
+                ]
+            elif kind == "canonical_scope_id":
+                scope_prefix = {
+                    "PRODUCT_SYSTEM": None,
+                    "WORKSPACE": "ws",
+                    "PORTFOLIO": "port",
+                    "EXCHANGE_ACCOUNT": "xacc",
+                    "STRATEGY_INSTANCE": "sinst",
+                    "INSTRUMENT": "instr",
+                    "EXECUTION_ROUTE": "xroute",
+                }[upstream[contract["scope_type_field"]]]
+                upstream[field] = (
+                    "product"
+                    if scope_prefix is None
+                    else _canonical_fixture_id(scope_prefix, object_suffix)
+                )
             else:
                 upstream[field] = f"canonical-{field}-{object_suffix}"
-        terminal = (
-            "content_fingerprint_sha256"
-            if "content_fingerprint_sha256" in upstream
-            else "record_fingerprint_sha256"
-            if "record_fingerprint_sha256" in upstream
-            else "event_fingerprint_sha256"
-            if "event_fingerprint_sha256" in upstream
-            else None
-        )
-        if terminal is not None:
-            upstream[terminal] = _actual_fingerprint(
-                {key: value for key, value in upstream.items() if key != terminal}
-            )
+        semantic_binding = variant if variant is not None else binding
+        terminal = semantic_binding.get("semantic_fingerprint_field")
+        if isinstance(terminal, str):
+            derived = _semantic_fingerprint(semantic_binding, upstream)
+            assert derived is not None
+            upstream[terminal] = derived
         return {
             "fact_kind": entry["semantic_object_or_invariant"],
             "upstream_payload": upstream,
@@ -1919,11 +2160,21 @@ def _payload_for(aspect: str, *, object_suffix: str = "a", revision: int = 1) ->
 
 
 def _persistence_record(
-    aspect: str, payload: Any | None = None, *, object_suffix: str = "a", revision: int = 1
+    aspect: str,
+    payload: Any | None = None,
+    *,
+    object_suffix: str = "a",
+    revision: int = 1,
+    variant_name: str | None = None,
 ) -> dict[str, Any]:
     entry = MACHINE["backup_contract"]["representation_registry"][aspect]
     actual = (
-        _payload_for(aspect, object_suffix=object_suffix, revision=revision)
+        _payload_for(
+            aspect,
+            object_suffix=object_suffix,
+            revision=revision,
+            variant_name=variant_name,
+        )
         if payload is None
         else payload
     )
@@ -3508,6 +3759,7 @@ def _revalidate_restore_records(
     accepted_by_reference: Any,
     minimum_generation: int,
     bootstrap_history: Any,
+    reservation_authority: Any = None,
 ) -> str:
     if not isinstance(records, list) or not all(
         _validate_persistence_record(record) for record in records
@@ -3515,6 +3767,10 @@ def _revalidate_restore_records(
         return "RESTORE_REJECTED"
     for record in records:
         category = record["representation_category"]
+        if record["representation_name"] == "reservation transition history" and not (
+            _revalidate_reservation_restore_authority(record, reservation_authority)
+        ):
+            return "RESTORE_REJECTED"
         if category == "M011_CURRENT_DESIGNATION_PROJECTION":
             if record["representation_name"] == "bootstrap consumed fence":
                 result = _revalidate_bootstrap_consumption(record, bootstrap_history)
@@ -3563,7 +3819,12 @@ def test_immutable_history_is_lossless_closed_and_fingerprint_recomputed(aspect:
     assert record["payload"]["upstream_payload_fingerprint_sha256"] == _actual_fingerprint(upstream)
     assert _validate_persistence_record(record)
 
-    for mutation in ("missing", "extra", "scope", "identity", "revision", "state", "sha"):
+    mutations = ["missing", "extra", "scope", "identity", "sha"]
+    if binding["revision_generation_fields"]:
+        mutations.append("revision")
+    if "state" in upstream:
+        mutations.append("state")
+    for mutation in mutations:
         altered = copy.deepcopy(record)
         payload = altered["payload"]["upstream_payload"]
         if mutation == "missing":
@@ -3585,6 +3846,1414 @@ def test_immutable_history_is_lossless_closed_and_fingerprint_recomputed(aspect:
         altered["payload_fingerprint_sha256"] = _actual_fingerprint(altered["payload"])
         altered["record_key"] = _derive_record_key(aspect, entry, altered["payload"])
         assert not _validate_persistence_record(altered)
+
+
+def _rehash_immutable_record(record: dict[str, Any]) -> None:
+    record["payload"]["upstream_payload_fingerprint_sha256"] = _actual_fingerprint(
+        record["payload"]["upstream_payload"]
+    )
+    record["payload_fingerprint_sha256"] = _actual_fingerprint(record["payload"])
+
+
+def test_runtime_session_provenance_is_independently_derived_from_m02() -> None:
+    upstream = json.loads((DOCS / "canonical_domain_vocabulary.json").read_text())
+    entity = next(x for x in upstream["entity_kinds"] if x["canonical_name"] == "RuntimeSession")
+    relationship = next(
+        x
+        for x in upstream["relationships"]
+        if x["from"] == "DeviceInstallation" and x["to"] == "RuntimeSession"
+    )
+    entry = MACHINE["backup_contract"]["representation_registry"][
+        "RuntimeSession canonical identity/history"
+    ]
+    binding = entry["immutable_fact_binding"]
+    assert entry["semantic_owner_milestone"] == upstream["m0_element"] == "M0.2"
+    assert entry["semantic_artifact"] == "canonical_domain_vocabulary.json"
+    assert entry["semantic_json_pointer"] != "/first_run_bootstrap_authority_contract"
+    assert entity == {
+        **entity,
+        "id_field": "runtime_session_id",
+        "id_prefix": "run",
+        "parent": "DeviceInstallation",
+        "persistence": True,
+    }
+    assert relationship["cardinality"] == "one_to_many"
+    assert binding["persisted_payload_fields"] == [
+        entity["id_field"],
+        next(
+            x["id_field"]
+            for x in upstream["entity_kinds"]
+            if x["canonical_name"] == entity["parent"]
+        ),
+    ]
+    assert not (
+        {"session_revision", "state", "content_fingerprint_sha256"}
+        & set(binding["persisted_payload_fields"])
+    )
+
+
+@pytest.mark.parametrize("invented", ["session_revision", "state", "content_fingerprint_sha256"])
+def test_runtime_session_rejects_every_invented_field(invented: str) -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    record["payload"]["upstream_payload"][invented] = 1
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+def test_runtime_session_accepts_run_and_rejects_sess_or_wrong_parent() -> None:
+    valid = _persistence_record("RuntimeSession canonical identity/history")
+    assert valid["payload"]["upstream_payload"]["runtime_session_id"].startswith("run_")
+    assert _validate_persistence_record(valid)
+    for field, prefix in (("runtime_session_id", "sess"), ("device_installation_id", "acct")):
+        altered = copy.deepcopy(valid)
+        altered["payload"]["upstream_payload"][field] = _canonical_fixture_id(prefix, "c")
+        _rehash_immutable_record(altered)
+        assert not _validate_persistence_record(altered)
+
+
+def test_risk_policy_dto_is_independently_derived_from_m09() -> None:
+    upstream = json.loads(
+        (DOCS / "risk_hierarchy_kill_switch_and_execution_lease.json").read_text()
+    )
+    contract = upstream["risk_policy_contract"]
+    binding = MACHINE["backup_contract"]["representation_registry"][
+        "RiskPolicy accepted revisions"
+    ]["immutable_fact_binding"]
+    assert binding["persisted_payload_fields"] == contract["identity"]
+    assert binding["semantic_fingerprint_input_fields"] == contract["semantic_fingerprint_input"]
+    assert binding["field_contracts"]["action"]["values"] == contract["action_registry"]
+    assert (
+        binding["field_contracts"]["scope_type"]["values"]
+        == upstream["scope_hierarchy"]["applicable_order"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("environment", "DEMO"),
+        ("scope_type", "ACCOUNT"),
+        ("scope_id", "port_01890f3a-2b4c-7abc-8def-0123456789ab"),
+        ("action", "PERMIT"),
+        ("limits", {}),
+    ],
+)
+def test_risk_policy_rejects_illegal_semantics_even_after_wrapper_rehash(
+    field: str, value: Any
+) -> None:
+    record = _persistence_record("RiskPolicy accepted revisions")
+    record["payload"]["upstream_payload"][field] = value
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize("invented", ["state", "account_id", "policy_revision"])
+def test_risk_policy_rejects_invented_fields(invented: str) -> None:
+    record = _persistence_record("RiskPolicy accepted revisions")
+    record["payload"]["upstream_payload"][invented] = "invented"
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+def test_risk_policy_rejects_mutated_limits_with_stale_semantic_fingerprint() -> None:
+    record = _persistence_record("RiskPolicy accepted revisions")
+    record["payload"]["upstream_payload"]["limits"][0][1] = "2/1"
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize(
+    ("aspect", "artifact", "pointer", "schema_name"),
+    [
+        (
+            "SessionSecurityState revision history",
+            "identity_device_authentication_and_secrets.json",
+            "/executable_boundary_schemas/SessionSecurityState",
+            "SessionSecurityState",
+        ),
+        (
+            "LiveAccessGrant accepted revisions/history",
+            "identity_device_authentication_and_secrets.json",
+            "/executable_boundary_schemas/LiveAccessGrantSecurityProjection",
+            "LiveAccessGrantSecurityProjection",
+        ),
+        (
+            "bootstrap accepted/consumption history",
+            "process_topology_and_lifecycle.json",
+            "/first_run_bootstrap_authority_contract/executable_schemas/ConsumedBootstrapAuthority",
+            "ConsumedBootstrapAuthority",
+        ),
+    ],
+)
+def test_critical_immutable_sources_are_read_directly_not_self_declared(
+    aspect: str, artifact: str, pointer: str, schema_name: str
+) -> None:
+    upstream = json.loads((DOCS / artifact).read_text())
+    ok, literal_fields = _resolve_pointer(upstream, pointer)
+    assert ok and isinstance(literal_fields, list) and literal_fields
+    entry = MACHINE["backup_contract"]["representation_registry"][aspect]
+    assert entry["semantic_object_or_invariant"] in {aspect, schema_name}
+    if "immutable_fact_binding" in entry:
+        assert entry["immutable_fact_binding"]["persisted_payload_fields"] == literal_fields
+    else:
+        assert set(_persistence_record(aspect)["payload"]) == set(literal_fields)
+
+
+def _independent_immutable_fields(aspect: str) -> list[str] | dict[str, list[str]]:
+    identity = json.loads((DOCS / "identity_device_authentication_and_secrets.json").read_text())
+    if aspect in {
+        "OperatorIdentity revisions",
+        "LiveAccessGrant accepted revisions/history",
+        "SessionSecurityState revision history",
+        "PinVerifierRecord accepted revisions",
+        "DeviceTrust/security revisions",
+        "platform enrollment revisions",
+    }:
+        schema = {
+            "OperatorIdentity revisions": "OperatorIdentitySecurityProjection",
+            "LiveAccessGrant accepted revisions/history": "LiveAccessGrantSecurityProjection",
+            "SessionSecurityState revision history": "SessionSecurityState",
+            "PinVerifierRecord accepted revisions": "PinVerifierRecord",
+            "DeviceTrust/security revisions": "DeviceTrustProjection",
+            "platform enrollment revisions": "CoreAcceptedPlatformBiometricAssertionBinding",
+        }[aspect]
+        return cast(list[str], identity["executable_boundary_schemas"][schema])
+    if aspect == "TradingUniverse version history":
+        upstream = json.loads((DOCS / "exchange_accounts_and_instruments.json").read_text())
+        return cast(list[str], upstream["trading_universe_contract"]["record_fields"])
+    if aspect == "StrategyDefinition accepted revisions":
+        upstream = json.loads(
+            (DOCS / "strategy_market_data_and_execution_routing.json").read_text()
+        )
+        return cast(list[str], upstream["record_schemas"]["StrategyDefinition"]["exact_fields"])
+    if aspect in {"RiskPolicy accepted revisions", "kill-switch transition history"}:
+        upstream = json.loads(
+            (DOCS / "risk_hierarchy_kill_switch_and_execution_lease.json").read_text()
+        )
+        return cast(
+            list[str],
+            {
+                "RiskPolicy accepted revisions": upstream["risk_policy_contract"]["identity"],
+                "kill-switch transition history": upstream["kill_switch_contract"]["record_fields"],
+            }[aspect],
+        )
+    if aspect == "reservation transition history":
+        upstream = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+        registry = upstream["accounting_economic_fact_schema_registry"]
+        return cast(
+            dict[str, list[str]],
+            {
+                name: registry[name]["exact_fields"]
+                for name in ("capital_reservation", "capital_release")
+            },
+        )
+    if aspect == "Order lifecycle events/history":
+        upstream = json.loads(
+            (DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text()
+        )
+        return cast(list[str], upstream["event_contract"]["envelope_schema"]["fields"])
+    if aspect == "RuntimeSession canonical identity/history":
+        upstream = json.loads((DOCS / "canonical_domain_vocabulary.json").read_text())
+        runtime = next(
+            x for x in upstream["entity_kinds"] if x["canonical_name"] == "RuntimeSession"
+        )
+        parent = next(
+            x for x in upstream["entity_kinds"] if x["canonical_name"] == runtime["parent"]
+        )
+        return [runtime["id_field"], parent["id_field"]]
+    if aspect == "bootstrap accepted/consumption history":
+        upstream = json.loads((DOCS / "process_topology_and_lifecycle.json").read_text())
+        return cast(
+            list[str],
+            upstream["first_run_bootstrap_authority_contract"]["executable_schemas"][
+                "ConsumedBootstrapAuthority"
+            ],
+        )
+    raise AssertionError(f"missing independent source derivation for {aspect}")
+
+
+IMMUTABLE_ASPECTS = [
+    aspect
+    for aspect, entry in MACHINE["backup_contract"]["representation_registry"].items()
+    if entry["representation_category"] == "M011_IMMUTABLE_HISTORY_WRAPPER"
+]
+
+
+@pytest.mark.parametrize("aspect", IMMUTABLE_ASPECTS)
+def test_all_immutable_payload_fields_are_independently_derived_from_upstream(aspect: str) -> None:
+    expected = _independent_immutable_fields(aspect)
+    entry = MACHINE["backup_contract"]["representation_registry"][aspect]
+    if "immutable_fact_binding" in entry:
+        binding = entry["immutable_fact_binding"]
+        if "upstream_payload_variants" in binding:
+            assert isinstance(expected, dict)
+            assert set(binding["upstream_payload_variants"]) == set(expected)
+            source_document = json.loads((DOCS / entry["semantic_artifact"]).read_text())
+            for variant_name, expected_fields in expected.items():
+                variant = binding["upstream_payload_variants"][variant_name]
+                assert variant["persisted_payload_fields"] == expected_fields
+                assert set(variant["field_contracts"]) == set(expected_fields)
+                for field in expected_fields:
+                    source = variant["field_contracts"][field]
+                    resolved, declaration = _resolve_pointer(
+                        source_document, source["source_pointer"]
+                    )
+                    assert resolved and isinstance(declaration, list) and field in declaration
+            return
+        assert isinstance(expected, list)
+        assert binding["persisted_payload_fields"] == expected
+        assert set(binding["field_contracts"]) == set(expected)
+        source_document = json.loads((DOCS / entry["semantic_artifact"]).read_text())
+        for field in expected:
+            source = binding["field_contracts"][field]
+            assert source["source_artifact"] == entry["semantic_artifact"]
+            assert source["source_pointer"].startswith("/")
+            assert source["source_path"]
+            assert source["type"] and isinstance(source["nullable"], bool)
+            assert source["semantic_role"]
+            resolved, declaration = _resolve_pointer(source_document, source["source_pointer"])
+            assert resolved
+            if aspect == "RuntimeSession canonical identity/history":
+                assert source["projection_rule"]
+            else:
+                assert isinstance(declaration, list) and field in declaration
+    else:
+        assert entry["source_derivation"]["persisted_payload_fields"] == expected
+
+
+def test_no_immutable_wrapper_uses_the_forbidden_universal_state_enum() -> None:
+    universal = {
+        "ACCEPTED",
+        "ACTIVE",
+        "COMMITTED",
+        "CONSUMED",
+        "LOCKED",
+        "RECORDED",
+        "REVOKED",
+        "RETIRED",
+        "TRUSTED",
+    }
+    registry = MACHINE["backup_contract"]["representation_registry"]
+    for aspect in IMMUTABLE_ASPECTS:
+        binding = registry[aspect].get("immutable_fact_binding", {})
+        state = binding.get("field_contracts", {}).get("state")
+        assert state is None or set(state["values"]) != universal
+
+
+@pytest.mark.parametrize("illegal_state", ["TRUSTED", "LOCKED", "CONSUMED"])
+def test_operator_identity_rejects_state_from_another_owner(illegal_state: str) -> None:
+    record = _persistence_record("OperatorIdentity revisions")
+    record["payload"]["upstream_payload"]["state"] = illegal_state
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize("invented", ["definition_revision", "state", "content_fingerprint_sha256"])
+def test_strategy_definition_rejects_every_old_invented_alias(invented: str) -> None:
+    record = _persistence_record("StrategyDefinition accepted revisions")
+    record["payload"]["upstream_payload"][invented] = "invented"
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+def test_strategy_definition_uses_exact_sdef_identity_and_version() -> None:
+    record = _persistence_record("StrategyDefinition accepted revisions")
+    upstream = record["payload"]["upstream_payload"]
+    assert upstream["strategy_definition_id"].startswith("sdef_")
+    assert upstream["definition_version"] == 1
+    assert set(upstream["configuration"]) == {"lookback", "enabled"}
+
+
+def _m06_definition_hash(configuration: dict[str, Any], hash_contract: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        configuration, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    return hashlib.sha256(hash_contract["domain_separator"].encode() + encoded).hexdigest()
+
+
+def test_strategy_definition_hash_is_independently_derived_from_m06() -> None:
+    upstream = json.loads((DOCS / "strategy_market_data_and_execution_routing.json").read_text())
+    schema = upstream["record_schemas"]["StrategyDefinition"]
+    hash_contract = upstream["strategy_definition_contract"]["hash"]
+    record = _persistence_record("StrategyDefinition accepted revisions")
+    payload = record["payload"]["upstream_payload"]
+    assert list(payload) == schema["exact_fields"]
+    assert payload["strategy_definition_id"].startswith(schema["id_prefix"] + "_")
+    assert payload["hash_domain_separator"] == hash_contract["domain_separator"]
+    assert payload["canonical_content_hash"] == _m06_definition_hash(
+        payload["configuration"], hash_contract
+    )
+    assert _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "hash_without_separator",
+        "wrong_separator",
+        "changed_configuration_stale_hash",
+        "changed_configuration_hash_without_separator",
+        "mutated_separator_wrapper_rehash",
+    ],
+)
+def test_strategy_definition_rejects_every_domain_hash_mismatch(mutation: str) -> None:
+    record = _persistence_record("StrategyDefinition accepted revisions")
+    payload = record["payload"]["upstream_payload"]
+    if mutation == "hash_without_separator":
+        payload["canonical_content_hash"] = _actual_fingerprint(payload["configuration"])
+    elif mutation == "wrong_separator":
+        payload["hash_domain_separator"] = "foreign-domain\\0"
+    elif mutation == "changed_configuration_stale_hash":
+        payload["configuration"]["lookback"] = 2
+    elif mutation == "changed_configuration_hash_without_separator":
+        payload["configuration"]["lookback"] = 2
+        payload["canonical_content_hash"] = _actual_fingerprint(payload["configuration"])
+    else:
+        payload["hash_domain_separator"] += ".mutated"
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize(
+    ("aspect", "field", "artifact", "pointer"),
+    [
+        (
+            "OperatorIdentity revisions",
+            "state",
+            "identity_device_authentication_and_secrets.json",
+            "/registries/identity_states",
+        ),
+        (
+            "LiveAccessGrant accepted revisions/history",
+            "state",
+            "identity_device_authentication_and_secrets.json",
+            "/registries/grant_states",
+        ),
+        (
+            "TradingUniverse version history",
+            "lifecycle_state",
+            "exchange_accounts_and_instruments.json",
+            "/trading_universe_contract/lifecycle_states",
+        ),
+        (
+            "StrategyDefinition accepted revisions",
+            "lifecycle_state",
+            "strategy_market_data_and_execution_routing.json",
+            "/record_schemas/StrategyDefinition/enum_registry/lifecycle_state",
+        ),
+        (
+            "RiskPolicy accepted revisions",
+            "scope_type",
+            "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "/scope_hierarchy/applicable_order",
+        ),
+        (
+            "RiskPolicy accepted revisions",
+            "action",
+            "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "/risk_policy_contract/action_registry",
+        ),
+        (
+            "kill-switch transition history",
+            "state",
+            "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "/kill_switch_contract/states",
+        ),
+        (
+            "Order lifecycle events/history",
+            "event_type",
+            "commands_events_order_lifecycle_and_idempotency.json",
+            "/event_contract/event_types",
+        ),
+        (
+            "SessionSecurityState revision history",
+            "state",
+            "identity_device_authentication_and_secrets.json",
+            "/registries/session_states",
+        ),
+        (
+            "DeviceTrust/security revisions",
+            "state",
+            "identity_device_authentication_and_secrets.json",
+            "/registries/device_trust_states",
+        ),
+    ],
+)
+def test_every_literal_immutable_enum_is_exactly_upstream(
+    aspect: str, field: str, artifact: str, pointer: str
+) -> None:
+    document = json.loads((DOCS / artifact).read_text())
+    ok, expected = _resolve_pointer(document, pointer)
+    assert ok and isinstance(expected, list)
+    contract = MACHINE["backup_contract"]["representation_registry"][aspect][
+        "immutable_fact_binding"
+    ]["field_contracts"][field]
+    assert contract["constraint_pointer"] == pointer
+    assert contract["values"] == expected
+
+
+@pytest.mark.parametrize(
+    "aspect",
+    [
+        "RiskPolicy accepted revisions",
+        "kill-switch transition history",
+        "Order lifecycle events/history",
+    ],
+)
+def test_environment_enum_is_derived_from_canonical_m02(aspect: str) -> None:
+    upstream = json.loads((DOCS / "canonical_domain_vocabulary.json").read_text())
+    expected = [item["name"].upper() for item in upstream["public_trading_environments"]]
+    contract = MACHINE["backup_contract"]["representation_registry"][aspect][
+        "immutable_fact_binding"
+    ]["field_contracts"]["environment"]
+    assert contract["constraint_artifact"] == "canonical_domain_vocabulary.json"
+    assert contract["constraint_pointer"] == "/public_trading_environments"
+    assert contract["values"] == expected
+
+
+@pytest.mark.parametrize(
+    "aspect", ["RiskPolicy accepted revisions", "kill-switch transition history"]
+)
+def test_product_system_scope_uses_literal_product_not_invented_account_id(aspect: str) -> None:
+    record = _persistence_record(aspect)
+    payload = record["payload"]["upstream_payload"]
+    assert payload["scope_type"] == "PRODUCT_SYSTEM" and payload["scope_id"] == "product"
+    assert _validate_persistence_record(record)
+    payload["scope_id"] = _canonical_fixture_id("acct", "c")
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+def test_strategy_nested_schema_nullability_and_constants_are_exactly_m06() -> None:
+    upstream = json.loads((DOCS / "strategy_market_data_and_execution_routing.json").read_text())
+    schema = upstream["record_schemas"]["StrategyDefinition"]
+    hash_contract = upstream["strategy_definition_contract"]["hash"]
+    binding = MACHINE["backup_contract"]["representation_registry"][
+        "StrategyDefinition accepted revisions"
+    ]["immutable_fact_binding"]
+    configuration = binding["field_contracts"]["configuration"]
+    nested = schema["nested_schemas"]["configuration"]
+    assert configuration["fields"] == nested["exact_fields"]
+    assert {
+        name: contract["type"] for name, contract in configuration["field_schemas"].items()
+    } == {"lookback": "positive_integer", "enabled": "boolean"}
+    assert nested["nullable_fields"] == [] and not configuration["nullable"]
+    separator = binding["field_contracts"]["hash_domain_separator"]
+    assert separator["constraint_pointer"] == "/strategy_definition_contract/hash/domain_separator"
+    assert separator["value"] == hash_contract["domain_separator"]
+
+
+def test_pin_constant_nullable_and_verifier_constraints_are_upstream_derived() -> None:
+    upstream = json.loads((DOCS / "identity_device_authentication_and_secrets.json").read_text())
+    contracts = MACHINE["backup_contract"]["representation_registry"][
+        "PinVerifierRecord accepted revisions"
+    ]["immutable_fact_binding"]["field_contracts"]
+    assert contracts["algorithm_id"]["value"] == upstream["pin_policy"]["reference_algorithm"]
+    assert contracts["verifier"]["type"] == "sha256_hex"
+    assert contracts["failed_attempts"]["type"] == "non_negative_integer"
+    assert contracts["lockout_until_utc"]["type"] == "nullable_timestamp"
+    assert contracts["lockout_until_utc"]["nullable"] is True
+
+
+def test_all_semantic_fingerprint_derivations_match_upstream_contracts() -> None:
+    registry = MACHINE["backup_contract"]["representation_registry"]
+    identity = json.loads((DOCS / "identity_device_authentication_and_secrets.json").read_text())
+    for aspect, schema_name in {
+        "OperatorIdentity revisions": "OperatorIdentitySecurityProjection",
+        "LiveAccessGrant accepted revisions/history": "LiveAccessGrantSecurityProjection",
+        "SessionSecurityState revision history": "SessionSecurityState",
+        "PinVerifierRecord accepted revisions": "PinVerifierRecord",
+        "DeviceTrust/security revisions": "DeviceTrustProjection",
+    }.items():
+        binding = registry[aspect]["immutable_fact_binding"]
+        assert binding["semantic_fingerprint_derivation"]["input_fields"] == [
+            field
+            for field in identity["executable_boundary_schemas"][schema_name]
+            if field != "content_fingerprint_sha256"
+        ]
+        assert binding["semantic_fingerprint_derivation"]["input_shape"] == "JSON_OBJECT"
+
+    m05 = json.loads((DOCS / "exchange_accounts_and_instruments.json").read_text())
+    trading = registry["TradingUniverse version history"]["immutable_fact_binding"]
+    trading_hash = m05["trading_universe_contract"]["content_hash_definition"]
+    assert (
+        trading["semantic_fingerprint_derivation"]["input_fields"] == trading_hash["input_fields"]
+    )
+    assert (
+        trading["semantic_fingerprint_derivation"]["domain_separator"]
+        == trading_hash["domain_separator"]
+    )
+
+    m09 = json.loads((DOCS / "risk_hierarchy_kill_switch_and_execution_lease.json").read_text())
+    risk = registry["RiskPolicy accepted revisions"]["immutable_fact_binding"]
+    assert (
+        risk["semantic_fingerprint_derivation"]["input_fields"]
+        == m09["risk_policy_contract"]["semantic_fingerprint_input"]
+    )
+    kill = registry["kill-switch transition history"]["immutable_fact_binding"]
+    assert kill["semantic_fingerprint_derivation"]["input_fields"] == [
+        field
+        for field in m09["kill_switch_contract"]["record_fields"]
+        if field != "record_fingerprint_sha256"
+    ]
+
+    m07 = json.loads((DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text())
+    event = registry["Order lifecycle events/history"]["immutable_fact_binding"]
+    assert event["semantic_fingerprint_derivation"]["input_fields"] == [
+        field
+        for field in m07["event_contract"]["envelope_schema"]["fields"]
+        if field != "event_fingerprint_sha256"
+    ]
+
+
+def test_every_immutable_canonical_id_prefix_is_upstream_derived() -> None:
+    vocabulary = json.loads((DOCS / "canonical_domain_vocabulary.json").read_text())
+    expected = {item["id_field"]: item["id_prefix"] for item in vocabulary["entity_kinds"]}
+    commands = json.loads(
+        (DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text()
+    )
+    event_schemas = commands["event_contract"]["envelope_schema"]["field_schemas"]
+    expected.update(
+        {
+            "correlation_id": event_schemas["correlation_id"]["prefix"],
+            "causation_id": event_schemas["causation_id"]["prefix"],
+            "command_id": event_schemas["command_id"]["prefix"],
+            "previous_version_id": expected["trading_universe_id"],
+        }
+    )
+    registry = MACHINE["backup_contract"]["representation_registry"]
+    observed: set[str] = set()
+    for aspect in IMMUTABLE_ASPECTS:
+        binding = registry[aspect].get("immutable_fact_binding", {})
+        groups = binding.get("upstream_payload_variants", {"default": binding}).values()
+        for group in groups:
+            for field, contract in group.get("field_contracts", {}).items():
+                if contract["type"] in {"canonical_id", "nullable_canonical_id"}:
+                    observed.add(field)
+                    assert contract["id_prefix"] == expected[field]
+    assert observed <= set(expected)
+
+
+def test_order_types_and_nullability_match_exact_upstream_envelope() -> None:
+    upstream = json.loads(
+        (DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text()
+    )["event_contract"]["envelope_schema"]
+    contracts = MACHINE["backup_contract"]["representation_registry"][
+        "Order lifecycle events/history"
+    ]["immutable_fact_binding"]["field_contracts"]
+    type_projection = {
+        "id": "canonical_id",
+        "positive_integer": "positive_integer",
+        "enum": "enum",
+        "non_empty_string": "non_empty_string",
+        "timestamp": "timestamp",
+        "event_safe_payload": "event_safe_payload",
+        "sha256_hex": "sha256_hex",
+    }
+    for field, source_schema in upstream["field_schemas"].items():
+        expected_type = type_projection[source_schema["type"]]
+        if field in upstream["nullable_fields"]:
+            expected_type = "nullable_canonical_id"
+        assert contracts[field]["type"] == expected_type
+        assert contracts[field]["nullable"] is (field in upstream["nullable_fields"])
+
+
+def _reservation_variant_record(variant: str) -> dict[str, Any]:
+    return _persistence_record("reservation transition history", variant_name=variant)
+
+
+_RESERVATION_AUTHORITY_SEAL = object()
+_M07_ACCEPTANCE_SEAL = object()
+_M07_LIFECYCLE_SEAL = object()
+
+
+@dataclass(frozen=True)
+class _ReservationRestoreAuthority:
+    accounting: dict[str, tuple[str, str, str, str, str]]
+    commands: dict[str, tuple[dict[str, Any], str]]
+    terminal_events: dict[str, tuple[dict[str, Any], dict[str, Any]]]
+    authority_seal: object
+    m07_acceptance_seal: object
+    lifecycle_seal: object
+
+
+def _m07_command_fingerprint(request: dict[str, Any]) -> str:
+    return _actual_fingerprint(
+        {key: value for key, value in request.items() if key != "correlation_id"}
+    )
+
+
+def _m07_event_fingerprint(event: dict[str, Any]) -> str:
+    return _actual_fingerprint(
+        {key: value for key, value in event.items() if key != "event_fingerprint_sha256"}
+    )
+
+
+def _m07_legal_predecessors(
+    context: dict[str, Any], event_type: str, document: dict[str, Any] | None = None
+) -> frozenset[str] | None:
+    derivation = context.get("legal_predecessor_derivation")
+    if not isinstance(derivation, dict):
+        return None
+    if document is None:
+        artifact = derivation.get("source_artifact")
+        if not isinstance(artifact, str):
+            return None
+        document = json.loads((DOCS / artifact).read_text())
+    ok, transitions = _resolve_pointer(document, derivation.get("source_pointer"))
+    selector = derivation.get("selector")
+    if (
+        not ok
+        or not isinstance(transitions, list)
+        or not isinstance(selector, dict)
+        or selector.get("field") != "event"
+        or selector.get("equals_field") != "accepted_terminal_event.event_type"
+        or derivation.get("result_path") != "sources"
+        or derivation.get("cardinality") != "EXACTLY_ONE_TRANSITION"
+    ):
+        return None
+    matches = [
+        item for item in transitions if isinstance(item, dict) and item.get("event") == event_type
+    ]
+    if len(matches) != 1:
+        return None
+    sources = matches[0].get("sources")
+    if (
+        not isinstance(sources, list)
+        or not sources
+        or any(type(source) is not str or not source for source in sources)
+        or len(set(sources)) != len(sources)
+    ):
+        return None
+    return frozenset(sources)
+
+
+def _preexisting_reservation_authority(record: dict[str, Any]) -> _ReservationRestoreAuthority:
+    """Build the opaque input as if Core/M0.7 had accepted it before restore validation."""
+    payload = record["payload"]["upstream_payload"]
+    accounting = {
+        payload["audit_event_id"]: (
+            payload["source_type"],
+            payload["source_fingerprint_sha256"],
+            payload["workspace_id"],
+            payload["portfolio_id"],
+            payload["environment"],
+        )
+    }
+    commands: dict[str, tuple[dict[str, Any], str]] = {}
+    terminal_events: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    if payload["source_type"] == "capital_reservation":
+        command_id = payload["command_id"]
+        request = {
+            "command_id": command_id,
+            "operation_type": "SUBMIT_ORDER",
+            "authority_context_id": _canonical_fixture_id("authctx", "a"),
+            "environment": payload["environment"],
+            "workspace_id": payload["workspace_id"],
+            "portfolio_id": payload["portfolio_id"],
+            "exchange_account_id": payload["exchange_account_id"],
+            "strategy_instance_id": None,
+            "source_type": "OPERATOR",
+            "instrument_id": _canonical_fixture_id("instr", "a"),
+            "execution_route_id": _canonical_fixture_id("xroute", "a"),
+            "correlation_id": _canonical_fixture_id("corr", "a"),
+            "causation_id": None,
+            "idempotency_key": command_id,
+            "order_intent_id": _canonical_fixture_id("oint", "a"),
+            "order_id": payload["order_id"],
+            "side": "BUY",
+            "order_type": "MARKET",
+            "quantity": "1",
+            "limit_price": None,
+            "time_in_force": "GTC",
+            "expire_at_utc": None,
+        }
+        commands[command_id] = (request, _m07_command_fingerprint(request))
+    else:
+        event_type = {
+            "REJECTED": "ORDER_REJECTED",
+            "FILLED": "ORDER_FILLED",
+            "CANCELLED": "ORDER_CANCEL_CONFIRMED",
+            "REPLACED": "ORDER_REPLACE_CONFIRMED",
+            "EXPIRED": "ORDER_EXPIRED",
+        }[payload["terminal_state"]]
+        safe_payload = (
+            {"reason_code": "VENUE_REJECTED"}
+            if event_type == "ORDER_REJECTED"
+            else (
+                {
+                    "fill_id": _canonical_fixture_id("fill", "a"),
+                    "venue_trade_id": "trade-a",
+                    "cumulative_executed_quantity": "1",
+                }
+                if event_type == "ORDER_FILLED"
+                else {
+                    "replacement_order_id": _canonical_fixture_id("ord", "b"),
+                    "venue_order_id": "venue-a",
+                }
+                if event_type == "ORDER_REPLACE_CONFIRMED"
+                else {"venue_order_id": "venue-a"}
+            )
+        )
+        event = {
+            "audit_event_id": payload["audit_event_id"],
+            "event_type": event_type,
+            "order_id": payload["order_id"],
+            "aggregate_version": 2,
+            "correlation_id": _canonical_fixture_id("corr", "a"),
+            "causation_id": _canonical_fixture_id("cause", "a"),
+            "command_id": _canonical_fixture_id("cmd", "a"),
+            "environment": payload["environment"],
+            "workspace_id": payload["workspace_id"],
+            "portfolio_id": payload["portfolio_id"],
+            "exchange_account_id": payload["exchange_account_id"],
+            "exchange_id": "paper_simulated_venue",
+            "instrument_id": _canonical_fixture_id("instr", "a"),
+            "execution_route_id": _canonical_fixture_id("xroute", "a"),
+            "occurred_at_utc": "2025-01-01T00:00:00Z",
+            "safe_payload": safe_payload,
+            "event_fingerprint_sha256": "",
+        }
+        event["event_fingerprint_sha256"] = _m07_event_fingerprint(event)
+        predecessor = {
+            "ORDER_REJECTED": "SUBMISSION_PENDING",
+            "ORDER_FILLED": "PARTIALLY_FILLED",
+            "ORDER_CANCEL_CONFIRMED": "CANCEL_PENDING",
+            "ORDER_REPLACE_CONFIRMED": "REPLACE_PENDING",
+            "ORDER_EXPIRED": "ACKNOWLEDGED",
+        }[event_type]
+        proof = {
+            "event_fingerprint_sha256": event["event_fingerprint_sha256"],
+            "order_id": event["order_id"],
+            "aggregate_version": 2,
+            "event_type": event_type,
+            "terminal_state": payload["terminal_state"],
+            "predecessor_state": predecessor,
+            "previous_aggregate_version": 1,
+        }
+        terminal_events[event["audit_event_id"]] = (event, proof)
+    return _ReservationRestoreAuthority(
+        accounting,
+        commands,
+        terminal_events,
+        _RESERVATION_AUTHORITY_SEAL,
+        _M07_ACCEPTANCE_SEAL,
+        _M07_LIFECYCLE_SEAL,
+    )
+
+
+def _revalidate_reservation_restore_authority(record: dict[str, Any], authority: Any) -> bool:
+    if not isinstance(authority, _ReservationRestoreAuthority) or (
+        authority.authority_seal is not _RESERVATION_AUTHORITY_SEAL
+        or authority.m07_acceptance_seal is not _M07_ACCEPTANCE_SEAL
+    ):
+        return False
+    payload = record["payload"]["upstream_payload"]
+    membership = (
+        payload["source_type"],
+        payload["source_fingerprint_sha256"],
+        payload["workspace_id"],
+        payload["portfolio_id"],
+        payload["environment"],
+    )
+    if authority.accounting.get(payload["audit_event_id"]) != membership:
+        return False
+    if payload["source_type"] == "capital_reservation":
+        accepted = authority.commands.get(payload["command_id"])
+        if accepted is None:
+            return False
+        request, accepted_fingerprint = accepted
+        upstream = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+        fields = upstream["m07_authority_boundary"]["submit_order_consumed_fields"]
+        if set(request) != set(fields) or request.get("operation_type") != "SUBMIT_ORDER":
+            return False
+        if accepted_fingerprint != _m07_command_fingerprint(request):
+            return False
+        return all(
+            request[field] == payload[field]
+            for field in (
+                "command_id",
+                "order_id",
+                "workspace_id",
+                "portfolio_id",
+                "environment",
+                "exchange_account_id",
+            )
+        )
+    if authority.lifecycle_seal is not _M07_LIFECYCLE_SEAL:
+        return False
+    accepted_event = authority.terminal_events.get(payload["audit_event_id"])
+    if accepted_event is None:
+        return False
+    event, proof = accepted_event
+    upstream = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+    mapping = upstream["m07_authority_boundary"]["terminal_event_mapping"]
+    if event.get("event_fingerprint_sha256") != _m07_event_fingerprint(event):
+        return False
+    if (
+        event.get("event_type") not in mapping
+        or mapping[event["event_type"]] != payload["terminal_state"]
+    ):
+        return False
+    context = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"]["capital_release"][
+        "restore_authority_revalidation"
+    ]["m07_context"]
+    legal_predecessors = _m07_legal_predecessors(context, event["event_type"])
+    if legal_predecessors is None:
+        return False
+    if any(
+        event[field] != payload[field]
+        for field in (
+            "audit_event_id",
+            "order_id",
+            "workspace_id",
+            "portfolio_id",
+            "environment",
+            "exchange_account_id",
+        )
+    ):
+        return False
+    return bool(
+        proof
+        == {
+            **proof,
+            "event_fingerprint_sha256": event["event_fingerprint_sha256"],
+            "order_id": event["order_id"],
+            "aggregate_version": event["aggregate_version"],
+            "event_type": event["event_type"],
+            "terminal_state": mapping[event["event_type"]],
+            "previous_aggregate_version": event["aggregate_version"] - 1,
+        }
+        and proof.get("predecessor_state") in legal_predecessors
+    )
+
+
+def test_reservation_decimal_rule_is_read_from_actual_m08_reference() -> None:
+    reference_path = (
+        DOCS.parents[2] / "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py"
+    )
+    tree = ast.parse(reference_path.read_text())
+    decimal_pattern = cast(
+        str,
+        next(
+            node.value.args[0].value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "DECIMAL_RE"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "compile"
+            and isinstance(node.value.args[0], ast.Constant)
+        ),
+    )
+    decimal_function = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "decimal"
+    )
+    assert len(decimal_function.args.kw_defaults) == 1
+    assert isinstance(decimal_function.args.kw_defaults[0], ast.Constant)
+    assert decimal_function.args.kw_defaults[0].value is True
+    contract = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"]["capital_reservation"][
+        "field_contracts"
+    ]["quantity"]
+    assert contract["type"] == "positive_decimal"
+    assert contract["decimal_regex"] == decimal_pattern
+    grammar = re.compile(decimal_pattern)
+    assert all(grammar.fullmatch(value) for value in ("1", "1.25", "10.01"))
+    assert all(
+        grammar.fullmatch(value) is None for value in ("-1", "01", "1.0", "1.", ".1", "+1", "1e2")
+    )
+    assert contract["positive"] is True
+
+
+def test_reservation_asset_reference_is_exact_m05_m08_trusted_projection() -> None:
+    m05 = json.loads((DOCS / "exchange_accounts_and_instruments.json").read_text())
+    m08 = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+    contract = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"]["capital_reservation"][
+        "field_contracts"
+    ]["asset_reference"]
+    assert contract["type"] == "asset_reference"
+    assert contract["fields"] == m05["asset_reference_contract"]["fields"]
+    assert (
+        contract["field_schemas"]["mapping_status"]["values"]
+        == m08["asset_identity"]["accepted_mapping_status"]
+    )
+    assert all(
+        not contract["field_schemas"][field].get("nullable", False) for field in contract["fields"]
+    )
+
+
+@pytest.mark.parametrize("variant", ["capital_reservation", "capital_release"])
+def test_each_reservation_variant_is_valid_and_source_fingerprint_is_recomputed(
+    variant: str,
+) -> None:
+    record = _reservation_variant_record(variant)
+    payload = record["payload"]["upstream_payload"]
+    assert payload["source_type"] == variant
+    assert _validate_persistence_record(record)
+    binding = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"][variant]
+    assert payload["source_fingerprint_sha256"] == _semantic_fingerprint(binding, payload)
+    assert binding["semantic_fingerprint_derivation"]["authority_semantics"].startswith(
+        "pre-existing CoreAcceptedAccountingFactProjection membership"
+    )
+
+
+@pytest.mark.parametrize("variant", ["capital_reservation", "capital_release"])
+def test_reservation_restore_requires_preexisting_accounting_and_m07_authority(
+    variant: str,
+) -> None:
+    record = _reservation_variant_record(variant)
+    assert _validate_persistence_record(record)
+    assert not _revalidate_reservation_restore_authority(record, None)
+    empty = _ReservationRestoreAuthority(
+        {}, {}, {}, _RESERVATION_AUTHORITY_SEAL, _M07_ACCEPTANCE_SEAL, _M07_LIFECYCLE_SEAL
+    )
+    assert not _revalidate_reservation_restore_authority(record, empty)
+    assert _revalidate_reservation_restore_authority(
+        record, _preexisting_reservation_authority(record)
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["source_type", "source_fingerprint_sha256", "workspace_id", "portfolio_id", "environment"],
+)
+def test_accounting_membership_exact_tuple_mismatch_fails_after_all_hashes_pass(
+    field: str,
+) -> None:
+    record = _reservation_variant_record("capital_reservation")
+    authority = _preexisting_reservation_authority(record)
+    payload = record["payload"]["upstream_payload"]
+    values = list(authority.accounting[payload["audit_event_id"]])
+    index = [
+        "source_type",
+        "source_fingerprint_sha256",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+    ].index(field)
+    values[index] = "wrong"
+    authority = _ReservationRestoreAuthority(
+        {payload["audit_event_id"]: cast(tuple[str, str, str, str, str], tuple(values))},
+        authority.commands,
+        authority.terminal_events,
+        authority.authority_seal,
+        authority.m07_acceptance_seal,
+        authority.lifecycle_seal,
+    )
+    assert _validate_persistence_record(record)
+    assert not _revalidate_reservation_restore_authority(record, authority)
+
+
+@pytest.mark.parametrize("variant", ["capital_reservation", "capital_release"])
+def test_candidate_cannot_self_enroll_with_nominal_payload_derived_authority(variant: str) -> None:
+    record = _reservation_variant_record(variant)
+    nominal = _preexisting_reservation_authority(record)
+    fake = _ReservationRestoreAuthority(
+        nominal.accounting,
+        nominal.commands,
+        nominal.terminal_events,
+        object(),
+        object(),
+        object(),
+    )
+    _rehash_immutable_record(record)
+    assert _validate_persistence_record(record)
+    assert not _revalidate_reservation_restore_authority(record, fake)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "command_id",
+        "order_id",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "exchange_account_id",
+    ],
+)
+def test_capital_reservation_rejects_wrong_or_missing_accepted_submit_order_context(
+    field: str,
+) -> None:
+    record = _reservation_variant_record("capital_reservation")
+    authority = _preexisting_reservation_authority(record)
+    payload = record["payload"]["upstream_payload"]
+    request, _ = next(iter(authority.commands.values()))
+    request = copy.deepcopy(request)
+    request[field] = "wrong"
+    bad_commands = {payload["command_id"]: (request, _m07_command_fingerprint(request))}
+    bad = _ReservationRestoreAuthority(
+        authority.accounting,
+        bad_commands,
+        {},
+        authority.authority_seal,
+        authority.m07_acceptance_seal,
+        authority.lifecycle_seal,
+    )
+    assert not _revalidate_reservation_restore_authority(record, bad)
+
+
+def test_capital_reservation_rejects_stale_command_fingerprint() -> None:
+    record = _reservation_variant_record("capital_reservation")
+    authority = _preexisting_reservation_authority(record)
+    command_id = record["payload"]["upstream_payload"]["command_id"]
+    request, _ = authority.commands[command_id]
+    bad = _ReservationRestoreAuthority(
+        authority.accounting,
+        {command_id: (request, "f" * 64)},
+        {},
+        authority.authority_seal,
+        authority.m07_acceptance_seal,
+        authority.lifecycle_seal,
+    )
+    assert not _revalidate_reservation_restore_authority(record, bad)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing", "event_type", "order_id", "environment", "fingerprint", "version", "predecessor"],
+)
+def test_capital_release_rejects_missing_or_mismatched_accepted_terminal_event(
+    mutation: str,
+) -> None:
+    record = _reservation_variant_record("capital_release")
+    authority = _preexisting_reservation_authority(record)
+    audit_id = record["payload"]["upstream_payload"]["audit_event_id"]
+    if mutation == "missing":
+        terminal: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    else:
+        event, proof = authority.terminal_events[audit_id]
+        event, proof = copy.deepcopy(event), copy.deepcopy(proof)
+        if mutation == "event_type":
+            event["event_type"] = (
+                "ORDER_CANCEL_CONFIRMED"
+                if event["event_type"] == "ORDER_REJECTED"
+                else "ORDER_REJECTED"
+            )
+        elif mutation == "order_id":
+            event["order_id"] = _canonical_fixture_id("ord", "b")
+        elif mutation == "environment":
+            event["environment"] = "TESTNET"
+        elif mutation == "fingerprint":
+            event["event_fingerprint_sha256"] = "f" * 64
+        elif mutation == "version":
+            proof["previous_aggregate_version"] = 0
+        else:
+            proof["predecessor_state"] = "NEW"
+        terminal = {audit_id: (event, proof)}
+    bad = _ReservationRestoreAuthority(
+        authority.accounting,
+        {},
+        terminal,
+        authority.authority_seal,
+        authority.m07_acceptance_seal,
+        authority.lifecycle_seal,
+    )
+    assert not _revalidate_reservation_restore_authority(record, bad)
+
+
+def test_reservation_authority_contract_is_derived_from_actual_m08_m07_boundaries() -> None:
+    upstream = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+    m07 = json.loads((DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text())
+    variants = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"]
+    for variant in variants.values():
+        gate = variant["restore_authority_revalidation"]
+        assert gate["accounting_membership"]["binding_fields"] == [
+            "source_type",
+            "source_fingerprint_sha256",
+            "workspace_id",
+            "portfolio_id",
+            "environment",
+        ]
+        assert gate["accounting_membership"]["lookup_key_field"] == "audit_event_id"
+        assert gate["no_self_enrollment"] == {
+            "candidate_may_populate_registry": False,
+            "payload_or_backup_may_carry_private_seal": False,
+            "nominal_mapping_or_self_hash_grants_authority": False,
+        }
+    reservation = variants["capital_reservation"]["restore_authority_revalidation"]["m07_context"]
+    assert reservation["contract_pointer"] == "/m07_authority_boundary/submit_order_consumed_fields"
+    assert reservation["operation_type_constant"] == "SUBMIT_ORDER"
+    assert upstream["m07_authority_boundary"]["submit_order_consumed_fields"]
+    release = variants["capital_release"]["restore_authority_revalidation"]["m07_context"]
+    assert (
+        release["event_to_terminal_state_pointer"]
+        == "/m07_authority_boundary/terminal_event_mapping"
+    )
+    terminal_mapping = upstream["m07_authority_boundary"]["terminal_event_mapping"]
+    derivation = release["legal_predecessor_derivation"]
+    assert derivation["source_artifact"] == "commands_events_order_lifecycle_and_idempotency.json"
+    assert derivation["source_pointer"] == "/order_lifecycle/transitions"
+    ok, transitions = _resolve_pointer(m07, derivation["source_pointer"])
+    assert ok
+    for event_type in terminal_mapping:
+        matches = [
+            transition for transition in transitions if transition.get("event") == event_type
+        ]
+        assert len(matches) == 1
+        assert _m07_legal_predecessors(release, event_type) == frozenset(matches[0]["sources"])
+
+
+def test_every_actual_m07_terminal_predecessor_passes_and_foreign_state_fails() -> None:
+    m08 = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+    release_context = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"]["capital_release"][
+        "restore_authority_revalidation"
+    ]["m07_context"]
+    for event_type, terminal_state in m08["m07_authority_boundary"][
+        "terminal_event_mapping"
+    ].items():
+        record = _reservation_variant_record("capital_release")
+        record["payload"]["upstream_payload"]["terminal_state"] = terminal_state
+        authority = _preexisting_reservation_authority(record)
+        audit_id = record["payload"]["upstream_payload"]["audit_event_id"]
+        event, original_proof = authority.terminal_events[audit_id]
+        assert event["event_type"] == event_type
+        legal_sources = _m07_legal_predecessors(release_context, event_type)
+        assert legal_sources
+        for predecessor in legal_sources:
+            proof = {**original_proof, "predecessor_state": predecessor}
+            accepted = _ReservationRestoreAuthority(
+                authority.accounting,
+                {},
+                {audit_id: (event, proof)},
+                authority.authority_seal,
+                authority.m07_acceptance_seal,
+                authority.lifecycle_seal,
+            )
+            assert _revalidate_reservation_restore_authority(record, accepted)
+        proof = {**original_proof, "predecessor_state": "PLANNED"}
+        rejected = _ReservationRestoreAuthority(
+            authority.accounting,
+            {},
+            {audit_id: (event, proof)},
+            authority.authority_seal,
+            authority.m07_acceptance_seal,
+            authority.lifecycle_seal,
+        )
+        assert "PLANNED" not in legal_sources
+        assert not _revalidate_reservation_restore_authority(record, rejected)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "duplicate", "no_sources", "malformed_sources"])
+def test_m07_predecessor_derivation_fails_closed_for_malformed_source(mutation: str) -> None:
+    document = json.loads(
+        (DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text()
+    )
+    context = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"]["capital_release"][
+        "restore_authority_revalidation"
+    ]["m07_context"]
+    transitions = document["order_lifecycle"]["transitions"]
+    match = next(item for item in transitions if item["event"] == "ORDER_REJECTED")
+    if mutation == "missing":
+        transitions.remove(match)
+    elif mutation == "duplicate":
+        transitions.append(copy.deepcopy(match))
+    elif mutation == "no_sources":
+        match.pop("sources")
+    else:
+        match["sources"] = ["SUBMISSION_PENDING", 7]
+    assert _m07_legal_predecessors(context, "ORDER_REJECTED", document) is None
+
+
+def test_restore_gate_has_no_local_terminal_predecessor_registry() -> None:
+    source = inspect.getsource(_revalidate_reservation_restore_authority)
+    assert '"ORDER_REJECTED": {' not in source
+    assert '"ORDER_FILLED": {' not in source
+    assert "legal_predecessor_derivation" not in source
+
+
+@pytest.mark.parametrize("variant", ["capital_reservation", "capital_release"])
+def test_top_level_restore_orchestrator_requires_reservation_authority(variant: str) -> None:
+    record = _reservation_variant_record(variant)
+    assert _validate_persistence_record(record)
+    assert _revalidate_restore_records([record], {}, 1, []) == "RESTORE_REJECTED"
+    empty = _ReservationRestoreAuthority(
+        {}, {}, {}, _RESERVATION_AUTHORITY_SEAL, _M07_ACCEPTANCE_SEAL, _M07_LIFECYCLE_SEAL
+    )
+    assert _revalidate_restore_records([record], {}, 1, [], empty) == "RESTORE_REJECTED"
+    accepted = _preexisting_reservation_authority(record)
+    assert (
+        _revalidate_restore_records([record], {}, 1, [], accepted)
+        == "CANDIDATE_VALID_REQUIRES_M0.3_FRESHNESS"
+    )
+
+
+def test_top_level_restore_rejects_release_without_accepted_terminal_event() -> None:
+    record = _reservation_variant_record("capital_release")
+    authority = _preexisting_reservation_authority(record)
+    missing_event = _ReservationRestoreAuthority(
+        authority.accounting,
+        {},
+        {},
+        authority.authority_seal,
+        authority.m07_acceptance_seal,
+        authority.lifecycle_seal,
+    )
+    assert _revalidate_restore_records([record], {}, 1, [], missing_event) == "RESTORE_REJECTED"
+
+
+def test_mixed_restore_candidate_requires_every_independent_authority_gate() -> None:
+    current = _persistence_record("RiskPolicy current designation")
+    current_payload = current["payload"]
+    accepted_current = {
+        current_payload["current_reference"]: {
+            "scope_key": current_payload["scope_key"],
+            "content_fingerprint_sha256": current_payload["content_fingerprint_sha256"],
+            "revision": current_payload["current_revision"],
+            "state": "ACTIVE",
+        }
+    }
+    reservation = _reservation_variant_record("capital_reservation")
+    reservation_authority = _preexisting_reservation_authority(reservation)
+    records = [current, reservation]
+    assert _revalidate_restore_records(records, accepted_current, 1, [], None) == "RESTORE_REJECTED"
+    assert (
+        _revalidate_restore_records(records, {}, 1, [], reservation_authority) == "RESTORE_REJECTED"
+    )
+    assert (
+        _revalidate_restore_records(records, accepted_current, 1, [], reservation_authority)
+        == "CANDIDATE_VALID_REQUIRES_M0.3_FRESHNESS"
+    )
+
+
+def test_machine_contract_makes_reservation_gate_part_of_restore_orchestration() -> None:
+    orchestration = MACHINE["backup_contract"]["restore_candidate_revalidation_orchestration"]
+    assert orchestration["ordered_stages"] == [
+        "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION",
+        "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+        "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+        "M0_3_RESTORE_FRESHNESS",
+    ]
+    reservation = orchestration["reservation_transition_history"]
+    assert reservation["selector"] == {"representation_name": "reservation transition history"}
+    assert reservation["missing_authority_when_records_present"] == "RESTORE_REJECTED"
+    assert orchestration["structural_integrity_grants_authority"] is False
+    assert orchestration["category_gates_are_conjunctive"] is True
+
+
+def test_reservation_authority_metadata_uses_real_json_pointers_and_executable_evidence() -> None:
+    variants = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"]
+    upstream = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+    for variant in variants.values():
+        gate = variant["restore_authority_revalidation"]
+        for source in (gate["accounting_membership"], gate["m07_context"]):
+            assert source["source_artifact"] == "ledger_portfolio_capital_and_pnl.json"
+            ok, _ = _resolve_pointer(upstream, source["source_pointer"])
+            assert ok
+            assert source["executable_evidence"].startswith("tests/architecture/")
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "01", "1.0", "1.", 1.0, True])
+def test_capital_reservation_rejects_nonpositive_or_noncanonical_quantity_after_rehash(
+    bad: Any,
+) -> None:
+    record = _reservation_variant_record("capital_reservation")
+    record["payload"]["upstream_payload"]["quantity"] = bad
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["arbitrary", "missing", "extra", "mapping_status", "field_type"]
+)
+def test_capital_reservation_rejects_malformed_asset_reference_after_rehash(
+    mutation: str,
+) -> None:
+    record = _reservation_variant_record("capital_reservation")
+    asset = record["payload"]["upstream_payload"]["asset_reference"]
+    if mutation == "arbitrary":
+        record["payload"]["upstream_payload"]["asset_reference"] = {"anything": "non-empty"}
+    elif mutation == "missing":
+        asset.pop("asset_namespace")
+    elif mutation == "extra":
+        asset["invented"] = "field"
+    elif mutation == "mapping_status":
+        asset["mapping_status"] = "UNKNOWN"
+    else:
+        asset["venue_asset_code"] = 1
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize(
+    ("variant", "field", "bad"),
+    [
+        ("capital_reservation", "source_type", "capital_release"),
+        ("capital_reservation", "environment", "DEMO"),
+        ("capital_release", "source_type", "capital_reservation"),
+        ("capital_release", "environment", "DEMO"),
+        ("capital_release", "terminal_state", "PARTIALLY_FILLED"),
+    ],
+)
+def test_reservation_variant_rejects_wrong_discriminator_environment_or_terminal_state(
+    variant: str, field: str, bad: str
+) -> None:
+    record = _reservation_variant_record(variant)
+    record["payload"]["upstream_payload"][field] = bad
+    _rehash_immutable_record(record)
+    assert not _validate_persistence_record(record)
+
+
+def test_reservation_variant_constants_environments_terminal_and_provenance_are_upstream() -> None:
+    upstream = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+    variants = MACHINE["backup_contract"]["representation_registry"][
+        "reservation transition history"
+    ]["immutable_fact_binding"]["upstream_payload_variants"]
+    for name, variant in variants.items():
+        contracts = variant["field_contracts"]
+        assert name in upstream["accounting_economic_fact_schema_registry"]
+        assert contracts["source_type"]["value"] == name
+        assert contracts["environment"]["values"] == upstream["environment_policy"]["core"]
+        assert contracts["provenance"]["type"] == "non_empty_string"
+        assert contracts["provenance"]["constraint_pointer"].endswith(f"/{name}/constraints")
+        assert contracts["source_fingerprint_sha256"]["authority_semantics"] == (
+            "INTEGRITY_PLUS_PREEXISTING_ACCEPTED_ACCOUNTING_MEMBERSHIP"
+        )
+    assert (
+        variants["capital_release"]["field_contracts"]["terminal_state"]["values"]
+        == upstream["reservation_protocol"]["terminal_release"]
+    )
+
+
+def test_all14_constraint_audit_executes_variant_contracts_not_only_field_sets() -> None:
+    entry = MACHINE["backup_contract"]["representation_registry"]["reservation transition history"]
+    document = json.loads((DOCS / entry["semantic_artifact"]).read_text())
+    variants = entry["immutable_fact_binding"]["upstream_payload_variants"]
+    for variant_name, variant in variants.items():
+        for field, contract in variant["field_contracts"].items():
+            ok, declaration = _resolve_pointer(document, contract["source_pointer"])
+            assert ok and field in declaration
+            assert contract["nullable"] is False
+            if contract["type"] == "constant":
+                assert contract["value"] == variant_name
+            if contract["type"] == "enum":
+                ok, expected = _resolve_pointer(document, contract["constraint_pointer"])
+                assert ok and contract["values"] == expected
+            if field == "quantity":
+                assert contract["type"] == "positive_decimal" and contract["positive"] is True
+            if field == "asset_reference":
+                assert contract["type"] == "asset_reference" and contract["projection_rule"]
+            if field in {"provenance", "source_fingerprint_sha256"}:
+                assert contract["projection_rule"]
 
 
 @pytest.mark.parametrize(
