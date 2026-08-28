@@ -1,0 +1,68 @@
+{
+  "schema_version": "cryptohunter.architecture_baseline_freeze.v1",
+  "baseline_id": "M0.2-M0.11",
+  "status": "FROZEN",
+  "purpose": "INTEGRITY_GUARD_ONLY_NOT_RUNTIME_AUTHORITY",
+  "milestones": [
+    {
+      "milestone_id": "M0.2",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/canonical_domain_vocabulary.json",
+      "canonical_schema_version": "cryptohunter.canonical_domain_vocabulary.v1",
+      "sha256": "4b25ce887432590bcb0647fcc10b774b68c49f2fb207637399201a7bc88087f8"
+    },
+    {
+      "milestone_id": "M0.3",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/process_topology_and_lifecycle.json",
+      "canonical_schema_version": "cryptohunter.process_topology_and_lifecycle.v1",
+      "sha256": "5eed0ce5d5c7a2c94ef607412ea39ec3df9b595f2c6a59b12b6a744a94014b7c"
+    },
+    {
+      "milestone_id": "M0.4",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/environment_and_product_capabilities.json",
+      "canonical_schema_version": "cryptohunter.environment_and_product_capabilities.v1",
+      "sha256": "0fb844d86817746fee3efb7ba7e19794ab2c4f321b70082557bdc6e2ea80b9c4"
+    },
+    {
+      "milestone_id": "M0.5",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/exchange_accounts_and_instruments.json",
+      "canonical_schema_version": "cryptohunter.exchange_accounts_and_instruments.v1",
+      "sha256": "83049f1f492c55d31e6ea8fb20c2389016f39e3db5aa1cd365c03636bb1c5081"
+    },
+    {
+      "milestone_id": "M0.6",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/strategy_market_data_and_execution_routing.json",
+      "canonical_schema_version": "1.0.0",
+      "sha256": "39a9b4f3b5e0c1311f788b061170bf5dc6b5e9c0fe3cec691b7094455fe4ceb7"
+    },
+    {
+      "milestone_id": "M0.7",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/commands_events_order_lifecycle_and_idempotency.json",
+      "canonical_schema_version": "cryptohunter.commands_events_order_lifecycle_and_idempotency.v1",
+      "sha256": "e9cb8bfc0300174e03a0bbd557f7c5055634b0fd2f00bcf2f989625b6b896cb0"
+    },
+    {
+      "milestone_id": "M0.8",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/ledger_portfolio_capital_and_pnl.json",
+      "canonical_schema_version": "1.0.0",
+      "sha256": "bdf70ab825298ee689718de794ee6f9d39211405db0f735db19816119c2d46fd"
+    },
+    {
+      "milestone_id": "M0.9",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/risk_hierarchy_kill_switch_and_execution_lease.json",
+      "canonical_schema_version": "1.0.0",
+      "sha256": "a595d7baf3ca8581df7686dd86551f70394b75f072e3dafc97ae5ac1d1e4bc37"
+    },
+    {
+      "milestone_id": "M0.10",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json",
+      "canonical_schema_version": "1.0.0",
+      "sha256": "0c82b5b468e4d362cddaa0abaab32be2e11eff45ebc1c25a2c395a2220af2d0a"
+    },
+    {
+      "milestone_id": "M0.11",
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json",
+      "canonical_schema_version": "1.0.0",
+      "sha256": "894b943e2245bae3f3c0473bb35d560d059afa8082e366ed3e0bbcc1fe6d2a37"
+    }
+  ]
+}
