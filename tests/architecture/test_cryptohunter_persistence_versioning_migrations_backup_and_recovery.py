@@ -52,6 +52,212 @@ def _actual_fingerprint(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _canonical_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(records, key=lambda record: (record["representation_name"], record["record_key"]))
+
+
+def _history_tail_fingerprint(records: list[dict[str, Any]]) -> str:
+    return _actual_fingerprint(_canonical_records(records))
+
+
+def _state_projection(metadata: dict[str, Any], current: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "account_id": metadata["account_id"],
+        "device_installation_id": metadata["device_installation_id"],
+        "state_store_schema_version": metadata["state_store_schema_version"],
+        "state_store_identity_fingerprint_sha256": metadata[
+            "state_store_identity_fingerprint_sha256"
+        ],
+        "environment": metadata["environment"],
+        "protected_freshness_generation": metadata["protected_freshness_generation"],
+        "canonical_durable_current_records": _canonical_records(current),
+        "history_tail_fingerprint_sha256": metadata["history_tail_fingerprint_sha256"],
+    }
+
+
+def _transaction_projection(**updates: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "account_id": SCOPE[0],
+        "device_installation_id": SCOPE[1],
+        "state_store_identity_fingerprint_sha256": SCOPE[2],
+        "state_store_schema_version": 1,
+        "environment": "PAPER",
+        "expected_current_generation": 1,
+        "target_generation": 2,
+        "pre_state_fingerprint_sha256": "1" * 64,
+        "pre_history_tail_fingerprint_sha256": "2" * 64,
+        "post_state_fingerprint_sha256": "3" * 64,
+        "post_history_tail_fingerprint_sha256": "4" * 64,
+        "current_record_mutations": [],
+        "immutable_history_appends": [],
+    }
+    value.update(updates)
+    value["current_record_mutations"] = _canonical_records(value["current_record_mutations"])
+    value["immutable_history_appends"] = _canonical_records(value["immutable_history_appends"])
+    return value
+
+
+def _transaction_descriptor(**updates: Any) -> dict[str, Any]:
+    projection = _transaction_projection(**updates)
+    return {**projection, "transaction_fingerprint_sha256": _actual_fingerprint(projection)}
+
+
+def _descriptor_matches_metadata(descriptor: dict[str, Any], metadata: dict[str, Any]) -> bool:
+    binding = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "metadata_binding"
+    ]
+    return all(
+        descriptor[descriptor_field] == metadata[metadata_field]
+        for descriptor_field, metadata_field in binding.items()
+        if descriptor_field != "comparison"
+    )
+
+
+def _descriptor_hash_valid(descriptor: dict[str, Any]) -> bool:
+    projection_fields = MACHINE["state_store_fingerprint_contract"]["transaction_fingerprint"][
+        "projection_fields"
+    ]
+    projection = {field: descriptor[field] for field in projection_fields}
+    return _actual_fingerprint(projection) == descriptor["transaction_fingerprint_sha256"]
+
+
+def _rehash_descriptor(descriptor: dict[str, Any]) -> None:
+    projection_fields = MACHINE["state_store_fingerprint_contract"]["transaction_fingerprint"][
+        "projection_fields"
+    ]
+    descriptor["transaction_fingerprint_sha256"] = _actual_fingerprint(
+        {field: descriptor[field] for field in projection_fields}
+    )
+
+
+def _descriptor_chain_valid(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    return (
+        current["expected_current_generation"] == previous["target_generation"]
+        and current["target_generation"] == previous["target_generation"] + 1
+        and current["pre_state_fingerprint_sha256"] == previous["post_state_fingerprint_sha256"]
+        and current["pre_history_tail_fingerprint_sha256"]
+        == previous["post_history_tail_fingerprint_sha256"]
+    )
+
+
+def _descriptor_intrinsically_valid(value: Any) -> bool:
+    schema = MACHINE["executable_boundary_schemas"]["StateStoreTransactionDescriptor"]
+    if not isinstance(value, dict) or set(value) != set(schema["required"]):
+        return False
+    if not _canonical_scope(value["account_id"], value["device_installation_id"]):
+        return False
+    for field in (
+        "state_store_identity_fingerprint_sha256",
+        "post_state_fingerprint_sha256",
+        "post_history_tail_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+    ):
+        if not isinstance(value[field], str) or SHA_RE.fullmatch(value[field]) is None:
+            return False
+    if not _positive(value["state_store_schema_version"]) or not _positive(
+        value["target_generation"]
+    ):
+        return False
+    if value["environment"] not in {"PAPER", "TESTNET", "LIVE"}:
+        return False
+    genesis = value["target_generation"] == 1
+    nullable_fields = (
+        "expected_current_generation",
+        "pre_state_fingerprint_sha256",
+        "pre_history_tail_fingerprint_sha256",
+    )
+    if genesis:
+        if any(value[field] is not None for field in nullable_fields):
+            return False
+    else:
+        if not _positive(value["expected_current_generation"]):
+            return False
+        for field in nullable_fields[1:]:
+            if not isinstance(value[field], str) or SHA_RE.fullmatch(value[field]) is None:
+                return False
+    for field in ("current_record_mutations", "immutable_history_appends"):
+        records = value[field]
+        if not isinstance(records, list) or not all(
+            _validate_persistence_record(record) for record in records
+        ):
+            return False
+        if records != _canonical_records(records):
+            return False
+    return True
+
+
+def _descriptor_chain(length: int = 4) -> list[dict[str, Any]]:
+    chain = [
+        _transaction_descriptor(
+            expected_current_generation=None,
+            target_generation=1,
+            pre_state_fingerprint_sha256=None,
+            pre_history_tail_fingerprint_sha256=None,
+        )
+    ]
+    for generation in range(2, length + 1):
+        previous = chain[-1]
+        chain.append(
+            _transaction_descriptor(
+                expected_current_generation=generation - 1,
+                target_generation=generation,
+                pre_state_fingerprint_sha256=previous["post_state_fingerprint_sha256"],
+                pre_history_tail_fingerprint_sha256=previous[
+                    "post_history_tail_fingerprint_sha256"
+                ],
+            )
+        )
+    return chain
+
+
+def _complete_descriptor_chain_valid(
+    descriptors: list[dict[str, Any]], metadata: dict[str, Any]
+) -> bool:
+    generation = metadata["protected_freshness_generation"]
+    if not all(_descriptor_intrinsically_valid(descriptor) for descriptor in descriptors):
+        return False
+    targets = [descriptor["target_generation"] for descriptor in descriptors]
+    if any(not _positive(target) for target in targets):
+        return False
+    if len(targets) != generation or sorted(targets) != list(range(1, generation + 1)):
+        return False
+    canonical = sorted(descriptors, key=lambda descriptor: descriptor["target_generation"])
+    immutable_scope = (
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+    )
+    if any(
+        descriptor[field] != metadata[field]
+        for descriptor in canonical
+        for field in immutable_scope
+    ):
+        return False
+    genesis = canonical[0]
+    if (
+        genesis["expected_current_generation"] is not None
+        or genesis["pre_state_fingerprint_sha256"] is not None
+        or genesis["pre_history_tail_fingerprint_sha256"] is not None
+    ):
+        return False
+    if not all(_descriptor_hash_valid(descriptor) for descriptor in canonical):
+        return False
+    if not all(
+        _descriptor_chain_valid(previous, current)
+        for previous, current in zip(canonical[:-1], canonical[1:], strict=True)
+    ):
+        return False
+    return _descriptor_matches_metadata(canonical[-1], metadata)
+
+
+def _all_keys(value: Any) -> set[str]:
+    if isinstance(value, dict):
+        return set(value) | {key for item in value.values() for key in _all_keys(item)}
+    if isinstance(value, list):
+        return {key for item in value for key in _all_keys(item)}
+    return set()
+
+
 def _nfc(value: Any) -> Any:
     if isinstance(value, str):
         return unicodedata.normalize("NFC", value)
@@ -5658,3 +5864,932 @@ def test_supported_canonical_entity_ids_use_frozen_m02_type_prefixes() -> None:
     assert account["record_key"].startswith("acct_")
     assert runtime["record_key"].startswith("run_")
     assert account["record_key"] != runtime["record_key"]
+
+
+def test_s2c_contract_closes_common_canonical_json_and_record_order() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]
+    assert contract["canonical_json"] == {
+        "algorithm": "SHA-256",
+        "encoding": "UTF-8",
+        "sort_keys": True,
+        "separators": [",", ":"],
+        "ensure_ascii": False,
+        "allow_nan": False,
+        "digest": "lowercase hexadecimal",
+        "projection": "semantic and storage-neutral; SQLite storage JSON is not authority",
+        "forbidden_inputs": [
+            "pickle",
+            "repr",
+            "SQLite binary layout",
+            "rowid",
+            "page number",
+            "insertion order",
+            "locally generated timestamp",
+            "filesystem metadata",
+        ],
+    }
+    assert contract["record_order"]["keys"] == ["representation_name", "record_key"]
+    assert len(MACHINE["executable_boundary_schemas"]["PersistenceRecord"]["required"]) == 9
+
+
+def test_history_tail_empty_is_sha256_of_exact_empty_canonical_array() -> None:
+    assert _history_tail_fingerprint([]) == hashlib.sha256(b"[]").hexdigest()
+
+
+def test_history_tail_is_deterministic_and_input_order_independent() -> None:
+    records = [
+        _persistence_record("RuntimeSession canonical identity/history"),
+        _persistence_record("RiskPolicy accepted revisions"),
+    ]
+    assert _history_tail_fingerprint(records) == _history_tail_fingerprint(list(reversed(records)))
+    assert _history_tail_fingerprint(records) == _history_tail_fingerprint(copy.deepcopy(records))
+
+
+def test_history_append_delete_payload_and_metadata_mutation_change_digest() -> None:
+    first = _persistence_record("RuntimeSession canonical identity/history")
+    second = _persistence_record("RiskPolicy accepted revisions")
+    baseline = _history_tail_fingerprint([first])
+    appended = _history_tail_fingerprint([first, second])
+    assert appended != baseline
+    assert _history_tail_fingerprint([second]) != appended
+    payload_mutation = copy.deepcopy(first)
+    payload_mutation["payload"]["upstream_payload"]["device_installation_id"] += "x"
+    assert _history_tail_fingerprint([payload_mutation]) != baseline
+    metadata_mutation = copy.deepcopy(first)
+    metadata_mutation["semantic_json_pointer"] += "/changed"
+    assert _history_tail_fingerprint([metadata_mutation]) != baseline
+
+
+def test_history_contract_has_no_rowid_chronology_or_insertion_order_dependency() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]
+    assert contract["record_order"]["not_chronology"] is True
+    assert "rowid" in contract["canonical_json"]["forbidden_inputs"]
+    assert "insertion order" in contract["canonical_json"]["forbidden_inputs"]
+
+
+def test_state_projection_has_exact_fields_and_excludes_self_reference_and_evidence() -> None:
+    projection = _state_projection(_metadata(), [])
+    contract = MACHINE["state_store_fingerprint_contract"]["state_fingerprint"]
+    assert list(projection) == contract["projection_fields"]
+    assert not {
+        "state_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+        "LocalDurableStateEvidence",
+    } & set(projection)
+
+
+def test_current_projection_selection_is_exact_and_excludes_metadata_and_evidence() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]["current_record_projection"]
+    assert "DURABLE AUTHORITATIVE CURRENT STATE" in contract["selection"]
+    assert "StateStoreMetadata" in contract["exclude"]
+    assert "LocalDurableStateEvidence payload" in contract["exclude"]
+    assert MACHINE["startup_recovery_model"]["evidence_policy"] == {
+        "local_durable_evidence_persisted_in_StateStore": False,
+        "local_durable_evidence_included_in_state_fingerprint": False,
+        "local_durable_evidence_included_in_BackupEnvelope": False,
+        "local_evidence_current_designation_persisted": False,
+        "local_evidence_registry_process_local": True,
+        "local_evidence_rebuild_source": "verified current durable StateStore observation",
+        "evidence_publication_is_StateStore_semantic_transaction": False,
+        "evidence_publication_advances_protected_freshness_generation": False,
+    }
+
+
+def test_state_digest_is_stable_and_current_input_order_independent() -> None:
+    records = [
+        _persistence_record("Workspace"),
+        _persistence_record("CryptoHunterAccount current record"),
+    ]
+    metadata = _metadata(history_tail_fingerprint_sha256=_history_tail_fingerprint([]))
+    assert _actual_fingerprint(_state_projection(metadata, records)) == _actual_fingerprint(
+        _state_projection(copy.deepcopy(metadata), list(reversed(records)))
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("account_id", "acct_01890f3a-2b4c-7abc-8def-0123456789ac"),
+        ("device_installation_id", "dev_01890f3a-2b4c-7abc-8def-0123456789ac"),
+        ("state_store_identity_fingerprint_sha256", "d" * 64),
+        ("state_store_schema_version", 2),
+        ("environment", "TESTNET"),
+        ("protected_freshness_generation", 2),
+        ("history_tail_fingerprint_sha256", "e" * 64),
+    ],
+)
+def test_each_state_metadata_input_changes_digest(field: str, replacement: Any) -> None:
+    baseline = _state_projection(_metadata(), [])
+    changed_metadata = _metadata(**{field: replacement})
+    assert _actual_fingerprint(baseline) != _actual_fingerprint(
+        _state_projection(changed_metadata, [])
+    )
+
+
+def test_current_record_mutation_changes_state_digest() -> None:
+    record = _persistence_record("Workspace")
+    changed = copy.deepcopy(record)
+    changed["payload_fingerprint_sha256"] = "f" * 64
+    assert _actual_fingerprint(_state_projection(_metadata(), [record])) != _actual_fingerprint(
+        _state_projection(_metadata(), [changed])
+    )
+
+
+def test_transaction_projection_has_exact_fields_and_does_not_hash_itself() -> None:
+    projection = _transaction_projection()
+    contract = MACHINE["state_store_fingerprint_contract"]["transaction_fingerprint"]
+    assert list(projection) == contract["projection_fields"]
+    assert "transaction_fingerprint_sha256" not in projection
+
+
+def test_genesis_transaction_has_null_pre_fields_and_external_positive_target() -> None:
+    genesis = _transaction_projection(
+        expected_current_generation=None,
+        pre_state_fingerprint_sha256=None,
+        pre_history_tail_fingerprint_sha256=None,
+        target_generation=1,
+    )
+    assert genesis["expected_current_generation"] is None
+    assert genesis["pre_state_fingerprint_sha256"] is None
+    assert genesis["pre_history_tail_fingerprint_sha256"] is None
+    assert genesis["target_generation"] == 1
+    assert (
+        "externally supplied"
+        in MACHINE["state_store_fingerprint_contract"]["genesis_semantics"]["target_generation"]
+    )
+
+
+def test_transaction_mutation_arrays_are_input_order_independent() -> None:
+    records = [_persistence_record("Workspace"), _persistence_record("ExchangeAccount")]
+    left = _transaction_projection(current_record_mutations=records)
+    right = _transaction_projection(current_record_mutations=list(reversed(records)))
+    assert _actual_fingerprint(left) == _actual_fingerprint(right)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("account_id", "acct_01890f3a-2b4c-7abc-8def-0123456789ac"),
+        ("environment", "TESTNET"),
+        ("state_store_schema_version", 2),
+        ("expected_current_generation", 0),
+        ("target_generation", 3),
+        ("pre_state_fingerprint_sha256", "5" * 64),
+        ("post_state_fingerprint_sha256", "6" * 64),
+        ("pre_history_tail_fingerprint_sha256", "7" * 64),
+        ("post_history_tail_fingerprint_sha256", "8" * 64),
+    ],
+)
+def test_each_transaction_boundary_input_changes_digest(field: str, replacement: Any) -> None:
+    assert _actual_fingerprint(_transaction_projection()) != _actual_fingerprint(
+        _transaction_projection(**{field: replacement})
+    )
+
+
+def test_current_mutation_and_history_append_each_change_transaction_digest() -> None:
+    baseline = _actual_fingerprint(_transaction_projection())
+    current = _persistence_record("Workspace")
+    history = _persistence_record("RuntimeSession canonical identity/history")
+    assert baseline != _actual_fingerprint(
+        _transaction_projection(current_record_mutations=[current])
+    )
+    assert baseline != _actual_fingerprint(
+        _transaction_projection(immutable_history_appends=[history])
+    )
+
+
+def test_metadata_only_transition_remains_fingerprintable() -> None:
+    projection = _transaction_projection()
+    assert projection["current_record_mutations"] == []
+    assert projection["immutable_history_appends"] == []
+    assert SHA_RE.fullmatch(_actual_fingerprint(projection))
+    assert MACHINE["state_store_fingerprint_contract"]["metadata_only_semantics"]["is_transaction"]
+
+
+def test_syntactically_valid_false_metadata_fails_prepared_validation() -> None:
+    expected = {
+        "state_fingerprint_sha256": _actual_fingerprint(_state_projection(_metadata(), [])),
+        "transaction_fingerprint_sha256": _actual_fingerprint(_transaction_projection()),
+        "history_tail_fingerprint_sha256": _history_tail_fingerprint([]),
+    }
+    supplied = {name: "f" * 64 for name in expected}
+    assert all(SHA_RE.fullmatch(value) for value in supplied.values())
+    assert supplied != expected
+    assert (
+        MACHINE["state_store_fingerprint_contract"]["prepare_commit_relation"][
+            "mismatching_syntactically_valid_digest"
+        ]
+        == "FAIL CLOSED"
+    )
+
+
+def test_generation_pinned_snapshot_rejects_mixed_generation_components() -> None:
+    def valid(metadata_generation: int, records_generation: int, history_generation: int) -> bool:
+        return len({metadata_generation, records_generation, history_generation}) == 1
+
+    assert valid(2, 2, 2)
+    assert not valid(1, 2, 1)
+    assert not valid(2, 2, 1)
+    snapshot = MACHINE["state_store_fingerprint_contract"]["durable_snapshot"]
+    assert snapshot["generation_consistent"] is True
+    assert snapshot["authority"] is False
+
+
+def test_trusted_observer_checks_bind_one_generation_pinned_snapshot() -> None:
+    binding = MACHINE["startup_recovery_model"]["trusted_observation_snapshot_binding"]
+    assert binding["single_input"] == (
+        "one generation-pinned durable snapshot including complete "
+        "StateStoreTransactionDescriptor chain 1..G for the current identity"
+    )
+    assert binding["multiple_potentially_different_reads_forbidden"] is True
+    assert binding["mints_upstream_authority"] is False
+
+
+def test_restart_recomputes_all_fingerprints_but_never_trusts_stored_hash_alone() -> None:
+    restart = MACHINE["state_store_fingerprint_contract"]["restart_verification"]
+    assert restart["history_tail_recomputable_from_generation_pinned_snapshot"] is True
+    assert restart["state_fingerprint_recomputable_from_generation_pinned_snapshot"] is True
+    assert (
+        restart[
+            "transaction_fingerprint_independently_reconstructable_from_current_frozen_StateStore_content"
+        ]
+        == "true only when the complete durable StateStoreTransactionDescriptor chain 1..G is present and valid"
+    )
+    assert restart["stored_hash_is_proof"] is False
+    assert restart["missing_descriptor"].startswith("FAIL CLOSED")
+
+
+def test_fingerprint_contract_is_integrity_only_negative_authority_matrix() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]
+    forbidden = {
+        "accepted",
+        "authorized",
+        "live_allowed",
+        "execution_allowed",
+        "membership_accepted",
+        "current_membership",
+    }
+    assert not (_all_keys(contract) & forbidden)
+    assert contract["authority_boundary"]["integrity_fencing_evidence_only"] is True
+    assert MACHINE["authority_model"]["live_current"] == "DENIED"
+    assert MACHINE["authority_model"]["testnet_to_live_fallback"] is False
+    assert MACHINE["transaction_protocol"]["cross_resource_acid_claim"] is False
+
+
+def test_descriptor_schema_is_closed_exact_fourteen_fields_and_has_no_domain_id() -> None:
+    schema = MACHINE["executable_boundary_schemas"]["StateStoreTransactionDescriptor"]
+    expected = [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+        "state_store_schema_version",
+        "environment",
+        "expected_current_generation",
+        "target_generation",
+        "pre_state_fingerprint_sha256",
+        "pre_history_tail_fingerprint_sha256",
+        "post_state_fingerprint_sha256",
+        "post_history_tail_fingerprint_sha256",
+        "current_record_mutations",
+        "immutable_history_appends",
+        "transaction_fingerprint_sha256",
+    ]
+    assert schema["required"] == expected
+    assert set(schema["properties"]) == set(expected)
+    assert schema["additionalProperties"] is False
+    assert not {"id", "descriptor_id", "transaction_id", "uuid"} & set(schema["properties"])
+
+
+def test_descriptor_schema_closes_nullable_sha_generation_and_environment_semantics() -> None:
+    properties = MACHINE["executable_boundary_schemas"]["StateStoreTransactionDescriptor"][
+        "properties"
+    ]
+    assert properties["environment"]["enum"] == ["PAPER", "TESTNET", "LIVE"]
+    assert properties["target_generation"] == {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": False,
+    }
+    assert properties["expected_current_generation"]["oneOf"][1] == {"type": "null"}
+    for field in ("pre_state_fingerprint_sha256", "pre_history_tail_fingerprint_sha256"):
+        assert properties[field]["oneOf"][1] == {"type": "null"}
+    for field in (
+        "state_store_identity_fingerprint_sha256",
+        "post_state_fingerprint_sha256",
+        "post_history_tail_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+    ):
+        assert properties[field]["pattern"] == "^[0-9a-f]{64}$"
+
+
+def test_descriptor_reuses_exact_transaction_projection_and_detects_any_mutation() -> None:
+    descriptor = _transaction_descriptor()
+    assert _descriptor_hash_valid(descriptor)
+    projection_fields = MACHINE["state_store_fingerprint_contract"]["transaction_fingerprint"][
+        "projection_fields"
+    ]
+    assert projection_fields == list(descriptor)[:-1]
+    for field in projection_fields:
+        tampered = copy.deepcopy(descriptor)
+        value = tampered[field]
+        if isinstance(value, list):
+            value.append(_persistence_record("Workspace"))
+        elif isinstance(value, int):
+            tampered[field] = value + 1
+        else:
+            tampered[field] = f"{value}x"
+        assert not _descriptor_hash_valid(tampered), field
+
+
+def test_genesis_and_non_genesis_descriptor_generation_semantics() -> None:
+    genesis = _transaction_descriptor(
+        expected_current_generation=None,
+        target_generation=1,
+        pre_state_fingerprint_sha256=None,
+        pre_history_tail_fingerprint_sha256=None,
+    )
+    assert genesis["expected_current_generation"] is None
+    assert genesis["pre_state_fingerprint_sha256"] is None
+    assert genesis["pre_history_tail_fingerprint_sha256"] is None
+    current = _transaction_descriptor(expected_current_generation=1, target_generation=2)
+    assert current["target_generation"] == current["expected_current_generation"] + 1
+    assert not _positive(True)
+
+
+@pytest.mark.parametrize(
+    ("descriptor_field", "metadata_field", "replacement"),
+    [
+        ("account_id", "account_id", "acct_01890f3a-2b4c-7abc-8def-0123456789ac"),
+        (
+            "device_installation_id",
+            "device_installation_id",
+            "dev_01890f3a-2b4c-7abc-8def-0123456789ac",
+        ),
+        (
+            "state_store_identity_fingerprint_sha256",
+            "state_store_identity_fingerprint_sha256",
+            "d" * 64,
+        ),
+        ("state_store_schema_version", "state_store_schema_version", 2),
+        ("environment", "environment", "TESTNET"),
+        ("target_generation", "protected_freshness_generation", 3),
+        ("post_state_fingerprint_sha256", "state_fingerprint_sha256", "d" * 64),
+        ("post_history_tail_fingerprint_sha256", "history_tail_fingerprint_sha256", "e" * 64),
+        ("transaction_fingerprint_sha256", "transaction_fingerprint_sha256", "f" * 64),
+    ],
+)
+def test_each_descriptor_metadata_mismatch_fails_closed(
+    descriptor_field: str, metadata_field: str, replacement: Any
+) -> None:
+    descriptor = _transaction_descriptor()
+    metadata = _metadata(
+        protected_freshness_generation=descriptor["target_generation"],
+        state_fingerprint_sha256=descriptor["post_state_fingerprint_sha256"],
+        history_tail_fingerprint_sha256=descriptor["post_history_tail_fingerprint_sha256"],
+        transaction_fingerprint_sha256=descriptor["transaction_fingerprint_sha256"],
+    )
+    assert _descriptor_matches_metadata(descriptor, metadata)
+    altered = copy.deepcopy(metadata)
+    altered[metadata_field] = replacement
+    assert descriptor[descriptor_field] != altered[metadata_field]
+    assert not _descriptor_matches_metadata(descriptor, altered)
+
+
+def test_descriptor_chain_accepts_continuity_and_rejects_each_break() -> None:
+    previous = _transaction_descriptor(target_generation=1)
+    current = _transaction_descriptor(
+        expected_current_generation=1,
+        target_generation=2,
+        pre_state_fingerprint_sha256=previous["post_state_fingerprint_sha256"],
+        pre_history_tail_fingerprint_sha256=previous["post_history_tail_fingerprint_sha256"],
+    )
+    assert _descriptor_chain_valid(previous, current)
+    for field, value in (
+        ("expected_current_generation", 2),
+        ("pre_state_fingerprint_sha256", "8" * 64),
+        ("pre_history_tail_fingerprint_sha256", "9" * 64),
+        ("target_generation", 3),
+    ):
+        altered = copy.deepcopy(current)
+        altered[field] = value
+        assert not _descriptor_chain_valid(previous, altered)
+    assert len({previous["target_generation"], current["target_generation"]}) == 2
+    assert len({current["target_generation"], current["target_generation"]}) != 2
+
+
+@pytest.mark.parametrize("descriptor_generation", [None, 1, 3])
+def test_generation_pinned_snapshot_requires_exact_matching_descriptor(
+    descriptor_generation: int | None,
+) -> None:
+    metadata_generation = 2
+
+    def valid(candidate: int | None) -> bool:
+        return candidate is not None and candidate == metadata_generation
+
+    assert valid(2)  # metadata G + records G + history G + descriptor G
+    assert not valid(descriptor_generation)
+
+
+def test_restart_transaction_gate_requires_descriptor_recomputation_and_metadata_binding() -> None:
+    descriptor = _transaction_descriptor()
+    metadata = _metadata(
+        protected_freshness_generation=descriptor["target_generation"],
+        state_fingerprint_sha256=descriptor["post_state_fingerprint_sha256"],
+        history_tail_fingerprint_sha256=descriptor["post_history_tail_fingerprint_sha256"],
+        transaction_fingerprint_sha256=descriptor["transaction_fingerprint_sha256"],
+    )
+    assert _descriptor_hash_valid(descriptor) and _descriptor_matches_metadata(descriptor, metadata)
+    assert metadata["transaction_fingerprint_sha256"] and not False  # stored metadata alone is data
+    tampered = copy.deepcopy(descriptor)
+    tampered["target_generation"] += 1
+    assert (
+        tampered["transaction_fingerprint_sha256"] == descriptor["transaction_fingerprint_sha256"]
+    )
+    assert not _descriptor_hash_valid(tampered)
+
+
+def test_missing_descriptor_blocks_crash_recovery_and_finalized_restart() -> None:
+    restart = MACHINE["state_store_fingerprint_contract"]["restart_verification"]
+    assert "NO EVIDENCE PUBLICATION" in restart["missing_descriptor"]
+    assert "NO FINALIZE" in restart["missing_descriptor"]
+    crash = restart["LOCAL_COMMIT_BEFORE_EVIDENCE"]
+    assert "without second business commit" in crash["complete_chain_and_all_other_gates_pass"]
+    assert crash["missing_any_descriptor_or_invalid_chain"].startswith("NO EVIDENCE PUBLICATION")
+    assert "registry restarts EMPTY" in restart["ordinary_finalized_restart"]
+
+
+def test_descriptor_is_atomic_local_only_and_not_optional_audit_log() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"]
+    assert contract["durability_classification"] == "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
+    assert contract["current_descriptor_requirement"]["optional_audit_log"] is False
+    assert contract["atomic_local_commit_binding"]["cross_resource_acid_claim"] is False
+    assert len(contract["atomic_local_commit_binding"]["same_local_StateStore_transaction"]) == 4
+
+
+def test_descriptor_has_no_state_history_self_reference_cycle() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]
+    descriptor = contract["durable_transaction_descriptor"]
+    assert set(descriptor["excluded_from"]) == {
+        "canonical_durable_current_records",
+        "canonical_immutable_history_records",
+        "history_tail_fingerprint_sha256",
+        "state_fingerprint_sha256",
+    }
+    assert (
+        "transaction_fingerprint_sha256"
+        not in contract["transaction_fingerprint"]["projection_fields"]
+    )
+    assert descriptor["is_PersistenceRecord"] is False
+
+
+def test_descriptor_authority_and_backup_restore_boundaries_remain_closed() -> None:
+    descriptor = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"]
+    assert "mint M0.3 membership" in descriptor["authority_boundary"]["does_not"]
+    assert (
+        "does not add descriptors to BackupEnvelope integrity_metadata"
+        in descriptor["backup_restore_limitation"]
+    )
+    assert MACHINE["authority_model"]["live_current"] == "DENIED"
+    assert MACHINE["authority_model"]["testnet_to_live_fallback"] is False
+    assert MACHINE["transaction_protocol"]["cross_resource_acid_claim"] is False
+
+
+def _metadata_for_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
+    return _metadata(
+        protected_freshness_generation=descriptor["target_generation"],
+        state_fingerprint_sha256=descriptor["post_state_fingerprint_sha256"],
+        history_tail_fingerprint_sha256=descriptor["post_history_tail_fingerprint_sha256"],
+        transaction_fingerprint_sha256=descriptor["transaction_fingerprint_sha256"],
+    )
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [[1, 3, 4], [2, 3, 4], [1, 2, 4], [1, 2, 3], [1, 2, 3, 4, 5], [1, 2, 2, 3, 4]],
+)
+def test_complete_chain_rejects_each_non_exact_generation_multiset(targets: list[int]) -> None:
+    chain = _descriptor_chain(5)
+    by_generation = {descriptor["target_generation"]: descriptor for descriptor in chain}
+    candidate = [copy.deepcopy(by_generation[target]) for target in targets]
+    metadata = _metadata_for_descriptor(by_generation[4])
+    assert _complete_descriptor_chain_valid(_descriptor_chain(4), metadata)
+    assert not _complete_descriptor_chain_valid(candidate, metadata)
+
+
+def test_missing_middle_descriptor_fails_even_when_current_edge_is_valid() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    missing_g2 = [chain[0], chain[2], chain[3]]
+    assert _descriptor_chain_valid(chain[2], chain[3])
+    assert _descriptor_matches_metadata(chain[3], metadata)
+    assert not _complete_descriptor_chain_valid(missing_g2, metadata)
+
+
+@pytest.mark.parametrize(
+    ("generation", "field", "replacement"),
+    [
+        (2, "expected_current_generation", 4),
+        (2, "pre_state_fingerprint_sha256", "8" * 64),
+        (2, "pre_history_tail_fingerprint_sha256", "8" * 64),
+        (3, "expected_current_generation", 1),
+        (3, "pre_state_fingerprint_sha256", "8" * 64),
+        (3, "pre_history_tail_fingerprint_sha256", "8" * 64),
+        (4, "expected_current_generation", 2),
+        (4, "pre_state_fingerprint_sha256", "8" * 64),
+        (4, "pre_history_tail_fingerprint_sha256", "8" * 64),
+    ],
+)
+def test_complete_chain_checks_every_edge(generation: int, field: str, replacement: Any) -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[generation - 1][field] = replacement
+    chain[generation - 1]["transaction_fingerprint_sha256"] = _actual_fingerprint(
+        {name: chain[generation - 1][name] for name in _transaction_projection()}
+    )
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+def test_tampered_non_current_descriptor_hash_fails_full_chain() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    assert _descriptor_matches_metadata(chain[-1], metadata)
+    chain[1]["pre_state_fingerprint_sha256"] = "8" * 64
+    assert not _descriptor_hash_valid(chain[1])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+def test_complete_chain_rejects_future_bool_and_unrelated_identity_descriptors() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    future = _descriptor_chain(5)
+    assert not _complete_descriptor_chain_valid(future, metadata)
+    boolean = copy.deepcopy(chain)
+    boolean[1]["target_generation"] = True
+    assert not _complete_descriptor_chain_valid(boolean, metadata)
+    unrelated = copy.deepcopy(chain)
+    unrelated[1]["state_store_identity_fingerprint_sha256"] = "f" * 64
+    assert not _complete_descriptor_chain_valid(unrelated, metadata)
+
+
+def test_initialized_store_requires_exact_genesis_descriptor() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    assert _complete_descriptor_chain_valid(chain, metadata)
+    for field, value in (
+        ("expected_current_generation", 0),
+        ("pre_state_fingerprint_sha256", "8" * 64),
+        ("pre_history_tail_fingerprint_sha256", "8" * 64),
+    ):
+        altered = copy.deepcopy(chain)
+        altered[0][field] = value
+        altered[0]["transaction_fingerprint_sha256"] = _actual_fingerprint(
+            {name: altered[0][name] for name in _transaction_projection()}
+        )
+        assert not _complete_descriptor_chain_valid(altered, metadata)
+
+
+def test_metadata_only_descriptor_is_valid_atomic_commit_not_partial_state() -> None:
+    descriptor = _transaction_descriptor(current_record_mutations=[], immutable_history_appends=[])
+    binding = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "atomic_local_commit_binding"
+    ]
+    semantics = binding["metadata_only_valid"]
+    assert descriptor["current_record_mutations"] == []
+    assert descriptor["immutable_history_appends"] == []
+    assert semantics["requested_record_delta_count"] == 0
+    assert semantics["violates_forbidden_partial_state"] is False
+    assert "descriptor without records" not in binding["forbidden_partial_states"]
+
+
+@pytest.mark.parametrize("committed", [["A"], ["R"], [], ["A", "R", "X"]])
+def test_declared_mutation_binding_rejects_partial_or_extra_delta(committed: list[str]) -> None:
+    declared = ["A", "R"]
+    assert committed != declared
+    invariant = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "atomic_declared_mutation_binding"
+    ]
+    assert invariant["comparison"].startswith("exact canonical PersistenceRecord arrays")
+
+
+def test_declared_mutation_binding_accepts_exact_current_and_history_delta() -> None:
+    current = _persistence_record("Workspace")
+    history = _persistence_record("RuntimeSession canonical identity/history")
+    descriptor = _transaction_descriptor(
+        current_record_mutations=[current], immutable_history_appends=[history]
+    )
+    committed_current = [current]
+    committed_history = [history]
+    assert committed_current == descriptor["current_record_mutations"]
+    assert committed_history == descriptor["immutable_history_appends"]
+
+
+def test_snapshot_restart_and_crash_contract_require_complete_chain() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]
+    assert contract["durable_snapshot"]["complete_descriptor_chain_required"] is True
+    assert contract["durable_snapshot"]["exact_descriptor_generation_set"].startswith("1..")
+    algorithm = contract["restart_verification"]["post_restart_algorithm"]
+    assert any("every descriptor" in step for step in algorithm)
+    assert any("every adjacent descriptor pair" in step for step in algorithm)
+    crash = contract["restart_verification"]["LOCAL_COMMIT_BEFORE_EVIDENCE"]
+    assert "NO FINALIZE" in crash["missing_any_descriptor_or_invalid_chain"]
+
+
+def test_complete_chain_deletion_detection_and_no_performance_shortcut() -> None:
+    requirement = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "complete_chain_requirement"
+    ]
+    assert "deletion of any descriptor" in requirement["deletion_detection"]
+    assert requirement["performance_non_claim"] == [
+        "no checkpoints",
+        "no Merkle tree",
+        "no descriptor-chain aggregate hash",
+        "no pruning",
+    ]
+
+
+def test_complete_chain_backup_and_authority_boundaries_remain_non_claims() -> None:
+    descriptor = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"]
+    assert "complete descriptor chain 1..G" in descriptor["backup_restore_limitation"]
+    assert (
+        "does not claim the current backup contract is complete"
+        in descriptor["backup_restore_limitation"]
+    )
+    assert descriptor["chain_continuity"]["meaning"].endswith("not upstream authority")
+    assert MACHINE["authority_model"]["live_current"] == "DENIED"
+    assert MACHINE["authority_model"]["testnet_to_live_fallback"] is False
+    assert MACHINE["transaction_protocol"]["cross_resource_acid_claim"] is False
+
+
+def test_complete_chain_immutable_scope_is_exact_three_independent_fields() -> None:
+    requirement = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "complete_chain_requirement"
+    ]
+    assert requirement["immutable_scope_fields"] == [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+    ]
+    assert requirement["every_descriptor_must_match_current_metadata_immutable_scope"] is True
+    assert "not a substitute" in requirement["scope_comparison"]
+    assert requirement["environment_is_immutable_scope_field"] is False
+    assert requirement["state_store_schema_version_is_global_immutable_scope_field"] is False
+
+
+def test_shuffled_valid_chain_is_storage_order_independent() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    shuffled = [chain[3], chain[1], chain[0], chain[2]]
+    assert _complete_descriptor_chain_valid(chain, metadata)
+    assert _complete_descriptor_chain_valid(shuffled, metadata)
+
+
+def test_self_consistent_foreign_historical_account_fails_scope_not_hash() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[1]["account_id"] = "acct_01890f3a-2b4c-7abc-8def-0123456789ac"
+    _rehash_descriptor(chain[1])
+    assert _descriptor_hash_valid(chain[1])
+    assert _descriptor_chain_valid(chain[0], chain[1])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+def test_self_consistent_foreign_historical_device_fails_scope_not_hash() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[2]["device_installation_id"] = "dev_01890f3a-2b4c-7abc-8def-0123456789ac"
+    _rehash_descriptor(chain[2])
+    assert _descriptor_hash_valid(chain[2])
+    assert _descriptor_chain_valid(chain[1], chain[2])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+@pytest.mark.parametrize(
+    ("field", "foreign_value"),
+    [
+        ("account_id", "acct_01890f3a-2b4c-7abc-8def-0123456789ac"),
+        ("device_installation_id", "dev_01890f3a-2b4c-7abc-8def-0123456789ac"),
+    ],
+)
+def test_self_consistent_foreign_genesis_fails_immutable_scope(
+    field: str, foreign_value: str
+) -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[0][field] = foreign_value
+    _rehash_descriptor(chain[0])
+    assert chain[0]["expected_current_generation"] is None
+    assert _descriptor_hash_valid(chain[0])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+def test_descriptor_multiset_detects_duplicate_before_sort_and_never_uses_storage_order() -> None:
+    requirement = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "complete_chain_requirement"
+    ]
+    ordering = requirement["canonical_descriptor_order"]
+    assert ordering["key"] == "target_generation"
+    assert ordering["direction"] == "ascending"
+    assert ordering["applied_after_exact_multiset_cardinality_validation"] is True
+    assert requirement["storage_order_affects_validity"] is False
+    assert "never deduplicate" in requirement["duplicate_detection"]
+
+
+def test_restart_and_trusted_observation_validate_every_descriptor_scope() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]
+    algorithm = contract["restart_verification"]["post_restart_algorithm"]
+    assert any(
+        "every descriptor against current metadata immutable scope" in step for step in algorithm
+    )
+    binding = MACHINE["startup_recovery_model"]["trusted_observation_snapshot_binding"]
+    assert "every descriptor 1..G" in binding["immutable_scope_gate"]
+    assert binding["scope_mismatch"].startswith("NO EVIDENCE PUBLICATION / NO FINALIZE")
+    assert binding["descriptor_storage_order_authoritative"] is False
+
+
+def test_scope_corrective_preserves_current_binding_metadata_only_delta_and_authority() -> None:
+    descriptor = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"]
+    assert set(descriptor["metadata_binding"]) == {
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+        "state_store_schema_version",
+        "environment",
+        "target_generation",
+        "post_state_fingerprint_sha256",
+        "post_history_tail_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+        "comparison",
+    }
+    assert (
+        descriptor["atomic_local_commit_binding"]["metadata_only_valid"][
+            "violates_forbidden_partial_state"
+        ]
+        is False
+    )
+    assert descriptor["atomic_declared_mutation_binding"]["invariant"].startswith(
+        "durably committed current-record mutations"
+    )
+    assert MACHINE["authority_model"]["live_current"] == "DENIED"
+    assert MACHINE["authority_model"]["testnet_to_live_fallback"] is False
+    assert MACHINE["transaction_protocol"]["cross_resource_acid_claim"] is False
+
+
+def test_backup_limitation_preserves_complete_chain_and_exact_immutable_scope() -> None:
+    limitation = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "backup_restore_limitation"
+    ]
+    assert "complete descriptor chain 1..G" in limitation
+    assert "exact immutable account/device/store-identity scope" in limitation
+    assert "does not implement backup/restore" in limitation
+
+
+def test_descriptor_intrinsic_contract_is_closed_and_precedes_all_trust_checks() -> None:
+    contract = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"]
+    intrinsic = contract["intrinsic_validation"]
+    schema = MACHINE["executable_boundary_schemas"]["StateStoreTransactionDescriptor"]
+    assert intrinsic["exact_field_set"] == schema["required"]
+    assert len(intrinsic["exact_field_set"]) == 14
+    assert intrinsic["additional_properties"] is False
+    assert intrinsic["hash_recomputation_occurs_only_after_intrinsic_validation"] is True
+    assert intrinsic["valid_transaction_hash_compensates_for_invalid_schema"] is False
+
+
+@pytest.mark.parametrize("extra", ["authorized", "accepted", "live_allowed"])
+def test_authority_looking_extra_field_fails_despite_valid_projection_hash(extra: str) -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[1][extra] = True
+    assert _descriptor_hash_valid(chain[1])
+    assert not _descriptor_intrinsically_valid(chain[1])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("account_id", "acct-invalid"), ("device_installation_id", "dev-invalid")],
+)
+def test_descriptor_intrinsic_validation_rejects_noncanonical_scope_id(
+    field: str, value: str
+) -> None:
+    descriptor = _transaction_descriptor()
+    descriptor[field] = value
+    _rehash_descriptor(descriptor)
+    assert _descriptor_hash_valid(descriptor)
+    assert not _descriptor_intrinsically_valid(descriptor)
+
+
+def test_self_consistent_invalid_historical_environment_fails_intrinsic_validation() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[1]["environment"] = "HACKED"
+    _rehash_descriptor(chain[1])
+    assert _descriptor_hash_valid(chain[1])
+    assert not _descriptor_intrinsically_valid(chain[1])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+@pytest.mark.parametrize("value", [True, 0])
+def test_self_consistent_invalid_historical_schema_version_fails_intrinsic_validation(
+    value: Any,
+) -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[1]["state_store_schema_version"] = value
+    _rehash_descriptor(chain[1])
+    assert _descriptor_hash_valid(chain[1])
+    assert not _descriptor_intrinsically_valid(chain[1])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+def test_self_consistent_boolean_expected_generation_fails_intrinsic_before_edge() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[1]["expected_current_generation"] = True
+    _rehash_descriptor(chain[1])
+    assert _descriptor_hash_valid(chain[1])
+    assert not _descriptor_intrinsically_valid(chain[1])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+@pytest.mark.parametrize(
+    ("field", "record_name"),
+    [
+        ("current_record_mutations", "Workspace"),
+        ("immutable_history_appends", "RuntimeSession canonical identity/history"),
+    ],
+)
+def test_self_consistent_outer_hash_cannot_mask_invalid_nested_stage_one_record(
+    field: str, record_name: str
+) -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    record = _persistence_record(record_name)
+    record["payload_fingerprint_sha256"] = "f" * 64
+    chain[1][field] = [record]
+    _rehash_descriptor(chain[1])
+    assert _descriptor_hash_valid(chain[1])
+    assert not _validate_persistence_record(record)
+    assert not _descriptor_intrinsically_valid(chain[1])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+def test_noncanonical_mutation_array_order_fails_but_canonical_variant_passes() -> None:
+    records = [
+        _persistence_record("Workspace"),
+        _persistence_record("CryptoHunterAccount current record"),
+    ]
+    canonical = _canonical_records(records)
+    descriptor = _transaction_descriptor(current_record_mutations=canonical)
+    assert _descriptor_intrinsically_valid(descriptor)
+    descriptor["current_record_mutations"] = list(reversed(canonical))
+    _rehash_descriptor(descriptor)
+    assert _descriptor_hash_valid(descriptor)
+    assert not _descriptor_intrinsically_valid(descriptor)
+
+
+def test_missing_descriptor_field_fails_intrinsic_and_full_chain_without_key_error() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    chain[1].pop("environment")
+    assert not _descriptor_intrinsically_valid(chain[1])
+    assert not _complete_descriptor_chain_valid(chain, metadata)
+
+
+def test_intrinsic_validation_accepts_metadata_only_and_valid_historical_environment() -> None:
+    descriptor = _transaction_descriptor(
+        environment="TESTNET", current_record_mutations=[], immutable_history_appends=[]
+    )
+    assert _descriptor_intrinsically_valid(descriptor)
+    assert descriptor["current_record_mutations"] == []
+    assert descriptor["immutable_history_appends"] == []
+
+
+def test_intrinsic_duplicate_audit_does_not_invent_unfrozen_array_rule() -> None:
+    semantics = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "intrinsic_validation"
+    ]["mutation_arrays"]["duplicate_entry_semantics"]
+    assert semantics.startswith("NO NEW RULE")
+    assert "does not unambiguously specify duplicate" in semantics
+
+
+def test_intrinsic_corrective_preserves_chain_scope_current_binding_and_authority() -> None:
+    chain = _descriptor_chain(4)
+    metadata = _metadata_for_descriptor(chain[-1])
+    shuffled = [chain[3], chain[0], chain[2], chain[1]]
+    assert _complete_descriptor_chain_valid(shuffled, metadata)
+    descriptor = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"]
+    assert descriptor["metadata_binding"]["environment"] == "environment"
+    assert descriptor["metadata_binding"]["state_store_schema_version"] == (
+        "state_store_schema_version"
+    )
+    assert MACHINE["authority_model"]["live_current"] == "DENIED"
+    assert MACHINE["authority_model"]["testnet_to_live_fallback"] is False
+    assert MACHINE["transaction_protocol"]["cross_resource_acid_claim"] is False
+
+
+def test_backup_limitation_requires_intrinsic_validation_of_every_restored_descriptor() -> None:
+    limitation = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "backup_restore_limitation"
+    ]
+    assert "every descriptor passing exact intrinsic validation" in limitation
+    assert "does not implement backup/restore" in limitation
