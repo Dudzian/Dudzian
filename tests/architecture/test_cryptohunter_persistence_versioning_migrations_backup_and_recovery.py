@@ -3768,9 +3768,7 @@ def _revalidate_restore_records(
     for record in records:
         category = record["representation_category"]
         if record["representation_name"] == "reservation transition history":
-            if not _revalidate_reservation_restore_authority(
-                record, reservation_authority
-            ):
+            if not _revalidate_reservation_restore_authority(record, reservation_authority):
                 return "RESTORE_REJECTED"
         if category == "M011_CURRENT_DESIGNATION_PROJECTION":
             if record["representation_name"] == "bootstrap consumed fence":
