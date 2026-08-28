@@ -42,7 +42,13 @@ def _resolve_pointer(document: Any, pointer: Any) -> tuple[bool, Any]:
 
 
 def _actual_fingerprint(value: Any) -> str:
-    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    encoded = json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -1514,7 +1520,8 @@ def _validate_immutable_projection(aspect: str, entry: dict[str, Any], payload: 
         not isinstance(binding, dict)
         or not isinstance(payload, dict)
         or set(payload) != set(binding["wrapper_fields"])
-        or payload.get("fact_kind") != entry["semantic_object_or_invariant"]
+        or payload.get("fact_kind")
+        != binding.get("fact_kind_literal", entry["semantic_object_or_invariant"])
         or not isinstance(payload.get("upstream_payload"), dict)
     ):
         return False
@@ -1734,7 +1741,13 @@ def _derive_record_key(aspect: str, entry: dict[str, Any], payload: dict[str, An
                 + ":".join(str(upstream[field]) for field in fields)
             )
         if strategy == "CANONICAL_ENTITY_ID":
-            return f"entity:{payload['entity_kind']}:{payload['entity_id']}"
+            source_field = entry["record_key_source_field"]
+            source_location = entry["record_key_source_location"]
+            if source_location == "payload":
+                return str(payload[source_field])
+            if source_location == "upstream_payload":
+                return str(payload["upstream_payload"][source_field])
+            return None
         if strategy == "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION":
             return f"current:{payload['scope_key']}:{payload['current_reference']}:{payload['current_revision']}:{payload['current_generation']}"
         if strategy == "CANONICAL_OBJECT_ID_REVISION":
@@ -1801,7 +1814,10 @@ def _validate_persistence_record(value: Any) -> bool:
         or SHA_RE.fullmatch(value["payload_fingerprint_sha256"]) is None
     ):
         return False
-    if value["payload_fingerprint_sha256"] != _actual_fingerprint(value.get("payload")):
+    try:
+        if value["payload_fingerprint_sha256"] != _actual_fingerprint(value.get("payload")):
+            return False
+    except (TypeError, ValueError):
         return False
     if not isinstance(value.get("payload"), dict) or value.get("record_key") != _derive_record_key(
         aspect, entry, value["payload"]
@@ -2152,7 +2168,7 @@ def _payload_for(
             assert derived is not None
             upstream[terminal] = derived
         return {
-            "fact_kind": entry["semantic_object_or_invariant"],
+            "fact_kind": binding.get("fact_kind_literal", entry["semantic_object_or_invariant"]),
             "upstream_payload": upstream,
             "upstream_payload_fingerprint_sha256": _actual_fingerprint(upstream),
         }
@@ -5430,3 +5446,215 @@ def test_fill_nested_fee_reference_and_decimal_constraints_are_exact() -> None:
             altered["payload"]["fee_quantity"] = "-1"
         _rehash_direct_record(altered)
         assert not _validate_persistence_record(altered)
+
+
+def test_persistence_record_payload_fingerprint_contract_is_exact_and_integrity_only() -> None:
+    contract = MACHINE["backup_contract"]["persistence_record_contract"]
+    derivation = contract["payload_fingerprint_sha256_derivation"]
+    assert derivation == {
+        "algorithm": "SHA-256",
+        "input": "exact PersistenceRecord.payload JSON value",
+        "encoding": "UTF-8",
+        "canonical_json": {
+            "sort_keys": True,
+            "separators": [",", ":"],
+            "ensure_ascii": False,
+            "allow_nan": False,
+        },
+        "digest_encoding": "lowercase hexadecimal",
+        "domain_separator": None,
+        "excluded_inputs": [
+            "PersistenceRecord fields other than payload",
+            "timestamp",
+            "representation_name",
+            "record_key",
+        ],
+        "meaning": "INTEGRITY_ONLY",
+        "establishes_domain_authority": False,
+        "establishes_accepted_or_current_membership": False,
+    }
+    assert contract["domain_authority"] is False
+    assert contract["self_hash_membership"] is False
+
+
+def test_persistence_record_payload_fingerprint_uses_exact_canonical_json() -> None:
+    payload = {"zażółć": [1, True, None], "a": {"b": "✓"}}
+    expected = hashlib.sha256('{"a":{"b":"✓"},"zażółć":[1,true,null]}'.encode("utf-8")).hexdigest()
+    assert _actual_fingerprint(payload) == expected
+    assert _actual_fingerprint(dict(reversed(list(payload.items())))) == expected
+    assert _actual_fingerprint({**payload, "a": {"b": "x"}}) != expected
+
+
+def test_persistence_record_rejects_caller_hash_not_matching_payload() -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    record["payload_fingerprint_sha256"] = "f" * 64
+    assert SHA_RE.fullmatch(record["payload_fingerprint_sha256"])
+    assert not _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")])
+def test_persistence_record_rejects_non_finite_json_number(non_finite: float) -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    record["payload"]["non_finite"] = non_finite
+    record["payload_fingerprint_sha256"] = "f" * 64
+    assert not _validate_persistence_record(record)
+    with pytest.raises(ValueError):
+        _actual_fingerprint(record["payload"])
+
+
+def test_runtime_session_fact_kind_is_exact_m02_entity_kind() -> None:
+    vocabulary = json.loads((DOCS / "canonical_domain_vocabulary.json").read_text())
+    entity = next(x for x in vocabulary["entity_kinds"] if x["canonical_name"] == "RuntimeSession")
+    entry = MACHINE["backup_contract"]["representation_registry"][
+        "RuntimeSession canonical identity/history"
+    ]
+    assert entry["payload_contract"]["fact_kind_literal"] == entity["canonical_name"]
+    assert entry["immutable_fact_binding"]["fact_kind_literal"] == "RuntimeSession"
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    assert record["payload"]["fact_kind"] == "RuntimeSession"
+    assert _validate_persistence_record(record)
+
+
+def test_runtime_session_rejects_noncanonical_fact_kind() -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    record["payload"]["fact_kind"] = "RuntimeSession canonical identity/history"
+    record["payload_fingerprint_sha256"] = _actual_fingerprint(record["payload"])
+    assert not _validate_persistence_record(record)
+
+
+def test_runtime_session_wrapper_fingerprint_contract_is_m011_integrity() -> None:
+    binding = MACHINE["backup_contract"]["representation_registry"][
+        "RuntimeSession canonical identity/history"
+    ]["immutable_fact_binding"]
+    derivation = binding["upstream_payload_fingerprint_sha256_derivation"]
+    assert binding["upstream_fingerprint_literal"] is False
+    assert derivation["origin"] == "M0.11 wrapper integrity"
+    assert derivation["input_fields"] == ["runtime_session_id", "device_installation_id"]
+    assert derivation["upstream_semantic_fingerprint_literal"] is False
+    assert derivation["authority"] is False
+    assert derivation["establishes_membership"] is False
+
+
+def test_runtime_session_upstream_fingerprint_is_exact_payload_digest() -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    upstream = record["payload"]["upstream_payload"]
+    assert set(upstream) == {"runtime_session_id", "device_installation_id"}
+    assert record["payload"]["upstream_payload_fingerprint_sha256"] == _actual_fingerprint(upstream)
+    assert _validate_persistence_record(record)
+
+
+@pytest.mark.parametrize("field", ["runtime_session_id", "device_installation_id"])
+def test_runtime_session_changed_upstream_field_rejects_stale_digest(field: str) -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    record["payload"]["upstream_payload"][field] += "x"
+    record["payload_fingerprint_sha256"] = _actual_fingerprint(record["payload"])
+    assert not _validate_persistence_record(record)
+
+
+def test_runtime_session_self_consistent_invalid_id_is_rejected() -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    record["payload"]["upstream_payload"]["runtime_session_id"] = "invalid"
+    _rehash_immutable_record(record)
+    record["record_key"] = "invalid"
+    assert not _validate_persistence_record(record)
+
+
+def test_runtime_session_record_key_is_exact_canonical_id_only() -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    entry = MACHINE["backup_contract"]["representation_registry"][record["representation_name"]]
+    upstream = record["payload"]["upstream_payload"]
+    assert entry["record_key_strategy"] == "CANONICAL_ENTITY_ID"
+    assert entry["record_key_source_field"] == "runtime_session_id"
+    assert record["record_key"] == upstream["runtime_session_id"]
+    assert upstream["device_installation_id"] not in record["record_key"]
+    assert entry["immutable_fact_binding"]["revision_generation_fields"] == []
+
+
+def test_runtime_session_rejects_arbitrary_or_previous_strategy_key() -> None:
+    record = _persistence_record("RuntimeSession canonical identity/history")
+    for wrong in (
+        "arbitrary",
+        f"immutable:RuntimeSession:{record['payload']['upstream_payload']['runtime_session_id']}",
+    ):
+        altered = copy.deepcopy(record)
+        altered["record_key"] = wrong
+        assert not _validate_persistence_record(altered)
+
+
+def test_stage_one_contract_recomputes_intrinsic_runtime_session_integrity_only() -> None:
+    stages = MACHINE["backup_contract"]["persistence_record_validation_stages"]
+    assert stages["STAGE_1_INTRINSIC_CARRIER"] == [
+        "exact carrier fields",
+        "representation registry binding",
+        "category-specific payload semantics",
+        "derived record_key",
+        "recomputed payload_fingerprint_sha256",
+    ]
+    assert stages["runtime_session_additional_checks"] == [
+        "fact_kind == RuntimeSession",
+        "exact upstream payload",
+        "canonical RuntimeSession ID",
+        "canonical DeviceInstallation parent binding",
+        "recomputed upstream_payload_fingerprint_sha256",
+    ]
+    assert stages["stage_1_success_does_not_mean"] == [
+        "accepted",
+        "current",
+        "authorized",
+        "restore-authoritative",
+    ]
+    assert stages["stage_1_establishes_authority"] is False
+
+
+def test_crypto_account_record_key_is_exact_entity_id_and_rejects_alternatives() -> None:
+    record = _persistence_record("CryptoHunterAccount current record")
+    entity_id = record["payload"]["entity_id"]
+    assert record["record_key"] == entity_id
+    assert _validate_persistence_record(record)
+
+    for wrong_key in (
+        f"entity:CryptoHunterAccount:{entity_id}",
+        "arbitrary",
+        _canonical_fixture_id("acct", "b"),
+    ):
+        altered = copy.deepcopy(record)
+        altered["record_key"] = wrong_key
+        assert not _validate_persistence_record(altered)
+
+
+def test_all_canonical_entity_id_entries_derive_their_exact_declared_source() -> None:
+    registry = MACHINE["backup_contract"]["representation_registry"]
+    entries = {
+        name: entry
+        for name, entry in registry.items()
+        if entry.get("record_key_strategy") == "CANONICAL_ENTITY_ID"
+    }
+    assert set(entries) == {
+        "CryptoHunterAccount current record",
+        "Workspace",
+        "RuntimeSession canonical identity/history",
+    }
+    for name, entry in entries.items():
+        payload = _payload_for(name)
+        source_field = entry["record_key_source_field"]
+        source_location = entry["record_key_source_location"]
+        assert source_location in {"payload", "upstream_payload"}
+        source = payload if source_location == "payload" else payload["upstream_payload"]
+        expected = source[source_field]
+        derived = _derive_record_key(name, entry, payload)
+        assert derived == expected
+        assert not derived.startswith(("entity:", "immutable:"))
+
+
+def test_supported_canonical_entity_ids_use_frozen_m02_type_prefixes() -> None:
+    vocabulary = json.loads((DOCS / "canonical_domain_vocabulary.json").read_text())
+    entities = {entry["canonical_name"]: entry for entry in vocabulary["entity_kinds"]}
+    assert vocabulary["identifier_policy"]["persistent_id_format"] == "<prefix>_<uuidv7>"
+    assert entities["CryptoHunterAccount"]["id_prefix"] == "acct"
+    assert entities["RuntimeSession"]["id_prefix"] == "run"
+
+    account = _persistence_record("CryptoHunterAccount current record")
+    runtime = _persistence_record("RuntimeSession canonical identity/history")
+    assert account["record_key"].startswith("acct_")
+    assert runtime["record_key"].startswith("run_")
+    assert account["record_key"] != runtime["record_key"]
