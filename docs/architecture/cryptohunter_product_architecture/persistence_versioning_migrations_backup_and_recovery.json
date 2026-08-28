@@ -941,7 +941,32 @@
       "deserialization_establishes_current_authority": false,
       "record_key_policy": "existing canonical ID or exact upstream compound key/fingerprint plus revision/generation/designation discriminator; no new domain ID",
       "category_validator_required": true,
-      "restore_promotion_later": true
+      "restore_promotion_later": true,
+      "payload_fingerprint_sha256_derivation": {
+        "algorithm": "SHA-256",
+        "input": "exact PersistenceRecord.payload JSON value",
+        "encoding": "UTF-8",
+        "canonical_json": {
+          "sort_keys": true,
+          "separators": [
+            ",",
+            ":"
+          ],
+          "ensure_ascii": false,
+          "allow_nan": false
+        },
+        "digest_encoding": "lowercase hexadecimal",
+        "domain_separator": null,
+        "excluded_inputs": [
+          "PersistenceRecord fields other than payload",
+          "timestamp",
+          "representation_name",
+          "record_key"
+        ],
+        "meaning": "INTEGRITY_ONLY",
+        "establishes_domain_authority": false,
+        "establishes_accepted_or_current_membership": false
+      }
     },
     "category_validation_strategy": {
       "DIRECT_UPSTREAM_SCHEMA": "exact upstream closed payload/record contract validator",
@@ -993,7 +1018,10 @@
             "entity_id": "/identifier_policy",
             "parent_scope_bindings": "/relationships"
           }
-        }
+        },
+        "record_key_source_field": "entity_id",
+        "record_key_source_location": "payload",
+        "record_key_derivation": "record_key == payload.entity_id"
       },
       "DeviceInstallation current identity/lifecycle": {
         "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
@@ -1464,7 +1492,10 @@
             "entity_id": "/identifier_policy",
             "parent_scope_bindings": "/relationships"
           }
-        }
+        },
+        "record_key_source_field": "entity_id",
+        "record_key_source_location": "payload",
+        "record_key_derivation": "record_key == payload.entity_id"
       },
       "Portfolio canonical accounting state": {
         "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
@@ -3734,7 +3765,7 @@
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
-        "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+        "record_key_strategy": "CANONICAL_ENTITY_ID",
         "payload_contract": {
           "required_fields": [
             "fact_kind",
@@ -3745,7 +3776,9 @@
             "upstream_payload": "per-field source_derivation independently resolved against M0.2 entity_kinds, relationships and identifier_policy"
           },
           "closed": true,
-          "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
+          "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION",
+          "fact_kind_literal": "RuntimeSession",
+          "fact_kind_source_derivation": "M0.2 /entity_kinds[canonical_name == RuntimeSession].canonical_name"
         },
         "immutable_fact_binding": {
           "wrapper_fields": [
@@ -3796,8 +3829,37 @@
           "source_derivation_mode": "INDEPENDENT_CANONICAL_M02_ENTITY_RELATIONSHIP_PROJECTION",
           "upstream_revision_literal": false,
           "upstream_state_literal": false,
-          "upstream_fingerprint_literal": false
-        }
+          "upstream_fingerprint_literal": false,
+          "fact_kind_literal": "RuntimeSession",
+          "fact_kind_source_derivation": "M0.2 /entity_kinds[canonical_name == RuntimeSession].canonical_name",
+          "upstream_payload_fingerprint_sha256_derivation": {
+            "origin": "M0.11 wrapper integrity",
+            "algorithm": "SHA-256",
+            "input": "exact upstream_payload JSON object containing runtime_session_id and device_installation_id",
+            "input_fields": [
+              "runtime_session_id",
+              "device_installation_id"
+            ],
+            "encoding": "UTF-8",
+            "canonical_json": {
+              "sort_keys": true,
+              "separators": [
+                ",",
+                ":"
+              ],
+              "ensure_ascii": false,
+              "allow_nan": false
+            },
+            "digest_encoding": "lowercase hexadecimal",
+            "validator_recomputes": true,
+            "upstream_semantic_fingerprint_literal": false,
+            "authority": false,
+            "establishes_membership": false
+          }
+        },
+        "record_key_source_field": "runtime_session_id",
+        "record_key_derivation": "record_key == upstream_payload.runtime_session_id",
+        "record_key_source_location": "upstream_payload"
       },
       "SessionSecurityState current generation/state": {
         "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
@@ -4780,10 +4842,11 @@
     "synthetic_record_kinds_forbidden": true,
     "persistence_record_validation_stages": {
       "STAGE_1_INTRINSIC_CARRIER": [
-        "exact field/source/category",
+        "exact carrier fields",
+        "representation registry binding",
+        "category-specific payload semantics",
         "derived record_key",
-        "payload fingerprint",
-        "category-specific exact payload validation"
+        "recomputed payload_fingerprint_sha256"
       ],
       "STAGE_2_RESTORE_RELATIONAL": [
         "accepted/history membership",
@@ -4794,13 +4857,27 @@
         "M0.3 freshness"
       ],
       "stage_1_establishes_authority": false,
-      "stage_2_requires_m0_3_freshness": true
+      "stage_2_requires_m0_3_freshness": true,
+      "runtime_session_additional_checks": [
+        "fact_kind == RuntimeSession",
+        "exact upstream payload",
+        "canonical RuntimeSession ID",
+        "canonical DeviceInstallation parent binding",
+        "recomputed upstream_payload_fingerprint_sha256"
+      ],
+      "stage_1_success_does_not_mean": [
+        "accepted",
+        "current",
+        "authorized",
+        "restore-authoritative"
+      ]
     },
     "record_key_policy": {
       "authority": "existing canonical payload facts only",
       "prose_aspect_key_forbidden": true,
       "arbitrary_nonempty_key_forbidden": true,
-      "collision_requirement": "different canonical object/revision/designation facts produce different keys"
+      "collision_requirement": "different canonical object/revision/designation facts produce different keys",
+      "CANONICAL_ENTITY_ID": "record_key = exact canonical entity ID"
     },
     "direct_upstream_validator_registry": {
       "ExchangeAccount": {
