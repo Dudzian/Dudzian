@@ -109,13 +109,20 @@ def _commit(
     current: tuple[PersistenceRecord, ...] = (),
     history: tuple[PersistenceRecord, ...] = (),
     expected: int | None = None,
-) -> None:
-    store.commit_prepared_state(
+) -> StateStoreMetadata:
+    prepared = store.derive_prepared_metadata(
         metadata,
         current_records=current,
         immutable_history=history,
         expected_current_generation=expected,
     )
+    store.commit_prepared_state(
+        prepared,
+        current_records=current,
+        immutable_history=history,
+        expected_current_generation=expected,
+    )
+    return prepared
 
 
 def _encode(record: PersistenceRecord) -> str:
@@ -145,7 +152,7 @@ def test_fresh_atomic_commit_survives_reopen_and_preserves_prepared_fingerprints
     path = tmp_path / "state.sqlite3"
     metadata, account, runtime = _metadata(), _account(), _runtime()
     with SQLiteStateStore(path) as store:
-        _commit(store, metadata, current=(account,), history=(runtime,))
+        metadata = _commit(store, metadata, current=(account,), history=(runtime,))
         assert store.read_metadata() == metadata
         assert store.read_current_records() == (account,)
         assert store.read_immutable_history() == (runtime,)
@@ -231,7 +238,8 @@ def test_foreign_scope_corruption_blocks_next_commit_and_is_not_repaired(
         _replace_raw_record(store, "state_store_current_records", foreign)
         with pytest.raises(StateStoreError, match="outside StateStore scope"):
             _commit(store, _metadata(2), history=(_runtime(SESSION_2),), expected=1)
-        assert store.read_metadata() == _metadata()
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 1
         assert store._connection.execute(
             "SELECT record_key FROM state_store_current_records"
         ).fetchone() == (OTHER_ACCOUNT_ID,)
@@ -243,14 +251,16 @@ def test_foreign_scope_corruption_blocks_next_commit_and_is_not_repaired(
 def test_metadata_only_commit_cannot_bypass_foreign_scope_validation(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "state.sqlite3") as store:
         _commit(store, _metadata(), current=(_account(),), history=(_runtime(),))
-        store.commit_prepared_metadata(_metadata(2), expected_current_generation=1)
-        assert store.read_metadata() == _metadata(2)
+        _commit(store, _metadata(2), expected=1)
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 2
         _replace_raw_record(
             store, "state_store_immutable_history", _runtime(device_id=OTHER_DEVICE_ID)
         )
         with pytest.raises(StateStoreError, match="outside StateStore scope"):
             store.commit_prepared_metadata(_metadata(3), expected_current_generation=2)
-        assert store.read_metadata() == _metadata(2)
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 2
 
 
 def test_local_scope_coherence_does_not_add_authority_api(tmp_path: Path) -> None:
@@ -265,7 +275,8 @@ def test_generation_update_replaces_current_and_preserves_old_history(tmp_path: 
         first, second = _runtime(), _runtime(SESSION_2)
         _commit(store, _metadata(), current=(_account(),), history=(first,))
         _commit(store, _metadata(2), current=(_account(),), history=(second,), expected=1)
-        assert store.read_metadata() == _metadata(2)
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 2
         assert store.read_current_records() == (_account(),)
         assert store.read_immutable_history() == (first, second)
 
@@ -281,13 +292,16 @@ def test_two_writers_reject_stale_record_commit_without_partial_rows(tmp_path: P
     path = tmp_path / "state.sqlite3"
     with SQLiteStateStore(path) as first, SQLiteStateStore(path) as second:
         _commit(first, _metadata(), current=(_account(),), history=(_runtime(),))
-        assert second.read_metadata() == _metadata()
+        assert second.read_metadata() is not None
+        assert second.read_metadata().protected_freshness_generation == 1
         _commit(first, _metadata(2), history=(_runtime(SESSION_2),), expected=1)
         with pytest.raises(StateStoreError):
             _commit(second, _metadata(2), history=(_runtime(SESSION_3),), expected=1)
     with SQLiteStateStore(path) as store:
-        assert store.read_metadata() == _metadata(2)
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 2
         assert store.read_immutable_history() == (_runtime(), _runtime(SESSION_2))
+        assert [item.target_generation for item in store.read_transaction_descriptors()] == [1, 2]
 
 
 @pytest.mark.parametrize(
@@ -328,7 +342,8 @@ def test_existing_history_duplicate_rolls_back_current_and_metadata(tmp_path: Pa
         _commit(store, _metadata(), current=(account,), history=(runtime,))
         with pytest.raises(StateStoreError):
             _commit(store, _metadata(2), current=(account,), history=(runtime,), expected=1)
-        assert store.read_metadata() == _metadata()
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 1
         assert store.read_current_records() == (account,)
         assert store.read_immutable_history() == (runtime,)
 
@@ -353,7 +368,8 @@ def test_all_metadata_fences_rollback_requested_records(
         candidate = replace(_metadata(2), **changes)
         with pytest.raises(StateStoreError):
             _commit(store, candidate, history=(_runtime(SESSION_2),), expected=expected)
-        assert store.read_metadata() == _metadata()
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 1
         assert store.read_current_records() == (account,)
         assert store.read_immutable_history() == (runtime,)
 
@@ -376,7 +392,8 @@ def test_history_insert_failure_rolls_back_prior_current_mutation(tmp_path: Path
                 history=(_runtime(SESSION_2),),
                 expected=1,
             )
-        assert store.read_metadata() == _metadata()
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 1
         assert store.read_current_records() == before
         assert store.read_immutable_history() == (_runtime(),)
 
@@ -398,9 +415,50 @@ def test_metadata_write_failure_rolls_back_all_record_mutations(tmp_path: Path) 
                 history=(_runtime(SESSION_2),),
                 expected=1,
             )
-        assert store.read_metadata() == _metadata()
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 1
         assert store.read_current_records() == (_account(),)
         assert store.read_immutable_history() == (_runtime(),)
+        assert [item.target_generation for item in store.read_transaction_descriptors()] == [1]
+
+
+def test_descriptor_insert_failure_rolls_back_metadata_current_and_history(tmp_path: Path) -> None:
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as store:
+        first_metadata = _commit(store, _metadata(), current=(_account(),), history=(_runtime(),))
+        first_current = store.read_current_records()
+        first_history = store.read_immutable_history()
+        first_descriptors = store.read_transaction_descriptors()
+        store._connection.execute(
+            """
+            CREATE TRIGGER fail_descriptor BEFORE INSERT ON state_store_transaction_descriptors
+            BEGIN SELECT RAISE(ABORT, 'injected descriptor failure'); END
+            """
+        )
+        with pytest.raises(StateStoreError):
+            _commit(
+                store,
+                _metadata(2),
+                current=(_account(),),
+                history=(_runtime(SESSION_2),),
+                expected=1,
+            )
+        assert store.read_metadata() == first_metadata
+        assert store.read_current_records() == first_current
+        assert store.read_immutable_history() == first_history
+        assert store.read_transaction_descriptors() == first_descriptors
+
+
+def test_genesis_descriptor_insert_failure_leaves_store_empty(tmp_path: Path) -> None:
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as store:
+        store._connection.execute(
+            """
+            CREATE TRIGGER fail_descriptor BEFORE INSERT ON state_store_transaction_descriptors
+            BEGIN SELECT RAISE(ABORT, 'injected descriptor failure'); END
+            """
+        )
+        with pytest.raises(StateStoreError):
+            _commit(store, _metadata(), current=(_account(),), history=(_runtime(),))
+        assert store.read_snapshot() is None
 
 
 @pytest.mark.parametrize(
@@ -450,7 +508,8 @@ def test_existing_corruption_blocks_next_atomic_commit(
         store._connection.execute(f"UPDATE {table} SET {column} = '{{'")
         with pytest.raises(StateStoreError):
             _commit(store, _metadata(2), history=(_runtime(SESSION_2),), expected=1)
-        assert store.read_metadata() == _metadata()
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 1
         assert (
             store._connection.execute(
                 "SELECT COUNT(*) FROM state_store_immutable_history"
@@ -462,9 +521,10 @@ def test_existing_corruption_blocks_next_atomic_commit(
 
 def test_metadata_only_api_uses_same_kernel_without_creating_records(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "state.sqlite3") as store:
-        store.commit_prepared_metadata(_metadata(), expected_current_generation=None)
-        store.commit_prepared_metadata(_metadata(2), expected_current_generation=1)
-        assert store.read_metadata() == _metadata(2)
+        _commit(store, _metadata())
+        _commit(store, _metadata(2), expected=1)
+        assert store.read_metadata() is not None
+        assert store.read_metadata().protected_freshness_generation == 2
         assert store.read_current_records() == ()
         assert store.read_immutable_history() == ()
 
@@ -481,6 +541,7 @@ def test_schema_contains_exact_record_tables_and_storage_columns(tmp_path: Path)
             "state_store_metadata",
             "state_store_current_records",
             "state_store_immutable_history",
+            "state_store_transaction_descriptors",
         }
         for table in ("state_store_current_records", "state_store_immutable_history"):
             assert [row[1] for row in store._connection.execute(f"PRAGMA table_info({table})")] == [

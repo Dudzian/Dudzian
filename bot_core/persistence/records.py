@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from hashlib import sha256
-import json
 import math
 import re
 from types import MappingProxyType
 from typing import Any, ClassVar
+
+from .fingerprints import canonical_json_sha256
 
 
 class PersistenceRecordError(ValueError):
@@ -82,14 +82,7 @@ def _thaw_json(value: object) -> Any:
 
 
 def _fingerprint(value: object) -> str:
-    encoded = json.dumps(
-        _thaw_json(value),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return sha256(encoded).hexdigest()
+    return canonical_json_sha256(_thaw_json(value))
 
 
 @dataclass(frozen=True, slots=True)

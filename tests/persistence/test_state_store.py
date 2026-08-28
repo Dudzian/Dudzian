@@ -18,6 +18,20 @@ ACCOUNT_ID = "acct_01890f3a-8b4c-7def-8abc-0123456789ab"
 DEVICE_ID = "dev_01890f3a-8b4c-7def-9abc-0123456789ab"
 
 
+def _commit_metadata(
+    store: SQLiteStateStore,
+    metadata: StateStoreMetadata,
+    expected_current_generation: int | None,
+) -> StateStoreMetadata:
+    prepared = store.derive_prepared_metadata(
+        metadata, expected_current_generation=expected_current_generation
+    )
+    store.commit_prepared_metadata(
+        prepared, expected_current_generation=expected_current_generation
+    )
+    return prepared
+
+
 def _metadata(generation: int = 1, **changes: Any) -> StateStoreMetadata:
     values: dict[str, Any] = {
         "account_id": ACCOUNT_ID,
@@ -119,7 +133,7 @@ def test_fresh_store_is_empty_and_commit_survives_reopen(tmp_path: Path) -> None
     metadata = _metadata()
     with SQLiteStateStore(path) as store:
         assert store.read_metadata() is None
-        store.commit_prepared_metadata(metadata, expected_current_generation=None)
+        metadata = _commit_metadata(store, metadata, expected_current_generation=None)
     with SQLiteStateStore(path) as reopened:
         assert reopened.read_metadata() == metadata
 
@@ -128,8 +142,8 @@ def test_generation_fences_and_failures_preserve_durable_state(tmp_path: Path) -
     with SQLiteStateStore(tmp_path / "store.sqlite3") as store:
         generation_1 = _metadata(1)
         generation_2 = replace(generation_1, protected_freshness_generation=2)
-        store.commit_prepared_metadata(generation_1, expected_current_generation=None)
-        store.commit_prepared_metadata(generation_2, expected_current_generation=1)
+        generation_1 = _commit_metadata(store, generation_1, expected_current_generation=None)
+        generation_2 = _commit_metadata(store, generation_2, expected_current_generation=1)
         assert store.read_metadata() == generation_2
 
         attempts = [
@@ -139,7 +153,8 @@ def test_generation_fences_and_failures_preserve_durable_state(tmp_path: Path) -
         ]
         for prepared, expected in attempts:
             with pytest.raises(StateStoreError):
-                store.commit_prepared_metadata(
+                _commit_metadata(
+                    store,
                     prepared,
                     expected_current_generation=expected,
                 )
@@ -159,28 +174,28 @@ def test_identity_fence_preserves_previous_state(
 ) -> None:
     with SQLiteStateStore(tmp_path / "store.sqlite3") as store:
         current = _metadata()
-        store.commit_prepared_metadata(current, expected_current_generation=None)
+        current = _commit_metadata(store, current, expected_current_generation=None)
         prepared = replace(
             current,
             protected_freshness_generation=2,
             **{field_name: value},
         )
         with pytest.raises(StateStoreError):
-            store.commit_prepared_metadata(prepared, expected_current_generation=1)
+            _commit_metadata(store, prepared, expected_current_generation=1)
         assert store.read_metadata() == current
 
 
 def test_schema_version_drift_requires_future_migration_engine(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "store.sqlite3") as store:
         current = _metadata()
-        store.commit_prepared_metadata(current, expected_current_generation=None)
+        current = _commit_metadata(store, current, expected_current_generation=None)
         prepared = replace(
             current,
             protected_freshness_generation=2,
             state_store_schema_version=2,
         )
         with pytest.raises(StateStoreError):
-            store.commit_prepared_metadata(prepared, expected_current_generation=1)
+            _commit_metadata(store, prepared, expected_current_generation=1)
         assert store.read_metadata() == current
 
 
@@ -188,17 +203,17 @@ def test_two_instances_reject_deterministic_stale_write(tmp_path: Path) -> None:
     path = tmp_path / "store.sqlite3"
     with SQLiteStateStore(path) as first, SQLiteStateStore(path) as second:
         generation_1 = _metadata()
-        first.commit_prepared_metadata(generation_1, expected_current_generation=None)
+        generation_1 = _commit_metadata(first, generation_1, expected_current_generation=None)
         assert second.read_metadata() == generation_1
         generation_2 = replace(generation_1, protected_freshness_generation=2)
-        first.commit_prepared_metadata(generation_2, expected_current_generation=1)
+        generation_2 = _commit_metadata(first, generation_2, expected_current_generation=1)
         stale_candidate = replace(
             generation_2,
             protected_freshness_generation=2,
             state_fingerprint_sha256="a" * 64,
         )
         with pytest.raises(StateStoreError):
-            second.commit_prepared_metadata(stale_candidate, expected_current_generation=1)
+            _commit_metadata(second, stale_candidate, expected_current_generation=1)
         assert first.read_metadata() == generation_2
 
 
@@ -213,7 +228,7 @@ def test_sqlite_durability_settings_are_active(tmp_path: Path) -> None:
 def test_malformed_persisted_state_fails_closed(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "store.sqlite3") as store:
         metadata = _metadata()
-        store.commit_prepared_metadata(metadata, expected_current_generation=None)
+        _commit_metadata(store, metadata, expected_current_generation=None)
         store._connection.execute(
             "UPDATE state_store_metadata SET state_fingerprint_sha256 = ?",
             ("CORRUPT",),
