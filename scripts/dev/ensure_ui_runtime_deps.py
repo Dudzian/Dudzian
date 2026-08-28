@@ -41,7 +41,7 @@ def _runtime_dependencies() -> tuple[RuntimeDependency, ...]:
         ),
         RuntimeDependency(
             module="cryptography",
-            requirement="cryptography>=48.0.1,<49",
+            requirement="cryptography>=50.0.1,<51",
             reason="imported by marketplace/security modules reached from ui.pyside_app bootstrap",
         ),
         RuntimeDependency(

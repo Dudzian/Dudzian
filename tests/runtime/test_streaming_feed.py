@@ -432,7 +432,9 @@ def test_streaming_strategy_feed_stop_async_unregisters_when_no_task() -> None:
     "feed_class",
     [StreamingStrategyFeed, data_pipeline_module.StreamingStrategyFeed],
 )
-def test_close_all_active_interrupts_restart_delay(feed_class) -> None:
+def test_close_all_active_interrupts_restart_delay(
+    feed_class, monkeypatch: pytest.MonkeyPatch
+) -> None:
     exhausted = threading.Event()
 
     class _ExhaustedStream:
@@ -450,6 +452,7 @@ def test_close_all_active_interrupts_restart_delay(feed_class) -> None:
         restart_delay=5.0,
     )
 
+    monkeypatch.delenv("DUDZIAN_TEST_MODE", raising=False)
     feed.start()
     assert exhausted.wait(timeout=1.0)
 
@@ -466,7 +469,9 @@ def test_close_all_active_interrupts_restart_delay(feed_class) -> None:
     "feed_class",
     [StreamingStrategyFeed, data_pipeline_module.StreamingStrategyFeed],
 )
-def test_stream_close_error_does_not_skip_worker_cleanup(feed_class) -> None:
+def test_stream_close_error_does_not_skip_worker_cleanup(
+    feed_class, monkeypatch: pytest.MonkeyPatch
+) -> None:
     entered = threading.Event()
     released = threading.Event()
 
@@ -488,6 +493,7 @@ def test_stream_close_error_does_not_skip_worker_cleanup(feed_class) -> None:
         stream_factory=_FailingCloseStream,
         symbols_map={"trend-d1": ("BTC/USDT",)},
     )
+    monkeypatch.delenv("DUDZIAN_TEST_MODE", raising=False)
     feed.start()
     assert entered.wait(timeout=1.0)
     worker = feed._thread
