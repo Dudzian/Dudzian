@@ -430,6 +430,538 @@
 }
 ```
 
+## `state_store_fingerprint_contract`
+
+```json
+{
+  "canonical_json": {
+    "algorithm": "SHA-256",
+    "encoding": "UTF-8",
+    "sort_keys": true,
+    "separators": [
+      ",",
+      ":"
+    ],
+    "ensure_ascii": false,
+    "allow_nan": false,
+    "digest": "lowercase hexadecimal",
+    "projection": "semantic and storage-neutral; SQLite storage JSON is not authority",
+    "forbidden_inputs": [
+      "pickle",
+      "repr",
+      "SQLite binary layout",
+      "rowid",
+      "page number",
+      "insertion order",
+      "locally generated timestamp",
+      "filesystem metadata"
+    ]
+  },
+  "record_order": {
+    "keys": [
+      "representation_name",
+      "record_key"
+    ],
+    "direction": "ascending Unicode/code-point JSON string comparison",
+    "record_projection": "exact Stage-1-valid PersistenceRecord mapping with all nine carrier fields",
+    "not_chronology": true
+  },
+  "current_record_projection": {
+    "name": "canonical_durable_current_records",
+    "selection": "all Stage-1-valid PersistenceRecord carriers whose durability_classification.records[representation_name] == DURABLE AUTHORITATIVE CURRENT STATE",
+    "exclude": [
+      "StateStoreMetadata",
+      "DERIVED / REBUILDABLE",
+      "EPHEMERAL RUNTIME",
+      "EXTERNAL AUTHORITY / REFERENCE ONLY",
+      "SECRET PAYLOAD OUTSIDE DOMAIN",
+      "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "LocalDurableStateEvidence payload"
+    ],
+    "reason_for_metadata_exclusion": "parent projection fingerprint fields would self-reference"
+  },
+  "immutable_history_projection": {
+    "name": "canonical_immutable_history_records",
+    "selection": "all Stage-1-valid PersistenceRecord carriers whose durability class is DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "ordering": [
+      "representation_name",
+      "record_key"
+    ],
+    "excludes_non_PersistenceRecord_local_integrity_descriptors": [
+      "StateStoreTransactionDescriptor"
+    ]
+  },
+  "history_tail_fingerprint": {
+    "field": "history_tail_fingerprint_sha256",
+    "projection": "exact canonical JSON array canonical_immutable_history_records",
+    "meaning": "digest of the complete canonical immutable-history projection",
+    "empty_projection": [],
+    "properties": [
+      "append changes digest",
+      "deletion of any record changes digest",
+      "mutation of any carrier field changes digest",
+      "SQL insertion order does not change digest",
+      "identical canonical set gives identical digest",
+      "fingerprint is not authority"
+    ],
+    "does_not_mean": [
+      "SQLite last row",
+      "highest rowid",
+      "last timestamp",
+      "only the last PersistenceRecord"
+    ]
+  },
+  "state_fingerprint": {
+    "field": "state_fingerprint_sha256",
+    "projection_fields": [
+      "account_id",
+      "device_installation_id",
+      "state_store_schema_version",
+      "state_store_identity_fingerprint_sha256",
+      "environment",
+      "protected_freshness_generation",
+      "canonical_durable_current_records",
+      "history_tail_fingerprint_sha256"
+    ],
+    "excluded": [
+      "state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "canonical_immutable_history_records",
+      "LocalDurableStateEvidence",
+      "process-local evidence",
+      "filesystem path",
+      "WAL state",
+      "SQLite rowid",
+      "SQL row order",
+      "StateStoreTransactionDescriptor"
+    ],
+    "derivation": "SHA-256 canonical JSON of the exact projection_fields object",
+    "change_inputs": [
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "state_store_schema_version",
+      "environment",
+      "protected_freshness_generation",
+      "any canonical current record",
+      "history_tail_fingerprint_sha256"
+    ]
+  },
+  "transaction_fingerprint": {
+    "field": "transaction_fingerprint_sha256",
+    "purpose": "fingerprint exact prepared local transition committed G to prepared G+1, not merely post-state",
+    "projection_fields": [
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "state_store_schema_version",
+      "environment",
+      "expected_current_generation",
+      "target_generation",
+      "pre_state_fingerprint_sha256",
+      "pre_history_tail_fingerprint_sha256",
+      "post_state_fingerprint_sha256",
+      "post_history_tail_fingerprint_sha256",
+      "current_record_mutations",
+      "immutable_history_appends"
+    ],
+    "current_record_mutations": "exact incoming current PersistenceRecord carriers sorted by record_order",
+    "immutable_history_appends": "exact incoming history PersistenceRecord carriers sorted by record_order",
+    "excluded": [
+      "transaction_fingerprint_sha256",
+      "caller-provided transaction hash",
+      "unchanged full state"
+    ],
+    "derivation": "SHA-256 canonical JSON of the exact projection_fields object",
+    "change_inputs": [
+      "scope",
+      "environment",
+      "schema version",
+      "expected generation",
+      "target generation",
+      "pre-state fingerprint",
+      "post-state fingerprint",
+      "pre-history-tail fingerprint",
+      "post-history-tail fingerprint",
+      "current mutation",
+      "immutable append"
+    ],
+    "caller_input_order_invariant": true
+  },
+  "genesis_semantics": {
+    "expected_current_generation": null,
+    "pre_state_fingerprint_sha256": null,
+    "pre_history_tail_fingerprint_sha256": null,
+    "target_generation": "exact externally supplied prepared positive generation; StateStore does not mint it"
+  },
+  "metadata_only_semantics": {
+    "current_record_mutations": [],
+    "immutable_history_appends": [],
+    "is_transaction": true,
+    "still_binds": [
+      "target generation",
+      "pre-state",
+      "post-state",
+      "pre-history tail",
+      "post-history tail"
+    ]
+  },
+  "prepare_commit_relation": {
+    "before": "M0.3_PREPARE_G_PLUS_1",
+    "inputs": [
+      "committed generation-pinned durable snapshot G",
+      "candidate mutation set",
+      "externally supplied target generation G+1"
+    ],
+    "deterministic_outputs": [
+      "post history tail fingerprint",
+      "post state fingerprint",
+      "transaction fingerprint"
+    ],
+    "local_commit": "ALL_OR_NOTHING_LOCAL_DURABLE_COMMIT_G_PLUS_1 persists metadata exactly matching canonical prepared projections",
+    "mismatching_syntactically_valid_digest": "FAIL CLOSED",
+    "hash_syntax_is_sufficient": false,
+    "establishes_M0.3_authority": false
+  },
+  "durable_snapshot": {
+    "name": "generation-pinned durable snapshot",
+    "logical_content": [
+      "StateStoreMetadata",
+      "canonical_durable_current_records",
+      "canonical_immutable_history_records",
+      "complete StateStoreTransactionDescriptor chain with exact target generations 1..G for the same StateStore identity, including matching current descriptor G"
+    ],
+    "view": "one transactionally consistent durable view",
+    "valid_future_mechanisms": [
+      "one SQLite read transaction",
+      "equivalent single coherent snapshot mechanism"
+    ],
+    "forbidden": "read metadata; COMMIT happens; read records as independent views",
+    "generation_consistent": true,
+    "role": "OBSERVATION / INTEGRITY INPUT",
+    "authority": false,
+    "complete_descriptor_chain_required": true,
+    "exact_descriptor_generation_set": "1..StateStoreMetadata.protected_freshness_generation"
+  },
+  "authority_boundary": {
+    "integrity_fencing_evidence_only": true,
+    "does_not_establish": [
+      "domain authority",
+      "membership",
+      "current membership",
+      "M0.3 authority",
+      "LIVE authority",
+      "restore authority",
+      "execution authority"
+    ],
+    "fingerprint_success_enables_LIVE": false,
+    "cross_resource_acid_claim": false
+  },
+  "restart_verification": {
+    "history_tail_recomputable_from_generation_pinned_snapshot": true,
+    "state_fingerprint_recomputable_from_generation_pinned_snapshot": true,
+    "transaction_fingerprint_independently_reconstructable_from_current_frozen_StateStore_content": "true only when the complete durable StateStoreTransactionDescriptor chain 1..G is present and valid",
+    "during_commit_status": "verified during prepared local commit against exact prepared transaction projection",
+    "post_restart_algorithm": [
+      "read one generation-pinned durable snapshot",
+      "intrinsically validate StateStoreMetadata",
+      "Stage-1 validate durable current/history PersistenceRecord carriers",
+      "intrinsically validate every StateStoreTransactionDescriptor against exact closed schema and genesis/non-genesis conditional semantics",
+      "Stage-1 validate every nested current mutation and immutable-history append PersistenceRecord and require canonical array order",
+      "validate original descriptor generation multiset/cardinality before any sort or deduplication",
+      "canonical-sort descriptors by target_generation ascending",
+      "validate account_id, device_installation_id, and state_store_identity_fingerprint_sha256 of every descriptor against current metadata immutable scope",
+      "require exact descriptor target-generation multiset 1..G with no gap, duplicate, future generation, or unrelated identity",
+      "validate mandatory genesis descriptor 1 null pre-fields",
+      "recompute transaction fingerprint of every intrinsically valid descriptor from its exact projection excluding stored hash",
+      "compare every recomputed hash to its descriptor.transaction_fingerprint_sha256",
+      "validate generation and pre/post state/history continuity for every adjacent descriptor pair 1->2 through G-1->G",
+      "validate current descriptor G to current metadata G exact binding including schema and environment",
+      "compare current recomputed transaction hash to metadata.transaction_fingerprint_sha256",
+      "pass transaction fingerprint / descriptor-chain integrity gate only after every preceding check passes"
+    ],
+    "missing_descriptor": "FAIL CLOSED / DURABLE STATE INTEGRITY FAILURE / NO EVIDENCE PUBLICATION / NO FINALIZE / RECOVERY REQUIRED",
+    "stored_hash_is_proof": false,
+    "metadata_stored_hash_alone_is_proof": false,
+    "descriptor_stored_hash_alone_is_proof": false,
+    "ordinary_finalized_restart": "registry restarts EMPTY; complete valid descriptor chain 1..G is required, and current descriptor G alone is insufficient",
+    "LOCAL_COMMIT_BEFORE_EVIDENCE": {
+      "complete_chain_and_all_other_gates_pass": "trusted durable observation may be rebuilt; process-local evidence may be rebuilt; M0.3 FINALIZE may proceed without second business commit",
+      "missing_any_descriptor_or_invalid_chain": "NO EVIDENCE PUBLICATION / NO FINALIZE / FAIL CLOSED / RECOVERY REQUIRED"
+    }
+  },
+  "durable_transaction_descriptor": {
+    "name": "StateStoreTransactionDescriptor",
+    "role": "M0.11 local durable integrity descriptor",
+    "is_domain_entity": false,
+    "is_PersistenceRecord": false,
+    "has_canonical_or_domain_id": false,
+    "durability_classification": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "classification_scope": "local integrity descriptor, not domain immutable-history carrier",
+    "exact_schema": "#/executable_boundary_schemas/StateStoreTransactionDescriptor",
+    "durable_uniqueness_key": [
+      "state_store_identity_fingerprint_sha256",
+      "target_generation"
+    ],
+    "cardinality": "one descriptor per successfully committed target generation",
+    "append_only_rules": [
+      "no update",
+      "no replace",
+      "no ordinary delete"
+    ],
+    "excluded_from": [
+      "canonical_durable_current_records",
+      "canonical_immutable_history_records",
+      "history_tail_fingerprint_sha256",
+      "state_fingerprint_sha256"
+    ],
+    "exclusion_reason": "local integrity descriptor containing transaction hash must not feed state/history projections or create self-reference",
+    "fingerprint_derivation_reuse": {
+      "projection": "state_store_fingerprint_contract.transaction_fingerprint.projection_fields",
+      "input_fields": "first 13 descriptor fields, excluding transaction_fingerprint_sha256",
+      "canonicalization": "state_store_fingerprint_contract.canonical_json",
+      "second_transaction_canonicalization": false
+    },
+    "atomic_local_commit_binding": {
+      "transaction": "ALL_OR_NOTHING_LOCAL_DURABLE_COMMIT_G_PLUS_1",
+      "same_local_StateStore_transaction": [
+        "current record mutations",
+        "immutable history appends",
+        "StateStoreMetadata G+1",
+        "StateStoreTransactionDescriptor G+1"
+      ],
+      "forbidden_partial_states": [
+        "metadata G+1 without descriptor G+1",
+        "descriptor G+1 without metadata G+1",
+        "record mutation or history append committed without descriptor G+1",
+        "descriptor G+1 committed without every mutation and append declared by its exact arrays",
+        "only a subset of descriptor-declared mutations or appends committed",
+        "undeclared mutation or append added by the local transaction"
+      ],
+      "cross_resource_acid_claim": false,
+      "metadata_only_valid": {
+        "current_record_mutations": [],
+        "immutable_history_appends": [],
+        "required_commit_content": [
+          "StateStoreMetadata G+1",
+          "StateStoreTransactionDescriptor G+1"
+        ],
+        "requested_record_delta_count": 0,
+        "violates_forbidden_partial_state": false
+      }
+    },
+    "metadata_binding": {
+      "account_id": "account_id",
+      "device_installation_id": "device_installation_id",
+      "state_store_identity_fingerprint_sha256": "state_store_identity_fingerprint_sha256",
+      "state_store_schema_version": "state_store_schema_version",
+      "environment": "environment",
+      "target_generation": "protected_freshness_generation",
+      "post_state_fingerprint_sha256": "state_fingerprint_sha256",
+      "post_history_tail_fingerprint_sha256": "history_tail_fingerprint_sha256",
+      "transaction_fingerprint_sha256": "transaction_fingerprint_sha256",
+      "comparison": "exact equality"
+    },
+    "chain_continuity": {
+      "for_every_adjacent_pair": "for each n in 2..G, descriptor n-1 and descriptor n both must exist",
+      "expected_current_generation": "descriptor_n.expected_current_generation == descriptor_n_minus_1.target_generation == n - 1",
+      "target_generation": "descriptor_n.target_generation == n",
+      "pre_state_fingerprint_sha256": "descriptor_n.pre_state_fingerprint_sha256 == descriptor_n_minus_1.post_state_fingerprint_sha256",
+      "pre_history_tail_fingerprint_sha256": "descriptor_n.pre_history_tail_fingerprint_sha256 == descriptor_n_minus_1.post_history_tail_fingerprint_sha256",
+      "full_chain": "every edge from genesis 1 through current G must pass",
+      "previous_descriptor_optional": false,
+      "meaning": "integrity continuity only, not upstream authority",
+      "reject": [
+        "generation mismatch",
+        "skipped generation",
+        "replay",
+        "missing previous descriptor",
+        "state discontinuity",
+        "history-tail discontinuity",
+        "conflicting duplicate target generation"
+      ]
+    },
+    "current_descriptor_requirement": {
+      "current_matching_descriptor": "exactly one descriptor target_generation G matching current StateStoreMetadata",
+      "complete_descriptor_chain": "exactly one descriptor for each target_generation 1..G for the same immutable state_store_identity_fingerprint_sha256",
+      "both_required": true,
+      "missing_descriptor": "DURABLE STATE INTEGRITY FAILURE / FAIL CLOSED",
+      "optional_audit_log": false
+    },
+    "authority_boundary": {
+      "does_not": [
+        "mint M0.3 membership",
+        "select current membership",
+        "set protected generation",
+        "finalize M0.3",
+        "replace M0.3 PREPARE",
+        "domain authority",
+        "accepted membership",
+        "current membership",
+        "device acceptance",
+        "account acceptance",
+        "restore authority",
+        "LIVE authority",
+        "RiskDecision",
+        "ExecutionLease",
+        "LiveAccessGrant"
+      ],
+      "pending_external_comparison": "may compare to external prepared transaction fingerprint only when existing M0.3 contract requires it"
+    },
+    "backup_restore_limitation": "Full trusted transaction verification after future restore requires audited preservation of the complete descriptor chain 1..G and exact immutable account/device/store-identity scope for the restored StateStore, with every descriptor passing exact intrinsic validation; this amendment does not add descriptors to BackupEnvelope integrity_metadata, does not implement backup/restore, and does not claim the current backup contract is complete for descriptor-chain verification.",
+    "atomic_declared_mutation_binding": {
+      "invariant": "durably committed current-record mutations and immutable-history appends for generation G exactly equal descriptor G arrays",
+      "comparison": "exact canonical PersistenceRecord arrays after existing record_order canonicalization",
+      "reject": [
+        "declared current mutation missing",
+        "undeclared current mutation added by this transaction",
+        "partial declared current mutations",
+        "declared history append missing",
+        "undeclared history append added by this transaction",
+        "partial declared history appends"
+      ],
+      "production_delta_reconstruction_API_designed": false
+    },
+    "complete_chain_requirement": {
+      "scope": "descriptors whose state_store_identity_fingerprint_sha256 exactly equals current metadata identity",
+      "current_generation": "G = StateStoreMetadata.protected_freshness_generation",
+      "exact_target_generation_multiset": "exactly one occurrence of every integer in 1..G",
+      "exact_generation_set": "{1,2,...,G}",
+      "genesis_required": {
+        "target_generation": 1,
+        "expected_current_generation": null,
+        "pre_state_fingerprint_sha256": null,
+        "pre_history_tail_fingerprint_sha256": null
+      },
+      "reject": [
+        "missing generation including genesis",
+        "duplicate or conflicting duplicate generation",
+        "target_generation greater than G",
+        "zero target_generation",
+        "negative target_generation",
+        "boolean target_generation",
+        "descriptor for unrelated StateStore identity"
+      ],
+      "missing_any_generation": "FAIL CLOSED / DURABLE STATE INTEGRITY FAILURE",
+      "future_descriptor": "FAIL CLOSED / DURABLE STATE INTEGRITY FAILURE",
+      "unrelated_identity_in_local_store": "FAIL CLOSED / do not mix chains",
+      "deletion_detection": "deletion of any descriptor target_generation in 1..G is detected as durable integrity failure because descriptors are excluded from state and history-tail fingerprints",
+      "performance_non_claim": [
+        "no checkpoints",
+        "no Merkle tree",
+        "no descriptor-chain aggregate hash",
+        "no pruning"
+      ],
+      "future_optimization": "requires separate explicit architecture amendment preserving equivalent integrity guarantee",
+      "immutable_scope_fields": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256"
+      ],
+      "every_descriptor_must_match_current_metadata_immutable_scope": true,
+      "scope_comparison": "three independent exact equalities; StateStore identity fingerprint is not a substitute for account_id or device_installation_id",
+      "scope_mismatch": "IMMUTABLE STATESTORE SCOPE MISMATCH / NO EVIDENCE PUBLICATION / NO FINALIZE / FAIL CLOSED / RECOVERY REQUIRED",
+      "environment_is_immutable_scope_field": false,
+      "state_store_schema_version_is_global_immutable_scope_field": false,
+      "canonical_descriptor_order": {
+        "key": "target_generation",
+        "direction": "ascending",
+        "applied_after_exact_multiset_cardinality_validation": true,
+        "forbidden_order_authorities": [
+          "SQLite rowid",
+          "insertion order",
+          "caller list order",
+          "physical query order"
+        ]
+      },
+      "duplicate_detection": "validate original collection cardinality/multiset before sorting; never deduplicate through dict or set",
+      "storage_order_affects_validity": false
+    },
+    "intrinsic_validation": {
+      "required_before": [
+        "descriptor generation multiset/cardinality use",
+        "canonical descriptor sorting",
+        "immutable scope validation",
+        "transaction fingerprint recomputation",
+        "chain continuity",
+        "current metadata binding"
+      ],
+      "exact_field_set": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+        "state_store_schema_version",
+        "environment",
+        "expected_current_generation",
+        "target_generation",
+        "pre_state_fingerprint_sha256",
+        "pre_history_tail_fingerprint_sha256",
+        "post_state_fingerprint_sha256",
+        "post_history_tail_fingerprint_sha256",
+        "current_record_mutations",
+        "immutable_history_appends",
+        "transaction_fingerprint_sha256"
+      ],
+      "additional_properties": false,
+      "account_id": "canonical M0.2 AccountId nominal syntax; does not establish scope equality or authority",
+      "device_installation_id": "canonical M0.2 DeviceInstallationId nominal syntax; does not establish scope equality or authority",
+      "lowercase_sha256_fields": [
+        "state_store_identity_fingerprint_sha256",
+        "post_state_fingerprint_sha256",
+        "post_history_tail_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+        "non-genesis pre_state_fingerprint_sha256",
+        "non-genesis pre_history_tail_fingerprint_sha256"
+      ],
+      "positive_non_boolean_integer_fields": [
+        "state_store_schema_version",
+        "target_generation",
+        "non-genesis expected_current_generation"
+      ],
+      "environment_enum": [
+        "PAPER",
+        "TESTNET",
+        "LIVE"
+      ],
+      "historical_environment_must_equal_current": false,
+      "historical_schema_version_globally_immutable": false,
+      "genesis_conditional": {
+        "when": "target_generation == 1",
+        "expected_current_generation": null,
+        "pre_state_fingerprint_sha256": null,
+        "pre_history_tail_fingerprint_sha256": null
+      },
+      "non_genesis_conditional": {
+        "when": "target_generation > 1",
+        "expected_current_generation": "positive non-boolean integer, non-null",
+        "pre_state_fingerprint_sha256": "lowercase SHA-256, non-null",
+        "pre_history_tail_fingerprint_sha256": "lowercase SHA-256, non-null"
+      },
+      "mutation_arrays": {
+        "fields": [
+          "current_record_mutations",
+          "immutable_history_appends"
+        ],
+        "type": "array",
+        "items": "exact Stage-1-valid PersistenceRecord; Stage 2 is not performed",
+        "durable_order": [
+          "representation_name",
+          "record_key"
+        ],
+        "durable_order_direction": "ascending Unicode/code-point JSON string comparison",
+        "noncanonical_durable_array": "FAIL CLOSED",
+        "empty_arrays_allowed": true,
+        "duplicate_entry_semantics": "NO NEW RULE: current frozen prepared-local transaction contract does not unambiguously specify duplicate PersistenceRecord entries inside these two arrays; intrinsic validation asserts exact Stage-1 carriers and canonical order only"
+      },
+      "valid_transaction_hash_compensates_for_invalid_schema": false,
+      "hash_recomputation_occurs_only_after_intrinsic_validation": true,
+      "role": "local structural/semantic integrity only, not authority",
+      "failure": "FAIL CLOSED / DURABLE STATE INTEGRITY FAILURE / NO EVIDENCE PUBLICATION / NO FINALIZE / RECOVERY REQUIRED"
+    }
+  }
+}
+```
+
 ## `durability_classification`
 
 ```json
@@ -506,6 +1038,9 @@
     "Migration transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
     "SecretHandoff current state/designation": "DURABLE AUTHORITATIVE CURRENT STATE",
     "SecretHandoff transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
+  },
+  "local_integrity_descriptors": {
+    "StateStoreTransactionDescriptor": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY; not PersistenceRecord; excluded from canonical immutable history and state/history fingerprints"
   }
 }
 ```
@@ -583,6 +1118,26 @@
     "transaction fingerprint",
     "current observed durable commit"
   ],
+  "trusted_observation_snapshot_binding": {
+    "single_input": "one generation-pinned durable snapshot including complete StateStoreTransactionDescriptor chain 1..G for the current identity",
+    "bound_checks": [
+      "StateStore integrity",
+      "authoritative/history integrity",
+      "generation",
+      "state fingerprint",
+      "transaction fingerprint"
+    ],
+    "multiple_potentially_different_reads_forbidden": true,
+    "mints_upstream_authority": false,
+    "transaction_fingerprint_gate": "recompute every descriptor transaction projection, validate exact generation set and every chain edge, then bind current descriptor to metadata",
+    "descriptor_generation_must_equal_metadata_generation": true,
+    "complete_descriptor_chain_required": true,
+    "immutable_scope_gate": "every descriptor 1..G independently matches current metadata account_id, device_installation_id, and state_store_identity_fingerprint_sha256",
+    "scope_mismatch": "NO EVIDENCE PUBLICATION / NO FINALIZE / FAIL CLOSED / RECOVERY REQUIRED",
+    "descriptor_storage_order_authoritative": false,
+    "descriptor_intrinsic_validation_gate": "every descriptor passes exact closed schema, conditional semantics, nested PersistenceRecord Stage 1, and canonical mutation-array order before hash/scope/chain use",
+    "valid_hash_compensates_for_malformed_descriptor": false
+  },
   "registry_restart": "EMPTY"
 }
 ```
@@ -7272,6 +7827,130 @@
       "history_tail_fingerprint_sha256": {
         "type": "string",
         "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "StateStoreTransactionDescriptor": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "state_store_schema_version",
+      "environment",
+      "expected_current_generation",
+      "target_generation",
+      "pre_state_fingerprint_sha256",
+      "pre_history_tail_fingerprint_sha256",
+      "post_state_fingerprint_sha256",
+      "post_history_tail_fingerprint_sha256",
+      "current_record_mutations",
+      "immutable_history_appends",
+      "transaction_fingerprint_sha256"
+    ],
+    "properties": {
+      "account_id": "canonical M0.2 AccountId",
+      "device_installation_id": "canonical M0.2 DeviceInstallationId",
+      "state_store_identity_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "state_store_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "environment": {
+        "enum": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "expected_current_generation": {
+        "oneOf": [
+          {
+            "type": "integer",
+            "minimum": 1,
+            "boolean_allowed": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "target_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "pre_state_fingerprint_sha256": {
+        "oneOf": [
+          {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "pre_history_tail_fingerprint_sha256": {
+        "oneOf": [
+          {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "post_state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "post_history_tail_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "current_record_mutations": {
+        "type": "array",
+        "items": {
+          "$ref": "#/executable_boundary_schemas/PersistenceRecord"
+        },
+        "canonical_order": [
+          "representation_name",
+          "record_key"
+        ],
+        "stage_1_valid_required": true
+      },
+      "immutable_history_appends": {
+        "type": "array",
+        "items": {
+          "$ref": "#/executable_boundary_schemas/PersistenceRecord"
+        },
+        "canonical_order": [
+          "representation_name",
+          "record_key"
+        ],
+        "stage_1_valid_required": true
+      },
+      "transaction_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "conditional_semantics": {
+      "genesis_target_generation_1": {
+        "expected_current_generation": null,
+        "pre_state_fingerprint_sha256": null,
+        "pre_history_tail_fingerprint_sha256": null
+      },
+      "non_genesis_target_generation_G_plus_1": {
+        "expected_current_generation": "G positive non-boolean",
+        "target_generation": "G + 1; no skip or replay"
       }
     }
   },
