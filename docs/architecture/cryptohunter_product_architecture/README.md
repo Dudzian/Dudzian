@@ -150,3 +150,7 @@ Semantic fingerprints mają jawne wykonywalne tryby zgodne z owner contracts: ca
 Historia rezerwacji wykonuje oba warianty M0.8 bez generycznych skrótów: `capital_reservation.quantity` jest dodatnim canonical decimal, `asset_reference` jest dokładnym zamkniętym M0.5/M0.8 `AssetReference.trusted`, `provenance` jest niepustym stringiem, a środowisko, discriminator i terminal states są wiązane z literalnymi rejestrami. `source_fingerprint_sha256` jest ponownie liczony z kompletnego DTO bez pola fingerprint po canonical NFC JSON, lecz authority nadal wymaga wcześniejszego `CoreAcceptedAccountingFactProjection` membership.
 
 M0.11 rewaliduje autorytet historii rezerwacji poza integralnością rekordu: restore wymaga istniejącego wcześniej, nieprzenoszonego w backupie członkostwa `CoreAcceptedAccountingFactProjection` oraz zapieczętowanego kontekstu zaakceptowanej komendy M0.7 `SUBMIT_ORDER` albo zaakceptowanego terminalnego zdarzenia M0.7. Kandydat, jego source hash ani wrapper hash nie mogą samodzielnie utworzyć tego członkostwa (no self-enrollment).
+
+## FROZEN ARCHITECTURE BASELINE — M0.2–M0.11
+
+M0.2–M0.11 stanowią zamrożony baseline architektury chroniony przez [canonical freeze manifest](architecture_baseline_freeze.json) oraz jego [projekcję Markdown](architecture_baseline_freeze.md). Późniejsze prace produkcyjne nie mogą potajemnie zmieniać tych kontraktów. Zmiana baseline'u wymaga jawnego architecture change, aktualizacji właściwego canonical JSON, a następnie świadomej aktualizacji freeze manifestu.
