@@ -170,14 +170,23 @@ class LocalDurableEvidenceRegistry:
     def verify_current(self, scope: tuple[str, str, str], ref: object) -> bool:
         """Verify membership and current designation for the exact requested scope."""
 
+        return self.resolve_current(scope, ref) is not None
+
+    def resolve_current(
+        self, scope: EvidenceScope, ref: object
+    ) -> LocalDurableStateEvidence | None:
+        """Resolve only accepted, intrinsically valid, exactly-current evidence."""
+
         if not isinstance(ref, str) or not isinstance(scope, tuple) or len(scope) != 3:
-            return False
+            return None
         with self._lock:
             evidence = self._accepted.get(ref)
             if not _intrinsically_valid(evidence):
-                return False
+                return None
             assert isinstance(evidence, LocalDurableStateEvidence)
-            return self._scope(evidence) == scope and self._current.get(scope) == ref
+            if self._scope(evidence) != scope or self._current.get(scope) != ref:
+                return None
+            return evidence
 
     @staticmethod
     def _scope(evidence: LocalDurableStateEvidence) -> EvidenceScope:
