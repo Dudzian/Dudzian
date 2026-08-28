@@ -3767,10 +3767,11 @@ def _revalidate_restore_records(
         return "RESTORE_REJECTED"
     for record in records:
         category = record["representation_category"]
-        if record["representation_name"] == "reservation transition history" and not (
-            _revalidate_reservation_restore_authority(record, reservation_authority)
-        ):
-            return "RESTORE_REJECTED"
+        if record["representation_name"] == "reservation transition history":
+            if not _revalidate_reservation_restore_authority(
+                record, reservation_authority
+            ):
+                return "RESTORE_REJECTED"
         if category == "M011_CURRENT_DESIGNATION_PROJECTION":
             if record["representation_name"] == "bootstrap consumed fence":
                 result = _revalidate_bootstrap_consumption(record, bootstrap_history)
