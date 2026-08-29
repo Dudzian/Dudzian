@@ -53,6 +53,7 @@ class Boundary:
         self.ack_lost = False
         self.change_ref_after_prepare = False
         self.change_ref_after_finalize = False
+        self.after_finalize_effect = None
         self.post_finalize_changes: dict[str, Any] = {}
         self._finalized = False
 
@@ -166,10 +167,45 @@ class Boundary:
             committed_state_fingerprint_sha256=evidence.state_fingerprint_sha256,
         )
         self._finalized = True
+        if self.after_finalize_effect:
+            self.after_finalize_effect()
         if self.change_ref_after_finalize:
             self.ref = object()
         if self.ack_lost:
             raise RuntimeError("ack lost")
+
+    def abort(self, current_ref, scope, *, evidence_ref, evidence_resolver):  # type: ignore[no-untyped-def]
+        self.calls.append("abort")
+        evidence = evidence_resolver(evidence_ref)
+        pending_scope = (
+            self.value["account_id"],
+            self.value["device_installation_id"],
+            self.value["state_store_identity_fingerprint_sha256"],
+        )
+        if (
+            current_ref is not self.ref
+            or scope != pending_scope
+            or self.value["lifecycle"] != "PREPARED"
+            or self.value["committed_generation"] is None
+            or self.value["committed_state_fingerprint_sha256"] is None
+            or evidence is None
+            or evidence.durability_state != "DURABLE_COMMITTED"
+            or (
+                evidence.account_id,
+                evidence.device_installation_id,
+                evidence.state_store_identity_fingerprint_sha256,
+            )
+            != pending_scope
+            or evidence.generation != self.value["committed_generation"]
+            or evidence.state_fingerprint_sha256 != self.value["committed_state_fingerprint_sha256"]
+        ):
+            raise RuntimeError("abort denied")
+        self.value = record(
+            "COMMITTED",
+            revision=self.value["authority_revision"] + 1,
+            committed_generation=evidence.generation,
+            committed_state_fingerprint_sha256=evidence.state_fingerprint_sha256,
+        )
 
 
 def test_genesis_and_normal_advance_use_ordered_handoff(tmp_path: Path) -> None:
@@ -184,6 +220,49 @@ def test_genesis_and_normal_advance_use_ordered_handoff(tmp_path: Path) -> None:
         assert two.protected_freshness_generation == 2
         assert boundary.value["committed_state_fingerprint_sha256"] == two.state_fingerprint_sha256
         assert boundary.calls.count("prepare") == boundary.calls.count("finalize") == 2
+        assert coordinator._recovery_required is False
+        assert coordinator._recovery_scope is None
+
+
+def test_post_finalize_local_advance_fails_s5_and_keeps_scope_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with SQLiteStateStore(tmp_path / "post-finalize-local.db") as store:
+        one = _commit(store, _metadata())
+        boundary = Boundary(
+            record(
+                "COMMITTED",
+                committed_generation=1,
+                committed_state_fingerprint_sha256=one.state_fingerprint_sha256,
+            )
+        )
+        commits = 0
+        original_commit = store.commit_prepared_state
+
+        def counted_commit(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal commits
+            commits += 1
+            return original_commit(*args, **kwargs)
+
+        monkeypatch.setattr(store, "commit_prepared_state", counted_commit)
+        boundary.after_finalize_effect = lambda: _commit(store, _metadata(3), expected=2)
+        coordinator = ProtectedFreshnessHandoffCoordinator(
+            store, LocalDurableEvidenceRegistry(), boundary
+        )
+        with pytest.raises(ProtectedFreshnessHandoffError, match="changed during"):
+            coordinator.advance_protected_state(_metadata(2))
+        assert boundary.value["lifecycle"] == "COMMITTED"
+        assert boundary.value["committed_generation"] == 2
+        snapshot = store.read_verified_snapshot()
+        assert snapshot is not None and snapshot.metadata.protected_freshness_generation == 3
+        assert boundary.calls.count("finalize") == 1
+        assert commits == 2
+        assert coordinator._recovery_required is True
+        assert coordinator._recovery_scope == SCOPE
+        with pytest.raises(ProtectedFreshnessHandoffError, match="requires recovery"):
+            coordinator.advance_protected_state(_metadata(4))
+        assert boundary.calls.count("finalize") == 1
+        assert commits == 2
 
 
 @pytest.mark.parametrize(
@@ -473,6 +552,7 @@ def test_finalize_pending_failure_latches_and_denies_retry(tmp_path: Path) -> No
         with pytest.raises(RuntimeError, match="finalize denied"):
             coordinator.advance_protected_state(_metadata())
         assert boundary.value["lifecycle"] == "PREPARED" and coordinator._recovery_required
+        assert coordinator._recovery_scope == SCOPE
         with pytest.raises(ProtectedFreshnessHandoffError, match="requires recovery"):
             coordinator.advance_protected_state(_metadata(2))
 
@@ -748,8 +828,10 @@ def test_successful_path_has_exact_relative_call_order(
         assert first["prepare"] < first["local commit"]
         assert first["local commit"] < first["publish"] < first["evidence resolve"]
         assert first["evidence resolve"] < first["finalize"]
-        assert log[-1] == "external resolve"
-        assert log.index("external resolve", first["finalize"]) > first["finalize"]
+        post_finalize_external = log.index("external resolve", first["finalize"])
+        assert post_finalize_external > first["finalize"]
+        assert log[-1] == "local verify"
+        assert post_finalize_external < len(log) - 1
 
 
 def test_s3_observation_is_not_part_of_s5_public_surface() -> None:
