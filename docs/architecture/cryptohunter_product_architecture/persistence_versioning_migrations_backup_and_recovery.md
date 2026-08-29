@@ -1,6 +1,6 @@
-# M0.11 — Persistence, versioning, migrations, backup and recovery
+# Persistence Versioning, Migrations, Backup and Recovery
 
-**Status: CLOSED.** Dokument jest dokładną projekcją źródła maszynowego.
+Canonical machine-readable source: `persistence_versioning_migrations_backup_and_recovery.json`.
 
 ## `schema_version`
 
@@ -808,7 +808,7 @@
       ],
       "pending_external_comparison": "may compare to external prepared transaction fingerprint only when existing M0.3 contract requires it"
     },
-    "backup_restore_limitation": "Full trusted transaction verification after future restore requires audited preservation of the complete descriptor chain 1..G and exact immutable account/device/store-identity scope for the restored StateStore, with every descriptor passing exact intrinsic validation; this amendment does not add descriptors to BackupEnvelope integrity_metadata, does not implement backup/restore, and does not claim the current backup contract is complete for descriptor-chain verification.",
+    "backup_restore_limitation": "BackupEnvelope preserves the exact complete descriptor chain 1..G of StateStoreTransactionDescriptor carriers with exact immutable account/device/store-identity scope and intrinsic validation, enabling future local integrity verification after restore; it remains only a restore candidate and does not establish restore authority, which remains subject to the external M0.3 restore freshness authority.",
     "atomic_declared_mutation_binding": {
       "invariant": "durably committed current-record mutations and immutable-history appends for generation G exactly equal descriptor G arrays",
       "comparison": "exact canonical PersistenceRecord arrays after existing record_order canonicalization",
@@ -1514,7 +1514,27 @@
         "pattern": "^[0-9a-f]{64}$"
       },
       "integrity_metadata": {
-        "type": "object"
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "state_store_transaction_descriptors"
+        ],
+        "properties": {
+          "state_store_transaction_descriptors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/executable_boundary_schemas/StateStoreTransactionDescriptor"
+            },
+            "meaning": "complete frozen local durable integrity descriptor chain 1..G; not PersistenceRecord or domain/history authority",
+            "exact_cardinality": "G = BackupEnvelope.local_protected_freshness_generation",
+            "exact_target_generation_multiset": "{1,2,...,G}",
+            "canonical_order": {
+              "key": "target_generation",
+              "direction": "ascending",
+              "after_original_multiset_validation": true
+            }
+          }
+        }
       }
     }
   },
@@ -1522,7 +1542,7 @@
     "canonical durable records",
     "immutable recovery history",
     "PinVerifierRecord including verifier",
-    "integrity metadata"
+    "integrity metadata containing the exact complete StateStoreTransactionDescriptor chain 1..G"
   ],
   "excludes": [
     "M0.3 protected membership",
@@ -1569,7 +1589,23 @@
     "algorithm": "SHA-256",
     "encoding": "UTF-8",
     "json": "sorted keys, compact separators, ensure_ascii=false",
-    "projection": "all exact BackupEnvelope fields except envelope_fingerprint_sha256"
+    "projection": "all exact BackupEnvelope fields except envelope_fingerprint_sha256",
+    "descriptor_effect": "the complete descriptor collection participates only after exact original collection validation and canonical ordering by target_generation ascending; descriptor semantic-field, cardinality, generation-membership, nested-mutation, or nested-append changes change the expected fingerprint, while a permutation of the same valid descriptor multiset does not",
+    "descriptor_array_semantic_normalization": {
+      "field": "integrity_metadata.state_store_transaction_descriptors",
+      "applied_before_canonical_JSON_serialization": true,
+      "steps": [
+        "inspect the original descriptor collection cardinality and target_generation multiset without deduplication",
+        "reject invalid cardinality, duplicate, missing, future, zero, negative, or boolean target generations",
+        "canonical-sort the valid descriptors by target_generation ascending",
+        "insert the canonical descriptor array into the exact BackupEnvelope projection",
+        "canonical-JSON serialize all exact BackupEnvelope fields except envelope_fingerprint_sha256 and compute SHA-256"
+      ],
+      "permutation_semantics": "a permutation of the same valid descriptor multiset produces the same canonical descriptor array and expected envelope fingerprint; physical storage and caller/input order are not authority",
+      "does_not_normalize_other_arrays": true
+    },
+    "digest": "lowercase hexadecimal",
+    "allow_nan": false
   },
   "representation_categories": [
     "DIRECT_UPSTREAM_SCHEMA",
@@ -7019,7 +7055,151 @@
     },
     "structural_integrity_grants_authority": false,
     "category_gates_are_conjunctive": true
-  }
+  },
+  "descriptor_preservation_contract": {
+    "placement": "BackupEnvelope.integrity_metadata.state_store_transaction_descriptors",
+    "classification": "INTEGRITY METADATA; exact serialized carriers from #/executable_boundary_schemas/StateStoreTransactionDescriptor; not PersistenceRecord, canonical durable current records, or canonical immutable history",
+    "top_level_field_set_changed": false,
+    "integrity_metadata_exact_field_set": [
+      "state_store_transaction_descriptors"
+    ],
+    "source_schema": "#/executable_boundary_schemas/StateStoreTransactionDescriptor",
+    "collection_exactness": {
+      "cardinality": "exactly G entries",
+      "target_generation_multiset": "exactly {1,2,...,G}; exactly one descriptor per generation",
+      "reject": [
+        "missing generation",
+        "duplicate generation",
+        "future generation",
+        "generation 0",
+        "negative generation",
+        "boolean generation"
+      ],
+      "validation_order": "inspect original cardinality and multiset before sorting; never deduplicate through dict or set"
+    },
+    "canonical_order": {
+      "key": "target_generation",
+      "direction": "ascending",
+      "applied_after_original_collection_validation": true,
+      "not_authority": [
+        "physical SQLite order",
+        "rowid",
+        "caller array order"
+      ]
+    },
+    "genesis_required": {
+      "target_generation": 1,
+      "expected_current_generation": null,
+      "pre_state_fingerprint_sha256": null,
+      "pre_history_tail_fingerprint_sha256": null,
+      "synthesis_forbidden": true
+    },
+    "intrinsic_validation": "every descriptor must independently pass the existing exact 14-field closed StateStoreTransactionDescriptor schema, canonical identifiers, lowercase SHA, positive non-boolean integer semantics, environment enum, genesis/non-genesis conditionals, nested PersistenceRecord Stage-1 validation, canonical nested-array order, and transaction hash recomputation before chain use",
+    "immutable_scope_binding": {
+      "fields": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256"
+      ],
+      "comparison": "three independent exact equalities against BackupEnvelope; store fingerprint never substitutes for account/device"
+    },
+    "chain_continuity": {
+      "range": "each n in 2..G",
+      "required": [
+        "descriptor_n.expected_current_generation == n - 1",
+        "descriptor_n.target_generation == n",
+        "descriptor_n.pre_state_fingerprint_sha256 == descriptor_n_minus_1.post_state_fingerprint_sha256",
+        "descriptor_n.pre_history_tail_fingerprint_sha256 == descriptor_n_minus_1.post_history_tail_fingerprint_sha256"
+      ],
+      "every_transaction_fingerprint_recomputed": true
+    },
+    "current_descriptor_G_binding": {
+      "comparison": "exact equality",
+      "fields": {
+        "account_id": "account_id",
+        "device_installation_id": "device_installation_id",
+        "state_store_identity_fingerprint_sha256": "state_store_identity_fingerprint_sha256",
+        "state_store_schema_version": "state_store_schema_version",
+        "environment": "environment",
+        "target_generation": "local_protected_freshness_generation",
+        "post_state_fingerprint_sha256": "state_fingerprint_sha256",
+        "post_history_tail_fingerprint_sha256": "history_tail_fingerprint_sha256",
+        "transaction_fingerprint_sha256": "transaction_fingerprint_sha256"
+      }
+    },
+    "fingerprint_boundaries": {
+      "excluded_from": [
+        "canonical_durable_records",
+        "immutable_recovery_history",
+        "state_fingerprint_sha256 projection",
+        "history_tail_fingerprint_sha256 projection"
+      ],
+      "included_in_envelope_fingerprint": true,
+      "envelope_projection": "after validation of the original descriptor multiset, the descriptor array is canonical-sorted by target_generation ascending and participates with every nested semantic field in all exact BackupEnvelope fields except envelope_fingerprint_sha256",
+      "second_descriptor_aggregate_hash": false,
+      "input_permutation_changes_expected_fingerprint": false
+    },
+    "nested_record_security": {
+      "arrays": [
+        "current_record_mutations",
+        "immutable_history_appends"
+      ],
+      "requirements": [
+        "exact PersistenceRecord Stage-1 validation",
+        "same backup forbidden_record_kinds enforcement",
+        "same backup forbidden_payload_fields enforcement",
+        "PinVerifierRecord verifier only under existing direct-field exception"
+      ],
+      "hidden_forbidden_record_rejected": true,
+      "role": "transaction integrity reconstruction only; never an alternative source of durable/domain authority"
+    },
+    "durable_source_collections_remain": [
+      "canonical_durable_records",
+      "immutable_recovery_history"
+    ],
+    "creation_source": "one generation-pinned verified durable StateStore snapshot containing StateStoreMetadata, current records, immutable history, and complete descriptor chain 1..G in one coherent view",
+    "unrelated_reads_forbidden": true,
+    "invalid_chain_outcome": "NO TRUSTED BACKUP CANDIDATE / FAIL CLOSED; no best effort omission",
+    "repair_forbidden": [
+      "synthesize missing descriptor",
+      "recompute and overwrite stored descriptor",
+      "delete duplicate",
+      "normalize corrupted chain into a valid backup"
+    ],
+    "operation": "read / validate / canonical-project only",
+    "candidate_only": true,
+    "authority_by_possession": false,
+    "does_not_establish": [
+      "protected membership",
+      "current protected reference",
+      "M0.3 authority",
+      "account acceptance",
+      "device acceptance",
+      "current domain authority",
+      "LocalDurableEvidence membership",
+      "LIVE",
+      "restore authority"
+    ],
+    "future_restore_sequence": [
+      "deserialize",
+      "intrinsically validate envelope",
+      "verify envelope fingerprint",
+      "validate PersistenceRecords",
+      "validate every complete descriptor",
+      "verify full chain and local candidate",
+      "apply pre-existing external M0.3 restore freshness gate"
+    ],
+    "external_restore_freshness_owner": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+    "pending_floor": "external pending G+1 is not cleared or rolled back by restored/reconstructed G, descriptor G, or hash G",
+    "schema_version_decision": "not bumped: the canonical contract defines only a positive integer and the frozen compatibility model currently supports schema version 1 and rejects values greater than 1; S7A completes the pre-production version-1 exact nested integrity_metadata contract rather than changing migration semantics"
+  },
+  "forbidden_record_scope": [
+    "canonical_durable_records",
+    "immutable_recovery_history",
+    "integrity_metadata.state_store_transaction_descriptors[*].current_record_mutations",
+    "integrity_metadata.state_store_transaction_descriptors[*].immutable_history_appends"
+  ],
+  "no_authority_by_descriptor_possession": true
 }
 ```
 
@@ -8137,7 +8317,27 @@
         "pattern": "^[0-9a-f]{64}$"
       },
       "integrity_metadata": {
-        "type": "object"
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "state_store_transaction_descriptors"
+        ],
+        "properties": {
+          "state_store_transaction_descriptors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/executable_boundary_schemas/StateStoreTransactionDescriptor"
+            },
+            "meaning": "complete frozen local durable integrity descriptor chain 1..G; not PersistenceRecord or domain/history authority",
+            "exact_cardinality": "G = BackupEnvelope.local_protected_freshness_generation",
+            "exact_target_generation_multiset": "{1,2,...,G}",
+            "canonical_order": {
+              "key": "target_generation",
+              "direction": "ascending",
+              "after_original_multiset_validation": true
+            }
+          }
+        }
       }
     }
   },

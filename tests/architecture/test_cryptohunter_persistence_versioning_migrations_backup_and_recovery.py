@@ -2042,6 +2042,15 @@ def _validate_backup_records(records: Any) -> bool:
     )
 
 
+def _canonical_backup_projection(value: dict[str, Any]) -> dict[str, Any]:
+    canonical = copy.deepcopy(value)
+    descriptors = canonical["integrity_metadata"]["state_store_transaction_descriptors"]
+    canonical["integrity_metadata"]["state_store_transaction_descriptors"] = sorted(
+        descriptors, key=lambda descriptor: descriptor["target_generation"]
+    )
+    return {key: item for key, item in canonical.items() if key != "envelope_fingerprint_sha256"}
+
+
 def _validate_backup(value: Any) -> str:
     required = set(MACHINE["executable_boundary_schemas"]["BackupEnvelope"]["required"])
     if not isinstance(value, dict) or set(value) != required:
@@ -2073,9 +2082,25 @@ def _validate_backup(value: Any) -> str:
     ) or not _validate_backup_records(value.get("immutable_recovery_history")):
         return "BACKUP_INTEGRITY_FAILED"
     metadata = value.get("integrity_metadata")
-    if not isinstance(metadata, dict) or _contains_forbidden(metadata):
+    if not isinstance(metadata, dict) or set(metadata) != {"state_store_transaction_descriptors"}:
         return "BACKUP_INTEGRITY_FAILED"
-    projected = {key: item for key, item in value.items() if key != "envelope_fingerprint_sha256"}
+    descriptors = metadata["state_store_transaction_descriptors"]
+    if not isinstance(descriptors, list):
+        return "BACKUP_INTEGRITY_FAILED"
+    envelope_metadata = {
+        "account_id": value["account_id"],
+        "device_installation_id": value["device_installation_id"],
+        "state_store_identity_fingerprint_sha256": value["state_store_identity_fingerprint_sha256"],
+        "state_store_schema_version": value["state_store_schema_version"],
+        "environment": value["environment"],
+        "protected_freshness_generation": value["local_protected_freshness_generation"],
+        "state_fingerprint_sha256": value["state_fingerprint_sha256"],
+        "transaction_fingerprint_sha256": value["transaction_fingerprint_sha256"],
+        "history_tail_fingerprint_sha256": value["history_tail_fingerprint_sha256"],
+    }
+    if not _complete_descriptor_chain_valid(descriptors, envelope_metadata):
+        return "BACKUP_INTEGRITY_FAILED"
+    projected = _canonical_backup_projection(value)
     return (
         "VALID"
         if value["envelope_fingerprint_sha256"] == _actual_fingerprint(projected)
@@ -2420,21 +2445,23 @@ def _persistence_record(
 
 
 def _valid_backup() -> dict[str, Any]:
+    descriptors = _descriptor_chain(2)
+    current = descriptors[-1]
     value = {
         "backup_envelope_schema_version": 1,
-        "state_store_schema_version": 2,
+        "state_store_schema_version": current["state_store_schema_version"],
         "account_id": SCOPE[0],
         "device_installation_id": SCOPE[1],
         "state_store_identity_fingerprint_sha256": SHA,
         "environment": "PAPER",
         "local_protected_freshness_generation": 2,
-        "state_fingerprint_sha256": SHA,
-        "transaction_fingerprint_sha256": "b" * 64,
-        "history_tail_fingerprint_sha256": "c" * 64,
+        "state_fingerprint_sha256": current["post_state_fingerprint_sha256"],
+        "transaction_fingerprint_sha256": current["transaction_fingerprint_sha256"],
+        "history_tail_fingerprint_sha256": current["post_history_tail_fingerprint_sha256"],
         "canonical_durable_records": [],
         "immutable_recovery_history": [],
         "envelope_fingerprint_sha256": "",
-        "integrity_metadata": {},
+        "integrity_metadata": {"state_store_transaction_descriptors": descriptors},
     }
     value["envelope_fingerprint_sha256"] = _actual_fingerprint(
         {key: item for key, item in value.items() if key != "envelope_fingerprint_sha256"}
@@ -6345,10 +6372,8 @@ def test_descriptor_has_no_state_history_self_reference_cycle() -> None:
 def test_descriptor_authority_and_backup_restore_boundaries_remain_closed() -> None:
     descriptor = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"]
     assert "mint M0.3 membership" in descriptor["authority_boundary"]["does_not"]
-    assert (
-        "does not add descriptors to BackupEnvelope integrity_metadata"
-        in descriptor["backup_restore_limitation"]
-    )
+    assert "preserves the exact complete" in descriptor["backup_restore_limitation"]
+    assert "does not establish restore authority" in descriptor["backup_restore_limitation"]
     assert MACHINE["authority_model"]["live_current"] == "DENIED"
     assert MACHINE["authority_model"]["testnet_to_live_fallback"] is False
     assert MACHINE["transaction_protocol"]["cross_resource_acid_claim"] is False
@@ -6510,10 +6535,7 @@ def test_complete_chain_deletion_detection_and_no_performance_shortcut() -> None
 def test_complete_chain_backup_and_authority_boundaries_remain_non_claims() -> None:
     descriptor = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"]
     assert "complete descriptor chain 1..G" in descriptor["backup_restore_limitation"]
-    assert (
-        "does not claim the current backup contract is complete"
-        in descriptor["backup_restore_limitation"]
-    )
+    assert "does not establish restore authority" in descriptor["backup_restore_limitation"]
     assert descriptor["chain_continuity"]["meaning"].endswith("not upstream authority")
     assert MACHINE["authority_model"]["live_current"] == "DENIED"
     assert MACHINE["authority_model"]["testnet_to_live_fallback"] is False
@@ -6640,7 +6662,7 @@ def test_backup_limitation_preserves_complete_chain_and_exact_immutable_scope() 
     ]
     assert "complete descriptor chain 1..G" in limitation
     assert "exact immutable account/device/store-identity scope" in limitation
-    assert "does not implement backup/restore" in limitation
+    assert "does not establish restore authority" in limitation
 
 
 def test_descriptor_intrinsic_contract_is_closed_and_precedes_all_trust_checks() -> None:
@@ -6791,5 +6813,148 @@ def test_backup_limitation_requires_intrinsic_validation_of_every_restored_descr
     limitation = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
         "backup_restore_limitation"
     ]
-    assert "every descriptor passing exact intrinsic validation" in limitation
-    assert "does not implement backup/restore" in limitation
+    assert "intrinsic validation" in limitation
+    assert "external M0.3 restore freshness authority" in limitation
+
+
+def test_backup_integrity_metadata_is_exact_required_descriptor_carrier() -> None:
+    schema = MACHINE["executable_boundary_schemas"]["BackupEnvelope"]
+    metadata = schema["properties"]["integrity_metadata"]
+    assert metadata["additionalProperties"] is False
+    assert metadata["required"] == ["state_store_transaction_descriptors"]
+    assert metadata["properties"]["state_store_transaction_descriptors"]["items"] == {
+        "$ref": "#/executable_boundary_schemas/StateStoreTransactionDescriptor"
+    }
+    assert _validate_backup(_valid_backup()) == "VALID"
+
+
+@pytest.mark.parametrize("targets", [[1], [2], [1, 1], [1, 2, 3], [0, 2], [True, 2]])
+def test_backup_rejects_non_exact_original_descriptor_generation_multiset(
+    targets: list[int],
+) -> None:
+    backup = _valid_backup()
+    chain = _descriptor_chain(3)
+    backup["integrity_metadata"]["state_store_transaction_descriptors"] = [
+        copy.deepcopy(chain[int(target) - 1])
+        if type(target) is int and target > 0
+        else {
+            **copy.deepcopy(chain[0]),
+            "target_generation": target,
+        }
+        for target in targets
+    ]
+    assert _validate_backup(backup) == "BACKUP_INTEGRITY_FAILED"
+
+
+def test_backup_reordered_descriptor_input_canonicalizes_deterministically() -> None:
+    backup = _valid_backup()
+    canonical_fingerprint = _actual_fingerprint(_canonical_backup_projection(backup))
+    descriptors = backup["integrity_metadata"]["state_store_transaction_descriptors"]
+    backup["integrity_metadata"]["state_store_transaction_descriptors"] = list(
+        reversed(descriptors)
+    )
+    reordered_fingerprint = _actual_fingerprint(_canonical_backup_projection(backup))
+    assert reordered_fingerprint == canonical_fingerprint
+    assert _validate_backup(backup) == "VALID"
+
+
+def test_descriptor_input_permutation_alone_does_not_change_canonical_fingerprint() -> None:
+    canonical = _valid_backup()
+    permuted = copy.deepcopy(canonical)
+    descriptors = permuted["integrity_metadata"]["state_store_transaction_descriptors"]
+    permuted["integrity_metadata"]["state_store_transaction_descriptors"] = descriptors[::-1]
+    assert _actual_fingerprint(_canonical_backup_projection(canonical)) == _actual_fingerprint(
+        _canonical_backup_projection(permuted)
+    )
+
+
+@pytest.mark.parametrize(
+    ("generation", "field", "replacement"),
+    [
+        (1, "account_id", "acct_01890f3a-2b4c-7abc-9def-0123456789ab"),
+        (1, "device_installation_id", "dev_01890f3a-2b4c-7abc-9def-0123456789ab"),
+        (1, "state_store_identity_fingerprint_sha256", "9" * 64),
+        (2, "pre_state_fingerprint_sha256", "8" * 64),
+        (2, "pre_history_tail_fingerprint_sha256", "8" * 64),
+        (2, "post_state_fingerprint_sha256", "8" * 64),
+    ],
+)
+def test_self_consistently_rehashed_descriptor_tamper_remains_invalid_backup(
+    generation: int, field: str, replacement: Any
+) -> None:
+    backup = _valid_backup()
+    descriptor = backup["integrity_metadata"]["state_store_transaction_descriptors"][generation - 1]
+    descriptor[field] = replacement
+    _rehash_descriptor(descriptor)
+    backup["envelope_fingerprint_sha256"] = _actual_fingerprint(
+        {key: value for key, value in backup.items() if key != "envelope_fingerprint_sha256"}
+    )
+    assert _validate_backup(backup) == "BACKUP_INTEGRITY_FAILED"
+
+
+def test_descriptor_semantics_are_covered_only_by_envelope_fingerprint() -> None:
+    backup = _valid_backup()
+    original = backup["envelope_fingerprint_sha256"]
+    backup["integrity_metadata"]["state_store_transaction_descriptors"][0]["environment"] = (
+        "TESTNET"
+    )
+    projected = _canonical_backup_projection(backup)
+    assert _actual_fingerprint(projected) != original
+    contract = MACHINE["backup_contract"]["descriptor_preservation_contract"]
+    assert contract["fingerprint_boundaries"]["second_descriptor_aggregate_hash"] is False
+    assert set(contract["fingerprint_boundaries"]["excluded_from"]) >= {
+        "state_fingerprint_sha256 projection",
+        "history_tail_fingerprint_sha256 projection",
+    }
+
+
+def test_nested_descriptor_semantic_change_changes_canonical_envelope_fingerprint() -> None:
+    backup = _valid_backup()
+    original = _actual_fingerprint(_canonical_backup_projection(backup))
+    descriptor = backup["integrity_metadata"]["state_store_transaction_descriptors"][0]
+    descriptor["current_record_mutations"] = [_persistence_record("Workspace")]
+    assert _actual_fingerprint(_canonical_backup_projection(backup)) != original
+
+
+def test_nested_descriptor_records_cannot_hide_forbidden_material() -> None:
+    backup = _valid_backup()
+    descriptor = backup["integrity_metadata"]["state_store_transaction_descriptors"][0]
+    forbidden = _persistence_record("Workspace")
+    forbidden["payload"]["api_secret"] = "secret"
+    forbidden["payload_fingerprint_sha256"] = _actual_fingerprint(forbidden["payload"])
+    descriptor["current_record_mutations"] = [forbidden]
+    _rehash_descriptor(descriptor)
+    assert _validate_backup(backup) == "BACKUP_INTEGRITY_FAILED"
+    scope = MACHINE["backup_contract"]["forbidden_record_scope"]
+    assert any("current_record_mutations" in item for item in scope)
+    assert any("immutable_history_appends" in item for item in scope)
+
+
+def test_nested_descriptor_allows_canonical_pin_verifier_direct_verifier() -> None:
+    backup = _valid_backup()
+    descriptor = backup["integrity_metadata"]["state_store_transaction_descriptors"][-1]
+    pin_record = _persistence_record("PinVerifierRecord accepted revisions")
+    assert "verifier" in pin_record["payload"]["upstream_payload"]
+    descriptor["immutable_history_appends"] = [pin_record]
+    _rehash_descriptor(descriptor)
+    backup["transaction_fingerprint_sha256"] = descriptor["transaction_fingerprint_sha256"]
+    backup["envelope_fingerprint_sha256"] = _actual_fingerprint(
+        _canonical_backup_projection(backup)
+    )
+    assert _validate_backup(backup) == "VALID"
+
+
+def test_descriptor_backup_remains_candidate_without_any_authority_by_possession() -> None:
+    contract = MACHINE["backup_contract"]
+    preservation = contract["descriptor_preservation_contract"]
+    assert contract["candidate_only"] is True
+    assert preservation["authority_by_possession"] is False
+    assert set(preservation["does_not_establish"]) >= {
+        "protected membership",
+        "current protected reference",
+        "M0.3 authority",
+        "LocalDurableEvidence membership",
+        "LIVE",
+        "restore authority",
+    }
+    assert "LocalDurableStateEvidence payload" in contract["excludes"]
