@@ -1,7 +1,7 @@
 """Ordered consumer-side handoff to the external protected freshness owner.
 
 This module deliberately supplies no external storage, provisioning, replacement,
-retirement, abort, recovery, backup, restore, or LIVE-authority implementation.
+retirement, backup, restore, or LIVE-authority implementation.
 """
 
 from __future__ import annotations
@@ -152,6 +152,15 @@ class ProtectedFreshnessAuthorityPort(Protocol):
         evidence_resolver: EvidenceResolver,
     ) -> None: ...
 
+    def abort(
+        self,
+        current_ref: object,
+        scope: EvidenceScope,
+        *,
+        evidence_ref: object,
+        evidence_resolver: EvidenceResolver,
+    ) -> None: ...
+
 
 class ProtectedFreshnessHandoffCoordinator:
     """Process-serialized ordered protocol for one ordinary protected advance."""
@@ -165,6 +174,28 @@ class ProtectedFreshnessHandoffCoordinator:
         self._store, self._registry, self._authority = store, registry, authority
         self._lock = RLock()
         self._recovery_required = False
+        self._recovery_scope: EvidenceScope | None = None
+
+    def _bind_recovery(self, scope: EvidenceScope) -> None:
+        if self._recovery_required and self._recovery_scope != scope:
+            raise ProtectedFreshnessHandoffError(
+                "recovery scope does not match active protected recovery"
+            )
+        self._recovery_required = True
+        self._recovery_scope = scope
+
+    def _clear_recovery(self) -> None:
+        self._recovery_required = False
+        self._recovery_scope = None
+
+    def _assert_local_still_matches(self, expected: StateStoreMetadata | None) -> None:
+        current = self._store.read_verified_snapshot()
+        if (expected is None and current is not None) or (
+            expected is not None and (current is None or current.metadata != expected)
+        ):
+            raise ProtectedFreshnessHandoffError(
+                "local StateStore changed during protected handoff"
+            )
 
     def _external(self, scope: EvidenceScope) -> tuple[object, ProtectedFreshnessAuthorityRecord]:
         resolved = self._authority.resolve_current(scope)
@@ -175,6 +206,39 @@ class ProtectedFreshnessHandoffCoordinator:
         if record.scope != scope:
             raise ProtectedFreshnessHandoffError("external scope mismatch")
         return ref, record
+
+    @staticmethod
+    def _validate_scope(scope: EvidenceScope) -> None:
+        if (
+            not isinstance(scope, tuple)
+            or len(scope) != 3
+            or not isinstance(scope[0], str)
+            or _ID_RE.fullmatch(scope[0]) is None
+            or not scope[0].startswith("acct_")
+            or not isinstance(scope[1], str)
+            or _ID_RE.fullmatch(scope[1]) is None
+            or not scope[1].startswith("dev_")
+            or not _sha(scope[2])
+        ):
+            raise ProtectedFreshnessHandoffError("recovery scope is malformed")
+
+    @staticmethod
+    def _is_terminal(
+        ref: object,
+        expected_ref: object,
+        record: ProtectedFreshnessAuthorityRecord,
+        generation: int,
+        state: str,
+        *,
+        revision_after: int | None = None,
+    ) -> bool:
+        return (
+            ref == expected_ref
+            and record.lifecycle == "COMMITTED"
+            and record.committed_generation == generation
+            and record.committed_state_fingerprint_sha256 == state
+            and (revision_after is None or record.authority_revision > revision_after)
+        )
 
     def _store_bound_resolver(self, scope: EvidenceScope) -> EvidenceResolver:
         def resolve(ref: object) -> LocalDurableStateEvidence | None:
@@ -207,6 +271,176 @@ class ProtectedFreshnessHandoffCoordinator:
 
         return resolve
 
+    def recover_protected_state(self, scope: EvidenceScope) -> StateStoreMetadata | None:
+        """Reconcile one existing protected/local pair without a business transition."""
+
+        with self._lock:
+            self._validate_scope(scope)
+            self._bind_recovery(scope)
+            ref, external = self._external(scope)
+            snapshot = self._store.read_verified_snapshot()
+            local = None if snapshot is None else snapshot.metadata
+            if (
+                local is not None
+                and (
+                    local.account_id,
+                    local.device_installation_id,
+                    local.state_store_identity_fingerprint_sha256,
+                )
+                != scope
+            ):
+                raise ProtectedFreshnessHandoffError("verified local scope mismatch")
+
+            if external.lifecycle == "UNINITIALIZED":
+                if local is not None:
+                    raise ProtectedFreshnessHandoffError("local store is ahead of UNINITIALIZED")
+                self._assert_local_still_matches(None)
+                self._clear_recovery()
+                return None
+
+            if external.lifecycle == "COMMITTED":
+                if local is None or (
+                    local.protected_freshness_generation,
+                    local.state_fingerprint_sha256,
+                ) != (
+                    external.committed_generation,
+                    external.committed_state_fingerprint_sha256,
+                ):
+                    raise ProtectedFreshnessHandoffError(
+                        "external COMMITTED and verified local state differ"
+                    )
+                self._assert_local_still_matches(local)
+                self._clear_recovery()
+                return local
+
+            # A genesis PREPARED record can never be aborted: absence of local
+            # state is not evidence that generation 1 was never durable.
+            if external.committed_generation is None:
+                if local is None:
+                    raise ProtectedFreshnessHandoffError("GENESIS_PENDING_RECOVERY_REQUIRED")
+                action = "finalize"
+            else:
+                if local is None:
+                    raise ProtectedFreshnessHandoffError("normal pending has no local baseline")
+                local_pair = (
+                    local.protected_freshness_generation,
+                    local.state_fingerprint_sha256,
+                )
+                committed_pair = (
+                    external.committed_generation,
+                    external.committed_state_fingerprint_sha256,
+                )
+                prepared_pair = (
+                    external.prepared_generation,
+                    external.prepared_state_fingerprint_sha256,
+                )
+                if local_pair == committed_pair:
+                    action = "abort"
+                elif local_pair == prepared_pair:
+                    action = "finalize"
+                else:
+                    raise ProtectedFreshnessHandoffError(
+                        "verified local state matches neither committed nor exact pending"
+                    )
+
+            if local is None:
+                raise ProtectedFreshnessHandoffError("recovery action requires durable local state")
+            if snapshot is None:
+                raise ProtectedFreshnessHandoffError("verified recovery snapshot is unavailable")
+            if action == "finalize":
+                if (
+                    local.protected_freshness_generation != external.prepared_generation
+                    or local.state_fingerprint_sha256 != external.prepared_state_fingerprint_sha256
+                    or local.transaction_fingerprint_sha256
+                    != external.prepared_transaction_fingerprint_sha256
+                ):
+                    raise ProtectedFreshnessHandoffError(
+                        "local state is not the exact pending state"
+                    )
+                descriptors = tuple(
+                    descriptor
+                    for descriptor in snapshot.transaction_descriptors
+                    if descriptor.target_generation == local.protected_freshness_generation
+                )
+                if len(descriptors) != 1:
+                    raise ProtectedFreshnessHandoffError("exact current descriptor is unavailable")
+                descriptor = descriptors[0]
+                if external.committed_generation is not None and (
+                    descriptor.expected_current_generation != external.committed_generation
+                    or descriptor.pre_state_fingerprint_sha256
+                    != external.committed_state_fingerprint_sha256
+                    or descriptor.post_state_fingerprint_sha256
+                    != external.prepared_state_fingerprint_sha256
+                    or descriptor.transaction_fingerprint_sha256
+                    != external.prepared_transaction_fingerprint_sha256
+                ):
+                    raise ProtectedFreshnessHandoffError(
+                        "pending does not descend from exact external baseline"
+                    )
+
+            evidence_ref = self._registry.publish_verified_state(self._store)
+            resolver = self._store_bound_resolver(scope)
+            evidence = resolver(evidence_ref)
+            expected_generation = (
+                external.committed_generation if action == "abort" else external.prepared_generation
+            )
+            expected_state = (
+                external.committed_state_fingerprint_sha256
+                if action == "abort"
+                else external.prepared_state_fingerprint_sha256
+            )
+            if not _positive(expected_generation) or not _sha(expected_state):
+                raise ProtectedFreshnessHandoffError("recovery terminal target is malformed")
+            revision_after = external.authority_revision if action == "abort" else None
+            if (
+                evidence is None
+                or evidence.generation != expected_generation
+                or evidence.state_fingerprint_sha256 != expected_state
+            ):
+                raise ProtectedFreshnessHandoffError("fresh recovery evidence mismatch")
+            try:
+                if action == "abort":
+                    self._authority.abort(
+                        ref, scope, evidence_ref=evidence_ref, evidence_resolver=resolver
+                    )
+                else:
+                    self._authority.finalize(
+                        ref, scope, evidence_ref=evidence_ref, evidence_resolver=resolver
+                    )
+            except Exception as exc:
+                try:
+                    terminal_ref, terminal = self._external(scope)
+                except Exception:
+                    raise ProtectedFreshnessHandoffError(
+                        f"external {action.upper()} outcome is unresolved"
+                    ) from exc
+                if not self._is_terminal(
+                    terminal_ref,
+                    ref,
+                    terminal,
+                    expected_generation,
+                    expected_state,
+                    revision_after=revision_after,
+                ):
+                    raise ProtectedFreshnessHandoffError(
+                        f"external {action.upper()} outcome is unresolved"
+                    ) from exc
+            terminal_ref, terminal = self._external(scope)
+            if not self._is_terminal(
+                terminal_ref,
+                ref,
+                terminal,
+                expected_generation,
+                expected_state,
+                revision_after=revision_after,
+            ):
+                raise ProtectedFreshnessHandoffError(
+                    f"external {action.upper()} terminal state mismatch"
+                )
+            self._assert_local_still_matches(local)
+            self._clear_recovery()
+            return local
+
     def advance_protected_state(
         self,
         metadata: StateStoreMetadata,
@@ -226,6 +460,7 @@ class ProtectedFreshnessHandoffCoordinator:
             before = self._store.read_verified_snapshot()
             expected = None if before is None else before.metadata.protected_freshness_generation
             if external.lifecycle == "PREPARED":
+                self._bind_recovery(scope)
                 raise ProtectedFreshnessHandoffError("external PREPARED requires recovery")
             if before is None:
                 if (
@@ -271,7 +506,7 @@ class ProtectedFreshnessHandoffCoordinator:
                 )
             # From this point an external transition may have occurred.  Only
             # exact post-FINALIZE verification makes this instance ordinary-ready.
-            self._recovery_required = True
+            self._bind_recovery(scope)
             self._authority.prepare(
                 ref,
                 scope,
@@ -344,5 +579,6 @@ class ProtectedFreshnessHandoffCoordinator:
                 != (candidate.protected_freshness_generation, candidate.state_fingerprint_sha256)
             ):
                 raise ProtectedFreshnessHandoffError("external FINALIZE acknowledgement mismatch")
-            self._recovery_required = False
+            self._assert_local_still_matches(candidate)
+            self._clear_recovery()
             return candidate
