@@ -373,7 +373,52 @@
         "plaintext"
       ]
     },
-    "lineage_timestamp_algorithm": "track direct successor; require predecessor.created_at <= predecessor.retired_at <= successor.created_at; then successor = predecessor"
+    "lineage_timestamp_algorithm": "track direct successor; require predecessor.created_at <= predecessor.retired_at <= successor.created_at; then successor = predecessor",
+    "lifecycle_states": [
+      "ACTIVE",
+      "RETIRED"
+    ],
+    "nullable_fields": [
+      "public_key_identifier",
+      "rotated_from_credential_profile_id",
+      "retired_at_utc"
+    ],
+    "intrinsic_field_schemas": {
+      "public_key_identifier": {
+        "type": "nullable_non_empty_string"
+      },
+      "rotated_from_credential_profile_id": {
+        "type": "nullable_canonical_id",
+        "id_prefix": "cred",
+        "identifier_policy": "canonical UUIDv7-prefixed ID"
+      },
+      "created_at_utc": {
+        "type": "timestamp",
+        "nullable": false,
+        "policy_pointer": "/timestamp_policy"
+      },
+      "retired_at_utc": {
+        "type": "nullable_timestamp",
+        "policy_pointer": "/timestamp_policy",
+        "nullability": "CONDITIONAL_ON_LIFECYCLE_STATE"
+      }
+    },
+    "lifecycle_timestamp_policy": {
+      "created_at_utc": {
+        "required": true,
+        "timestamp_policy_pointer": "/timestamp_policy"
+      },
+      "ACTIVE": {
+        "retired_at_utc": "MUST_BE_NULL"
+      },
+      "RETIRED": {
+        "retired_at_utc": "REQUIRED_CANONICAL_TIMESTAMP",
+        "ordering": "retired_at_utc >= created_at_utc"
+      },
+      "wall_clock_now_authority": false,
+      "scope": "INTRINSIC_SINGLE_RECORD_CONSISTENCY_ONLY",
+      "lineage_timestamp_algorithm_preserved_separately": true
+    }
   },
   "external_account_identity_contract": {
     "states": [

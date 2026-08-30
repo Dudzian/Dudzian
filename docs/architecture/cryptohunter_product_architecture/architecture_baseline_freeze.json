@@ -26,7 +26,7 @@
       "milestone_id": "M0.5",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/exchange_accounts_and_instruments.json",
       "canonical_schema_version": "cryptohunter.exchange_accounts_and_instruments.v1",
-      "sha256": "83049f1f492c55d31e6ea8fb20c2389016f39e3db5aa1cd365c03636bb1c5081"
+      "sha256": "82fe0548c889aa0f203059db158e324ff1680b5b5c1b24395542244363f2174b"
     },
     {
       "milestone_id": "M0.6",
@@ -50,19 +50,19 @@
       "milestone_id": "M0.9",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/risk_hierarchy_kill_switch_and_execution_lease.json",
       "canonical_schema_version": "1.0.0",
-      "sha256": "a595d7baf3ca8581df7686dd86551f70394b75f072e3dafc97ae5ac1d1e4bc37"
+      "sha256": "f7b3fb943d3aa503b4ea6810ea084f17f5bc830f82eab7ce98b3ea5d63eb0537"
     },
     {
       "milestone_id": "M0.10",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json",
       "canonical_schema_version": "1.0.0",
-      "sha256": "0c82b5b468e4d362cddaa0abaab32be2e11eff45ebc1c25a2c395a2220af2d0a"
+      "sha256": "dd7a23a4f40001a929ab16135876b5d1cb850d3a4f136c7e7d21e01a1c38e61e"
     },
     {
       "milestone_id": "M0.11",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json",
       "canonical_schema_version": "1.0.0",
-      "sha256": "d8fcdc59e53f17c4aea8f68f388bd6398e6260532fa2a1eccadc9f9f9344ca0e"
+      "sha256": "f18562a64e26bb1b315374dc50670e4df29eed1c8ad77c0f496507f0e23f3613"
     }
   ]
 }

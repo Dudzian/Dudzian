@@ -9,7 +9,13 @@ from bot_core.persistence.transaction_descriptor import (
     StateStoreTransactionDescriptor,
     TransactionDescriptorError,
 )
-from tests.persistence.test_state_store_records import ACCOUNT_ID, DEVICE_ID, _account, _runtime
+from tests.persistence.test_state_store_records import (
+    ACCOUNT_ID,
+    DEVICE_ID,
+    OTHER_ACCOUNT_ID,
+    _account,
+    _runtime,
+)
 
 
 def _mapping(**changes: object) -> dict[str, object]:
@@ -92,6 +98,23 @@ def test_nested_records_are_validated_and_arrays_must_already_be_canonical() -> 
     invalid["payload_fingerprint_sha256"] = "a" * 64
     with pytest.raises(TransactionDescriptorError):
         StateStoreTransactionDescriptor.from_mapping(_mapping(current_record_mutations=[invalid]))
-    records = [_runtime().to_mapping(), _account().to_mapping()]
+    records = [_account(OTHER_ACCOUNT_ID).to_mapping(), _account().to_mapping()]
     with pytest.raises(TransactionDescriptorError, match="canonically sorted"):
         StateStoreTransactionDescriptor.from_mapping(_mapping(current_record_mutations=records))
+
+
+@pytest.mark.parametrize(
+    ("field", "record"),
+    [
+        ("current_record_mutations", _runtime().to_mapping()),
+        ("immutable_history_appends", _account().to_mapping()),
+    ],
+)
+def test_descriptor_record_arrays_enforce_exact_durable_buckets(
+    field: str, record: dict[str, object]
+) -> None:
+    mapping = _mapping(**{field: [record]})
+    projection = {k: v for k, v in mapping.items() if k != "transaction_fingerprint_sha256"}
+    mapping["transaction_fingerprint_sha256"] = transaction_fingerprint_sha256(projection)
+    with pytest.raises(TransactionDescriptorError, match="invalid record"):
+        StateStoreTransactionDescriptor.from_mapping(mapping)

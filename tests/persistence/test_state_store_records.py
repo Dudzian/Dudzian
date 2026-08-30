@@ -9,10 +9,15 @@ from typing import Any
 import pytest
 
 from bot_core.persistence.records import PersistenceRecord
+from bot_core.persistence.record_registry import STATE_STORE_SCOPE_BINDINGS
 from bot_core.persistence.state_store import (
     SQLiteStateStore,
     StateStoreError,
     StateStoreMetadata,
+    _validate_record_store_scope,
+)
+from tests.architecture import (
+    test_cryptohunter_persistence_versioning_migrations_backup_and_recovery as frozen_oracle,
 )
 
 ACCOUNT_ID = "acct_01890f4c-7b9a-7cc1-8a2b-123456789abc"
@@ -22,6 +27,13 @@ OTHER_DEVICE_ID = "dev_01890f4c-7b9a-7cc1-8a2b-123456789abd"
 SESSION_1 = "run_01890f4c-7b9a-7cc1-8a2b-123456789abc"
 SESSION_2 = "run_01890f4c-7b9a-7cc1-8a2b-123456789abd"
 SESSION_3 = "run_01890f4c-7b9a-7cc1-8a2b-123456789abe"
+
+ACCOUNT_SCOPED = tuple(
+    name for name, binding in STATE_STORE_SCOPE_BINDINGS.items() if binding["account_paths"]
+)
+DEVICE_SCOPED = tuple(
+    name for name, binding in STATE_STORE_SCOPE_BINDINGS.items() if binding["device_paths"]
+)
 
 
 def _fingerprint(value: object) -> str:
@@ -33,6 +45,36 @@ def _fingerprint(value: object) -> str:
         allow_nan=False,
     ).encode()
     return sha256(encoded).hexdigest()
+
+
+def _oracle_scope_metadata(**changes: object) -> StateStoreMetadata:
+    account_id, device_id, _ = frozen_oracle.SCOPE
+    values = {"account_id": account_id, "device_installation_id": device_id, **changes}
+    return _metadata(**values)
+
+
+@pytest.mark.parametrize("name", ACCOUNT_SCOPED)
+def test_explicit_account_scope_paths_accept_exact_and_reject_wrong_store(name: str) -> None:
+    record = PersistenceRecord.from_mapping(frozen_oracle._persistence_record(name))
+    _validate_record_store_scope(record, _oracle_scope_metadata())
+    with pytest.raises(StateStoreError, match="scope"):
+        _validate_record_store_scope(
+            record,
+            _oracle_scope_metadata(account_id="acct_01890f3a-2b4c-7abc-8def-0123456789ac"),
+        )
+
+
+@pytest.mark.parametrize("name", DEVICE_SCOPED)
+def test_explicit_device_scope_paths_accept_exact_and_reject_wrong_store(name: str) -> None:
+    record = PersistenceRecord.from_mapping(frozen_oracle._persistence_record(name))
+    _validate_record_store_scope(record, _oracle_scope_metadata())
+    with pytest.raises(StateStoreError, match="scope"):
+        _validate_record_store_scope(
+            record,
+            _oracle_scope_metadata(
+                device_installation_id="dev_01890f3a-2b4c-7abc-8def-0123456789ac"
+            ),
+        )
 
 
 def _metadata(generation: int = 1, **changes: Any) -> StateStoreMetadata:

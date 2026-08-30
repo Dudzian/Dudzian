@@ -4,6 +4,7 @@ from dataclasses import fields
 from hashlib import sha256
 import json
 import math
+import unicodedata
 from pathlib import Path
 from types import MappingProxyType
 
@@ -15,6 +16,16 @@ from bot_core.persistence import (
     validate_persistence_record,
 )
 from bot_core.persistence import records as production
+from bot_core.persistence.record_registry import (
+    DIRECT_SEMANTIC_CONSTRAINTS,
+    DIRECT_UPSTREAM_VALIDATORS,
+    LOCAL_SCHEMA_CONTRACTS,
+    PERSISTENCE_RECORD_REGISTRY,
+    STATE_STORE_SCOPE_BINDINGS,
+)
+from tests.architecture import (
+    test_cryptohunter_persistence_versioning_migrations_backup_and_recovery as frozen_oracle,
+)
 
 
 ARCHITECTURE = Path("docs/architecture/cryptohunter_product_architecture")
@@ -98,6 +109,359 @@ def self_consistent(mapping: dict[str, object], payload: dict[str, object]) -> P
 def test_valid_account_and_runtime_records_pass_stage_1() -> None:
     assert validate_persistence_record(parsed(account_mapping())) is None
     assert validate_persistence_record(parsed(runtime_mapping())) is None
+
+
+FROZEN_PERSISTENCE_NAMES = tuple(
+    name
+    for name, entry in CANONICAL_REGISTRY.items()
+    if entry.get("carrier_strategy") == "PERSISTENCE_RECORD"
+)
+
+
+def test_production_registry_exactly_covers_frozen_persistence_records() -> None:
+    assert set(production._REGISTRY) == set(FROZEN_PERSISTENCE_NAMES)
+
+
+def test_static_registry_has_deep_exact_parity_with_frozen_registry() -> None:
+    expected = {
+        name: entry
+        for name, entry in CANONICAL_REGISTRY.items()
+        if entry.get("carrier_strategy") == "PERSISTENCE_RECORD"
+    }
+    assert PERSISTENCE_RECORD_REGISTRY == expected
+    assert (
+        DIRECT_UPSTREAM_VALIDATORS == M011["backup_contract"]["direct_upstream_validator_registry"]
+    )
+    assert LOCAL_SCHEMA_CONTRACTS == {
+        name: M011["executable_boundary_schemas"][name] for name in LOCAL_SCHEMA_CONTRACTS
+    }
+    assert set(STATE_STORE_SCOPE_BINDINGS) == set(expected)
+
+
+def test_resolved_direct_constraints_are_deeply_source_derived() -> None:
+    for name, resolved in DIRECT_SEMANTIC_CONSTRAINTS.items():
+        contract = DIRECT_UPSTREAM_VALIDATORS[name]
+        upstream = json.loads((ARCHITECTURE / contract["semantic_artifact"]).read_text())
+        for field, source in contract["semantic_constraints"].items():
+            value = source.get("values")
+            if value is None:
+                value = upstream
+                for component in source["pointer"].strip("/").split("/"):
+                    value = value[component]
+            assert resolved[field] == value
+
+
+def test_scope_binding_table_has_exact_source_derived_paths() -> None:
+    expected: dict[str, dict[str, tuple[tuple[str, ...], ...]]] = {}
+    direct = M011["backup_contract"]["direct_upstream_validator_registry"]
+    for name in FROZEN_PERSISTENCE_NAMES:
+        entry = CANONICAL_REGISTRY[name]
+        account: list[tuple[str, ...]] = []
+        device: list[tuple[str, ...]] = []
+        category = entry["representation_category"]
+        if name == "CryptoHunterAccount current record":
+            account.append(("entity_id",))
+        elif category == "M011_IMMUTABLE_HISTORY_WRAPPER" and entry.get("immutable_fact_binding"):
+            for field in entry["immutable_fact_binding"].get("scope_fields", []):
+                if field == "account_id":
+                    account.append(("upstream_payload", field))
+                elif field == "device_installation_id":
+                    device.append(("upstream_payload", field))
+        elif category == "M011_PERSISTENCE_PROJECTION_OF_UPSTREAM_FACTS":
+            required = entry["fact_binding"]["required_fact_fields"]
+            if "account_id" in required:
+                account.append(("facts", "account_id"))
+            if "device_installation_id" in required:
+                device.append(("facts", "device_installation_id"))
+        elif category == "DIRECT_UPSTREAM_SCHEMA":
+            exact = direct[name]["exact_fields"]
+            if "account_id" in exact:
+                account.append(("account_id",))
+            if "device_installation_id" in exact:
+                device.append(("device_installation_id",))
+        elif category == "M011_LOCAL_SCHEMA":
+            properties = LOCAL_SCHEMA_CONTRACTS[entry["projection_schema_if_any"]].get(
+                "properties", {}
+            )
+            if "account_id" in properties:
+                account.append(("account_id",))
+            if "device_installation_id" in properties:
+                device.append(("device_installation_id",))
+        if name in {"bootstrap consumed fence", "bootstrap accepted/consumption history"}:
+            account = [("account_id",)]
+            device = [("device_installation_id",)]
+        expected[name] = {"account_paths": tuple(account), "device_paths": tuple(device)}
+    assert STATE_STORE_SCOPE_BINDINGS == expected
+
+
+@pytest.mark.parametrize("name", FROZEN_PERSISTENCE_NAMES)
+def test_every_frozen_persistence_record_has_a_valid_stage_1_fixture(name: str) -> None:
+    mapping = frozen_oracle._persistence_record(name)
+    if name == "RiskPolicy accepted revisions":
+        payload = mapping["payload"]
+        upstream = payload["upstream_payload"]
+        upstream["limits"][0][2]["mapping_status"] = "EXACT"
+        binding = CANONICAL_REGISTRY[name]["immutable_fact_binding"]
+        upstream["semantic_fingerprint_sha256"] = frozen_oracle._semantic_fingerprint(
+            binding, upstream
+        )
+        payload["upstream_payload_fingerprint_sha256"] = fingerprint(upstream)
+        mapping["payload_fingerprint_sha256"] = fingerprint(payload)
+    validate_persistence_record(PersistenceRecord.from_mapping(mapping))
+
+
+@pytest.mark.parametrize("name", FROZEN_PERSISTENCE_NAMES)
+def test_every_frozen_persistence_record_rejects_wrong_semantic_binding(name: str) -> None:
+    mapping = frozen_oracle._persistence_record(name)
+    mapping["semantic_contract_fingerprint_sha256"] = "0" * 64
+    with pytest.raises(PersistenceRecordError, match="registry binding mismatch"):
+        validate_persistence_record(PersistenceRecord.from_mapping(mapping))
+
+
+LOCAL_NAMES = tuple(
+    name
+    for name, entry in CANONICAL_REGISTRY.items()
+    if entry.get("representation_category") == "M011_LOCAL_SCHEMA"
+)
+
+
+def _self_consistent_record(name: str, payload: dict[str, object]) -> PersistenceRecord:
+    mapping = frozen_oracle._persistence_record(name, payload)
+    mapping["record_key"] = frozen_oracle._derive_record_key(
+        name, CANONICAL_REGISTRY[name], payload
+    )
+    mapping["payload_fingerprint_sha256"] = fingerprint(payload)
+    return PersistenceRecord.from_mapping(mapping)
+
+
+def _rehash_immutable(name: str, mapping: dict[str, object]) -> PersistenceRecord:
+    payload = mapping["payload"]
+    upstream = payload["upstream_payload"]
+    binding = CANONICAL_REGISTRY[name]["immutable_fact_binding"]
+    semantic = binding
+    if "upstream_payload_variants" in binding:
+        semantic = binding["upstream_payload_variants"][
+            upstream[binding["upstream_payload_discriminator"]]
+        ]
+    terminal = semantic.get("semantic_fingerprint_field")
+    if terminal:
+        upstream[terminal] = production._semantic_fingerprint(semantic, upstream)
+    payload["upstream_payload_fingerprint_sha256"] = fingerprint(upstream)
+    mapping["record_key"] = frozen_oracle._derive_record_key(
+        name, CANONICAL_REGISTRY[name], payload
+    )
+    mapping["payload_fingerprint_sha256"] = fingerprint(payload)
+    return PersistenceRecord.from_mapping(mapping)
+
+
+def _inventory() -> tuple[set[str], set[str]]:
+    types: set[str] = set()
+    shapes: set[str] = set()
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            if isinstance(value.get("type"), str):
+                types.add(value["type"])
+            if isinstance(value.get("input_shape"), str):
+                shapes.add(value["input_shape"])
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(PERSISTENCE_RECORD_REGISTRY)
+    walk(DIRECT_UPSTREAM_VALIDATORS)
+    walk(LOCAL_SCHEMA_CONTRACTS)
+    return types, shapes
+
+
+def test_every_frozen_field_type_and_fingerprint_shape_has_executor_capability() -> None:
+    types, shapes = _inventory()
+    assert types == set(production.FIELD_VALIDATOR_CAPABILITIES)
+    assert shapes == set(production.SEMANTIC_FINGERPRINT_SHAPE_CAPABILITIES)
+
+
+@pytest.mark.parametrize(
+    ("name", "scope_type", "scope_id"),
+    [
+        ("RiskPolicy accepted revisions", "WORKSPACE", "port_01890f3a-2b4c-7abc-8def-0123456789ab"),
+        ("RiskPolicy accepted revisions", "PRODUCT_SYSTEM", "not-product"),
+        ("kill-switch transition history", "WORKSPACE", "garbage"),
+    ],
+)
+def test_canonical_scope_id_rejects_self_consistent_wrong_scope(
+    name: str, scope_type: str, scope_id: str
+) -> None:
+    mapping = frozen_oracle._persistence_record(name)
+    upstream = mapping["payload"]["upstream_payload"]
+    upstream["scope_type"] = scope_type
+    upstream["scope_id"] = scope_id
+    with pytest.raises(PersistenceRecordError, match="frozen schema"):
+        validate_persistence_record(_rehash_immutable(name, mapping))
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda limits: limits.__setitem__(0, ["UNKNOWN_LIMIT", "1/1", limits[0][2]]),
+        lambda limits: limits.__setitem__(0, ["MAX_ORDER_QUANTITY", "1/0", limits[0][2]]),
+        lambda limits: limits.__setitem__(0, ["MAX_ORDER_QUANTITY", "2/2", limits[0][2]]),
+        lambda limits: limits[0][2].pop("asset_namespace"),
+        lambda limits: limits[0][2].update(extra="x"),
+        lambda limits: limits[0][2].update(mapping_status="UNKNOWN"),
+        lambda limits: limits[0][2].update(venue_asset_code=1),
+        lambda limits: limits.__setitem__(0, ["MAX_ORDER_QUANTITY"]),
+    ],
+)
+def test_risk_limits_reject_semantic_attacks_after_full_rehash(mutate) -> None:  # type: ignore[no-untyped-def]
+    name = "RiskPolicy accepted revisions"
+    mapping = frozen_oracle._persistence_record(name)
+    limits = mapping["payload"]["upstream_payload"]["limits"]
+    limits[0][2]["mapping_status"] = "EXACT"
+    mutate(limits)
+    with pytest.raises(PersistenceRecordError, match="frozen schema"):
+        validate_persistence_record(_rehash_immutable(name, mapping))
+
+
+def test_compound_scope_binds_risk_budget_components_after_full_rehash() -> None:
+    name = "RiskBudget current state"
+    payload = frozen_oracle._payload_for(name)
+    payload["facts"]["risk_scope_key"] = "different|but|non-empty"
+    with pytest.raises(PersistenceRecordError, match="facts scope or fields"):
+        validate_persistence_record(_self_consistent_record(name, payload))
+
+
+def _reconciliation_event(name: str) -> PersistenceRecord:
+    mapping = frozen_oracle._persistence_record(name)
+    upstream = mapping["payload"]["upstream_payload"] if name != "Event" else mapping["payload"]
+    upstream["event_type"] = "ORDER_RECONCILIATION_OBSERVED"
+    upstream["safe_payload"] = {"trusted_fact_kind": "REJECTED", "venue_order_id": None}
+    if name == "Event":
+        upstream["event_fingerprint_sha256"] = fingerprint(
+            {key: value for key, value in upstream.items() if key != "event_fingerprint_sha256"}
+        )
+        return _self_consistent_record(name, upstream)
+    return _rehash_immutable(name, mapping)
+
+
+@pytest.mark.parametrize("name", ["Event", "Order lifecycle events/history"])
+def test_nullable_reconciliation_venue_order_id_is_accepted(name: str) -> None:
+    validate_persistence_record(_reconciliation_event(name))
+
+
+def test_immutable_event_reuses_exact_safe_payload_registry() -> None:
+    name = "Order lifecycle events/history"
+    mapping = frozen_oracle._persistence_record(name)
+    upstream = mapping["payload"]["upstream_payload"]
+    upstream["event_type"] = "ORDER_FILLED"
+    upstream["safe_payload"] = {"garbage": "still non-empty"}
+    with pytest.raises(PersistenceRecordError, match="frozen schema"):
+        validate_persistence_record(_rehash_immutable(name, mapping))
+
+
+def test_nfc_semantic_fingerprint_normalizes_nested_unicode_values() -> None:
+    name = "Order lifecycle events/history"
+    mapping = frozen_oracle._persistence_record(name)
+    upstream = mapping["payload"]["upstream_payload"]
+    upstream["event_type"] = "ORDER_REJECTED"
+    decomposed = "odrzucone-e\u0301"
+    upstream["safe_payload"] = {"reason_code": decomposed}
+    binding = CANONICAL_REGISTRY[name]["immutable_fact_binding"]
+    expected = production._semantic_fingerprint(binding, upstream)
+    generic = fingerprint(
+        {
+            field: upstream[field]
+            for field in binding["semantic_fingerprint_derivation"]["input_fields"]
+        }
+    )
+    assert unicodedata.normalize("NFC", decomposed) != decomposed
+    assert expected != generic
+    validate_persistence_record(_rehash_immutable(name, mapping))
+
+
+@pytest.mark.parametrize("name", LOCAL_NAMES)
+def test_every_local_schema_rejects_self_consistent_invalid_state_enum(name: str) -> None:
+    payload = frozen_oracle._payload_for(name)
+    payload["state"] = "BANANA"
+    with pytest.raises(PersistenceRecordError, match="local payload"):
+        validate_persistence_record(_self_consistent_record(name, payload))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "value"),
+    [
+        ("current_transition_revision", True),
+        ("current_transition_revision", 0),
+        ("designation_fingerprint_sha256", "x" * 64),
+        ("migration_id", 123),
+    ],
+)
+def test_local_schema_rejects_self_consistent_scalar_attacks(mutation: str, value: object) -> None:
+    name = "Migration current state/designation"
+    payload = frozen_oracle._payload_for(name)
+    payload[mutation] = value
+    with pytest.raises(PersistenceRecordError, match="local payload"):
+        validate_persistence_record(_self_consistent_record(name, payload))
+
+
+@pytest.mark.parametrize("shape", ["extra", "missing"])
+def test_local_schema_remains_closed_after_full_rehash(shape: str) -> None:
+    name = "SecretHandoff current state/designation"
+    payload = frozen_oracle._payload_for(name)
+    if shape == "extra":
+        payload["extra"] = True
+    else:
+        del payload["operation_fingerprint_sha256"]
+    with pytest.raises((PersistenceRecordError, KeyError)):
+        validate_persistence_record(_self_consistent_record(name, payload))
+
+
+@pytest.mark.parametrize(
+    ("name", "field", "invalid"),
+    [
+        ("Event", "event_type", "UNKNOWN_EVENT"),
+        ("LedgerEntry", "direction", "SIDEWAYS"),
+        ("LedgerEntry", "posting_role", "UNKNOWN_ROLE"),
+        ("RiskDecision", "decision", "MAYBE"),
+        ("SessionSecurityState current generation/state", "state", "PAUSED"),
+        ("SecretMetadataProjection", "state", "HIDDEN"),
+        ("SecretMetadataProjection", "secret_reference", "not-secure-store"),
+    ],
+)
+def test_direct_semantic_constraints_reject_self_consistent_values(
+    name: str, field: str, invalid: object
+) -> None:
+    payload = frozen_oracle._payload_for(name)
+    payload[field] = invalid
+    terminal = frozen_oracle._terminal_fingerprint_field(name)
+    if terminal:
+        payload[terminal] = fingerprint({k: v for k, v in payload.items() if k != terminal})
+    with pytest.raises(PersistenceRecordError):
+        validate_persistence_record(_self_consistent_record(name, payload))
+
+
+def test_event_safe_payload_registry_is_exact_after_full_rehash() -> None:
+    name = "Event"
+    payload = frozen_oracle._payload_for(name)
+    payload["safe_payload"] = {"arbitrary": "non-empty"}
+    payload["event_fingerprint_sha256"] = fingerprint(
+        {k: v for k, v in payload.items() if k != "event_fingerprint_sha256"}
+    )
+    with pytest.raises(PersistenceRecordError, match="safe_payload"):
+        validate_persistence_record(_self_consistent_record(name, payload))
+
+
+def test_fill_conditional_fee_semantics_survive_full_rehash() -> None:
+    name = "Fill"
+    payload = frozen_oracle._payload_for(name)
+    payload["fee_kind"] = "NONE"
+    payload["fee_quantity"] = "1"
+    payload["fill_fingerprint_sha256"] = fingerprint(
+        {k: v for k, v in payload.items() if k != "fill_fingerprint_sha256"}
+    )
+    with pytest.raises(PersistenceRecordError, match="fee semantics"):
+        validate_persistence_record(_self_consistent_record(name, payload))
 
 
 def test_carrier_fields_bind_exactly_to_canonical_schema() -> None:
@@ -286,11 +650,9 @@ def test_json_semantics_do_not_coerce_bool_integer_or_string() -> None:
     assert math.isfinite(1.0)
 
 
-def test_workspace_is_architecturally_valid_but_unsupported_in_s2a() -> None:
+def test_workspace_name_does_not_relax_its_exact_entity_binding() -> None:
     mapping = account_mapping(representation_name="Workspace")
-    with pytest.raises(
-        PersistenceRecordError, match="unsupported by current production implementation"
-    ):
+    with pytest.raises(PersistenceRecordError, match="entity_kind binding mismatch"):
         validate_persistence_record(parsed(mapping))
 
 

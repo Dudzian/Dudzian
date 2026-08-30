@@ -24,6 +24,12 @@ from bot_core.persistence.records import (
     PersistenceRecord,
     PersistenceRecordError,
     validate_persistence_record,
+    record_durability_class,
+    validate_record_bucket,
+)
+from bot_core.persistence.record_registry import (
+    PERSISTENCE_RECORD_REGISTRY,
+    STATE_STORE_SCOPE_BINDINGS,
 )
 
 _CANONICAL_ID_RE = re.compile(
@@ -36,8 +42,8 @@ _IDENTITY_FIELDS = (
     "device_installation_id",
     "state_store_identity_fingerprint_sha256",
 )
-_CURRENT_REPRESENTATION = "CryptoHunterAccount current record"
-_HISTORY_REPRESENTATION = "RuntimeSession canonical identity/history"
+_CURRENT_BUCKET = "DURABLE AUTHORITATIVE CURRENT STATE"
+_HISTORY_BUCKET = "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
 
 
 class StateStoreError(RuntimeError):
@@ -123,12 +129,12 @@ def _validate_record_store_scope(
 ) -> None:
     """Sprawdź wyłącznie lokalną zgodność scope carriera ze StateStore."""
 
-    if record.representation_name == _CURRENT_REPRESENTATION:
+    if record.representation_name == "CryptoHunterAccount current record":
         payload = record.payload
         if not isinstance(payload, Mapping) or payload.get("entity_id") != metadata.account_id:
             raise StateStoreError("CryptoHunterAccount record is outside StateStore scope")
         return
-    if record.representation_name == _HISTORY_REPRESENTATION:
+    if record.representation_name == "RuntimeSession canonical identity/history":
         payload = record.payload
         upstream = payload.get("upstream_payload") if isinstance(payload, Mapping) else None
         if (
@@ -137,7 +143,32 @@ def _validate_record_store_scope(
         ):
             raise StateStoreError("RuntimeSession record is outside StateStore scope")
         return
-    raise StateStoreError("record representation has no supported StateStore scope binding")
+
+    def at_path(value: object, path: tuple[str, ...]) -> object:
+        current = value
+        for part in path:
+            if not isinstance(current, Mapping):
+                raise StateStoreError("record scope path is absent")
+            current = current[part]
+        return current
+
+    binding = STATE_STORE_SCOPE_BINDINGS[record.representation_name]
+    if any(
+        at_path(record.payload, path) != metadata.account_id for path in binding["account_paths"]
+    ):
+        raise StateStoreError("record account scope mismatch")
+    if any(
+        at_path(record.payload, path) != metadata.device_installation_id
+        for path in binding["device_paths"]
+    ):
+        raise StateStoreError("record device scope mismatch")
+
+
+def _record_bucket(record: PersistenceRecord) -> str:
+    try:
+        return record_durability_class(record)
+    except PersistenceRecordError as exc:
+        raise StateStoreError("record representation has no durable bucket") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,8 +241,10 @@ class SQLiteStateStore:
             raise StateStoreError("persisted StateStoreMetadata is malformed") from exc
 
     def _read_records(
-        self, table: str, representation: str, metadata: StateStoreMetadata | None
+        self, table: str, bucket: str, metadata: StateStoreMetadata | None
     ) -> tuple[PersistenceRecord, ...]:
+        if bucket in PERSISTENCE_RECORD_REGISTRY:
+            bucket = str(PERSISTENCE_RECORD_REGISTRY[bucket]["durability_class"])
         try:
             rows = self._connection.execute(
                 f"SELECT record_key, representation_name, record_json FROM {table}"
@@ -224,7 +257,7 @@ class SQLiteStateStore:
                 validate_persistence_record(record)
                 if sql_key != record.record_key or sql_name != record.representation_name:
                     raise StateStoreError("persisted record SQL carrier mismatch")
-                if record.representation_name != representation:
+                if _record_bucket(record) != bucket:
                     raise StateStoreError("persisted record is in the wrong storage bucket")
                 if metadata is None:
                     raise StateStoreError("persisted record has no StateStore scope")
@@ -270,12 +303,12 @@ class SQLiteStateStore:
 
     def read_current_records(self) -> tuple[PersistenceRecord, ...]:
         return self._read_records(
-            "state_store_current_records", _CURRENT_REPRESENTATION, self.read_metadata()
+            "state_store_current_records", _CURRENT_BUCKET, self.read_metadata()
         )
 
     def read_immutable_history(self) -> tuple[PersistenceRecord, ...]:
         return self._read_records(
-            "state_store_immutable_history", _HISTORY_REPRESENTATION, self.read_metadata()
+            "state_store_immutable_history", _HISTORY_BUCKET, self.read_metadata()
         )
 
     def read_transaction_descriptors(self) -> tuple[StateStoreTransactionDescriptor, ...]:
@@ -283,12 +316,8 @@ class SQLiteStateStore:
 
     def _snapshot_inside_transaction(self) -> StateStoreSnapshot | None:
         metadata = self.read_metadata()
-        current = self._read_records(
-            "state_store_current_records", _CURRENT_REPRESENTATION, metadata
-        )
-        history = self._read_records(
-            "state_store_immutable_history", _HISTORY_REPRESENTATION, metadata
-        )
+        current = self._read_records("state_store_current_records", _CURRENT_BUCKET, metadata)
+        history = self._read_records("state_store_immutable_history", _HISTORY_BUCKET, metadata)
         descriptors = self._read_descriptors()
         if metadata is None:
             if current or history or descriptors:
@@ -311,6 +340,15 @@ class SQLiteStateStore:
     @staticmethod
     def verify_snapshot(snapshot: StateStoreSnapshot) -> None:
         metadata = snapshot.metadata
+        for records, bucket in (
+            (snapshot.current_records, _CURRENT_BUCKET),
+            (snapshot.immutable_history, _HISTORY_BUCKET),
+        ):
+            for record in records:
+                try:
+                    validate_record_bucket(record, bucket)
+                except (PersistenceRecordError, TypeError, ValueError) as exc:
+                    raise StateStoreError("snapshot record is in the wrong durable bucket") from exc
         for record in (*snapshot.current_records, *snapshot.immutable_history):
             try:
                 validate_persistence_record(record)
@@ -413,10 +451,10 @@ class SQLiteStateStore:
         """Derive caller-visible hashes without weakening commit-time verification."""
 
         current_delta = self._snapshot_records(
-            current_records, expected_representation=_CURRENT_REPRESENTATION, metadata=metadata
+            current_records, expected_bucket=_CURRENT_BUCKET, metadata=metadata
         )
         history_delta = self._snapshot_records(
-            immutable_history, expected_representation=_HISTORY_REPRESENTATION, metadata=metadata
+            immutable_history, expected_bucket=_HISTORY_BUCKET, metadata=metadata
         )
         before = self.read_verified_snapshot()
         old_current = () if before is None else before.current_records
@@ -472,7 +510,7 @@ class SQLiteStateStore:
     def _snapshot_records(
         records: Iterable[PersistenceRecord],
         *,
-        expected_representation: str,
+        expected_bucket: str,
         metadata: StateStoreMetadata,
     ) -> tuple[PersistenceRecord, ...]:
         try:
@@ -485,7 +523,7 @@ class SQLiteStateStore:
                 validate_persistence_record(record)
             except (PersistenceRecordError, TypeError, ValueError) as exc:
                 raise StateStoreError("input PersistenceRecord failed Stage 1") from exc
-            if record.representation_name != expected_representation:
+            if _record_bucket(record) != expected_bucket:
                 raise StateStoreError("input PersistenceRecord is in the wrong storage bucket")
             if record.record_key in keys:
                 raise StateStoreError("duplicate input record_key")
@@ -525,10 +563,10 @@ class SQLiteStateStore:
             except ValueError as exc:
                 raise StateStoreError(str(exc)) from exc
         current_delta = self._snapshot_records(
-            current_records, expected_representation=_CURRENT_REPRESENTATION, metadata=metadata
+            current_records, expected_bucket=_CURRENT_BUCKET, metadata=metadata
         )
         history_delta = self._snapshot_records(
-            immutable_history, expected_representation=_HISTORY_REPRESENTATION, metadata=metadata
+            immutable_history, expected_bucket=_HISTORY_BUCKET, metadata=metadata
         )
         try:
             self._connection.execute("BEGIN IMMEDIATE")

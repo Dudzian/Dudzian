@@ -41,3 +41,488 @@ Actual device target, grant id, policy scope, target state i current→next revi
 Pure safe-payload projector przepuszcza tylko bezpieczne IDs, opaque references, fingerprints i reason codes; usuwa PIN, verifier, materiał biometryczny, API secret, private key, passphrase, bearer token i plaintext payload. Zamknięta taksonomia odróżnia zwykłe denial od `CONTRACT_INCONSISTENT`.
 
 Canonical current designation jest wyłącznie mapą scope→accepted fingerprint; nie istnieją hybrydowe `Current*Binding` authority schemas. Authorization wymaga dokładnie `TRUSTED`; `ENROLLED_UNTRUSTED` nie autoryzuje. Unlock sam rewaliduje current identity/device/PIN/LOCKED session/exact entitlement oraz pełną generation coherence. Każda publiczna request path najpierw waliduje strukturę i failuje zamknięcie bez incidental exception. Security generation identity/device/PIN/session/entitlement/proof musi być spójna, inaczej Core zwraca `CONTRACT_INCONSISTENT`. `executable_boundary_schemas` jest dwukierunkowo exact z `M010_AUTHORITY_DATACLASSES`. Niezależny, głęboko immutable `EXPECTED_PROTOCOL` attestuje cały niezaufany JSON, exact top-level keys, wszystkie semantyczne roots, dependency pointery i canonical content fingerprints, w tym finalny bootstrap M0.3. M0.10 nie rości trwałości; persistence, migrations, backup i recovery należą do M0.11.
+
+## Canonical Source-Closure Projection
+
+The canonical JSON remains authoritative. This section is its deterministic projection for the source-closure rules.
+
+### `canonical_integrity_fingerprint_policy`
+
+```json
+{
+  "algorithm": "SHA-256",
+  "input_shape": "EXACT_CLOSED_JSON_OBJECT_OF_EXPLICIT_SEMANTIC_INPUT_FIELDS",
+  "json_canonicalization": {
+    "sort_keys": true,
+    "separators": [
+      ",",
+      ":"
+    ],
+    "ensure_ascii": false,
+    "allow_nan": false
+  },
+  "encoding": "UTF-8",
+  "array_policy": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER; NEVER_SORT_UNLESS_OWNING_CONTRACT_REQUIRES",
+  "object_key_policy": "KEY_ORDER_NON_SEMANTIC; SORT_KEYS_CANONICALIZES",
+  "number_policy": "NO_FLOAT_COERCION; VALIDATE_OWNING_FIELD_CONTRACT_BEFORE_HASHING",
+  "decimal_string_policy": "VALIDATE_CANONICAL_OWNING_FIELD_CONTRACT; NO_FINGERPRINT_LAYER_NORMALIZATION",
+  "timestamp_policy": "VALIDATE_CANONICAL_OWNING_TIMESTAMP_CONTRACT; NO_FINGERPRINT_LAYER_NORMALIZATION",
+  "unicode_policy": "HASH_EXACT_VALIDATED_STRINGS; NO_HIDDEN_NFC_OR_NFD_TRANSFORMATION",
+  "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+  "validation": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+  "authority_boundary": "INTEGRITY_ONLY; NEVER_CREATES_ACCEPTED_MEMBERSHIP, CURRENT_AUTHORITY, LIVE_READINESS, OR SELF_ENROLLMENT"
+}
+```
+
+### `registries`
+
+```json
+{
+  "identity_states": [
+    "ACTIVE",
+    "REVOKED"
+  ],
+  "device_trust_states": [
+    "ENROLLED_UNTRUSTED",
+    "TRUSTED",
+    "REVOKED",
+    "REPLACED"
+  ],
+  "session_states": [
+    "LOCKED",
+    "UNLOCKED",
+    "LOGGED_OUT"
+  ],
+  "biometric_outcomes": [
+    "SUCCESS",
+    "FAILED",
+    "CANCELLED",
+    "UNAVAILABLE"
+  ],
+  "factors": [
+    "PIN",
+    "BIOMETRIC"
+  ],
+  "factor_policies": [
+    "PIN",
+    "BIOMETRIC",
+    "PIN_AND_BIOMETRIC"
+  ],
+  "environments": [
+    "PAPER",
+    "TESTNET",
+    "LIVE"
+  ],
+  "secret_kinds": [
+    "API_KEY",
+    "API_SECRET",
+    "PASSPHRASE",
+    "PRIVATE_KEY"
+  ],
+  "secret_states": [
+    "AVAILABLE",
+    "ROTATED",
+    "REVOKED",
+    "REPLACED"
+  ],
+  "grant_states": [
+    "ACTIVE",
+    "SUSPENDED",
+    "REVOKED"
+  ],
+  "failure_codes": [
+    "MALFORMED_UNTRUSTED_CONTEXT",
+    "IDENTITY_INVALID",
+    "IDENTITY_REVOKED",
+    "DEVICE_NOT_TRUSTED",
+    "DEVICE_REVOKED",
+    "AUTHENTICATION_REQUIRED",
+    "AUTHENTICATION_FAILED",
+    "FACTOR_UNAVAILABLE",
+    "PIN_LOCKED",
+    "PROOF_EXPIRED",
+    "PROOF_STALE",
+    "AUTHORIZATION_DENIED",
+    "SECRET_INVALID",
+    "SECRET_UNAVAILABLE",
+    "SECRET_REVOKED",
+    "SECRET_STALE",
+    "OPERATION_UNSUPPORTED",
+    "CONTRACT_INCONSISTENT"
+  ],
+  "device_trust_transition_graph": {
+    "TRUST_DEVICE": [
+      "ABSENT->TRUSTED",
+      "ENROLLED_UNTRUSTED->TRUSTED"
+    ],
+    "REVOKE_DEVICE": [
+      "TRUSTED->REVOKED"
+    ],
+    "terminal_states": [
+      "REVOKED",
+      "REPLACED"
+    ],
+    "denied": [
+      "TRUSTED->TRUSTED",
+      "REVOKED->TRUSTED",
+      "REPLACED->TRUSTED"
+    ]
+  },
+  "identity_transition_rule": "REVOKED is terminal for the same OperatorIdentity; ACTIVE cannot be restored for that identity",
+  "secret_use_operation_registry": [
+    "PRIVATE_DATA",
+    "ORDER_ENTRY"
+  ]
+}
+```
+
+### `executable_boundary_terminal_fingerprints`
+
+```json
+{
+  "SessionSecurityState": {
+    "field": "content_fingerprint_sha256",
+    "algorithm": "SHA-256",
+    "input_fields": [
+      "account_id",
+      "operator_id",
+      "device_installation_id",
+      "runtime_session_id",
+      "state",
+      "session_generation",
+      "security_generation"
+    ],
+    "excluded_fields": [
+      "content_fingerprint_sha256"
+    ],
+    "input_shape": "JSON_OBJECT",
+    "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+    "canonicalization": {
+      "sort_keys": true,
+      "separators": [
+        ",",
+        ":"
+      ],
+      "ensure_ascii": false,
+      "allow_nan": false
+    },
+    "encoding": "UTF-8",
+    "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+    "unicode_normalization": "NONE",
+    "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+    "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+    "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+    "exact_fields_source_pointer": "/executable_boundary_schemas/SessionSecurityState"
+  },
+  "SecretMetadataProjection": {
+    "field": "content_fingerprint_sha256",
+    "algorithm": "SHA-256",
+    "input_fields": [
+      "secret_reference",
+      "secret_kind",
+      "exchange_account_id",
+      "credential_profile_id",
+      "exchange_id",
+      "environment",
+      "permitted_operations",
+      "secret_revision",
+      "state"
+    ],
+    "excluded_fields": [
+      "content_fingerprint_sha256"
+    ],
+    "input_shape": "JSON_OBJECT",
+    "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+    "canonicalization": {
+      "sort_keys": true,
+      "separators": [
+        ",",
+        ":"
+      ],
+      "ensure_ascii": false,
+      "allow_nan": false
+    },
+    "encoding": "UTF-8",
+    "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+    "unicode_normalization": "NONE",
+    "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+    "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+    "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+    "exact_fields_source_pointer": "/executable_boundary_schemas/SecretMetadataProjection"
+  }
+}
+```
+
+### `executable_boundary_schemas`
+
+```json
+{
+  "OperatorIdentitySecurityProjection": [
+    "account_id",
+    "operator_id",
+    "state",
+    "identity_revision",
+    "security_generation",
+    "content_fingerprint_sha256"
+  ],
+  "DeviceTrustProjection": [
+    "account_id",
+    "device_installation_id",
+    "state",
+    "trust_revision",
+    "security_generation",
+    "platform_enrollment_revision",
+    "content_fingerprint_sha256"
+  ],
+  "PinVerifierRecord": [
+    "account_id",
+    "operator_id",
+    "device_installation_id",
+    "algorithm_id",
+    "parameter_policy_version",
+    "salt_reference",
+    "verifier",
+    "pin_revision",
+    "failed_attempts",
+    "lockout_until_utc",
+    "security_generation",
+    "content_fingerprint_sha256"
+  ],
+  "PlatformBiometricAssertion": [
+    "account_id",
+    "device_installation_id",
+    "platform_authenticator_source",
+    "platform_enrollment_revision",
+    "challenge_fingerprint_sha256",
+    "outcome",
+    "verified_at_utc",
+    "expires_at_utc",
+    "assertion_fingerprint_sha256"
+  ],
+  "AuthenticationProof": [
+    "account_id",
+    "operator_id",
+    "device_installation_id",
+    "factor_set",
+    "issued_at_utc",
+    "expires_at_utc",
+    "identity_revision",
+    "device_trust_revision",
+    "pin_revision",
+    "platform_enrollment_revision",
+    "security_generation",
+    "session_generation",
+    "environment",
+    "operation",
+    "scope_fingerprint_sha256",
+    "mutation_fingerprint_sha256",
+    "causation_id",
+    "correlation_id",
+    "proof_fingerprint_sha256"
+  ],
+  "CoreIssuedAuthenticationProofBinding": [
+    "proof_fingerprint_sha256",
+    "complete_proof_content_fingerprint_sha256",
+    "authority_source",
+    "account_id",
+    "operator_id",
+    "device_installation_id",
+    "identity_revision",
+    "device_trust_revision",
+    "pin_revision",
+    "platform_enrollment_revision",
+    "security_generation",
+    "session_generation"
+  ],
+  "SessionSecurityState": {
+    "exact_fields": [
+      "account_id",
+      "operator_id",
+      "device_installation_id",
+      "runtime_session_id",
+      "state",
+      "session_generation",
+      "security_generation",
+      "content_fingerprint_sha256"
+    ],
+    "terminal_fingerprint": {
+      "field": "content_fingerprint_sha256",
+      "algorithm": "SHA-256",
+      "input_fields": [
+        "account_id",
+        "operator_id",
+        "device_installation_id",
+        "runtime_session_id",
+        "state",
+        "session_generation",
+        "security_generation"
+      ],
+      "excluded_fields": [
+        "content_fingerprint_sha256"
+      ],
+      "input_shape": "JSON_OBJECT",
+      "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+      "canonicalization": {
+        "sort_keys": true,
+        "separators": [
+          ",",
+          ":"
+        ],
+        "ensure_ascii": false,
+        "allow_nan": false
+      },
+      "encoding": "UTF-8",
+      "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+      "unicode_normalization": "NONE",
+      "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+      "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+      "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+      "exact_fields_source_pointer": "/executable_boundary_schemas/SessionSecurityState"
+    }
+  },
+  "OperationEntitlementProjection": [
+    "account_id",
+    "operator_id",
+    "operation",
+    "environment",
+    "authorization_scope",
+    "entitlement_revision",
+    "security_generation",
+    "content_fingerprint_sha256"
+  ],
+  "SecretMetadataProjection": {
+    "exact_fields": [
+      "secret_reference",
+      "secret_kind",
+      "exchange_account_id",
+      "credential_profile_id",
+      "exchange_id",
+      "environment",
+      "permitted_operations",
+      "secret_revision",
+      "state",
+      "content_fingerprint_sha256"
+    ],
+    "terminal_fingerprint": {
+      "field": "content_fingerprint_sha256",
+      "algorithm": "SHA-256",
+      "input_fields": [
+        "secret_reference",
+        "secret_kind",
+        "exchange_account_id",
+        "credential_profile_id",
+        "exchange_id",
+        "environment",
+        "permitted_operations",
+        "secret_revision",
+        "state"
+      ],
+      "excluded_fields": [
+        "content_fingerprint_sha256"
+      ],
+      "input_shape": "JSON_OBJECT",
+      "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+      "canonicalization": {
+        "sort_keys": true,
+        "separators": [
+          ",",
+          ":"
+        ],
+        "ensure_ascii": false,
+        "allow_nan": false
+      },
+      "encoding": "UTF-8",
+      "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+      "unicode_normalization": "NONE",
+      "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+      "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+      "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+      "exact_fields_source_pointer": "/executable_boundary_schemas/SecretMetadataProjection"
+    },
+    "field_schemas": {
+      "permitted_operations": {
+        "type": "canonical_unique_array_of_enum",
+        "items_source_pointer": "/registries/secret_use_operation_registry",
+        "min_items": 1,
+        "unique": true,
+        "canonical_order": "REGISTRY_ORDER",
+        "validator_behavior": "REJECT_NON_CANONICAL_ORDER_OR_DUPLICATES_NEVER_SORT_OR_DEDUPLICATE",
+        "validate_before_terminal_fingerprint": true,
+        "domain_separation": "SECRET_USE_OPERATIONS_NOT_ADMIN_OPERATION_POLICY_OR_M05_CREDENTIAL_PERMISSIONS",
+        "authority_boundary": "MEMBERSHIP_IN_INTRINSIC_METADATA_DOES_NOT_ESTABLISH_CURRENT_ACCEPTED_SECRET_AUTHORITY"
+      }
+    }
+  },
+  "LiveAccessGrantSecurityProjection": [
+    "live_access_grant_id",
+    "account_id",
+    "operator_id",
+    "device_installation_id",
+    "policy_scope_fingerprint_sha256",
+    "state",
+    "grant_revision",
+    "security_generation",
+    "content_fingerprint_sha256"
+  ],
+  "InitialSecurityState": [
+    "account_id",
+    "operator_id",
+    "device_installation_id",
+    "security_generation",
+    "session_generation",
+    "state",
+    "bootstrap_claim_fingerprint_sha256",
+    "content_fingerprint_sha256"
+  ],
+  "InitialSecurityEstablishmentResult": [
+    "account_id",
+    "operator_id",
+    "device_installation_id",
+    "security_generation",
+    "session_generation",
+    "bootstrap_claim_fingerprint_sha256",
+    "result",
+    "result_fingerprint_sha256"
+  ],
+  "CoreAcceptedPlatformBiometricAssertionBinding": [
+    "assertion_fingerprint_sha256",
+    "complete_assertion_content_fingerprint_sha256",
+    "authority_source",
+    "account_id",
+    "device_installation_id",
+    "platform_enrollment_revision",
+    "challenge_fingerprint_sha256"
+  ],
+  "M03BootstrapAuthorityView": [
+    "claim_fingerprint_sha256",
+    "account_id",
+    "device_installation_id",
+    "operator_id",
+    "bootstrap_generation",
+    "bootstrap_revision",
+    "purpose",
+    "pre_state_fingerprint_sha256",
+    "post_state_fingerprint_sha256",
+    "consumed_authority_fingerprint_sha256",
+    "consumed_claim_fingerprint_sha256",
+    "consumed_challenge_fingerprint_sha256"
+  ],
+  "M03AcceptedBootstrapAuthorityBinding": [
+    "view_fingerprint_sha256",
+    "complete_view_content_fingerprint_sha256",
+    "claim_fingerprint_sha256",
+    "account_id",
+    "device_installation_id",
+    "operator_id",
+    "bootstrap_generation",
+    "bootstrap_revision",
+    "purpose",
+    "accepted_pre_fingerprint_sha256",
+    "current_post_fingerprint_sha256",
+    "consumed_authority_fingerprint_sha256",
+    "consumed_claim_fingerprint_sha256",
+    "consumed_challenge_fingerprint_sha256",
+    "authority_source"
+  ]
+}
+```
