@@ -75,7 +75,7 @@
         "milestone": "M0.5",
         "artifact": "exchange_accounts_and_instruments.json",
         "json_pointer": "/credential_profile_contract",
-        "content_fingerprint_sha256": "4fd7629e1161d250471bfbf22976674a1794fe508af1f455fdc057e7a533786a"
+        "content_fingerprint_sha256": "d0f8b6213cd4388f097a2c16f27edc2bd304b36f0118ab0c834088e210432a2a"
       },
       {
         "milestone": "M0.6",
@@ -165,13 +165,13 @@
         "milestone": "M0.9",
         "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
         "json_pointer": "/kill_switch_contract",
-        "content_fingerprint_sha256": "31e8ff723ed8258bb3693a43228095fb70c4ff209aac2697b7d4e7d7aaf281a9"
+        "content_fingerprint_sha256": "c9f992a900d491e5eec67211ab9c3f158c11bb88171374ab4dd6f37224107061"
       },
       {
         "milestone": "M0.9",
         "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
         "json_pointer": "/execution_lease_contract",
-        "content_fingerprint_sha256": "92f2ac9a03ce3f6a4e419d3240b79e5affd0f620d70d96dd33c06c658b19a66a"
+        "content_fingerprint_sha256": "04e54a29e0f920af56b0918ca83bb825c307d6930fd1363ac77b540451ea06cc"
       },
       {
         "milestone": "M0.9",
@@ -231,7 +231,7 @@
         "milestone": "M0.10",
         "artifact": "identity_device_authentication_and_secrets.json",
         "json_pointer": "/registries",
-        "content_fingerprint_sha256": "c9fd15a72c6da56cda1a9c83afdf61e374fa817d992bb6c6850ba97b7ae26948"
+        "content_fingerprint_sha256": "ef6f1f675d9ec7e4aaf609baf4576cf4a1db1715d70d8919ec278fff5dbdb9e4"
       },
       {
         "milestone": "M0.10",
@@ -297,7 +297,7 @@
         "milestone": "M0.10",
         "artifact": "identity_device_authentication_and_secrets.json",
         "json_pointer": "/executable_boundary_schemas",
-        "content_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db"
+        "content_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321"
       }
     ],
     "count": 48,
@@ -1621,7 +1621,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
         "record_key_strategy": "FACT_SCOPE_OBJECT_GENERATION",
         "fact_binding": {
           "required_fact_fields": [
@@ -1696,7 +1696,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
           "required_fields": [
@@ -1861,7 +1861,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "8a3d80692e3ec63995618a9ff7b97705e94b8441e98f13cc5384779d9cb098db",
+        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
           "required_fields": [
@@ -2209,7 +2209,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "4fd7629e1161d250471bfbf22976674a1794fe508af1f455fdc057e7a533786a",
+        "semantic_contract_fingerprint_sha256": "d0f8b6213cd4388f097a2c16f27edc2bd304b36f0118ab0c834088e210432a2a",
         "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
         "direct_upstream_validator": "CredentialProfile metadata/reference"
       },
@@ -3051,7 +3051,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "31e8ff723ed8258bb3693a43228095fb70c4ff209aac2697b7d4e7d7aaf281a9",
+        "semantic_contract_fingerprint_sha256": "c9f992a900d491e5eec67211ab9c3f158c11bb88171374ab4dd6f37224107061",
         "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
         "direct_upstream_validator": "kill-switch state/generation"
       },
@@ -3067,7 +3067,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "31e8ff723ed8258bb3693a43228095fb70c4ff209aac2697b7d4e7d7aaf281a9",
+        "semantic_contract_fingerprint_sha256": "c9f992a900d491e5eec67211ab9c3f158c11bb88171374ab4dd6f37224107061",
         "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
         "payload_contract": {
           "required_fields": [
@@ -4242,7 +4242,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "7eccd54c17ee9def7a4f151ec684fd8623f36299a1e6f5dfa1c3716c7a46d92a",
+        "semantic_contract_fingerprint_sha256": "bb8460cd322e29d72e8b81681cd5b87c1ac5275ba826f4f8b75e53ddb3b2c173",
         "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
         "direct_upstream_validator": "RiskDecision"
       },
@@ -4258,7 +4258,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "ad15be8435c150c2b1bc914cb899442b2f6bc4e28e37120b487734722cadeefe",
+        "semantic_contract_fingerprint_sha256": "e7c8e00b5235ca738ac31d66371fac1431497967392ca2352ae1598abbd94159",
         "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
         "direct_upstream_validator": "ExecutionLease immutable record"
       },
@@ -4274,7 +4274,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "ad15be8435c150c2b1bc914cb899442b2f6bc4e28e37120b487734722cadeefe",
+        "semantic_contract_fingerprint_sha256": "e7c8e00b5235ca738ac31d66371fac1431497967392ca2352ae1598abbd94159",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
           "required_fields": [
@@ -4305,7 +4305,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "ad15be8435c150c2b1bc914cb899442b2f6bc4e28e37120b487734722cadeefe",
+        "semantic_contract_fingerprint_sha256": "e7c8e00b5235ca738ac31d66371fac1431497967392ca2352ae1598abbd94159",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
           "required_fields": [
@@ -4459,7 +4459,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "d00e3866c3106a98e7c2a1aa06c36442c4fcf29c8fca117e51b07ff1249a3a9a",
+        "semantic_contract_fingerprint_sha256": "c86b2d7960aef278741d0e6a304271937b961a84951d2e377ac7d85bf6f07d3a",
         "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
         "direct_upstream_validator": "SessionSecurityState current generation/state"
       },
@@ -4475,7 +4475,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "d00e3866c3106a98e7c2a1aa06c36442c4fcf29c8fca117e51b07ff1249a3a9a",
+        "semantic_contract_fingerprint_sha256": "c86b2d7960aef278741d0e6a304271937b961a84951d2e377ac7d85bf6f07d3a",
         "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
         "payload_contract": {
           "required_fields": [
@@ -5220,7 +5220,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "eec388e6568803e5d66c0c8d7e1cbf63d9f5567149617799807cbc354a2c65cc",
+        "semantic_contract_fingerprint_sha256": "fd44cd04d78c7ca79018fa294881f45d19fbad522fcb4790587ea45ab61c6808",
         "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
         "direct_upstream_validator": "SecretMetadataProjection"
       },
@@ -5487,7 +5487,13 @@
           "created_at_utc",
           "retired_at_utc"
         ],
-        "nullable_fields": [],
+        "nullable_fields": [
+          "external_account_reference",
+          "external_subaccount_reference",
+          "active_credential_profile_id",
+          "account_capability_snapshot_id",
+          "retired_at_utc"
+        ],
         "upstream_field_schemas": {
           "exchange_account_id": {
             "type": "id",
@@ -5515,13 +5521,35 @@
             "type": "non_empty_string"
           },
           "lifecycle_state": {
-            "type": "non_empty_string"
+            "type": "enum",
+            "values": [
+              "DRAFT",
+              "ACTIVE",
+              "DISABLED",
+              "RETIRED"
+            ]
           },
           "connection_state": {
-            "type": "non_empty_string"
+            "type": "enum",
+            "values": [
+              "DISCONNECTED",
+              "CONNECTING",
+              "SYNCHRONIZING",
+              "ONLINE",
+              "DEGRADED",
+              "BLOCKED"
+            ]
           },
           "execution_authorization": {
-            "type": "non_empty_string"
+            "type": "enum",
+            "values": [
+              "READ_ONLY",
+              "ORDER_ENTRY_ALLOWED",
+              "BLOCKED_BY_POLICY",
+              "BLOCKED_BY_KILL_SWITCH",
+              "BLOCKED_BY_LEASE",
+              "BLOCKED_BY_RECONCILIATION"
+            ]
           },
           "external_account_identity_state": {
             "type": "object",
@@ -5550,12 +5578,28 @@
             "type": "timestamp"
           },
           "retired_at_utc": {
-            "type": "timestamp"
+            "type": "nullable_timestamp"
           }
         },
         "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
         "record_key_fields": [
           "exchange_account_id"
+        ],
+        "semantic_constraints": {
+          "lifecycle_timestamp_policy": {
+            "source_pointer": "/exchange_account_contract/lifecycle_timestamp_policy",
+            "state_field": "lifecycle_state",
+            "created_field": "created_at_utc",
+            "retired_field": "retired_at_utc"
+          }
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
         ]
       },
       "CredentialProfile metadata/reference": {
@@ -5575,7 +5619,11 @@
           "rotated_from_credential_profile_id",
           "retired_at_utc"
         ],
-        "nullable_fields": [],
+        "nullable_fields": [
+          "public_key_identifier",
+          "rotated_from_credential_profile_id",
+          "retired_at_utc"
+        ],
         "upstream_field_schemas": {
           "credential_profile_id": {
             "type": "id",
@@ -5597,33 +5645,106 @@
             ]
           },
           "credential_purpose": {
-            "type": "non_empty_string"
+            "type": "enum",
+            "values": [
+              "ACCOUNT_READ",
+              "ORDER_ENTRY",
+              "RECONCILIATION"
+            ]
           },
           "secure_store_reference": {
-            "type": "non_empty_string"
+            "type": "secure_store_reference",
+            "grammar": {
+              "prefix": "secure-store://",
+              "locator": "non-empty opaque string",
+              "forbidden_characters": [
+                "whitespace",
+                "?",
+                "#",
+                "="
+              ],
+              "forbidden_payload_markers": [
+                "api_key",
+                "apikey",
+                "secret",
+                "password",
+                "token",
+                "private_key",
+                "credential_value",
+                "plaintext"
+              ]
+            }
           },
           "public_key_identifier": {
-            "type": "non_empty_string"
+            "type": "nullable_non_empty_string"
           },
           "permission_snapshot": {
-            "type": "array"
+            "type": "unique_array_of_enum",
+            "values": [
+              "READ_ACCOUNT",
+              "READ_ORDERS",
+              "PLACE_ORDERS",
+              "CANCEL_ORDERS",
+              "WITHDRAW",
+              "INTERNAL_TRANSFER"
+            ],
+            "order": "PRESERVED"
           },
           "lifecycle_state": {
-            "type": "non_empty_string"
+            "type": "enum",
+            "values": [
+              "ACTIVE",
+              "RETIRED"
+            ]
           },
           "created_at_utc": {
             "type": "timestamp"
           },
           "rotated_from_credential_profile_id": {
-            "type": "non_empty_string"
+            "type": "nullable_canonical_id",
+            "id_prefix": "cred",
+            "identifier_policy": "canonical UUIDv7-prefixed ID"
           },
           "retired_at_utc": {
-            "type": "timestamp"
+            "type": "nullable_timestamp",
+            "policy_pointer": "/timestamp_policy",
+            "nullability": "CONDITIONAL_ON_LIFECYCLE_STATE"
           }
         },
         "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
         "record_key_fields": [
           "credential_profile_id"
+        ],
+        "semantic_constraints": {
+          "lifecycle_timestamp_policy": {
+            "created_at_utc": {
+              "required": true,
+              "timestamp_policy_pointer": "/timestamp_policy"
+            },
+            "ACTIVE": {
+              "retired_at_utc": "MUST_BE_NULL"
+            },
+            "RETIRED": {
+              "retired_at_utc": "REQUIRED_CANONICAL_TIMESTAMP",
+              "ordering": "retired_at_utc >= created_at_utc"
+            },
+            "wall_clock_now_authority": false,
+            "scope": "INTRINSIC_SINGLE_RECORD_CONSISTENCY_ONLY",
+            "lineage_timestamp_algorithm_preserved_separately": true
+          },
+          "self_cycle": {
+            "left": "credential_profile_id",
+            "right": "rotated_from_credential_profile_id",
+            "rule": "MUST_DIFFER_WHEN_RIGHT_NON_NULL"
+          }
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
         ]
       },
       "StrategyInstance current lifecycle/config": {
@@ -5688,6 +5809,14 @@
         "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
         "record_key_fields": [
           "strategy_instance_id"
+        ],
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
         ]
       },
       "kill-switch state/generation": {
@@ -5745,6 +5874,43 @@
           "scope_id",
           "environment",
           "generation"
+        ],
+        "terminal_fingerprint": {
+          "field": "record_fingerprint_sha256",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "scope_type",
+            "scope_id",
+            "environment",
+            "state",
+            "source_revision",
+            "effective_at_utc",
+            "generation",
+            "accepted_authority_fingerprint_sha256"
+          ],
+          "excluded_fields": [
+            "record_fingerprint_sha256"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "encoding": "UTF-8",
+          "canonical_json": {
+            "sort_keys": true,
+            "separators": [
+              ",",
+              ":"
+            ],
+            "ensure_ascii": false,
+            "allow_nan": false
+          },
+          "digest_format": "lowercase_hex"
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
         ]
       },
       "Command accepted request": {
@@ -5904,6 +6070,75 @@
         "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
         "record_key_fields": [
           "command_id"
+        ],
+        "semantic_constraints": {
+          "source_pointer": "/command_registry/SUBMIT_ORDER/constraints",
+          "rules": [
+            "order_id differs from command_id",
+            "MARKET requires limit_price null",
+            "LIMIT requires limit_price non-null",
+            "GTD requires expire_at_utc non-null",
+            "non-GTD requires expire_at_utc null",
+            "STRATEGY_INSTANCE source requires strategy_instance_id non-null",
+            "other sources require strategy_instance_id null"
+          ],
+          "conditional_nullability": [
+            {
+              "when": {
+                "order_type": "MARKET"
+              },
+              "field": "limit_price",
+              "required": "NULL"
+            },
+            {
+              "when": {
+                "order_type": "LIMIT"
+              },
+              "field": "limit_price",
+              "required": "NON_NULL"
+            },
+            {
+              "when": {
+                "time_in_force": "GTD"
+              },
+              "field": "expire_at_utc",
+              "required": "NON_NULL"
+            },
+            {
+              "when_not": {
+                "time_in_force": "GTD"
+              },
+              "field": "expire_at_utc",
+              "required": "NULL"
+            },
+            {
+              "when": {
+                "source_type": "STRATEGY_INSTANCE"
+              },
+              "field": "strategy_instance_id",
+              "required": "NON_NULL"
+            },
+            {
+              "when_not": {
+                "source_type": "STRATEGY_INSTANCE"
+              },
+              "field": "strategy_instance_id",
+              "required": "NULL"
+            }
+          ],
+          "identity_inequality": {
+            "left": "order_id",
+            "right": "command_id",
+            "rule": "MUST_DIFFER"
+          }
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
         ]
       },
       "Event": {
@@ -5928,14 +6163,41 @@
           "safe_payload",
           "event_fingerprint_sha256"
         ],
-        "nullable_fields": [],
+        "nullable_fields": [
+          "causation_id",
+          "command_id"
+        ],
         "upstream_field_schemas": {
           "audit_event_id": {
             "type": "id",
             "prefix": "evt"
           },
           "event_type": {
-            "type": "non_empty_string"
+            "type": "enum",
+            "registry": "event_types",
+            "values": [
+              "ORDER_PLANNED",
+              "ORDER_DISPATCHED",
+              "ORDER_ACKNOWLEDGED",
+              "ORDER_REJECTED",
+              "ORDER_PARTIALLY_FILLED",
+              "ORDER_FILLED",
+              "ORDER_CANCEL_REQUESTED",
+              "ORDER_CANCEL_CONFIRMED",
+              "ORDER_CANCEL_REJECTED",
+              "ORDER_REPLACE_REQUESTED",
+              "ORDER_REPLACE_CONFIRMED",
+              "ORDER_REPLACE_REJECTED",
+              "ORDER_EXPIRED",
+              "ORDER_EXTERNAL_OUTCOME_UNKNOWN",
+              "ORDER_RECONCILIATION_OBSERVED",
+              "COMMAND_ACCEPTED",
+              "COMMAND_REJECTED",
+              "COMMAND_REPLAYED",
+              "IDEMPOTENCY_CONFLICT",
+              "EVENT_REPLAY_IGNORED",
+              "EVENT_REJECTED"
+            ]
           },
           "order_id": {
             "type": "id",
@@ -6003,13 +6265,60 @@
           "aggregate_version"
         ],
         "semantic_constraints": {
-          "event_type": {
-            "pointer": "/event_contract/event_types"
-          },
-          "safe_payload": {
-            "pointer": "/event_contract/event_schema_registry"
+          "event_schema_registry": {
+            "event_type_source_pointer": "/event_contract/event_types",
+            "schema_source_pointer": "/event_contract/event_schema_registry",
+            "safe_payload_field": "safe_payload",
+            "required_scope_enforced": true
           }
-        }
+        },
+        "terminal_fingerprint": {
+          "field": "event_fingerprint_sha256",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "audit_event_id",
+            "event_type",
+            "order_id",
+            "aggregate_version",
+            "correlation_id",
+            "causation_id",
+            "command_id",
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id",
+            "occurred_at_utc",
+            "safe_payload"
+          ],
+          "excluded_fields": [
+            "event_fingerprint_sha256"
+          ],
+          "input_shape": "CANONICAL_NFC_JSON_OBJECT",
+          "unicode_normalization": "NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED",
+          "encoding": "UTF-8",
+          "canonical_json": {
+            "sort_keys": true,
+            "separators": [
+              ",",
+              ":"
+            ],
+            "ensure_ascii": false,
+            "allow_nan": false
+          },
+          "digest_format": "lowercase_hex",
+          "source_pointer": "/event_contract/fingerprint"
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
+        ]
       },
       "OrderIntent": {
         "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
@@ -6168,6 +6477,75 @@
         "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
         "record_key_fields": [
           "order_intent_id"
+        ],
+        "semantic_constraints": {
+          "source_pointer": "/command_registry/SUBMIT_ORDER/constraints",
+          "rules": [
+            "order_id differs from command_id",
+            "MARKET requires limit_price null",
+            "LIMIT requires limit_price non-null",
+            "GTD requires expire_at_utc non-null",
+            "non-GTD requires expire_at_utc null",
+            "STRATEGY_INSTANCE source requires strategy_instance_id non-null",
+            "other sources require strategy_instance_id null"
+          ],
+          "conditional_nullability": [
+            {
+              "when": {
+                "order_type": "MARKET"
+              },
+              "field": "limit_price",
+              "required": "NULL"
+            },
+            {
+              "when": {
+                "order_type": "LIMIT"
+              },
+              "field": "limit_price",
+              "required": "NON_NULL"
+            },
+            {
+              "when": {
+                "time_in_force": "GTD"
+              },
+              "field": "expire_at_utc",
+              "required": "NON_NULL"
+            },
+            {
+              "when_not": {
+                "time_in_force": "GTD"
+              },
+              "field": "expire_at_utc",
+              "required": "NULL"
+            },
+            {
+              "when": {
+                "source_type": "STRATEGY_INSTANCE"
+              },
+              "field": "strategy_instance_id",
+              "required": "NON_NULL"
+            },
+            {
+              "when_not": {
+                "source_type": "STRATEGY_INSTANCE"
+              },
+              "field": "strategy_instance_id",
+              "required": "NULL"
+            }
+          ],
+          "identity_inequality": {
+            "left": "order_id",
+            "right": "command_id",
+            "rule": "MUST_DIFFER"
+          }
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
         ]
       },
       "Fill": {
@@ -6313,22 +6691,76 @@
           "fill_id"
         ],
         "semantic_constraints": {
-          "side": {
-            "values": [
-              "BUY",
-              "SELL"
-            ]
-          },
-          "fee_kind": {
-            "values": [
+          "fee_semantics": {
+            "fee_kind_values": [
               "NONE",
               "CHARGE"
-            ]
-          },
-          "fee_semantics": {
-            "pointer": "/fill_contract/fee_semantics"
+            ],
+            "NONE": "fee_quantity must be exactly 0 and fee_asset_reference must be null",
+            "CHARGE": "fee_quantity must be positive and fee_asset_reference must be non-null, exact, mapping_status EXACT or EXPLICIT_ALIAS, and asset_namespace must equal Fill.exchange_id",
+            "third_asset_fee": "legal and preserved without base/quote default",
+            "maker_rebate": "unsupported fail-closed; negative decimals forbidden; a future explicit economic fact kind is required"
           }
-        }
+        },
+        "terminal_fingerprint": {
+          "field": "fill_fingerprint_sha256",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "fill_id",
+            "order_id",
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "instrument_metadata_version",
+            "execution_route_id",
+            "venue_trade_id",
+            "side",
+            "executed_quantity",
+            "execution_price",
+            "executed_at_utc",
+            "fee_kind",
+            "fee_quantity",
+            "fee_asset_reference"
+          ],
+          "excluded_fields": [
+            "fill_fingerprint_sha256"
+          ],
+          "canonicalization": [
+            "exact fact field order is schema attestation; JSON object keys sorted for hashing",
+            "UTF-8",
+            "NFC",
+            "canonical JSON separators comma and colon",
+            "M0.5 canonical decimals",
+            "canonical UTC RFC3339 Z timestamps"
+          ],
+          "input_shape": "CANONICAL_NFC_JSON_OBJECT",
+          "unicode_normalization": "NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED",
+          "encoding": "UTF-8",
+          "canonical_json": {
+            "sort_keys": true,
+            "separators": [
+              ",",
+              ":"
+            ],
+            "ensure_ascii": false,
+            "allow_nan": false
+          },
+          "decimal_policy": "M0.5_CANONICAL_DECIMAL",
+          "timestamp_policy": "CANONICAL_UTC_RFC3339_Z",
+          "digest_format": "lowercase_hex",
+          "source_pointer": "/fill_contract/fingerprint"
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
+        ]
       },
       "LedgerEntry": {
         "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
@@ -6487,7 +6919,15 @@
           "posting_role": {
             "pointer": "/ledger_entry_schema/posting_role_registry"
           }
-        }
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
+        ]
       },
       "RiskDecision": {
         "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
@@ -6577,7 +7017,49 @@
           "decision": {
             "pointer": "/risk_decision_contract/decisions"
           }
-        }
+        },
+        "terminal_fingerprint": {
+          "field": "decision_fingerprint_sha256",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "command_id",
+            "command_request_fingerprint_sha256",
+            "order_id",
+            "scope_binding",
+            "environment",
+            "effective_policy_fingerprint_sha256",
+            "pre_reservation_accounting_projection_fingerprint_sha256",
+            "reservation_requirement_fingerprint_sha256",
+            "evaluated_at_utc",
+            "ordered_limit_results",
+            "kill_switch_result",
+            "kill_switch_fence_sha256",
+            "decision"
+          ],
+          "excluded_fields": [
+            "decision_fingerprint_sha256"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "encoding": "UTF-8",
+          "canonical_json": {
+            "sort_keys": true,
+            "separators": [
+              ",",
+              ":"
+            ],
+            "ensure_ascii": false,
+            "allow_nan": false
+          },
+          "digest_format": "lowercase_hex"
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
+        ]
       },
       "ExecutionLease immutable record": {
         "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
@@ -6788,6 +7270,71 @@
         "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
         "record_key_fields": [
           "execution_lease_id"
+        ],
+        "terminal_fingerprint": {
+          "field": "lease_fingerprint_sha256",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "execution_lease_id",
+            "command_id",
+            "command_request_fingerprint_sha256",
+            "order_id",
+            "order_intent_id",
+            "workspace_id",
+            "portfolio_id",
+            "environment",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "instrument_metadata_version",
+            "execution_route_id",
+            "strategy_instance_id",
+            "source_identity",
+            "side",
+            "order_type",
+            "quantity",
+            "limit_price",
+            "time_in_force",
+            "order_expire_at_utc",
+            "effective_policy_bindings",
+            "effective_policy_fingerprint_sha256",
+            "kill_switch_bindings",
+            "kill_switch_fence_sha256",
+            "pre_reservation_accounting_projection_fingerprint_sha256",
+            "post_reservation_accounting_projection_fingerprint_sha256",
+            "risk_decision_fingerprint_sha256",
+            "reservation_source_audit_event_id",
+            "reservation_source_fingerprint_sha256",
+            "reservation_state_fingerprint_sha256",
+            "reservation_asset_reference",
+            "reservation_original_quantity",
+            "reservation_remaining_quantity",
+            "issued_at_utc",
+            "expires_at_utc"
+          ],
+          "excluded_fields": [
+            "lease_fingerprint_sha256"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "encoding": "UTF-8",
+          "canonical_json": {
+            "sort_keys": true,
+            "separators": [
+              ",",
+              ":"
+            ],
+            "ensure_ascii": false,
+            "allow_nan": false
+          },
+          "digest_format": "lowercase_hex"
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
         ]
       },
       "SessionSecurityState current generation/state": {
@@ -6847,7 +7394,43 @@
           "state": {
             "pointer": "/registries/session_states"
           }
-        }
+        },
+        "terminal_fingerprint": {
+          "field": "content_fingerprint_sha256",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "account_id",
+            "operator_id",
+            "device_installation_id",
+            "runtime_session_id",
+            "state",
+            "session_generation",
+            "security_generation"
+          ],
+          "excluded_fields": [
+            "content_fingerprint_sha256"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "encoding": "UTF-8",
+          "canonical_json": {
+            "sort_keys": true,
+            "separators": [
+              ",",
+              ":"
+            ],
+            "ensure_ascii": false,
+            "allow_nan": false
+          },
+          "digest_format": "lowercase_hex"
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
+        ]
       },
       "SecretMetadataProjection": {
         "semantic_artifact": "identity_device_authentication_and_secrets.json",
@@ -6925,7 +7508,45 @@
           "secret_reference": {
             "pointer": "/secret_reference_policy"
           }
-        }
+        },
+        "terminal_fingerprint": {
+          "field": "content_fingerprint_sha256",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "secret_reference",
+            "secret_kind",
+            "exchange_account_id",
+            "credential_profile_id",
+            "exchange_id",
+            "environment",
+            "permitted_operations",
+            "secret_revision",
+            "state"
+          ],
+          "excluded_fields": [
+            "content_fingerprint_sha256"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "encoding": "UTF-8",
+          "canonical_json": {
+            "sort_keys": true,
+            "separators": [
+              ",",
+              ":"
+            ],
+            "ensure_ascii": false,
+            "allow_nan": false
+          },
+          "digest_format": "lowercase_hex"
+        },
+        "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+        "stage2_contextual_rules_excluded": [
+          "accepted/current authority or membership",
+          "trusted history and cross-record lineage resolution",
+          "external venue or Core registry lookup",
+          "M0.3 membership and restore authority",
+          "LIVE readiness"
+        ]
       }
     },
     "direct_upstream_schema_policy": {

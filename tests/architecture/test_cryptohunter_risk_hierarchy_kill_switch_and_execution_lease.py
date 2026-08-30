@@ -1,7 +1,7 @@
 """Independent M0.9 attestation and pure, non-production reference model."""
 
 from __future__ import annotations
-import copy, hashlib, json, re, unicodedata
+import ast, copy, hashlib, inspect, json, math, re, textwrap, unicodedata
 from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
@@ -91,6 +91,29 @@ EXPECTED_PROTOCOLS = deep_freeze(
     "reference_model": "tests only; pure and non-production",
     "runtime": "not implemented"
   },
+  "canonical_integrity_fingerprint_policy": {
+    "algorithm": "SHA-256",
+    "input_shape": "EXACT_CLOSED_JSON_OBJECT_OF_EXPLICIT_SEMANTIC_INPUT_FIELDS",
+    "json_canonicalization": {
+      "sort_keys": true,
+      "separators": [
+        ",",
+        ":"
+      ],
+      "ensure_ascii": false,
+      "allow_nan": false
+    },
+    "encoding": "UTF-8",
+    "array_policy": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER; NEVER_SORT_UNLESS_OWNING_CONTRACT_REQUIRES",
+    "object_key_policy": "KEY_ORDER_NON_SEMANTIC; SORT_KEYS_CANONICALIZES",
+    "number_policy": "NO_FLOAT_COERCION; VALIDATE_OWNING_FIELD_CONTRACT_BEFORE_HASHING",
+    "decimal_string_policy": "VALIDATE_CANONICAL_OWNING_FIELD_CONTRACT; NO_FINGERPRINT_LAYER_NORMALIZATION",
+    "timestamp_policy": "VALIDATE_CANONICAL_OWNING_TIMESTAMP_CONTRACT; NO_FINGERPRINT_LAYER_NORMALIZATION",
+    "unicode_policy": "HASH_EXACT_VALIDATED_STRINGS; NO_HIDDEN_NFC_OR_NFD_TRANSFORMATION",
+    "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+    "validation": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+    "authority_boundary": "INTEGRITY_ONLY; NEVER_CREATES_ACCEPTED_MEMBERSHIP, CURRENT_AUTHORITY, LIVE_READINESS, OR SELF_ENROLLMENT"
+  },
   "scope_hierarchy": {
     "environment_required": true,
     "no_cross_environment_inheritance": true,
@@ -107,7 +130,48 @@ EXPECTED_PROTOCOLS = deep_freeze(
     "applicability": "same concrete environment and exact ancestor/qualifier identity only",
     "ordering": "fixed applicable_order then scope_id then policy revision; never container iteration",
     "deny": "any applicable DENY dominates",
-    "incomparable_conflict": "two applicable policies at the same exact scope identity and revision with unequal semantic fingerprints => POLICY_CONFLICT"
+    "incomparable_conflict": "two applicable policies at the same exact scope identity and revision with unequal semantic fingerprints => POLICY_CONFLICT",
+    "scope_id_policy": {
+      "scope_type_field": "scope_type",
+      "scope_id_field": "scope_id",
+      "bindings": {
+        "PRODUCT_SYSTEM": {
+          "type": "exact_literal",
+          "value": "product"
+        },
+        "WORKSPACE": {
+          "type": "canonical_uuid7_prefixed_id",
+          "prefix": "ws"
+        },
+        "PORTFOLIO": {
+          "type": "canonical_uuid7_prefixed_id",
+          "prefix": "port"
+        },
+        "EXCHANGE_ACCOUNT": {
+          "type": "canonical_uuid7_prefixed_id",
+          "prefix": "xacc"
+        },
+        "STRATEGY_INSTANCE": {
+          "type": "canonical_uuid7_prefixed_id",
+          "prefix": "sinst"
+        },
+        "INSTRUMENT": {
+          "type": "canonical_uuid7_prefixed_id",
+          "prefix": "instr"
+        },
+        "EXECUTION_ROUTE": {
+          "type": "canonical_uuid7_prefixed_id",
+          "prefix": "xroute"
+        }
+      },
+      "validation_stage": "STAGE_1_INTRINSIC",
+      "contextual_exclusions": [
+        "ANCESTRY",
+        "MEMBERSHIP",
+        "ACCEPTED_OR_CURRENT_DESIGNATION",
+        "HIERARCHY_APPLICABILITY"
+      ]
+    }
   },
   "risk_policy_contract": {
     "projection": "PrevalidatedRiskPolicyContext",
@@ -371,7 +435,81 @@ EXPECTED_PROTOCOLS = deep_freeze(
       "CoreAcceptedContentBinding",
       "PrevalidatedKillSwitchContext"
     ],
-    "generation_validation": "generation is positive and strictly increases per exact scope/environment history; duplicate/reuse/rollback or unknown state fails TRUSTED_CONTEXT_FAILURE"
+    "generation_validation": "generation is positive and strictly increases per exact scope/environment history; duplicate/reuse/rollback or unknown state fails TRUSTED_CONTEXT_FAILURE",
+    "field_schemas": {
+      "scope_type": {
+        "type": "enum",
+        "values_source_pointer": "/scope_hierarchy/applicable_order"
+      },
+      "scope_id": {
+        "type": "canonical_scope_id",
+        "scope_type_field": "scope_type",
+        "policy_source_pointer": "/scope_hierarchy/scope_id_policy"
+      },
+      "environment": {
+        "type": "enum",
+        "values": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "state": {
+        "type": "enum",
+        "values_source_pointer": "/kill_switch_contract/states"
+      },
+      "source_revision": {
+        "type": "positive_non_boolean_integer"
+      },
+      "effective_at_utc": {
+        "type": "canonical_utc_timestamp"
+      },
+      "generation": {
+        "type": "positive_non_boolean_integer"
+      },
+      "accepted_authority_fingerprint_sha256": {
+        "type": "sha256_lowercase_hex"
+      },
+      "record_fingerprint_sha256": {
+        "type": "terminal_fingerprint",
+        "derivation_source_pointer": "/kill_switch_contract/terminal_fingerprint"
+      }
+    },
+    "terminal_fingerprint": {
+      "field": "record_fingerprint_sha256",
+      "algorithm": "SHA-256",
+      "input_fields": [
+        "scope_type",
+        "scope_id",
+        "environment",
+        "state",
+        "source_revision",
+        "effective_at_utc",
+        "generation",
+        "accepted_authority_fingerprint_sha256"
+      ],
+      "excluded_fields": [
+        "record_fingerprint_sha256"
+      ],
+      "input_shape": "JSON_OBJECT",
+      "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+      "canonicalization": {
+        "sort_keys": true,
+        "separators": [
+          ",",
+          ":"
+        ],
+        "ensure_ascii": false,
+        "allow_nan": false
+      },
+      "encoding": "UTF-8",
+      "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+      "unicode_normalization": "NONE",
+      "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+      "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+      "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY"
+    },
+    "intrinsic_authority_fence": "VALID_FINGERPRINT_IS_NOT_ACCEPTED_AUTHORITY; VALID_RECORD_IS_NOT_CURRENT_KILL_SWITCH; RAW_RECORD_IS_NOT_POLICY_AUTHORITY"
   },
   "kill_switch_hierarchy": {
     "applicability": "same hierarchy/qualifiers and exact environment as policy",
@@ -412,20 +550,180 @@ EXPECTED_PROTOCOLS = deep_freeze(
       "decision",
       "decision_fingerprint_sha256"
     ],
-    "limit_result_fields": [
-      "limit_type",
-      "effective_threshold",
-      "observed_projected_value",
-      "unit_asset_reference",
-      "supplying_policy_scope",
-      "result",
-      "reason_code"
-    ],
     "aggregation": "any FAIL => DENY; else any INCOMPLETE => INCOMPLETE; else ALLOW",
     "lease_rule": "only accepted ALLOW can contribute to issuance; it is never sufficient alone",
     "accepted_context": "PrevalidatedRiskDecisionContext binds an independently recomputed immutable ALLOW RiskDecision fingerprint to the exact evaluation inputs",
     "decision_fingerprint": "SHA-256 over every semantic RiskDecision field except decision_fingerprint_sha256; recomputed at issuance and when retrieving accepted historical decision at dispatch",
-    "rederivation": "issuance independently rederives the full PRE decision. Dispatch retrieves the exact accepted historical RiskDecision, recomputes all its semantic fields/fingerprint, requires ALLOW and matching lease binding, then revalidates current execution authority, policy/switch fences, POST accounting, reservation and lifetime; it does not reinterpret the historical PRE decision."
+    "rederivation": "issuance independently rederives the full PRE decision. Dispatch retrieves the exact accepted historical RiskDecision, recomputes all its semantic fields/fingerprint, requires ALLOW and matching lease binding, then revalidates current execution authority, policy/switch fences, POST accounting, reservation and lifetime; it does not reinterpret the historical PRE decision.",
+    "terminal_fingerprint": {
+      "field": "decision_fingerprint_sha256",
+      "algorithm": "SHA-256",
+      "input_fields": [
+        "command_id",
+        "command_request_fingerprint_sha256",
+        "order_id",
+        "scope_binding",
+        "environment",
+        "effective_policy_fingerprint_sha256",
+        "pre_reservation_accounting_projection_fingerprint_sha256",
+        "reservation_requirement_fingerprint_sha256",
+        "evaluated_at_utc",
+        "ordered_limit_results",
+        "kill_switch_result",
+        "kill_switch_fence_sha256",
+        "decision"
+      ],
+      "excluded_fields": [
+        "decision_fingerprint_sha256"
+      ],
+      "input_shape": "JSON_OBJECT",
+      "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+      "canonicalization": {
+        "sort_keys": true,
+        "separators": [
+          ",",
+          ":"
+        ],
+        "ensure_ascii": false,
+        "allow_nan": false
+      },
+      "encoding": "UTF-8",
+      "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+      "unicode_normalization": "NONE",
+      "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+      "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+      "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY"
+    },
+    "intrinsic_authority_fence": "VALID_FINGERPRINT_DOES_NOT_SELF_ENROLL; ONLY_ACCEPTED_CORE_BINDING_CAN_PARTICIPATE_IN_LEASE_ISSUANCE",
+    "limit_result_type_registry": [
+      "MAX_ORDER_QUANTITY",
+      "MAX_ORDER_NOTIONAL",
+      "MAX_POST_TRADE_POSITION_QUANTITY",
+      "MAX_POST_TRADE_POSITION_NOTIONAL",
+      "MAX_GROSS_EXPOSURE",
+      "MIN_AVAILABLE_CAPITAL_AFTER_RESERVATION",
+      "DISPATCH_RESERVATION_ECONOMICS"
+    ],
+    "limit_result_result_registry": [
+      "PASS",
+      "FAIL",
+      "INCOMPLETE"
+    ],
+    "limit_result_reason_codes": [
+      "PASS",
+      "LIMIT_BREACH",
+      "MISSING_REQUIRED_INPUT",
+      "MISSING_VALUATION"
+    ],
+    "limit_result_schema": {
+      "exact_fields": [
+        "limit_type",
+        "effective_threshold",
+        "observed_projected_value",
+        "unit_asset_reference",
+        "supplying_policy_scope",
+        "result",
+        "reason_code"
+      ],
+      "field_schemas": {
+        "limit_type": {
+          "type": "enum",
+          "values_source_pointer": "/risk_decision_contract/limit_result_type_registry"
+        },
+        "effective_threshold": {
+          "type": "canonical_exact_fraction_string",
+          "nullable": false,
+          "float_forbidden": true,
+          "normalization": "REDUCED_NUMERATOR_SLASH_POSITIVE_DENOMINATOR"
+        },
+        "observed_projected_value": {
+          "type": "nullable_canonical_exact_fraction_string",
+          "nullable": true,
+          "float_forbidden": true,
+          "normalization": "REDUCED_NUMERATOR_SLASH_POSITIVE_DENOMINATOR"
+        },
+        "unit_asset_reference": {
+          "type": "exact_upstream_object",
+          "source_artifact": "exchange_accounts_and_instruments.json",
+          "source_pointer": "/asset_reference_contract",
+          "allowed_mapping_statuses": [
+            "EXACT",
+            "EXPLICIT_ALIAS"
+          ],
+          "mapping_status_registry_source_pointer": "/asset_reference_contract/mapping_statuses"
+        },
+        "supplying_policy_scope": {
+          "type": "conditional_supplying_policy_scope",
+          "ordinary_format": "scope_type + COLON + canonical scope_id",
+          "scope_type_registry_pointer": "/scope_hierarchy/applicable_order",
+          "scope_id_policy_pointer": "/scope_hierarchy/scope_id_policy",
+          "synthetic_limit_type": "DISPATCH_RESERVATION_ECONOMICS",
+          "synthetic_exact_value": "SYSTEM",
+          "authority_boundary": "LABEL_ONLY_NOT_ACCEPTED_POLICY_AUTHORITY"
+        },
+        "result": {
+          "type": "enum",
+          "values_source_pointer": "/risk_decision_contract/limit_result_result_registry"
+        },
+        "reason_code": {
+          "type": "enum",
+          "values_source_pointer": "/risk_decision_contract/limit_result_reason_codes"
+        }
+      },
+      "intrinsic_constraints": {
+        "observed_value_matrix": {
+          "PASS": "REQUIRED_NON_NULL",
+          "FAIL": "REQUIRED_NON_NULL",
+          "INCOMPLETE": "REQUIRED_NULL_BECAUSE_CURRENT_EMITTER_ONLY_USES_INCOMPLETE_WHEN_REQUIRED_TRUSTED_OBSERVATION_UNAVAILABLE"
+        },
+        "synthetic_dispatch_reservation_economics": {
+          "effective_threshold": "0/1",
+          "observed_projected_value": null,
+          "supplying_policy_scope": "SYSTEM",
+          "result": "INCOMPLETE",
+          "reason_code": "MISSING_VALUATION"
+        },
+        "policy_reason_matrix": {
+          "PASS": [
+            "PASS"
+          ],
+          "FAIL": [
+            "LIMIT_BREACH"
+          ],
+          "INCOMPLETE": [
+            "MISSING_REQUIRED_INPUT"
+          ]
+        }
+      }
+    },
+    "ordered_limit_results_array_schema": {
+      "type": "array_of_exact_LimitResult",
+      "item_schema_pointer": "/risk_decision_contract/limit_result_schema",
+      "min_items": 0,
+      "ordering": {
+        "semantic": true,
+        "validator_behavior": "REJECT_NON_CANONICAL_ORDER_NEVER_SORT",
+        "policy_results_key": [
+          "limit_type_registry_order",
+          "unit_asset_reference_lexicographic_field_tuple"
+        ],
+        "synthetic_position": "DISPATCH_RESERVATION_ECONOMICS_LAST"
+      },
+      "duplicates": {
+        "allowed": false,
+        "uniqueness_key": [
+          "limit_type",
+          "unit_asset_reference",
+          "supplying_policy_scope"
+        ]
+      }
+    },
+    "kill_switch_result_registry": [
+      "OK",
+      "KILL_SWITCH_ACTIVE",
+      "TRUSTED_CONTEXT_FAILURE"
+    ],
+    "kill_switch_result_authority_boundary": "IMMUTABLE_EVALUATION_FACT_ONLY; OK_DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_KILL_SWITCH_AUTHORITY"
   },
   "execution_lease_contract": {
     "entity": "ExecutionLease",
@@ -478,7 +776,200 @@ EXPECTED_PROTOCOLS = deep_freeze(
     ],
     "fingerprint": "SHA-256 over every semantic lease field except lease_fingerprint_sha256; recomputed before dispatch",
     "partial_match_forbidden": true,
-    "distinct_identity": "each issuance receives a distinct canonical execution_lease_id"
+    "distinct_identity": "each issuance receives a distinct canonical execution_lease_id",
+    "terminal_fingerprint": {
+      "field": "lease_fingerprint_sha256",
+      "algorithm": "SHA-256",
+      "input_fields": [
+        "execution_lease_id",
+        "command_id",
+        "command_request_fingerprint_sha256",
+        "order_id",
+        "order_intent_id",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "instrument_metadata_version",
+        "execution_route_id",
+        "strategy_instance_id",
+        "source_identity",
+        "side",
+        "order_type",
+        "quantity",
+        "limit_price",
+        "time_in_force",
+        "order_expire_at_utc",
+        "effective_policy_bindings",
+        "effective_policy_fingerprint_sha256",
+        "kill_switch_bindings",
+        "kill_switch_fence_sha256",
+        "pre_reservation_accounting_projection_fingerprint_sha256",
+        "post_reservation_accounting_projection_fingerprint_sha256",
+        "risk_decision_fingerprint_sha256",
+        "reservation_source_audit_event_id",
+        "reservation_source_fingerprint_sha256",
+        "reservation_state_fingerprint_sha256",
+        "reservation_asset_reference",
+        "reservation_original_quantity",
+        "reservation_remaining_quantity",
+        "issued_at_utc",
+        "expires_at_utc"
+      ],
+      "excluded_fields": [
+        "lease_fingerprint_sha256"
+      ],
+      "input_shape": "JSON_OBJECT",
+      "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+      "canonicalization": {
+        "sort_keys": true,
+        "separators": [
+          ",",
+          ":"
+        ],
+        "ensure_ascii": false,
+        "allow_nan": false
+      },
+      "encoding": "UTF-8",
+      "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+      "unicode_normalization": "NONE",
+      "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+      "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+      "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY"
+    },
+    "intrinsic_authority_fence": "VALID_FINGERPRINT_DOES_NOT_ESTABLISH_DISPATCH_AUTHORITY",
+    "binding_array_schemas": {
+      "effective_policy_bindings": {
+        "type": "array_of_exact_tuple",
+        "min_items": 1,
+        "tuple_length": 6,
+        "item_schema": [
+          {
+            "index": 0,
+            "name": "risk_policy_id",
+            "type": "canonical_uuid7_prefixed_id",
+            "prefix": "rpol"
+          },
+          {
+            "index": 1,
+            "name": "revision",
+            "type": "positive_non_boolean_integer"
+          },
+          {
+            "index": 2,
+            "name": "scope_type",
+            "type": "enum",
+            "values_source_pointer": "/scope_hierarchy/applicable_order"
+          },
+          {
+            "index": 3,
+            "name": "scope_id",
+            "type": "canonical_scope_id",
+            "scope_type_index": 2,
+            "policy_source_pointer": "/scope_hierarchy/scope_id_policy"
+          },
+          {
+            "index": 4,
+            "name": "action",
+            "type": "enum",
+            "values": [
+              "ALLOW",
+              "DENY"
+            ]
+          },
+          {
+            "index": 5,
+            "name": "semantic_fingerprint_sha256",
+            "type": "sha256_lowercase_hex"
+          }
+        ],
+        "ordering": {
+          "semantic": true,
+          "key": [
+            "scope_hierarchy.applicable_order(scope_type)",
+            "scope_id",
+            "revision"
+          ],
+          "validator_behavior": "REJECT_NON_CANONICAL_ORDER_NEVER_SORT"
+        },
+        "duplicates": {
+          "allowed": false,
+          "uniqueness_key_indexes": [
+            2,
+            3,
+            1
+          ],
+          "validator_behavior": "REJECT_NEVER_DEDUPLICATE"
+        }
+      },
+      "kill_switch_bindings": {
+        "type": "array_of_exact_tuple",
+        "min_items": 0,
+        "tuple_length": 8,
+        "item_schema": [
+          {
+            "index": 0,
+            "name": "scope_type",
+            "schema_reference": "/kill_switch_contract/field_schemas/scope_type"
+          },
+          {
+            "index": 1,
+            "name": "scope_id",
+            "schema_reference": "/kill_switch_contract/field_schemas/scope_id",
+            "scope_type_index": 0
+          },
+          {
+            "index": 2,
+            "name": "state",
+            "schema_reference": "/kill_switch_contract/field_schemas/state"
+          },
+          {
+            "index": 3,
+            "name": "source_revision",
+            "schema_reference": "/kill_switch_contract/field_schemas/source_revision"
+          },
+          {
+            "index": 4,
+            "name": "effective_at_utc",
+            "schema_reference": "/kill_switch_contract/field_schemas/effective_at_utc"
+          },
+          {
+            "index": 5,
+            "name": "generation",
+            "schema_reference": "/kill_switch_contract/field_schemas/generation"
+          },
+          {
+            "index": 6,
+            "name": "accepted_authority_fingerprint_sha256",
+            "schema_reference": "/kill_switch_contract/field_schemas/accepted_authority_fingerprint_sha256"
+          },
+          {
+            "index": 7,
+            "name": "record_fingerprint_sha256",
+            "type": "sha256_lowercase_hex"
+          }
+        ],
+        "ordering": {
+          "semantic": true,
+          "key": [
+            "scope_hierarchy.applicable_order(scope_type)",
+            "scope_id"
+          ],
+          "validator_behavior": "REJECT_NON_CANONICAL_ORDER_NEVER_SORT"
+        },
+        "duplicates": {
+          "allowed": false,
+          "uniqueness_key_indexes": [
+            0,
+            1
+          ],
+          "validator_behavior": "REJECT_NEVER_DEDUPLICATE"
+        }
+      }
+    },
+    "binding_authority_boundary": "BINDING_POSSESSION_AND_VALID_EMBEDDED_FINGERPRINTS_DO_NOT_ESTABLISH_MEMBERSHIP_OR_ACCEPTED_CURRENT_AUTHORITY; DISPATCH_MUST_RE_RESOLVE_CURRENT_ACCEPTED_AUTHORITY"
   },
   "lease_issuance_conditions": [
     "a validated PrevalidatedExecutionAuthorityContext whose complete M0.4-M0.7 content, fingerprints, accepted memberships, exact bindings and current mutable designations independently validate",
@@ -1025,22 +1516,75 @@ EXPECTED_PROTOCOLS = deep_freeze(
       "state_fingerprint_sha256",
       "accepted_membership_id"
     ],
-    "RiskDecision": [
-      "command_id",
-      "command_request_fingerprint_sha256",
-      "order_id",
-      "scope_binding",
-      "environment",
-      "effective_policy_fingerprint_sha256",
-      "pre_reservation_accounting_projection_fingerprint_sha256",
-      "reservation_requirement_fingerprint_sha256",
-      "evaluated_at_utc",
-      "ordered_limit_results",
-      "kill_switch_result",
-      "kill_switch_fence_sha256",
-      "decision",
-      "decision_fingerprint_sha256"
-    ],
+    "RiskDecision": {
+      "exact_fields": [
+        "command_id",
+        "command_request_fingerprint_sha256",
+        "order_id",
+        "scope_binding",
+        "environment",
+        "effective_policy_fingerprint_sha256",
+        "pre_reservation_accounting_projection_fingerprint_sha256",
+        "reservation_requirement_fingerprint_sha256",
+        "evaluated_at_utc",
+        "ordered_limit_results",
+        "kill_switch_result",
+        "kill_switch_fence_sha256",
+        "decision",
+        "decision_fingerprint_sha256"
+      ],
+      "terminal_fingerprint": {
+        "field": "decision_fingerprint_sha256",
+        "algorithm": "SHA-256",
+        "input_fields": [
+          "command_id",
+          "command_request_fingerprint_sha256",
+          "order_id",
+          "scope_binding",
+          "environment",
+          "effective_policy_fingerprint_sha256",
+          "pre_reservation_accounting_projection_fingerprint_sha256",
+          "reservation_requirement_fingerprint_sha256",
+          "evaluated_at_utc",
+          "ordered_limit_results",
+          "kill_switch_result",
+          "kill_switch_fence_sha256",
+          "decision"
+        ],
+        "excluded_fields": [
+          "decision_fingerprint_sha256"
+        ],
+        "input_shape": "JSON_OBJECT",
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
+          "sort_keys": true,
+          "separators": [
+            ",",
+            ":"
+          ],
+          "ensure_ascii": false,
+          "allow_nan": false
+        },
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY"
+      },
+      "field_schemas": {
+        "ordered_limit_results": {
+          "type": "schema_reference",
+          "source_pointer": "/risk_decision_contract/ordered_limit_results_array_schema",
+          "validate_before_terminal_fingerprint": true
+        },
+        "kill_switch_result": {
+          "type": "enum",
+          "values_source_pointer": "/risk_decision_contract/kill_switch_result_registry",
+          "validate_before_terminal_fingerprint": true
+        }
+      }
+    },
     "PrevalidatedRiskDecisionContext": [
       "decision",
       "membership_id"
@@ -1049,45 +1593,121 @@ EXPECTED_PROTOCOLS = deep_freeze(
       "decision_fingerprint_sha256",
       "decision"
     ],
-    "ExecutionLease": [
-      "execution_lease_id",
-      "command_id",
-      "command_request_fingerprint_sha256",
-      "order_id",
-      "order_intent_id",
-      "workspace_id",
-      "portfolio_id",
-      "environment",
-      "exchange_account_id",
-      "exchange_id",
-      "instrument_id",
-      "instrument_metadata_version",
-      "execution_route_id",
-      "strategy_instance_id",
-      "source_identity",
-      "side",
-      "order_type",
-      "quantity",
-      "limit_price",
-      "time_in_force",
-      "order_expire_at_utc",
-      "effective_policy_bindings",
-      "effective_policy_fingerprint_sha256",
-      "kill_switch_bindings",
-      "kill_switch_fence_sha256",
-      "pre_reservation_accounting_projection_fingerprint_sha256",
-      "post_reservation_accounting_projection_fingerprint_sha256",
-      "risk_decision_fingerprint_sha256",
-      "reservation_source_audit_event_id",
-      "reservation_source_fingerprint_sha256",
-      "reservation_state_fingerprint_sha256",
-      "reservation_asset_reference",
-      "reservation_original_quantity",
-      "reservation_remaining_quantity",
-      "issued_at_utc",
-      "expires_at_utc",
-      "lease_fingerprint_sha256"
-    ],
+    "ExecutionLease": {
+      "exact_fields": [
+        "execution_lease_id",
+        "command_id",
+        "command_request_fingerprint_sha256",
+        "order_id",
+        "order_intent_id",
+        "workspace_id",
+        "portfolio_id",
+        "environment",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "instrument_metadata_version",
+        "execution_route_id",
+        "strategy_instance_id",
+        "source_identity",
+        "side",
+        "order_type",
+        "quantity",
+        "limit_price",
+        "time_in_force",
+        "order_expire_at_utc",
+        "effective_policy_bindings",
+        "effective_policy_fingerprint_sha256",
+        "kill_switch_bindings",
+        "kill_switch_fence_sha256",
+        "pre_reservation_accounting_projection_fingerprint_sha256",
+        "post_reservation_accounting_projection_fingerprint_sha256",
+        "risk_decision_fingerprint_sha256",
+        "reservation_source_audit_event_id",
+        "reservation_source_fingerprint_sha256",
+        "reservation_state_fingerprint_sha256",
+        "reservation_asset_reference",
+        "reservation_original_quantity",
+        "reservation_remaining_quantity",
+        "issued_at_utc",
+        "expires_at_utc",
+        "lease_fingerprint_sha256"
+      ],
+      "terminal_fingerprint": {
+        "field": "lease_fingerprint_sha256",
+        "algorithm": "SHA-256",
+        "input_fields": [
+          "execution_lease_id",
+          "command_id",
+          "command_request_fingerprint_sha256",
+          "order_id",
+          "order_intent_id",
+          "workspace_id",
+          "portfolio_id",
+          "environment",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "instrument_metadata_version",
+          "execution_route_id",
+          "strategy_instance_id",
+          "source_identity",
+          "side",
+          "order_type",
+          "quantity",
+          "limit_price",
+          "time_in_force",
+          "order_expire_at_utc",
+          "effective_policy_bindings",
+          "effective_policy_fingerprint_sha256",
+          "kill_switch_bindings",
+          "kill_switch_fence_sha256",
+          "pre_reservation_accounting_projection_fingerprint_sha256",
+          "post_reservation_accounting_projection_fingerprint_sha256",
+          "risk_decision_fingerprint_sha256",
+          "reservation_source_audit_event_id",
+          "reservation_source_fingerprint_sha256",
+          "reservation_state_fingerprint_sha256",
+          "reservation_asset_reference",
+          "reservation_original_quantity",
+          "reservation_remaining_quantity",
+          "issued_at_utc",
+          "expires_at_utc"
+        ],
+        "excluded_fields": [
+          "lease_fingerprint_sha256"
+        ],
+        "input_shape": "JSON_OBJECT",
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
+          "sort_keys": true,
+          "separators": [
+            ",",
+            ":"
+          ],
+          "ensure_ascii": false,
+          "allow_nan": false
+        },
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY"
+      },
+      "field_schemas": {
+        "effective_policy_bindings": {
+          "type": "schema_reference",
+          "source_pointer": "/execution_lease_contract/binding_array_schemas/effective_policy_bindings",
+          "validate_before_terminal_fingerprint": true
+        },
+        "kill_switch_bindings": {
+          "type": "schema_reference",
+          "source_pointer": "/execution_lease_contract/binding_array_schemas/kill_switch_bindings",
+          "validate_before_terminal_fingerprint": true
+        }
+      }
+    },
     "CoreDispatchRecord": [
       "command_request_fingerprint_sha256",
       "order_id",
@@ -3191,7 +3811,10 @@ def test_all_executable_schemas_equal_machine() -> None:
     assert set(schemas) == set(local_dataclasses)
     for model_name, machine_fields in schemas.items():
         model = local_dataclasses[model_name]
-        assert [x.name for x in fields(model)] == machine_fields
+        expected_fields = (
+            machine_fields["exact_fields"] if isinstance(machine_fields, dict) else machine_fields
+        )
+        assert [x.name for x in fields(model)] == expected_fields
     d = thaw(EXPECTED_PROTOCOLS)
     assert list(d["risk_policy_contract"]["semantic_fingerprint_input"]) == [
         x.name for x in fields(RiskPolicyRecord) if x.name != "semantic_fingerprint_sha256"
@@ -3201,8 +3824,8 @@ def test_all_executable_schemas_equal_machine() -> None:
     ]
     assert [x.name for x in fields(RiskDecision)] == d["risk_decision_contract"]["required_fields"]
     assert [x.name for x in fields(LimitResult)] == d["risk_decision_contract"][
-        "limit_result_fields"
-    ]
+        "limit_result_schema"
+    ]["exact_fields"]
 
 
 def test_dependency_pointer_attacker_hash_fails() -> None:
@@ -4134,3 +4757,1125 @@ def test_same_scope_different_revisions_are_container_order_independent() -> Non
     assert forward.bindings == reverse.bindings
     assert forward.limits == reverse.limits
     assert forward.fingerprint_sha256 == reverse.fingerprint_sha256
+
+
+def _source_closure_hash(record: Mapping[str, Any], definition: Mapping[str, Any]) -> str:
+    payload = {field: record[field] for field in definition["input_fields"]}
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("UTF-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _canonical_scope_id(scope_type: Any, scope_id: Any) -> bool:
+    policy = thaw(EXPECTED_PROTOCOLS["scope_hierarchy"]["scope_id_policy"])
+    binding = policy["bindings"].get(scope_type)
+    if not isinstance(scope_id, str) or binding is None:
+        return False
+    if binding["type"] == "exact_literal":
+        return scope_id == binding["value"]
+    prefix, separator, identifier = scope_id.partition("_")
+    uuid7_re = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+    return separator == "_" and prefix == binding["prefix"] and bool(uuid7_re.fullmatch(identifier))
+
+
+@pytest.mark.parametrize(
+    ("scope_type", "scope_id", "expected"),
+    [
+        ("PRODUCT_SYSTEM", "product", True),
+        ("PRODUCT_SYSTEM", "PRODUCT_SYSTEM", False),
+        ("PRODUCT_SYSTEM", "", False),
+        ("WORKSPACE", "ws_01890f3a-2b4c-7abc-8def-0123456789ab", True),
+        ("WORKSPACE", "port_01890f3a-2b4c-7abc-8def-0123456789ab", False),
+        ("PORTFOLIO", "port_01890f3a-2b4c-7abc-8def-0123456789ab", True),
+        ("EXCHANGE_ACCOUNT", "xacc_01890f3a-2b4c-7abc-8def-0123456789ab", True),
+        ("STRATEGY_INSTANCE", "sinst_01890f3a-2b4c-7abc-8def-0123456789ab", True),
+        ("INSTRUMENT", "instr_01890f3a-2b4c-7abc-8def-0123456789ab", True),
+        ("EXECUTION_ROUTE", "xroute_01890f3a-2b4c-7abc-8def-0123456789ab", True),
+    ],
+)
+def test_common_scope_id_policy_is_intrinsically_executable(
+    scope_type: str, scope_id: str, expected: bool
+) -> None:
+    assert _canonical_scope_id(scope_type, scope_id) is expected
+
+
+@pytest.mark.parametrize("value", [1, 2, 99])
+def test_kill_switch_generation_accepts_positive_non_boolean_integer(value: int) -> None:
+    assert isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+@pytest.mark.parametrize("value", [True, "1", 0, -1])
+def test_kill_switch_generation_rejects_non_positive_or_non_integer(value: Any) -> None:
+    assert not (isinstance(value, int) and not isinstance(value, bool) and value > 0)
+
+
+def test_kill_switch_closed_state_and_field_contract_are_source_owned() -> None:
+    contract = thaw(EXPECTED_PROTOCOLS["kill_switch_contract"])
+    assert contract["states"] == ["INACTIVE", "ACTIVE"]
+    assert contract["field_schemas"]["state"] == {
+        "type": "enum",
+        "values_source_pointer": "/kill_switch_contract/states",
+    }
+    assert "BANANA" not in contract["states"]
+    assert contract["field_schemas"]["generation"]["type"] == "positive_non_boolean_integer"
+
+
+def test_kill_switch_terminal_fingerprint_covers_each_semantic_field() -> None:
+    definition = thaw(EXPECTED_PROTOCOLS["kill_switch_contract"]["terminal_fingerprint"])
+    record: dict[str, Any] = {
+        "scope_type": "PRODUCT_SYSTEM",
+        "scope_id": "product",
+        "environment": "PAPER",
+        "state": "INACTIVE",
+        "source_revision": 1,
+        "effective_at_utc": "2030-01-01T00:00:00Z",
+        "generation": 1,
+        "accepted_authority_fingerprint_sha256": "a" * 64,
+    }
+    baseline = _source_closure_hash(record, definition)
+    record[definition["field"]] = baseline
+    assert record[definition["field"]] == _source_closure_hash(record, definition)
+    for field in definition["input_fields"]:
+        mutated = copy.deepcopy(record)
+        mutated[field] = [mutated[field], "mutation"]
+        assert _source_closure_hash(mutated, definition) != baseline
+    assert definition["authority_boundary"].startswith("INTEGRITY_ONLY")
+
+
+@pytest.mark.parametrize(
+    ("schema_name", "contract_name", "terminal"),
+    [
+        ("RiskDecision", "risk_decision_contract", "decision_fingerprint_sha256"),
+        ("ExecutionLease", "execution_lease_contract", "lease_fingerprint_sha256"),
+    ],
+)
+def test_executable_terminal_fingerprint_is_exact_schema_minus_terminal(
+    schema_name: str, contract_name: str, terminal: str
+) -> None:
+    schemas = thaw(EXPECTED_PROTOCOLS["executable_boundary_schemas"])
+    contract = thaw(EXPECTED_PROTOCOLS[contract_name])
+    schema = schemas[schema_name]
+    definition = schema["terminal_fingerprint"]
+    assert schema["exact_fields"] == contract["required_fields"]
+    assert set(definition["input_fields"]) == set(schema["exact_fields"]) - {terminal}
+    assert definition["excluded_fields"] == [terminal]
+    assert definition == contract["terminal_fingerprint"]
+
+
+def test_source_closure_fingerprint_preserves_array_order_and_unicode_bytes() -> None:
+    definition = {"input_fields": ["values"]}
+    assert _source_closure_hash({"values": ["a", "b"]}, definition) != _source_closure_hash(
+        {"values": ["b", "a"]}, definition
+    )
+    assert _source_closure_hash({"values": ["é"]}, definition) != _source_closure_hash(
+        {"values": ["e\u0301"]}, definition
+    )
+    with pytest.raises(ValueError):
+        _source_closure_hash({"values": [float("nan")]}, definition)
+
+
+def _valid_fraction_transport(value: Any) -> bool:
+    if type(value) is not str:
+        return False
+    match = re.fullmatch(
+        r"(?P<numerator>0|[1-9][0-9]*|-[1-9][0-9]*)/"
+        r"(?P<denominator>[1-9][0-9]*)",
+        value,
+    )
+    if match is None:
+        return False
+    numerator = int(match.group("numerator"))
+    denominator = int(match.group("denominator"))
+    if numerator == 0:
+        return value == "0/1"
+    return math.gcd(abs(numerator), denominator) == 1
+
+
+def _valid_asset_transport(value: Any) -> bool:
+    fields = thaw(EXPECTED_PROTOCOLS["risk_decision_contract"]["limit_result_schema"])[
+        "exact_fields"
+    ]
+    _ = fields  # the LimitResult shape is checked separately; AssetReference is upstream-owned.
+    return (
+        isinstance(value, dict)
+        and set(value)
+        == {"venue_asset_code", "canonical_display_code", "asset_namespace", "mapping_status"}
+        and all(
+            isinstance(value[field], str)
+            and bool(value[field])
+            and unicodedata.normalize("NFC", value[field]) == value[field]
+            for field in ("venue_asset_code", "canonical_display_code", "asset_namespace")
+        )
+        and value["mapping_status"] in {"EXACT", "EXPLICIT_ALIAS"}
+    )
+
+
+def _valid_supplying_scope(limit_type: str, value: Any) -> bool:
+    if limit_type == "DISPATCH_RESERVATION_ECONOMICS":
+        return value == "SYSTEM"
+    if not isinstance(value, str) or ":" not in value:
+        return False
+    scope_type, scope_id = value.split(":", 1)
+    return _canonical_scope_id(scope_type, scope_id)
+
+
+def _valid_limit_result_transport(value: Any) -> bool:
+    contract = thaw(EXPECTED_PROTOCOLS["risk_decision_contract"])
+    schema = contract["limit_result_schema"]
+    if not isinstance(value, dict) or set(value) != set(schema["exact_fields"]):
+        return False
+    if (
+        value["limit_type"] not in contract["limit_result_type_registry"]
+        or not _valid_fraction_transport(value["effective_threshold"])
+        or (
+            value["observed_projected_value"] is not None
+            and not _valid_fraction_transport(value["observed_projected_value"])
+        )
+        or not _valid_asset_transport(value["unit_asset_reference"])
+        or not _valid_supplying_scope(value["limit_type"], value["supplying_policy_scope"])
+        or value["result"] not in contract["limit_result_result_registry"]
+        or value["reason_code"] not in contract["limit_result_reason_codes"]
+    ):
+        return False
+    observed = value["observed_projected_value"]
+    synthetic = schema["intrinsic_constraints"]["synthetic_dispatch_reservation_economics"]
+    if value["limit_type"] == "DISPATCH_RESERVATION_ECONOMICS":
+        return all(value[field] == expected for field, expected in synthetic.items())
+    if (
+        value["reason_code"]
+        not in schema["intrinsic_constraints"]["policy_reason_matrix"][value["result"]]
+    ):
+        return False
+    if value["result"] in {"PASS", "FAIL"} and observed is None:
+        return False
+    if value["result"] == "INCOMPLETE" and observed is not None:
+        return False
+    return True
+
+
+def _limit_result_key(value: dict[str, Any]) -> tuple[Any, ...]:
+    contract = thaw(EXPECTED_PROTOCOLS["risk_decision_contract"])
+    registry = contract["limit_result_type_registry"]
+    asset = value["unit_asset_reference"]
+    return (
+        registry.index(value["limit_type"]),
+        asset["venue_asset_code"],
+        asset["canonical_display_code"],
+        asset["asset_namespace"],
+        asset["mapping_status"],
+        value["supplying_policy_scope"],
+    )
+
+
+def _valid_ordered_limit_results(values: Any) -> bool:
+    if not isinstance(values, list) or not all(_valid_limit_result_transport(x) for x in values):
+        return False
+    keys = [_limit_result_key(x) for x in values]
+    unique = [
+        (
+            x["limit_type"],
+            json.dumps(x["unit_asset_reference"], sort_keys=True),
+            x["supplying_policy_scope"],
+        )
+        for x in values
+    ]
+    return keys == sorted(keys) and len(unique) == len(set(unique))
+
+
+def _asset_transport(code: str = "USD") -> dict[str, str]:
+    return {
+        "venue_asset_code": code,
+        "canonical_display_code": code,
+        "asset_namespace": "BINANCE:SPOT",
+        "mapping_status": "EXACT",
+    }
+
+
+def _limit_transport(**changes: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "limit_type": "MAX_ORDER_NOTIONAL",
+        "effective_threshold": "20/1",
+        "observed_projected_value": "10/1",
+        "unit_asset_reference": _asset_transport(),
+        "supplying_policy_scope": "WORKSPACE:ws_018f0000-0000-7000-8000-000000000001",
+        "result": "PASS",
+        "reason_code": "PASS",
+    }
+    value.update(changes)
+    return value
+
+
+def test_limit_result_object_key_order_is_non_semantic_and_fingerprints_identically() -> None:
+    canonical = _limit_transport()
+    reordered = dict(reversed(tuple(canonical.items())))
+    assert list(canonical) != list(reordered)
+    assert _valid_limit_result_transport(canonical)
+    assert _valid_limit_result_transport(reordered)
+
+    policy = thaw(EXPECTED_PROTOCOLS["canonical_integrity_fingerprint_policy"])
+    assert policy["object_key_policy"] == "KEY_ORDER_NON_SEMANTIC; SORT_KEYS_CANONICALIZES"
+    definition = {
+        "input_fields": thaw(EXPECTED_PROTOCOLS["risk_decision_contract"])["limit_result_schema"][
+            "exact_fields"
+        ]
+    }
+    assert _source_closure_hash(canonical, definition) == _source_closure_hash(
+        reordered, definition
+    )
+
+    missing = canonical.copy()
+    missing.pop("reason_code")
+    extra = canonical | {"extra": True}
+    assert not _valid_limit_result_transport(missing)
+    assert not _valid_limit_result_transport(extra)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0/1",
+        "1/1",
+        "-1/1",
+        "1/2",
+        "-7/3",
+        "999999999999999999/1000000000000000000",
+    ],
+)
+def test_canonical_fraction_transport_accepts_one_lexical_representation(value: str) -> None:
+    assert _valid_fraction_transport(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-0/1",
+        "00/1",
+        "-00/1",
+        "01/1",
+        "-01/1",
+        "1/01",
+        "1/0",
+        "1/-1",
+        "+1/1",
+        "2/2",
+        "-2/2",
+        "0/2",
+        "1.0/1",
+        "NaN",
+        "Infinity",
+        1.0,
+        1,
+        True,
+        None,
+    ],
+)
+def test_canonical_fraction_transport_rejects_lexical_or_mathematical_aliases(
+    value: Any,
+) -> None:
+    assert not _valid_fraction_transport(value)
+
+
+def test_fraction_zero_normalization_precedes_terminal_fingerprint_validation() -> None:
+    assert normalize(Fraction(0)) == "0/1"
+    canonical = _limit_transport(effective_threshold="0/1")
+    negative_zero = _limit_transport(effective_threshold="-0/1")
+    assert _valid_limit_result_transport(canonical)
+    assert not _valid_limit_result_transport(negative_zero)
+
+
+def test_limit_result_schema_closes_all_seven_fields_and_emitter_registries() -> None:
+    contract = thaw(EXPECTED_PROTOCOLS["risk_decision_contract"])
+    assert contract["limit_result_schema"]["exact_fields"] == [
+        field.name for field in fields(LimitResult)
+    ]
+    assert contract["limit_result_type_registry"] == [*SUPPORTED, "DISPATCH_RESERVATION_ECONOMICS"]
+    assert contract["limit_result_result_registry"] == ["PASS", "FAIL", "INCOMPLETE"]
+    assert set(contract["limit_result_reason_codes"]) == {
+        "PASS",
+        "LIMIT_BREACH",
+        "MISSING_REQUIRED_INPUT",
+        "MISSING_VALUATION",
+    }
+
+
+def _is_ast_descendant(root: ast.AST, target: ast.AST) -> bool:
+    return any(target is descendant for descendant in ast.walk(root))
+
+
+def _same_expression(node: ast.AST, source: str) -> bool:
+    expected = ast.parse(source, mode="eval").body
+    return ast.dump(node, include_attributes=False) == ast.dump(expected, include_attributes=False)
+
+
+def _expression_outcomes(node: ast.expr) -> set[str]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, ast.IfExp):
+        return _expression_outcomes(node.body) | _expression_outcomes(node.orelse)
+    raise AssertionError(f"unsupported emitter expression: {ast.dump(node)}")
+
+
+def _analyze_resolve_policy_limit_source(source: str, supported: tuple[str, ...]) -> set[str]:
+    resolver = ast.parse(textwrap.dedent(source))
+    supported_loops = [
+        node
+        for node in ast.walk(resolver)
+        if isinstance(node, ast.For)
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "SUPPORTED"
+    ]
+    assert len(supported_loops) == 1
+    supported_loop = supported_loops[0]
+    assert isinstance(supported_loop.target, ast.Name)
+    loop_variable = supported_loop.target.id
+
+    limit_appends = [
+        node
+        for node in ast.walk(resolver)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "limits"
+        and node.func.attr == "append"
+    ]
+    assert len(limit_appends) == 1
+    append = limit_appends[0]
+    assert _is_ast_descendant(supported_loop, append)
+    assert len(append.args) == 1 and not append.keywords
+    item = append.args[0]
+    assert isinstance(item, ast.Tuple) and len(item.elts) == 4
+    assert isinstance(item.elts[0], ast.Name) and item.elts[0].id == loop_variable
+    assert _same_expression(item.elts[1], "chosen[0]")
+    assert isinstance(item.elts[2], ast.Name) and item.elts[2].id == "unit"
+    assert _same_expression(item.elts[3], 'f"{chosen[1].scope_type}:{chosen[1].scope_id}"')
+    return set(supported)
+
+
+def _analyze_limit_result_emitter_source(
+    source: str, ordinary_limit_types: set[str]
+) -> tuple[set[str], set[str], set[str]]:
+    producer = ast.parse(textwrap.dedent(source))
+    constructors = [
+        node
+        for node in ast.walk(producer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "LimitResult"
+    ]
+    assert len(constructors) == 2
+
+    effective_loops = [
+        node
+        for node in ast.walk(producer)
+        if isinstance(node, ast.For)
+        and isinstance(node.iter, ast.Attribute)
+        and isinstance(node.iter.value, ast.Name)
+        and node.iter.value.id == "effective"
+        and node.iter.attr == "limits"
+    ]
+    assert len(effective_loops) == 1
+    effective_limit_loop = effective_loops[0]
+    assert isinstance(effective_limit_loop.target, ast.Tuple)
+    loop_names = [
+        item.id for item in effective_limit_loop.target.elts if isinstance(item, ast.Name)
+    ]
+    assert loop_names == ["name", "threshold", "unit", "supplier"]
+
+    ordinary_candidates = [
+        node for node in constructors if _is_ast_descendant(effective_limit_loop, node)
+    ]
+    synthetic_candidates = [
+        node for node in constructors if not _is_ast_descendant(effective_limit_loop, node)
+    ]
+    assert len(ordinary_candidates) == 1
+    assert len(synthetic_candidates) == 1
+    ordinary = ordinary_candidates[0]
+    synthetic = synthetic_candidates[0]
+
+    result_appends = [
+        node
+        for node in ast.walk(producer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "results"
+        and node.func.attr == "append"
+    ]
+    assert len(result_appends) == 2
+    for append in result_appends:
+        assert len(append.args) == 1 and not append.keywords
+    ordinary_sinks = [append for append in result_appends if append.args[0] is ordinary]
+    synthetic_sinks = [append for append in result_appends if append.args[0] is synthetic]
+    assert len(ordinary_sinks) == 1
+    assert len(synthetic_sinks) == 1
+    ordinary_sink = ordinary_sinks[0]
+    synthetic_sink = synthetic_sinks[0]
+    assert _is_ast_descendant(effective_limit_loop, ordinary_sink)
+    assert not _is_ast_descendant(effective_limit_loop, synthetic_sink)
+
+    assert len(ordinary.args) == 7 and not ordinary.keywords
+    for index, name in {
+        0: "name",
+        1: "threshold",
+        2: "observed",
+        3: "unit",
+        4: "supplier",
+        5: "result",
+    }.items():
+        assert isinstance(ordinary.args[index], ast.Name)
+        assert ordinary.args[index].id == name
+    assert _same_expression(
+        ordinary.args[6],
+        '"MISSING_REQUIRED_INPUT" if result == "INCOMPLETE" '
+        'else ("LIMIT_BREACH" if result == "FAIL" else "PASS")',
+    )
+
+    result_assignments = [
+        node
+        for node in ast.walk(producer)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "result" for target in node.targets)
+    ]
+    assert len(result_assignments) == 1
+    result_assignment = result_assignments[0]
+    assert _is_ast_descendant(effective_limit_loop, result_assignment)
+    assert isinstance(ordinary.args[5], ast.Name) and ordinary.args[5].id == "result"
+    ordinary_sink_statements = [
+        statement
+        for statement in effective_limit_loop.body
+        if _is_ast_descendant(statement, ordinary_sink)
+    ]
+    assert len(ordinary_sink_statements) == 1
+    assert result_assignment in effective_limit_loop.body
+    assert effective_limit_loop.body.index(result_assignment) < effective_limit_loop.body.index(
+        ordinary_sink_statements[0]
+    )
+    emitted_results = _expression_outcomes(result_assignment.value)
+    emitted_reason_codes = _expression_outcomes(ordinary.args[6])
+
+    assert len(synthetic.args) == 7 and not synthetic.keywords
+    assert isinstance(synthetic.args[0], ast.Constant)
+    assert synthetic.args[0].value == "DISPATCH_RESERVATION_ECONOMICS"
+    assert _same_expression(synthetic.args[1], "Fraction(0)")
+    assert isinstance(synthetic.args[2], ast.Constant) and synthetic.args[2].value is None
+    assert _same_expression(synthetic.args[3], "i.quote_asset_reference")
+    assert isinstance(synthetic.args[4], ast.Constant) and synthetic.args[4].value == "SYSTEM"
+    assert isinstance(synthetic.args[5], ast.Constant) and synthetic.args[5].value == "INCOMPLETE"
+    assert isinstance(synthetic.args[6], ast.Constant)
+    assert synthetic.args[6].value == "MISSING_VALUATION"
+
+    results_initializers = [
+        node
+        for node in ast.walk(producer)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "results" for target in node.targets)
+    ]
+    assert len(results_initializers) == 1
+    assert isinstance(results_initializers[0].value, ast.List)
+    assert not results_initializers[0].value.elts
+    vals_assignments = [
+        node
+        for node in ast.walk(producer)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "vals" for target in node.targets)
+    ]
+    assert len(vals_assignments) == 1
+    vals = vals_assignments[0].value
+    assert isinstance(vals, ast.Tuple) and len(vals.elts) == 13
+    assert _same_expression(vals.elts[9], "tuple(results)")
+    returns = [node for node in ast.walk(producer) if isinstance(node, ast.Return)]
+    assert len(returns) == 1
+    returned = returns[0].value
+    assert isinstance(returned, ast.Call)
+    assert isinstance(returned.func, ast.Name) and returned.func.id == "RiskDecision"
+    assert not returned.keywords and len(returned.args) == 2
+    assert isinstance(returned.args[0], ast.Starred)
+    assert _same_expression(returned.args[0].value, "vals")
+    assert _same_expression(returned.args[1], "fingerprint(vals)")
+
+    emitted_limit_types = set(ordinary_limit_types)
+    emitted_limit_types.add(synthetic.args[0].value)
+    emitted_results.add(synthetic.args[5].value)
+    emitted_reason_codes.add(synthetic.args[6].value)
+    return emitted_limit_types, emitted_results, emitted_reason_codes
+
+
+def _limit_result_emitter_sets() -> tuple[set[str], set[str], set[str]]:
+    """Inspect exact producer relationships before deriving closed emitted sets."""
+    ordinary_limit_types = _analyze_resolve_policy_limit_source(
+        inspect.getsource(resolve_policy), SUPPORTED
+    )
+    return _analyze_limit_result_emitter_source(
+        inspect.getsource(derive_decision), ordinary_limit_types
+    )
+
+
+_VALID_RESOLVE_POLICY_EMITTER_SOURCE = """
+def resolve_policy():
+    limits = []
+    for name in SUPPORTED:
+        chosen = choices[0]
+        for unit in units:
+            limits.append(
+                (name, chosen[0], unit, f"{chosen[1].scope_type}:{chosen[1].scope_id}")
+            )
+    return limits
+"""
+
+_VALID_DERIVE_DECISION_EMITTER_SOURCE = """
+def derive_decision(effective, i):
+    results = []
+    for name, threshold, unit, supplier in effective.limits:
+        observed = None
+        result = (
+            "INCOMPLETE"
+            if observed is None
+            else ("FAIL" if observed > threshold else "PASS")
+        )
+        results.append(
+            LimitResult(
+                name,
+                threshold,
+                observed,
+                unit,
+                supplier,
+                result,
+                "MISSING_REQUIRED_INPUT"
+                if result == "INCOMPLETE"
+                else ("LIMIT_BREACH" if result == "FAIL" else "PASS"),
+            )
+        )
+    results.append(
+        LimitResult(
+            "DISPATCH_RESERVATION_ECONOMICS",
+            Fraction(0),
+            None,
+            i.quote_asset_reference,
+            "SYSTEM",
+            "INCOMPLETE",
+            "MISSING_VALUATION",
+        )
+    )
+    vals = (a, b, c, d, e, f, g, h, j, tuple(results), k, l, m)
+    return RiskDecision(*vals, fingerprint(vals))
+"""
+
+
+def test_extracted_emitter_analyzers_accept_exact_current_structure() -> None:
+    ordinary = _analyze_resolve_policy_limit_source(
+        _VALID_RESOLVE_POLICY_EMITTER_SOURCE, ("A", "B")
+    )
+    assert _analyze_limit_result_emitter_source(
+        _VALID_DERIVE_DECISION_EMITTER_SOURCE, ordinary
+    ) == (
+        {"A", "B", "DISPATCH_RESERVATION_ECONOMICS"},
+        {"PASS", "FAIL", "INCOMPLETE"},
+        {"PASS", "LIMIT_BREACH", "MISSING_REQUIRED_INPUT", "MISSING_VALUATION"},
+    )
+
+
+def _ordinary_constructor_outside_loop_source() -> str:
+    return """
+def derive_decision(effective, i):
+    for name, threshold, unit, supplier in effective.limits:
+        observed = None
+    result = "INCOMPLETE" if observed is None else ("FAIL" if observed > threshold else "PASS")
+    first = LimitResult(
+        name, threshold, observed, unit, supplier, result,
+        "MISSING_REQUIRED_INPUT" if result == "INCOMPLETE"
+        else ("LIMIT_BREACH" if result == "FAIL" else "PASS"),
+    )
+    second = LimitResult(
+        "DISPATCH_RESERVATION_ECONOMICS", Fraction(0), None,
+        i.quote_asset_reference, "SYSTEM", "INCOMPLETE", "MISSING_VALUATION",
+    )
+    return [first, second]
+"""
+
+
+def _mutated_sink_source(mutation: str) -> str:
+    tree = ast.parse(textwrap.dedent(_VALID_DERIVE_DECISION_EMITTER_SOURCE))
+    effective_loop = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.For) and _same_expression(node.iter, "effective.limits")
+    )
+    sink_statements = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and _same_expression(node.value.func.value, "results")
+        and node.value.func.attr == "append"
+    ]
+    assert len(sink_statements) == 2
+    ordinary_sink = next(
+        node for node in sink_statements if _is_ast_descendant(effective_loop, node)
+    )
+    synthetic_sink = next(
+        node for node in sink_statements if not _is_ast_descendant(effective_loop, node)
+    )
+    if mutation in {"dead-ordinary", "dead-synthetic"}:
+        sink = ordinary_sink if mutation == "dead-ordinary" else synthetic_sink
+        constructor = sink.value.args[0]
+        replacement = ast.Assign(
+            targets=[ast.Name(id="unused", ctx=ast.Store())], value=constructor
+        )
+        for parent in ast.walk(tree):
+            for _field, value in ast.iter_fields(parent):
+                if isinstance(value, list) and sink in value:
+                    value[value.index(sink)] = replacement
+                    return ast.unparse(ast.fix_missing_locations(tree))
+        raise AssertionError("sink statement has no statement-list parent")
+    if mutation == "wrong-return":
+        returned = next(node for node in ast.walk(tree) if isinstance(node, ast.Return))
+        returned.value = ast.Name(id="other_results", ctx=ast.Load())
+    elif mutation == "assignment-after-sink":
+        assignment = next(
+            node
+            for node in effective_loop.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "result" for target in node.targets
+            )
+        )
+        effective_loop.body.remove(assignment)
+        effective_loop.body.insert(effective_loop.body.index(ordinary_sink) + 1, assignment)
+    else:
+        raise AssertionError(f"unknown mutation: {mutation}")
+    return ast.unparse(ast.fix_missing_locations(tree))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "analyzer"),
+    [
+        (
+            _ordinary_constructor_outside_loop_source(),
+            "derive",
+        ),
+        (
+            _VALID_RESOLVE_POLICY_EMITTER_SOURCE.replace(
+                "(name, chosen[0], unit,", '("MAX_ORDER_NOTIONAL", chosen[0], unit,'
+            ),
+            "resolve",
+        ),
+        (
+            _VALID_DERIVE_DECISION_EMITTER_SOURCE.replace(
+                "supplier,\n                result,",
+                "supplier,\n                other_result,",
+            ),
+            "derive",
+        ),
+        (
+            _VALID_DERIVE_DECISION_EMITTER_SOURCE.replace(
+                "results.append(\n            LimitResult(",
+                'result = "PASS"\n        results.append(\n            LimitResult(',
+                1,
+            ),
+            "derive",
+        ),
+        (
+            _VALID_RESOLVE_POLICY_EMITTER_SOURCE.replace(
+                "    return limits",
+                "        limits.append(\n"
+                '            (name, chosen[0], unit, f"{chosen[1].scope_type}:{chosen[1].scope_id}")\n'
+                "        )\n"
+                "    return limits",
+            ),
+            "resolve",
+        ),
+        (
+            _VALID_DERIVE_DECISION_EMITTER_SOURCE.replace(
+                "    vals = (a, b, c, d, e, f, g, h, j, tuple(results), k, l, m)",
+                "    results.append(\n"
+                "        LimitResult(\n"
+                '            "DISPATCH_RESERVATION_ECONOMICS", Fraction(0), None,\n'
+                '            i.quote_asset_reference, "SYSTEM", "INCOMPLETE", "MISSING_VALUATION",\n'
+                "        )\n"
+                "    )\n"
+                "    vals = (a, b, c, d, e, f, g, h, j, tuple(results), k, l, m)",
+            ),
+            "derive",
+        ),
+    ],
+    ids=[
+        "ordinary-outside-effective-loop",
+        "constant-instead-of-supported-loop-variable",
+        "constructor-uses-other-result",
+        "additional-result-assignment",
+        "additional-limits-append",
+        "third-limit-result-constructor",
+    ],
+)
+def test_emitter_structural_mutations_fail_closed(mutation: str, analyzer: str) -> None:
+    with pytest.raises(AssertionError):
+        if analyzer == "resolve":
+            _analyze_resolve_policy_limit_source(mutation, ("A", "B"))
+        else:
+            _analyze_limit_result_emitter_source(mutation, {"A", "B"})
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["dead-ordinary", "dead-synthetic", "wrong-return", "assignment-after-sink"],
+)
+def test_emitter_sink_and_control_flow_mutations_fail_closed(mutation: str) -> None:
+    with pytest.raises(AssertionError):
+        _analyze_limit_result_emitter_source(_mutated_sink_source(mutation), {"A", "B"})
+
+
+def _emitter_coverage_matches_registry(
+    emitted_limit_types: set[str], emitted_results: set[str], emitted_reason_codes: set[str]
+) -> bool:
+    contract = thaw(EXPECTED_PROTOCOLS["risk_decision_contract"])
+    return (
+        emitted_limit_types == set(contract["limit_result_type_registry"])
+        and emitted_results == set(contract["limit_result_result_registry"])
+        and emitted_reason_codes == set(contract["limit_result_reason_codes"])
+    )
+
+
+def _reference_limit_decision(
+    r: M07SubmitOrderRequest,
+    *,
+    limit_type: str,
+    threshold: Fraction,
+    unit: AssetReference,
+    pre: AccountingRiskProjection,
+) -> tuple[EffectivePolicy, RiskDecision]:
+    product, instrument, route, commands = _upstream_fixture(r, "CURRENT")
+    authority = resolve_execution_authority(r, product, instrument, route, commands)
+    assert isinstance(authority, PrevalidatedExecutionAuthorityContext)
+    effective = resolve_policy(
+        policy_context(policy_record(limit=limit_type, threshold=threshold, unit=unit)), r
+    )
+    assert isinstance(effective, EffectivePolicy)
+    requirement = derive_requirement(authority, pre)
+    assert isinstance(requirement, ReservationRequirementProjection)
+    decision = derive_decision(
+        authority,
+        pre,
+        effective,
+        switch_context(kill_record()),
+        requirement,
+    )
+    return effective, decision
+
+
+def _dynamic_limit_result_reachability() -> tuple[set[str], set[str], set[str], set[str]]:
+    unit_by_limit = {
+        "MAX_ORDER_QUANTITY": BTC,
+        "MAX_ORDER_NOTIONAL": USD,
+        "MAX_POST_TRADE_POSITION_QUANTITY": BTC,
+        "MAX_POST_TRADE_POSITION_NOTIONAL": USD,
+        "MAX_GROSS_EXPOSURE": USD,
+        "MIN_AVAILABLE_CAPITAL_AFTER_RESERVATION": USD,
+    }
+    reachable_effective: set[str] = set()
+    returned_types: set[str] = set()
+    returned_results: set[str] = set()
+    returned_reasons: set[str] = set()
+    for limit_type in SUPPORTED:
+        threshold = Fraction(0) if limit_type.startswith("MIN_") else Fraction(1_000_000)
+        effective, decision = _reference_limit_decision(
+            request(),
+            limit_type=limit_type,
+            threshold=threshold,
+            unit=unit_by_limit[limit_type],
+            pre=accounting(),
+        )
+        assert tuple(item[0] for item in effective.limits) == (limit_type,)
+        reachable_effective.add(effective.limits[0][0])
+        ordinary = tuple(
+            item for item in decision.ordered_limit_results if item.limit_type in SUPPORTED
+        )
+        assert len(ordinary) == 1 and ordinary[0].limit_type == limit_type
+        returned_types.add(ordinary[0].limit_type)
+        returned_results.add(ordinary[0].result)
+        returned_reasons.add(ordinary[0].reason_code)
+
+    _, failed = _reference_limit_decision(
+        request(),
+        limit_type="MAX_ORDER_QUANTITY",
+        threshold=Fraction(1),
+        unit=BTC,
+        pre=accounting(),
+    )
+    _, incomplete = _reference_limit_decision(
+        request(),
+        limit_type="MAX_POST_TRADE_POSITION_QUANTITY",
+        threshold=Fraction(1_000_000),
+        unit=BTC,
+        pre=accounting(inventory=()),
+    )
+    market_sell = replace(request(), side="SELL", order_type="MARKET", limit_price=None)
+    _, synthetic = _reference_limit_decision(
+        market_sell,
+        limit_type="MAX_ORDER_QUANTITY",
+        threshold=Fraction(1_000_000),
+        unit=BTC,
+        pre=accounting(vals=()),
+    )
+    synthetic_results = tuple(
+        item
+        for item in synthetic.ordered_limit_results
+        if item.limit_type == "DISPATCH_RESERVATION_ECONOMICS"
+    )
+    assert len(synthetic_results) == 1
+    for decision in (failed, incomplete, synthetic):
+        returned_types.update(item.limit_type for item in decision.ordered_limit_results)
+        returned_results.update(item.result for item in decision.ordered_limit_results)
+        returned_reasons.update(item.reason_code for item in decision.ordered_limit_results)
+    return reachable_effective, returned_types, returned_results, returned_reasons
+
+
+def _has_full_reachability(supported: set[str], reachable: set[str]) -> bool:
+    return reachable == supported
+
+
+def test_limit_result_registries_exactly_cover_programmatically_inspected_emitter() -> None:
+    emitted = _limit_result_emitter_sets()
+    assert emitted == (
+        {
+            "MAX_ORDER_QUANTITY",
+            "MAX_ORDER_NOTIONAL",
+            "MAX_POST_TRADE_POSITION_QUANTITY",
+            "MAX_POST_TRADE_POSITION_NOTIONAL",
+            "MAX_GROSS_EXPOSURE",
+            "MIN_AVAILABLE_CAPITAL_AFTER_RESERVATION",
+            "DISPATCH_RESERVATION_ECONOMICS",
+        },
+        {"PASS", "FAIL", "INCOMPLETE"},
+        {"PASS", "LIMIT_BREACH", "MISSING_REQUIRED_INPUT", "MISSING_VALUATION"},
+    )
+    assert _emitter_coverage_matches_registry(*emitted)
+
+
+def test_actual_resolver_and_returned_decisions_reach_exact_closed_registries() -> None:
+    structural_ordinary = _analyze_resolve_policy_limit_source(
+        inspect.getsource(resolve_policy), SUPPORTED
+    )
+    reachable_effective, returned_types, returned_results, returned_reasons = (
+        _dynamic_limit_result_reachability()
+    )
+    contract = thaw(EXPECTED_PROTOCOLS["risk_decision_contract"])
+    assert structural_ordinary == reachable_effective == set(SUPPORTED)
+    assert returned_types == set(contract["limit_result_type_registry"])
+    assert returned_results == set(contract["limit_result_result_registry"])
+    assert returned_reasons == set(contract["limit_result_reason_codes"])
+
+
+def test_reachability_equation_fails_when_a_supported_type_is_unreachable() -> None:
+    supported = {"A", "B"}
+    assert not _has_full_reachability(supported, {"A"})
+    assert _has_full_reachability(supported, {"A", "B"})
+
+
+def test_limit_result_emitter_coverage_fails_closed_for_unknown_literals() -> None:
+    emitted_limit_types, emitted_results, emitted_reason_codes = _limit_result_emitter_sets()
+    assert not _emitter_coverage_matches_registry(
+        emitted_limit_types | {"UNKNOWN_LIMIT"}, emitted_results, emitted_reason_codes
+    )
+    assert not _emitter_coverage_matches_registry(
+        emitted_limit_types, emitted_results, emitted_reason_codes | {"UNKNOWN_REASON"}
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        _limit_transport(),
+        _limit_transport(
+            result="FAIL", reason_code="LIMIT_BREACH", observed_projected_value="21/1"
+        ),
+        _limit_transport(
+            result="INCOMPLETE", reason_code="MISSING_REQUIRED_INPUT", observed_projected_value=None
+        ),
+        _limit_transport(
+            limit_type="DISPATCH_RESERVATION_ECONOMICS",
+            effective_threshold="0/1",
+            observed_projected_value=None,
+            supplying_policy_scope="SYSTEM",
+            result="INCOMPLETE",
+            reason_code="MISSING_VALUATION",
+        ),
+    ],
+)
+def test_limit_result_positive_source_cases(value: dict[str, Any]) -> None:
+    assert _valid_limit_result_transport(value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda x: x.__setitem__("limit_type", "UNKNOWN"),
+        lambda x: x.__setitem__("result", "OK"),
+        lambda x: x.__setitem__("reason_code", "UNKNOWN"),
+        lambda x: x.__setitem__("effective_threshold", 20.0),
+        lambda x: x.__setitem__("effective_threshold", "2/2"),
+        lambda x: x.__setitem__("unit_asset_reference", "USD"),
+        lambda x: x.__setitem__("observed_projected_value", None),
+        lambda x: x.__setitem__("supplying_policy_scope", "WORKSPACE"),
+        lambda x: x.__setitem__("extra", True),
+        lambda x: x.pop("reason_code"),
+    ],
+)
+def test_limit_result_rejects_intrinsic_drift(mutation: Any) -> None:
+    value = _limit_transport()
+    mutation(value)
+    assert not _valid_limit_result_transport(value)
+
+
+def test_ordered_limit_results_rejects_permutation_and_duplicate() -> None:
+    quantity = _limit_transport(
+        limit_type="MAX_ORDER_QUANTITY",
+        unit_asset_reference=_asset_transport("BTC"),
+    )
+    notional = _limit_transport()
+    assert _valid_ordered_limit_results([quantity, notional])
+    assert not _valid_ordered_limit_results([notional, quantity])
+    assert not _valid_ordered_limit_results([quantity, quantity])
+    assert _valid_ordered_limit_results([])
+
+
+def test_kill_switch_result_registry_covers_current_resolver_outcomes() -> None:
+    registry = thaw(EXPECTED_PROTOCOLS["risk_decision_contract"])["kill_switch_result_registry"]
+    assert registry == ["OK", "KILL_SWITCH_ACTIVE", "TRUSTED_CONTEXT_FAILURE"]
+    assert "BANANA" not in registry
+
+
+def _valid_policy_binding(item: Any) -> bool:
+    return (
+        isinstance(item, list)
+        and len(item) == 6
+        and valid_id(item[0], "rpol")
+        and type(item[1]) is int
+        and item[1] > 0
+        and item[2] in SCOPE_ORDER
+        and _canonical_scope_id(item[2], item[3])
+        and item[4] in {"ALLOW", "DENY"}
+        and isinstance(item[5], str)
+        and bool(re.fullmatch(r"[0-9a-f]{64}", item[5]))
+    )
+
+
+def _valid_policy_bindings(values: Any) -> bool:
+    if (
+        not isinstance(values, list)
+        or not values
+        or not all(_valid_policy_binding(x) for x in values)
+    ):
+        return False
+    keys = [(SCOPE_ORDER.index(x[2]), x[3], x[1]) for x in values]
+    unique = [(x[2], x[3], x[1]) for x in values]
+    return keys == sorted(keys) and len(unique) == len(set(unique))
+
+
+def _valid_switch_binding(item: Any) -> bool:
+    return (
+        isinstance(item, list)
+        and len(item) == 8
+        and item[0] in SCOPE_ORDER
+        and _canonical_scope_id(item[0], item[1])
+        and item[2] in {"INACTIVE", "ACTIVE"}
+        and type(item[3]) is int
+        and item[3] > 0
+        and utc_text(item[4])
+        and type(item[5]) is int
+        and item[5] > 0
+        and all(
+            isinstance(item[i], str) and bool(re.fullmatch(r"[0-9a-f]{64}", item[i]))
+            for i in (6, 7)
+        )
+    )
+
+
+def _valid_switch_bindings(values: Any) -> bool:
+    if not isinstance(values, list) or not all(_valid_switch_binding(x) for x in values):
+        return False
+    keys = [(SCOPE_ORDER.index(x[0]), x[1]) for x in values]
+    return keys == sorted(keys) and len(keys) == len(set(keys))
+
+
+def _policy_binding(
+    scope: str = "WORKSPACE", scope_id: str = "ws_018f0000-0000-7000-8000-000000000001"
+) -> list[Any]:
+    return ["rpol_018f0000-0000-7000-8000-000000000001", 1, scope, scope_id, "ALLOW", "a" * 64]
+
+
+def _switch_binding(
+    scope: str = "WORKSPACE", scope_id: str = "ws_018f0000-0000-7000-8000-000000000001"
+) -> list[Any]:
+    return [scope, scope_id, "INACTIVE", 1, "2026-01-01T00:00:00Z", 1, "a" * 64, "b" * 64]
+
+
+def test_execution_lease_binding_schemas_are_exact_and_non_authoritative() -> None:
+    contract = thaw(EXPECTED_PROTOCOLS["execution_lease_contract"])
+    assert contract["binding_array_schemas"]["effective_policy_bindings"]["tuple_length"] == 6
+    assert contract["binding_array_schemas"]["kill_switch_bindings"]["tuple_length"] == 8
+    assert _valid_policy_bindings([_policy_binding()])
+    assert _valid_switch_bindings([_switch_binding()])
+    assert "DO_NOT_ESTABLISH_MEMBERSHIP" in contract["binding_authority_boundary"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda x: x.pop(),
+        lambda x: x.append("extra"),
+        lambda x: x.__setitem__(0, "wrong_018f0000-0000-7000-8000-000000000001"),
+        lambda x: x.__setitem__(1, True),
+        lambda x: x.__setitem__(1, 0),
+        lambda x: x.__setitem__(2, "UNKNOWN"),
+        lambda x: x.__setitem__(3, "port_018f0000-0000-7000-8000-000000000001"),
+        lambda x: x.__setitem__(4, "UNKNOWN"),
+        lambda x: x.__setitem__(5, "A" * 64),
+    ],
+)
+def test_effective_policy_binding_rejects_drift(mutation: Any) -> None:
+    item = _policy_binding()
+    mutation(item)
+    assert not _valid_policy_binding(item)
+
+
+def test_effective_policy_bindings_reject_order_and_duplicate() -> None:
+    product = _policy_binding("PRODUCT_SYSTEM", "product")
+    workspace = _policy_binding()
+    assert _valid_policy_bindings([product, workspace])
+    assert not _valid_policy_bindings([workspace, product])
+    assert not _valid_policy_bindings([workspace, workspace])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda x: x.pop(),
+        lambda x: x.append("extra"),
+        lambda x: x.__setitem__(1, "port_018f0000-0000-7000-8000-000000000001"),
+        lambda x: x.__setitem__(2, "UNKNOWN"),
+        lambda x: x.__setitem__(3, True),
+        lambda x: x.__setitem__(5, True),
+        lambda x: x.__setitem__(5, 0),
+        lambda x: x.__setitem__(4, "bad"),
+        lambda x: x.__setitem__(6, "A" * 64),
+        lambda x: x.__setitem__(7, "bad"),
+    ],
+)
+def test_kill_switch_binding_rejects_drift(mutation: Any) -> None:
+    item = _switch_binding()
+    mutation(item)
+    assert not _valid_switch_binding(item)
+
+
+def test_kill_switch_bindings_reject_order_and_duplicate() -> None:
+    product = _switch_binding("PRODUCT_SYSTEM", "product")
+    workspace = _switch_binding()
+    assert _valid_switch_bindings([product, workspace])
+    assert not _valid_switch_bindings([workspace, product])
+    assert not _valid_switch_bindings([workspace, workspace])

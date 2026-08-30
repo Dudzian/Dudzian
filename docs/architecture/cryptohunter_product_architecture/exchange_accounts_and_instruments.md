@@ -26,6 +26,8 @@ Lifecycle (`DRAFT`, `ACTIVE`, `DISABLED`, `RETIRED`), connection state (`DISCONN
 
 CredentialProfile ma ID `credential_profile_id` z prefiksem `cred`, parent ExchangeAccount, `saas_sync_candidate=false` i zawiera tylko metadata oraz secure-store reference. Kontrakt zabrania API secret, secret key, password, PIN, biometric template, private key, access token, session token, odszyfrowanej wartości credential oraz zaszyfrowanego sekretu transportowanego w tym kontrakcie.
 
+Machine-readable lifecycle registry CredentialProfile to dokładnie `ACTIVE`, `RETIRED` (nie dziedziczy stanów ExchangeAccount). `ACTIVE` wymaga `retired_at_utc=null`; `RETIRED` wymaga canonical `retired_at_utc >= created_at_utc`. Nullable fields to dokładnie `public_key_identifier`, `rotated_from_credential_profile_id`, `retired_at_utc`; rotation ID, gdy obecne, jest canonical ID z prefiksem `cred`. Jest to intrinsic single-record consistency bez transition graphu i bez wall-clock authority; istniejący contextual lineage timestamp algorithm pozostaje odrębny i nieosłabiony.
+
 Profile scope musi równać się environment konta, exchange_id musi pasować do konta, TESTNET nie przyjmuje LIVE credentials, LIVE nie wiąże się z TESTNET, PAPER nie wymaga credentials. `WITHDRAW` jest zabronione i blokuje readiness; `INTERNAL_TRANSFER` nie jest używane przez M0.5; brak `PLACE_ORDERS` wymusza `READ_ONLY`. Same credentials nie tworzą execution authorization ani ProductCapabilities.
 
 ## External identity i account capabilities

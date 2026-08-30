@@ -395,6 +395,212 @@ def test_manifest_is_exactly_48_and_excludes_m01_authority() -> None:
     assert MACHINE["dependency_manifest"]["m0_1_authority_allowed"] is False
 
 
+def test_m05_credential_profile_dependency_attestation_tracks_canonical_corrective() -> None:
+    matches = [
+        entry
+        for entry in DEPENDENCIES
+        if entry["milestone"] == "M0.5"
+        and entry["artifact"] == "exchange_accounts_and_instruments.json"
+        and entry["json_pointer"] == "/credential_profile_contract"
+    ]
+    assert len(matches) == 1
+    upstream = json.loads((DOCS / matches[0]["artifact"]).read_text())
+    assert _attests(matches[0], upstream)
+    assert upstream["credential_profile_contract"]["lifecycle_states"] == [
+        "ACTIVE",
+        "RETIRED",
+    ]
+
+
+def _direct_source_contracts() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    representations = MACHINE["backup_contract"]["representation_registry"]
+    direct = MACHINE["backup_contract"]["direct_upstream_validator_registry"]
+    result = {}
+    for name, entry in representations.items():
+        if (
+            entry.get("carrier_strategy") == "PERSISTENCE_RECORD"
+            and entry.get("representation_category") == "DIRECT_UPSTREAM_SCHEMA"
+        ):
+            document = json.loads((DOCS / entry["semantic_artifact"]).read_text())
+            ok, source = _resolve_pointer(document, entry["semantic_json_pointer"])
+            assert ok and isinstance(source, (dict, list))
+            if isinstance(source, list):
+                source = {"exact_fields": source}
+            result[name] = (direct[name], source)
+    return result
+
+
+def _source_exact_fields(name: str, source: dict[str, Any]) -> list[str]:
+    if name == "ExchangeAccount":
+        return source["record_fields"]
+    if name == "CredentialProfile metadata/reference":
+        return source["fields"]
+    if name == "StrategyInstance current lifecycle/config":
+        return source["exact_fields"]
+    if name == "kill-switch state/generation":
+        return source["record_fields"]
+    if name == "Command accepted request":
+        return source["SUBMIT_ORDER"]["request_fields"]
+    if name == "Event":
+        return source["envelope_schema"]["fields"]
+    if name == "OrderIntent":
+        return source["request_fields"]
+    if name == "Fill":
+        return source["fact_fields"]
+    if name == "LedgerEntry":
+        return source["exact_fields"]
+    return source["exact_fields"]
+
+
+def _direct_projection_is_source_derived(
+    name: str, projection: dict[str, Any], source: dict[str, Any]
+) -> bool:
+    if projection.get("exact_fields") != _source_exact_fields(name, source):
+        return False
+    if projection.get("stage1_scope") != "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY":
+        return False
+    if not projection.get("stage2_contextual_rules_excluded"):
+        return False
+    schemas = projection.get("upstream_field_schemas", {})
+    if name == "ExchangeAccount":
+        return (
+            schemas.get("lifecycle_state", {}).get("values") == source["lifecycle_states"]
+            and schemas.get("connection_state", {}).get("values") == source["connection_states"]
+            and schemas.get("execution_authorization", {}).get("values")
+            == source["execution_authorizations"]
+        )
+    if name == "CredentialProfile metadata/reference":
+        return (
+            projection.get("nullable_fields") == source["nullable_fields"]
+            and schemas.get("credential_purpose", {}).get("values") == source["credential_purposes"]
+            and schemas.get("permission_snapshot", {}).get("type") == "unique_array_of_enum"
+            and schemas.get("permission_snapshot", {}).get("values")
+            == source["permission_registry"]
+            and schemas.get("secure_store_reference", {}).get("grammar")
+            == source["secure_store_reference_grammar"]
+            and schemas.get("lifecycle_state", {}).get("values") == source["lifecycle_states"]
+            and schemas.get("rotated_from_credential_profile_id")
+            == source["intrinsic_field_schemas"]["rotated_from_credential_profile_id"]
+            and projection.get("semantic_constraints", {}).get("lifecycle_timestamp_policy")
+            == source["lifecycle_timestamp_policy"]
+        )
+    if name in {"Command accepted request", "OrderIntent"}:
+        submit = source["SUBMIT_ORDER"] if name == "Command accepted request" else source
+        return (
+            projection.get("nullable_fields") == submit["nullable_fields"]
+            and projection.get("upstream_field_schemas") == submit["field_schemas"]
+            and projection.get("semantic_constraints", {}).get("rules") == submit["constraints"]
+            and len(projection.get("semantic_constraints", {}).get("conditional_nullability", []))
+            == 6
+        )
+    if name == "Event":
+        terminal = projection.get("terminal_fingerprint", {})
+        return (
+            projection.get("nullable_fields") == source["envelope_schema"]["nullable_fields"]
+            and schemas.get("event_type", {}).get("values") == source["event_types"]
+            and terminal.get("field") == "event_fingerprint_sha256"
+            and terminal.get("input_shape") == "CANONICAL_NFC_JSON_OBJECT"
+            and terminal.get("unicode_normalization")
+            == "NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED"
+        )
+    if name == "Fill":
+        terminal = projection.get("terminal_fingerprint", {})
+        return (
+            projection.get("nullable_fields") == source["nullable_fields"]
+            and projection.get("upstream_field_schemas") == source["field_schemas"]
+            and projection.get("semantic_constraints", {}).get("fee_semantics")
+            == source["fee_semantics"]
+            and terminal.get("input_fields") == source["fingerprint"]["input_fields"]
+            and terminal.get("canonicalization") == source["fingerprint"]["canonicalization"]
+            and terminal.get("input_shape") == "CANONICAL_NFC_JSON_OBJECT"
+        )
+    return True
+
+
+@pytest.mark.parametrize("name", list(_direct_source_contracts()))
+def test_m011_direct_upstream_validator_registry_is_source_derived(name: str) -> None:
+    projection, source = _direct_source_contracts()[name]
+    assert _direct_projection_is_source_derived(name, projection, source)
+
+
+@pytest.mark.parametrize(
+    ("name", "mutation"),
+    [
+        ("Event", lambda value: value.update(nullable_fields=[])),
+        (
+            "Event",
+            lambda value: value["terminal_fingerprint"].update(input_shape="JSON_OBJECT"),
+        ),
+        (
+            "Fill",
+            lambda value: value["terminal_fingerprint"].update(canonicalization=[]),
+        ),
+        (
+            "CredentialProfile metadata/reference",
+            lambda value: value["upstream_field_schemas"].update(
+                permission_snapshot={"type": "array"}
+            ),
+        ),
+        (
+            "CredentialProfile metadata/reference",
+            lambda value: value["upstream_field_schemas"].update(
+                lifecycle_state={"type": "non_empty_string"}
+            ),
+        ),
+        (
+            "CredentialProfile metadata/reference",
+            lambda value: value["upstream_field_schemas"].update(
+                secure_store_reference={"type": "non_empty_string"}
+            ),
+        ),
+        (
+            "CredentialProfile metadata/reference",
+            lambda value: value["upstream_field_schemas"].update(
+                rotated_from_credential_profile_id={"type": "string"}
+            ),
+        ),
+        ("OrderIntent", lambda value: value.update(semantic_constraints={})),
+        (
+            "ExchangeAccount",
+            lambda value: value["upstream_field_schemas"].update(
+                lifecycle_state={"type": "non_empty_string"}
+            ),
+        ),
+    ],
+)
+def test_direct_source_fidelity_rejects_known_projection_drifts(name, mutation) -> None:
+    projection, source = _direct_source_contracts()[name]
+    candidate = copy.deepcopy(projection)
+    mutation(candidate)
+    assert not _direct_projection_is_source_derived(name, candidate, source)
+
+
+def test_direct_event_nullable_envelope_is_source_valid() -> None:
+    payload = _direct_payload("Event", "a", 1)
+    assert payload["causation_id"] is None and payload["command_id"] is None
+    assert _validate_direct_upstream_payload("Event", payload)
+
+
+def test_direct_terminal_fingerprint_projection_is_complete_and_fail_closed() -> None:
+    direct = MACHINE["backup_contract"]["direct_upstream_validator_registry"]
+    expected = {
+        "Event": "event_fingerprint_sha256",
+        "Fill": "fill_fingerprint_sha256",
+        "kill-switch state/generation": "record_fingerprint_sha256",
+        "RiskDecision": "decision_fingerprint_sha256",
+        "ExecutionLease immutable record": "lease_fingerprint_sha256",
+        "SessionSecurityState current generation/state": "content_fingerprint_sha256",
+        "SecretMetadataProjection": "content_fingerprint_sha256",
+    }
+    for name, field in expected.items():
+        derivation = direct[name]["terminal_fingerprint"]
+        assert derivation["field"] == field
+        assert derivation["algorithm"] == "SHA-256"
+        assert derivation["excluded_fields"] == [field]
+        assert derivation["digest_format"] == "lowercase_hex"
+        assert set(derivation["input_fields"]) == set(direct[name]["exact_fields"]) - {field}
+
+
 def test_dependency_mutation_breaks_authored_attestation() -> None:
     entry = DEPENDENCIES[0]
     upstream = json.loads((DOCS / entry["artifact"]).read_text())
@@ -1608,6 +1814,31 @@ def _field_schema_valid(field: str, value: Any, schema: dict[str, Any]) -> bool:
         return value is None or _field_schema_valid(
             field, value, {"type": "id", "prefix": schema.get("id_prefix")}
         )
+    if kind == "nullable_id":
+        return value is None or _field_schema_valid(
+            field, value, {"type": "id", "prefix": schema.get("prefix")}
+        )
+    if kind == "nullable_non_empty_string":
+        return value is None or isinstance(value, str) and bool(value)
+    if kind == "secure_store_reference":
+        if not isinstance(value, str) or not value.startswith("secure-store://"):
+            return False
+        locator = value[len("secure-store://") :]
+        grammar = schema.get("grammar", {})
+        return (
+            bool(locator)
+            and not any(char.isspace() for char in value)
+            and not any(
+                marker in value.lower() for marker in grammar.get("forbidden_payload_markers", [])
+            )
+            and not any(char in value for char in "?#=")
+        )
+    if kind == "unique_array_of_enum":
+        return (
+            isinstance(value, list)
+            and len(value) == len(set(value))
+            and all(item in schema.get("values", []) for item in value)
+        )
     if kind == "non_negative_decimal":
         return _field_schema_valid(field, value, {"type": "decimal", "constraint": "non_negative"})
     if kind == "positive_decimal":
@@ -2117,6 +2348,8 @@ def _direct_fixture_value(
     aspect: str, field: str, schema: dict[str, Any], suffix: str, revision: int
 ) -> Any:
     kind = schema.get("type")
+    if field == "event_type":
+        return "ORDER_PLANNED"
     if kind == "constant":
         return schema["value"]
     if kind == "id":
@@ -2133,6 +2366,10 @@ def _direct_fixture_value(
         return "2026-01-01T00:00:00Z"
     if kind == "array":
         return []
+    if kind == "unique_array_of_enum":
+        return [schema["values"][0]]
+    if kind == "secure_store_reference":
+        return f"secure-store://reference-{suffix}"
     if kind == "event_safe_payload":
         return {"side": "BUY", "order_type": "MARKET", "quantity": "1"}
     if kind in {"object", "asset_reference"}:
@@ -4237,8 +4474,12 @@ def test_critical_immutable_sources_are_read_directly_not_self_declared(
     aspect: str, artifact: str, pointer: str, schema_name: str
 ) -> None:
     upstream = json.loads((DOCS / artifact).read_text())
-    ok, literal_fields = _resolve_pointer(upstream, pointer)
-    assert ok and isinstance(literal_fields, list) and literal_fields
+    ok, literal_schema = _resolve_pointer(upstream, pointer)
+    assert ok
+    literal_fields = (
+        literal_schema["exact_fields"] if isinstance(literal_schema, dict) else literal_schema
+    )
+    assert isinstance(literal_fields, list) and literal_fields
     entry = MACHINE["backup_contract"]["representation_registry"][aspect]
     assert entry["semantic_object_or_invariant"] in {aspect, schema_name}
     if "immutable_fact_binding" in entry:
@@ -4265,7 +4506,10 @@ def _independent_immutable_fields(aspect: str) -> list[str] | dict[str, list[str
             "DeviceTrust/security revisions": "DeviceTrustProjection",
             "platform enrollment revisions": "CoreAcceptedPlatformBiometricAssertionBinding",
         }[aspect]
-        return cast(list[str], identity["executable_boundary_schemas"][schema])
+        source_schema = identity["executable_boundary_schemas"][schema]
+        if isinstance(source_schema, dict):
+            source_schema = source_schema["exact_fields"]
+        return cast(list[str], source_schema)
     if aspect == "TradingUniverse version history":
         upstream = json.loads((DOCS / "exchange_accounts_and_instruments.json").read_text())
         return cast(list[str], upstream["trading_universe_contract"]["record_fields"])
@@ -4364,7 +4608,10 @@ def test_all_immutable_payload_fields_are_independently_derived_from_upstream(as
             if aspect == "RuntimeSession canonical identity/history":
                 assert source["projection_rule"]
             else:
-                assert isinstance(declaration, list) and field in declaration
+                declaration_fields = (
+                    declaration["exact_fields"] if isinstance(declaration, dict) else declaration
+                )
+                assert isinstance(declaration_fields, list) and field in declaration_fields
     else:
         assert entry["source_derivation"]["persisted_payload_fields"] == expected
 
@@ -4616,7 +4863,11 @@ def test_all_semantic_fingerprint_derivations_match_upstream_contracts() -> None
         binding = registry[aspect]["immutable_fact_binding"]
         assert binding["semantic_fingerprint_derivation"]["input_fields"] == [
             field
-            for field in identity["executable_boundary_schemas"][schema_name]
+            for field in (
+                identity["executable_boundary_schemas"][schema_name]["exact_fields"]
+                if isinstance(identity["executable_boundary_schemas"][schema_name], dict)
+                else identity["executable_boundary_schemas"][schema_name]
+            )
             if field != "content_fingerprint_sha256"
         ]
         assert binding["semantic_fingerprint_derivation"]["input_shape"] == "JSON_OBJECT"

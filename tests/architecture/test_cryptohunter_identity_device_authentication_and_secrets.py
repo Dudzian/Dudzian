@@ -267,7 +267,8 @@ EXPECTED_PROTOCOL_LITERAL = {
     "authority": {
         "owner": "CoreHost",
         "integrity_is_authority": False,
-        "authority_rule": "accepted/current Core membership; fingerprints prove content integrity only",
+        "authority_rule": "accepted/current Core membership; fingerprints prove content "
+        "integrity only",
         "non_authorities": [
             "UI",
             "TrayAgent",
@@ -284,8 +285,8 @@ EXPECTED_PROTOCOL_LITERAL = {
             "DeviceInstallation identity alone",
             "LiveAccessGrant presence alone",
         ],
-        "current_designation": "Core-owned scope-to-accepted-fingerprint maps only; is_current content never "
-        "establishes authority",
+        "current_designation": "Core-owned scope-to-accepted-fingerprint maps only; "
+        "is_current content never establishes authority",
         "public_authorization_inputs": [
             "untrusted AuthenticationProof",
             "untrusted exact authorization request",
@@ -304,18 +305,23 @@ EXPECTED_PROTOCOL_LITERAL = {
             "entitlement_caller_acceptance_allowed": False,
             "secret_caller_acceptance_allowed": False,
             "live_grant_caller_acceptance_allowed": False,
-            "trusted_seed_boundary": "module-private architecture-test harness represents "
-            "authority already accepted by M0.3, external platform or "
-            "M0.5; never product API",
+            "trusted_seed_boundary": "module-private architecture-test "
+            "harness represents authority already "
+            "accepted by M0.3, external platform "
+            "or M0.5; never product API",
         },
-        "security_generation_coherence": "identity == device == PIN == session == entitlement == proof for "
-        "exact authorization scope; inconsistent Core bundle is "
+        "security_generation_coherence": "identity == device == PIN == session == "
+        "entitlement == proof for exact authorization "
+        "scope; inconsistent Core bundle is "
         "CONTRACT_INCONSISTENT",
-        "canonical_time_boundary": "every public time path requires timezone-aware datetime with UTC offset "
-        "exactly zero; naive and non-UTC inputs fail closed",
-        "security_generation_monotonicity": "current OperatorIdentity and DeviceTrust security_generation are "
-        "monotonic non-decreasing per scope; rollback is denied and cannot "
-        "resurrect historical grant/proof authority",
+        "canonical_time_boundary": "every public time path requires timezone-aware datetime "
+        "with UTC offset exactly zero; naive and non-UTC inputs "
+        "fail closed",
+        "security_generation_monotonicity": "current OperatorIdentity and DeviceTrust "
+        "security_generation are monotonic "
+        "non-decreasing per scope; rollback is denied "
+        "and cannot resurrect historical grant/proof "
+        "authority",
     },
     "dependency_manifest": [
         {
@@ -356,7 +362,7 @@ EXPECTED_PROTOCOL_LITERAL = {
         {
             "contract": "exchange_accounts_and_instruments.json",
             "json_pointer": "/credential_profile_contract",
-            "expected_content_fingerprint_sha256": "4fd7629e1161d250471bfbf22976674a1794fe508af1f455fdc057e7a533786a",
+            "expected_content_fingerprint_sha256": "d0f8b6213cd4388f097a2c16f27edc2bd304b36f0118ab0c834088e210432a2a",
         },
         {
             "contract": "strategy_market_data_and_execution_routing.json",
@@ -403,21 +409,29 @@ EXPECTED_PROTOCOL_LITERAL = {
             "ExecutionLease",
             "LIVE",
         ],
-        "executable_consumer": "M03BootstrapAuthorityView resolves accepted historical PRE, accepted/current "
-        "POST and exact consumed authority; transition creates all initial "
-        "accepted/current M0.10 projections and atomically fences one-shot authority",
-        "semantic_atomicity": "prepare and validate complete identity/device/PIN/session/initial POST in shadow "
-        "semantic state; publish all plus bootstrap consumption together, or publish zero",
-        "bridge_membership": "pre-existing M03AcceptedBootstrapAuthorityBinding from trusted M0.3 bridge; binds "
-        "complete view, PRE, current POST, consumed authority, consumed claim/challenge, "
-        "exact generation/revision/scope and upstream source",
-        "bridge_semantic_validation": "view and binding validate canonical identifiers, positive non-bool "
-        "generation/revision, initial-only purpose, lowercase fingerprints, exact "
-        "PRE/current POST/consumed authority/claim/challenge and external "
-        "provisioning source; recomputed malformed pairs denied",
-        "consumed_challenge_source": "explicit module-private _M03TrustedConsumedBootstrapEvidence supplied "
-        "before projection; view is derived from evidence; no local "
-        "claim/challenge/authority default or derivation exists",
+        "executable_consumer": "M03BootstrapAuthorityView resolves accepted historical PRE, "
+        "accepted/current POST and exact consumed authority; "
+        "transition creates all initial accepted/current M0.10 "
+        "projections and atomically fences one-shot authority",
+        "semantic_atomicity": "prepare and validate complete "
+        "identity/device/PIN/session/initial POST in shadow semantic "
+        "state; publish all plus bootstrap consumption together, or "
+        "publish zero",
+        "bridge_membership": "pre-existing M03AcceptedBootstrapAuthorityBinding from "
+        "trusted M0.3 bridge; binds complete view, PRE, current POST, "
+        "consumed authority, consumed claim/challenge, exact "
+        "generation/revision/scope and upstream source",
+        "bridge_semantic_validation": "view and binding validate canonical identifiers, "
+        "positive non-bool generation/revision, initial-only "
+        "purpose, lowercase fingerprints, exact PRE/current "
+        "POST/consumed authority/claim/challenge and external "
+        "provisioning source; recomputed malformed pairs "
+        "denied",
+        "consumed_challenge_source": "explicit module-private "
+        "_M03TrustedConsumedBootstrapEvidence supplied before "
+        "projection; view is derived from evidence; no local "
+        "claim/challenge/authority default or derivation "
+        "exists",
     },
     "registries": {
         "identity_states": ["ACTIVE", "REVOKED"],
@@ -456,8 +470,9 @@ EXPECTED_PROTOCOL_LITERAL = {
             "terminal_states": ["REVOKED", "REPLACED"],
             "denied": ["TRUSTED->TRUSTED", "REVOKED->TRUSTED", "REPLACED->TRUSTED"],
         },
-        "identity_transition_rule": "REVOKED is terminal for the same OperatorIdentity; ACTIVE cannot be "
-        "restored for that identity",
+        "identity_transition_rule": "REVOKED is terminal for the same OperatorIdentity; "
+        "ACTIVE cannot be restored for that identity",
+        "secret_use_operation_registry": ["PRIVATE_DATA", "ORDER_ENTRY"],
     },
     "operation_policy_registry": {
         "TRUST_DEVICE": {
@@ -576,9 +591,10 @@ EXPECTED_PROTOCOL_LITERAL = {
         "raw_pin_serialized": False,
         "bool_as_int_rejected": True,
         "change_or_reset_increments_pin_revision": True,
-        "success_after_lockout_expiry": "successful comparison resets failed_attempts to zero and "
-        "lockout_until_utc to null by a new accepted/current record without "
-        "changing pin_revision",
+        "success_after_lockout_expiry": "successful comparison resets failed_attempts to "
+        "zero and lockout_until_utc to null by a new "
+        "accepted/current record without changing "
+        "pin_revision",
     },
     "biometric_policy": {
         "stores_biometric_material": False,
@@ -589,11 +605,13 @@ EXPECTED_PROTOCOL_LITERAL = {
             "expected challenge",
             "verified_at_utc <= now_utc <= expires_at_utc",
         ],
-        "acceptance_authority": "pre-existing external-platform accepted membership represented by "
-        "CoreAcceptedPlatformBiometricAssertionBinding; nominal SUCCESS and "
-        "self-hash denied",
-        "trusted_seed_boundary": "module-private fixture represents pre-existing external platform "
-        "acceptance; public Core API only consumes membership",
+        "acceptance_authority": "pre-existing external-platform accepted membership "
+        "represented by "
+        "CoreAcceptedPlatformBiometricAssertionBinding; "
+        "nominal SUCCESS and self-hash denied",
+        "trusted_seed_boundary": "module-private fixture represents pre-existing "
+        "external platform acceptance; public Core API only "
+        "consumes membership",
         "expected_challenge": "Core-derived canonical fingerprint of "
         "account/operator/device/environment/operation/scope/mutation/causation/correlation/enrollment/security/session; "
         "caller cannot supply expected challenge",
@@ -602,8 +620,9 @@ EXPECTED_PROTOCOL_LITERAL = {
         "factor_set": "derived Core output only",
         "membership": "pre-existing CoreIssuedAuthenticationProofBinding",
         "self_hash_authority": False,
-        "time_rule": "issued_at_utc <= now_utc <= expires_at_utc; expires_at_utc > issued_at_utc; freshness "
-        "age <= operation freshness_seconds (inclusive)",
+        "time_rule": "issued_at_utc <= now_utc <= expires_at_utc; expires_at_utc > "
+        "issued_at_utc; freshness age <= operation freshness_seconds "
+        "(inclusive)",
         "always_revalidate_current": [
             "identity",
             "device trust",
@@ -619,11 +638,11 @@ EXPECTED_PROTOCOL_LITERAL = {
             "causation",
             "correlation",
         ],
-        "issuance": "Core resolves all accepted/current registries, validates operation policy and factor "
-        "evidence, derives factor_set, emits proof and records exact "
-        "CoreIssuedAuthenticationProofBinding",
-        "binding_validation": "registry key and every ordered binding field exact; authority_source exactly "
-        "CoreHost",
+        "issuance": "Core resolves all accepted/current registries, validates operation "
+        "policy and factor evidence, derives factor_set, emits proof and "
+        "records exact CoreIssuedAuthenticationProofBinding",
+        "binding_validation": "registry key and every ordered binding field exact; "
+        "authority_source exactly CoreHost",
     },
     "secret_reference_policy": {
         "upstream_pointer": "/credential_profile_contract/secure_store_reference_grammar",
@@ -642,12 +661,15 @@ EXPECTED_PROTOCOL_LITERAL = {
         ],
         "keyring_scheme_result": "SECRET_INVALID",
         "raw_secret_in_domain_record": False,
-        "current_authority": "accepted SecretMetadataProjection plus canonical Core-owned "
-        "scope-to-accepted-fingerprint map for exact revision",
-        "upstream_seed_boundary": "module-private fixture represents already accepted/current "
-        "M0.5 projection; public Core API only validates use; "
-        "ROTATE/REBIND only return authorized security request to M0.5 "
-        "owner",
+        "current_authority": "accepted SecretMetadataProjection plus "
+        "canonical Core-owned "
+        "scope-to-accepted-fingerprint map for exact "
+        "revision",
+        "upstream_seed_boundary": "module-private fixture represents already "
+        "accepted/current M0.5 projection; public "
+        "Core API only validates use; ROTATE/REBIND "
+        "only return authorized security request to "
+        "M0.5 owner",
     },
     "live_policy": {
         "target_architecture_supports_live": True,
@@ -665,33 +687,39 @@ EXPECTED_PROTOCOL_LITERAL = {
             "M0.9 RiskDecision/ExecutionLease",
             "M0.10 security",
         ],
-        "grant_authority": "accepted LiveAccessGrantSecurityProjection plus canonical Core-owned "
-        "scope-to-accepted-fingerprint map; nominal payload denied",
-        "grant_transitions": "GRANT_LIVE_ACCESS, SUSPEND_LIVE_ACCESS and REVOKE_LIVE_ACCESS are M0.10-owned "
-        "authorized transitions; no public acceptance method",
+        "grant_authority": "accepted LiveAccessGrantSecurityProjection plus canonical "
+        "Core-owned scope-to-accepted-fingerprint map; nominal payload "
+        "denied",
+        "grant_transitions": "GRANT_LIVE_ACCESS, SUSPEND_LIVE_ACCESS and "
+        "REVOKE_LIVE_ACCESS are M0.10-owned authorized transitions; "
+        "no public acceptance method",
         "current_designation_key": [
             "account_id",
             "device_installation_id",
             "policy_scope_fingerprint_sha256",
         ],
-        "grant_identity_history": "live_access_grant_id identity cannot be reparented; account/device/policy "
-        "scope and operator parent remain immutable; security_generation is the "
-        "authorization epoch of each projection, not immutable grant identity "
+        "grant_identity_history": "live_access_grant_id identity cannot be reparented; "
+        "account/device/policy scope and operator parent remain "
+        "immutable; security_generation is the authorization "
+        "epoch of each projection, not immutable grant identity "
         "lineage",
         "transition_predecessors": {
             "GRANT_LIVE_ACCESS": ["ABSENT"],
             "SUSPEND_LIVE_ACCESS": ["ACTIVE"],
             "REVOKE_LIVE_ACCESS": ["ACTIVE", "SUSPENDED"],
         },
-        "one_current_rule": "at most one current ACTIVE grant per account/device/policy scope; second ACTIVE "
-        "identity for occupied scope denied; accepted historical projections remain "
-        "fenced",
-        "security_generation_epoch": "each new projection binds current coherent identity/device/proof "
-        "generation; historical older-generation projection is stale; generation "
-        "change never reactivates or self-mints grant authority",
-        "non_resurrection": "once parent is terminally revoked/replaced or authorization epoch advances, "
-        "historical grant authority never becomes active again through later value "
-        "equality; fresh authority requires a new legal grant transition on legal parents",
+        "one_current_rule": "at most one current ACTIVE grant per account/device/policy "
+        "scope; second ACTIVE identity for occupied scope denied; "
+        "accepted historical projections remain fenced",
+        "security_generation_epoch": "each new projection binds current coherent "
+        "identity/device/proof generation; historical "
+        "older-generation projection is stale; generation "
+        "change never reactivates or self-mints grant "
+        "authority",
+        "non_resurrection": "once parent is terminally revoked/replaced or authorization "
+        "epoch advances, historical grant authority never becomes "
+        "active again through later value equality; fresh authority "
+        "requires a new legal grant transition on legal parents",
         "grant_id_lifecycle": {
             "NEW_UNSEEN_ID": "ACTIVE revision 1",
             "ACTIVE": "SUSPENDED or REVOKED",
@@ -704,8 +732,9 @@ EXPECTED_PROTOCOL_LITERAL = {
             "SUSPENDED": "new grant denied",
             "REVOKED": "fresh distinct unseen grant ID allowed",
         },
-        "history_preservation": "all accepted projections remain immutable history; current scope designation "
-        "may move from revoked G1 to fresh active G2 without rewriting G1",
+        "history_preservation": "all accepted projections remain immutable history; "
+        "current scope designation may move from revoked G1 to "
+        "fresh active G2 without rewriting G1",
     },
     "audit_safe_payload": {
         "allowed_categories": [
@@ -730,6 +759,97 @@ EXPECTED_PROTOCOL_LITERAL = {
     "identifier_policy": {
         "prefixes": ["acct_", "op_", "dev_", "cred_", "xacc_", "lgrant_"],
         "uuid_version": 7,
+    },
+    "canonical_integrity_fingerprint_policy": {
+        "algorithm": "SHA-256",
+        "input_shape": "EXACT_CLOSED_JSON_OBJECT_OF_EXPLICIT_SEMANTIC_INPUT_FIELDS",
+        "json_canonicalization": {
+            "sort_keys": True,
+            "separators": [",", ":"],
+            "ensure_ascii": False,
+            "allow_nan": False,
+        },
+        "encoding": "UTF-8",
+        "array_policy": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER; "
+        "NEVER_SORT_UNLESS_OWNING_CONTRACT_REQUIRES",
+        "object_key_policy": "KEY_ORDER_NON_SEMANTIC; SORT_KEYS_CANONICALIZES",
+        "number_policy": "NO_FLOAT_COERCION; VALIDATE_OWNING_FIELD_CONTRACT_BEFORE_HASHING",
+        "decimal_string_policy": "VALIDATE_CANONICAL_OWNING_FIELD_CONTRACT; "
+        "NO_FINGERPRINT_LAYER_NORMALIZATION",
+        "timestamp_policy": "VALIDATE_CANONICAL_OWNING_TIMESTAMP_CONTRACT; "
+        "NO_FINGERPRINT_LAYER_NORMALIZATION",
+        "unicode_policy": "HASH_EXACT_VALIDATED_STRINGS; NO_HIDDEN_NFC_OR_NFD_TRANSFORMATION",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validation": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; "
+        "NEVER_CREATES_ACCEPTED_MEMBERSHIP, "
+        "CURRENT_AUTHORITY, "
+        "LIVE_READINESS, OR "
+        "SELF_ENROLLMENT",
+    },
+    "executable_boundary_terminal_fingerprints": {
+        "SessionSecurityState": {
+            "field": "content_fingerprint_sha256",
+            "algorithm": "SHA-256",
+            "input_fields": [
+                "account_id",
+                "operator_id",
+                "device_installation_id",
+                "runtime_session_id",
+                "state",
+                "session_generation",
+                "security_generation",
+            ],
+            "excluded_fields": ["content_fingerprint_sha256"],
+            "input_shape": "JSON_OBJECT",
+            "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+            "canonicalization": {
+                "sort_keys": True,
+                "separators": [",", ":"],
+                "ensure_ascii": False,
+                "allow_nan": False,
+            },
+            "encoding": "UTF-8",
+            "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+            "unicode_normalization": "NONE",
+            "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+            "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+            "authority_boundary": "INTEGRITY_ONLY; "
+            "DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+            "exact_fields_source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+        },
+        "SecretMetadataProjection": {
+            "field": "content_fingerprint_sha256",
+            "algorithm": "SHA-256",
+            "input_fields": [
+                "secret_reference",
+                "secret_kind",
+                "exchange_account_id",
+                "credential_profile_id",
+                "exchange_id",
+                "environment",
+                "permitted_operations",
+                "secret_revision",
+                "state",
+            ],
+            "excluded_fields": ["content_fingerprint_sha256"],
+            "input_shape": "JSON_OBJECT",
+            "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+            "canonicalization": {
+                "sort_keys": True,
+                "separators": [",", ":"],
+                "ensure_ascii": False,
+                "allow_nan": False,
+            },
+            "encoding": "UTF-8",
+            "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+            "unicode_normalization": "NONE",
+            "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+            "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+            "authority_boundary": "INTEGRITY_ONLY; "
+            "DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+            "exact_fields_source_pointer": "/executable_boundary_schemas/SecretMetadataProjection",
+        },
     },
     "executable_boundary_schemas": {
         "OperatorIdentitySecurityProjection": [
@@ -809,16 +929,48 @@ EXPECTED_PROTOCOL_LITERAL = {
             "security_generation",
             "session_generation",
         ],
-        "SessionSecurityState": [
-            "account_id",
-            "operator_id",
-            "device_installation_id",
-            "runtime_session_id",
-            "state",
-            "session_generation",
-            "security_generation",
-            "content_fingerprint_sha256",
-        ],
+        "SessionSecurityState": {
+            "exact_fields": [
+                "account_id",
+                "operator_id",
+                "device_installation_id",
+                "runtime_session_id",
+                "state",
+                "session_generation",
+                "security_generation",
+                "content_fingerprint_sha256",
+            ],
+            "terminal_fingerprint": {
+                "field": "content_fingerprint_sha256",
+                "algorithm": "SHA-256",
+                "input_fields": [
+                    "account_id",
+                    "operator_id",
+                    "device_installation_id",
+                    "runtime_session_id",
+                    "state",
+                    "session_generation",
+                    "security_generation",
+                ],
+                "excluded_fields": ["content_fingerprint_sha256"],
+                "input_shape": "JSON_OBJECT",
+                "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+                "canonicalization": {
+                    "sort_keys": True,
+                    "separators": [",", ":"],
+                    "ensure_ascii": False,
+                    "allow_nan": False,
+                },
+                "encoding": "UTF-8",
+                "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+                "unicode_normalization": "NONE",
+                "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+                "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+                "authority_boundary": "INTEGRITY_ONLY; "
+                "DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+                "exact_fields_source_pointer": "/executable_boundary_schemas/SessionSecurityState",
+            },
+        },
         "OperationEntitlementProjection": [
             "account_id",
             "operator_id",
@@ -829,18 +981,65 @@ EXPECTED_PROTOCOL_LITERAL = {
             "security_generation",
             "content_fingerprint_sha256",
         ],
-        "SecretMetadataProjection": [
-            "secret_reference",
-            "secret_kind",
-            "exchange_account_id",
-            "credential_profile_id",
-            "exchange_id",
-            "environment",
-            "permitted_operations",
-            "secret_revision",
-            "state",
-            "content_fingerprint_sha256",
-        ],
+        "SecretMetadataProjection": {
+            "exact_fields": [
+                "secret_reference",
+                "secret_kind",
+                "exchange_account_id",
+                "credential_profile_id",
+                "exchange_id",
+                "environment",
+                "permitted_operations",
+                "secret_revision",
+                "state",
+                "content_fingerprint_sha256",
+            ],
+            "terminal_fingerprint": {
+                "field": "content_fingerprint_sha256",
+                "algorithm": "SHA-256",
+                "input_fields": [
+                    "secret_reference",
+                    "secret_kind",
+                    "exchange_account_id",
+                    "credential_profile_id",
+                    "exchange_id",
+                    "environment",
+                    "permitted_operations",
+                    "secret_revision",
+                    "state",
+                ],
+                "excluded_fields": ["content_fingerprint_sha256"],
+                "input_shape": "JSON_OBJECT",
+                "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+                "canonicalization": {
+                    "sort_keys": True,
+                    "separators": [",", ":"],
+                    "ensure_ascii": False,
+                    "allow_nan": False,
+                },
+                "encoding": "UTF-8",
+                "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+                "unicode_normalization": "NONE",
+                "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+                "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+                "authority_boundary": "INTEGRITY_ONLY; "
+                "DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+                "exact_fields_source_pointer": "/executable_boundary_schemas/SecretMetadataProjection",
+            },
+            "field_schemas": {
+                "permitted_operations": {
+                    "type": "canonical_unique_array_of_enum",
+                    "items_source_pointer": "/registries/secret_use_operation_registry",
+                    "min_items": 1,
+                    "unique": True,
+                    "canonical_order": "REGISTRY_ORDER",
+                    "validator_behavior": "REJECT_NON_CANONICAL_ORDER_OR_DUPLICATES_NEVER_SORT_OR_DEDUPLICATE",
+                    "validate_before_terminal_fingerprint": True,
+                    "domain_separation": "SECRET_USE_OPERATIONS_NOT_ADMIN_OPERATION_POLICY_OR_M05_CREDENTIAL_PERMISSIONS",
+                    "authority_boundary": "MEMBERSHIP_IN_INTRINSIC_METADATA_DOES_NOT_ESTABLISH_CURRENT_ACCEPTED_SECRET_AUTHORITY",
+                }
+            },
+        },
         "LiveAccessGrantSecurityProjection": [
             "live_access_grant_id",
             "account_id",
@@ -928,9 +1127,10 @@ EXPECTED_PROTOCOL_LITERAL = {
             "platform biometric assertion bindings",
             "Core-issued proof bindings",
         ],
-        "current_designations": "canonical designation is only Core-owned scope -> accepted "
-        "projection fingerprint; no Current*Binding authority "
-        "schemas",
+        "current_designations": "canonical designation is only "
+        "Core-owned scope -> accepted "
+        "projection fingerprint; no "
+        "Current*Binding authority schemas",
         "public_registry_injection": False,
     },
     "operation_ownership": {
@@ -956,8 +1156,8 @@ EXPECTED_PROTOCOL_LITERAL = {
             "CHANGE_KILL_SWITCH",
             "CHANGE_PRODUCT_CAPABILITIES",
         ],
-        "rule": "every registered operation has exactly one executable owner; upstream-owned "
-        "operations stop after M0.10 authorization",
+        "rule": "every registered operation has exactly one executable owner; "
+        "upstream-owned operations stop after M0.10 authorization",
     },
     "transition_binding_invariants": {
         "actual_mutation_must_match_fingerprint": True,
@@ -970,13 +1170,15 @@ EXPECTED_PROTOCOL_LITERAL = {
         "malformed_public_inputs_fail_closed": True,
         "m010_owned_scope": "canonical fingerprint of "
         "account/operator/actor-device/environment/operation/authorization-scope",
-        "m010_owned_mutation": "canonical safe descriptor fingerprint; raw PIN/verifier "
-        "excluded; actual transition payload must match request and "
-        "proof",
-        "upstream_owned_mutation": "opaque fingerprint handoff bound by M0.10; upstream "
-        "owner MUST independently derive actual upstream "
-        "mutation fingerprint and require equality before "
-        "mutation",
+        "m010_owned_mutation": "canonical safe descriptor fingerprint; "
+        "raw PIN/verifier excluded; actual "
+        "transition payload must match request "
+        "and proof",
+        "upstream_owned_mutation": "opaque fingerprint handoff bound by "
+        "M0.10; upstream owner MUST "
+        "independently derive actual "
+        "upstream mutation fingerprint and "
+        "require equality before mutation",
         "session_mapping": {
             "LOCK_SESSION": "LOCKED",
             "LOGOUT_SESSION": "LOGGED_OUT",
@@ -1011,10 +1213,11 @@ EXPECTED_PROTOCOL_LITERAL = {
         "platform_enrollment_revision_cannot_roll_back": True,
         "pin_revision_cannot_roll_back": True,
         "session_generation_cannot_roll_back": True,
-        "same_epoch_rule": "exact same projection is idempotent; different authority content "
-        "at same identity/device/session epoch denied; PIN same revision "
-        "only permits failed_attempts/lockout updates with immutable "
-        "credential content",
+        "same_epoch_rule": "exact same projection is idempotent; different "
+        "authority content at same "
+        "identity/device/session epoch denied; PIN same "
+        "revision only permits failed_attempts/lockout "
+        "updates with immutable credential content",
         "scope": "Core-owned current registries; no caller override",
     },
 }
@@ -2612,8 +2815,7 @@ def valid_secret(s: Any) -> bool:
         and bool(s.exchange_id)
         and s.environment in {"PAPER", "TESTNET", "LIVE"}
         and isinstance(s.permitted_operations, tuple)
-        and bool(s.permitted_operations)
-        and all(isinstance(x, str) and x for x in s.permitted_operations)
+        and _valid_permitted_operations(s.permitted_operations)
         and exact_int(s.secret_revision)
         and s.state in {"AVAILABLE", "ROTATED", "REVOKED", "REPLACED"}
         and record_fp(s, "content_fingerprint_sha256")
@@ -2857,7 +3059,11 @@ def test_full_expected_protocol_dependencies_and_schema_exactness() -> None:
         c.__name__ for c in M010_AUTHORITY_DATACLASSES
     }
     for cls in M010_AUTHORITY_DATACLASSES:
-        assert value["executable_boundary_schemas"][cls.__name__] == [f.name for f in fields(cls)]
+        source_schema = value["executable_boundary_schemas"][cls.__name__]
+        source_fields = (
+            source_schema["exact_fields"] if isinstance(source_schema, dict) else source_schema
+        )
+        assert source_fields == [f.name for f in fields(cls)]
 
 
 MUTATIONS = [
@@ -4338,3 +4544,136 @@ def test_never_seen_rule_survives_multiple_revoked_current_grant_identities() ->
         == "AUTHORIZATION_DENIED"
     )
     assert (core._accepted_grants, core._current_grant) == before
+
+
+def _source_closure_content_hash(record: dict[str, Any], definition: dict[str, Any]) -> str:
+    payload = {field: record[field] for field in definition["input_fields"]}
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("UTF-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+@pytest.mark.parametrize("schema_name", ["SessionSecurityState", "SecretMetadataProjection"])
+def test_source_owned_terminal_fingerprint_is_schema_minus_terminal(schema_name: str) -> None:
+    protocol = thaw(EXPECTED_PROTOCOL)
+    schema = protocol["executable_boundary_schemas"][schema_name]
+    definition = schema["terminal_fingerprint"]
+    assert (
+        schema["exact_fields_source_pointer"] if "exact_fields_source_pointer" in schema else True
+    )
+    assert set(definition["input_fields"]) == set(schema["exact_fields"]) - {
+        "content_fingerprint_sha256"
+    }
+    assert definition == protocol["executable_boundary_terminal_fingerprints"][schema_name]
+    assert definition["authority_boundary"].startswith("INTEGRITY_ONLY")
+
+
+def test_session_and_secret_metadata_mutations_change_content_fingerprint() -> None:
+    protocol = thaw(EXPECTED_PROTOCOL)
+    for schema_name in ["SessionSecurityState", "SecretMetadataProjection"]:
+        schema = protocol["executable_boundary_schemas"][schema_name]
+        definition = schema["terminal_fingerprint"]
+        record = {field: f"value-{index}" for index, field in enumerate(definition["input_fields"])}
+        if "permitted_operations" in record:
+            record["permitted_operations"] = ["READ", "ROTATE"]
+        baseline = _source_closure_content_hash(record, definition)
+        for field in definition["input_fields"]:
+            mutated = copy.deepcopy(record)
+            mutated[field] = [mutated[field], "mutation"]
+            assert _source_closure_content_hash(mutated, definition) != baseline
+
+
+def test_secret_metadata_fingerprint_input_contains_metadata_only() -> None:
+    definition = thaw(EXPECTED_PROTOCOL)["executable_boundary_terminal_fingerprints"][
+        "SecretMetadataProjection"
+    ]
+    forbidden = {
+        "raw_secret",
+        "api_secret",
+        "password",
+        "private_key",
+        "pin",
+        "biometric_material",
+        "bearer_token",
+        "session_token",
+        "decrypted_credential",
+        "encrypted_secret_payload",
+    }
+    assert forbidden.isdisjoint(definition["input_fields"])
+
+
+def _valid_permitted_operations(value: Any) -> bool:
+    protocol = thaw(EXPECTED_PROTOCOL)
+    registry = protocol["registries"]["secret_use_operation_registry"]
+    return (
+        isinstance(value, (list, tuple))
+        and bool(value)
+        and all(type(item) is str and item in registry for item in value)
+        and len(value) == len(set(value))
+        and list(value) == [item for item in registry if item in value]
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        ["PRIVATE_DATA"],
+        ["ORDER_ENTRY"],
+        ["PRIVATE_DATA", "ORDER_ENTRY"],
+    ],
+)
+def test_secret_use_operations_accept_only_canonical_permission_sets(value: list[str]) -> None:
+    assert _valid_permitted_operations(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [],
+        ["UNKNOWN"],
+        ["PRIVATE_DATA", "PRIVATE_DATA"],
+        ["ORDER_ENTRY", "PRIVATE_DATA"],
+        "PRIVATE_DATA",
+        [1],
+        [True],
+    ],
+)
+def test_secret_use_operations_reject_noncanonical_carriers(value: Any) -> None:
+    assert not _valid_permitted_operations(value)
+
+
+def test_secret_use_registry_is_distinct_from_admin_and_credential_permissions() -> None:
+    protocol = thaw(EXPECTED_PROTOCOL)
+    secret_use = protocol["registries"]["secret_use_operation_registry"]
+    assert secret_use == ["PRIVATE_DATA", "ORDER_ENTRY"]
+    assert set(secret_use) != set(protocol["operation_policy_registry"])
+    upstream = json.loads((DOCS / "exchange_accounts_and_instruments.json").read_text())
+    assert set(secret_use) != set(upstream["credential_profile_contract"]["permission_registry"])
+    schema = protocol["executable_boundary_schemas"]["SecretMetadataProjection"]["field_schemas"][
+        "permitted_operations"
+    ]
+    assert schema["items_source_pointer"] == "/registries/secret_use_operation_registry"
+    assert schema["min_items"] == 1 and schema["unique"] is True
+    assert schema["canonical_order"] == "REGISTRY_ORDER"
+
+
+def test_secret_fingerprint_permutation_is_not_repaired() -> None:
+    canonical = make_secret()
+    reordered = replace(canonical, permitted_operations=("ORDER_ENTRY", "PRIVATE_DATA"))
+    repaired_hash = replace(
+        reordered,
+        content_fingerprint_sha256=fingerprint(
+            {
+                key: value
+                for key, value in reordered.__dict__.items()
+                if key != "content_fingerprint_sha256"
+            }
+        ),
+    )
+    assert valid_secret(canonical)
+    assert not _valid_permitted_operations(repaired_hash.permitted_operations)

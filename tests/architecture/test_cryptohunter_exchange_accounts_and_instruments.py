@@ -37,6 +37,9 @@ M04 = load_no_dupes(M04_DOC)
 DENIALS = set(DATA["denial_code_registry"])
 OPERATIONS = DATA["operation_dispatch_policy"]["closed_operation_registry"]
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+CANONICAL_UUID7_ID = re.compile(
+    r"^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
 
 
 def deny(code):
@@ -353,7 +356,7 @@ def validate_credential_profile(profile):
         return deny("CREDENTIAL_PROFILE_NOT_ACTIVE")
     if (
         not isinstance(profile.get("lifecycle_state"), str)
-        or profile["lifecycle_state"] not in {"ACTIVE", "RETIRED"}
+        or profile["lifecycle_state"] not in DATA["credential_profile_contract"]["lifecycle_states"]
         or profile.get("saas_sync_candidate") is not False
     ):
         return deny("CREDENTIAL_PROFILE_NOT_ACTIVE")
@@ -399,11 +402,29 @@ def validate_credential_profile(profile):
         or not ts_le(profile["created_at_utc"], profile["retired_at_utc"])
     ):
         return deny("CREDENTIAL_PROFILE_NOT_ACTIVE")
-    if profile.get("rotated_from_credential_profile_id") is not None and not is_nonempty_str(
-        profile.get("rotated_from_credential_profile_id")
+    rotated_from = profile.get("rotated_from_credential_profile_id")
+    if rotated_from is not None and (
+        not isinstance(rotated_from, str)
+        or CANONICAL_UUID7_ID.fullmatch(rotated_from) is None
+        or not rotated_from.startswith("cred_")
     ):
         return deny("CREDENTIAL_PROFILE_NOT_ACTIVE")
     return True, None
+
+
+def credential_profile_intrinsic_lifecycle_valid(profile):
+    """Reference model for the canonical single-record lifecycle matrix."""
+    contract = DATA["credential_profile_contract"]
+    if not isinstance(profile, dict):
+        return False
+    state = profile.get("lifecycle_state")
+    created = profile.get("created_at_utc")
+    retired = profile.get("retired_at_utc")
+    if state not in contract["lifecycle_states"] or parse_ts(created) is None:
+        return False
+    if state == "ACTIVE":
+        return retired is None
+    return parse_ts(retired) is not None and ts_le(created, retired)
 
 
 def validate_credential_lineage(current, context):
@@ -3181,26 +3202,32 @@ def test_nested_catalog_wrong_type_fails_closed():
 def test_credential_lineage_rejects_multinode_cycle():
     acct = sample_account()
     current = sample_profile(
-        credential_profile_id="cred_new", rotated_from_credential_profile_id="cred_old"
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+        rotated_from_credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
     )
     old = sample_profile(
-        credential_profile_id="cred_old",
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
         lifecycle_state="RETIRED",
         retired_at_utc="2026-02-01T00:00:00Z",
-        rotated_from_credential_profile_id="cred_older",
+        rotated_from_credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ad",
     )
     older = sample_profile(
-        credential_profile_id="cred_older",
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ad",
         lifecycle_state="RETIRED",
         retired_at_utc="2026-01-15T00:00:00Z",
-        rotated_from_credential_profile_id="cred_new",
+        rotated_from_credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ab",
     )
     ok, denial = validate_credential_profile_binding(
         current,
         acct,
         {
-            "previous_profiles_by_id": {"cred_old": old, "cred_older": older},
-            "active_profile_ids_by_account_id": {acct["exchange_account_id"]: ["cred_new"]},
+            "previous_profiles_by_id": {
+                "cred_01890f3a-2b4c-7abc-8def-0123456789ac": old,
+                "cred_01890f3a-2b4c-7abc-8def-0123456789ad": older,
+            },
+            "active_profile_ids_by_account_id": {
+                acct["exchange_account_id"]: ["cred_01890f3a-2b4c-7abc-8def-0123456789ab"]
+            },
         },
     )
     assert not ok and denial == "CREDENTIAL_PROFILE_NOT_ACTIVE"
@@ -3271,6 +3298,106 @@ def test_json_markdown_sync_for_final_fix():
     ]:
         assert phrase in md
     assert DATA["status"] == "closed"
+
+
+def test_credential_profile_has_its_own_exact_closed_lifecycle_registry():
+    credential = DATA["credential_profile_contract"]
+    account = DATA["exchange_account_contract"]
+    assert credential["lifecycle_states"] == ["ACTIVE", "RETIRED"]
+    assert credential["lifecycle_states"] != account["lifecycle_states"]
+    assert "environment purpose lifecycle closed registries" in credential["full_record_validation"]
+
+
+@pytest.mark.parametrize(
+    ("state", "created", "retired", "expected"),
+    [
+        ("ACTIVE", "2026-01-01T00:00:00Z", None, True),
+        ("ACTIVE", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", False),
+        ("RETIRED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", True),
+        ("RETIRED", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", True),
+        ("RETIRED", "2026-01-01T00:00:00Z", None, False),
+        ("RETIRED", "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z", False),
+        ("DRAFT", "2026-01-01T00:00:00Z", None, False),
+        ("DISABLED", "2026-01-01T00:00:00Z", None, False),
+        ("BANANA", "2026-01-01T00:00:00Z", None, False),
+    ],
+)
+def test_credential_profile_intrinsic_lifecycle_timestamp_matrix(state, created, retired, expected):
+    candidate = sample_profile(
+        lifecycle_state=state,
+        created_at_utc=created,
+        retired_at_utc=retired,
+    )
+    assert credential_profile_intrinsic_lifecycle_valid(candidate) is expected
+    assert validate_credential_profile(candidate)[0] is expected
+
+
+def test_credential_profile_nullable_fields_and_machine_schemas_are_exact():
+    contract = DATA["credential_profile_contract"]
+    assert contract["nullable_fields"] == [
+        "public_key_identifier",
+        "rotated_from_credential_profile_id",
+        "retired_at_utc",
+    ]
+    assert "lifecycle_state" not in contract["nullable_fields"]
+    assert "created_at_utc" not in contract["nullable_fields"]
+    assert contract["intrinsic_field_schemas"]["rotated_from_credential_profile_id"] == {
+        "type": "nullable_canonical_id",
+        "id_prefix": "cred",
+        "identifier_policy": "canonical UUIDv7-prefixed ID",
+    }
+    assert contract["lifecycle_timestamp_policy"] == {
+        "created_at_utc": {
+            "required": True,
+            "timestamp_policy_pointer": "/timestamp_policy",
+        },
+        "ACTIVE": {"retired_at_utc": "MUST_BE_NULL"},
+        "RETIRED": {
+            "retired_at_utc": "REQUIRED_CANONICAL_TIMESTAMP",
+            "ordering": "retired_at_utc >= created_at_utc",
+        },
+        "wall_clock_now_authority": False,
+        "scope": "INTRINSIC_SINGLE_RECORD_CONSISTENCY_ONLY",
+        "lineage_timestamp_algorithm_preserved_separately": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("rotated_from", "expected"),
+    [
+        (None, True),
+        ("cred_01890f3a-2b4c-7abc-8def-0123456789ab", True),
+        ("whatever", False),
+        ("xacc_01890f3a-2b4c-7abc-8def-0123456789ab", False),
+        ("cred_01890f3a-2b4c-6abc-8def-0123456789ab", False),
+        ("", False),
+        (True, False),
+        (1, False),
+        ([], False),
+        ({}, False),
+    ],
+)
+def test_credential_profile_rotation_id_is_nullable_canonical_cred_uuid7(rotated_from, expected):
+    candidate = sample_profile(rotated_from_credential_profile_id=rotated_from)
+    assert validate_credential_profile(candidate)[0] is expected
+
+
+def test_credential_profile_lifecycle_corrective_preserves_contextual_lineage_contract():
+    contract = DATA["credential_profile_contract"]
+    assert "predecessors are RETIRED" in contract["lineage_rules"]
+    assert "current is ACTIVE" in contract["lineage_rules"]
+    assert contract["lineage_timestamp_algorithm"] == (
+        "track direct successor; require predecessor.created_at <= "
+        "predecessor.retired_at <= successor.created_at; then successor = predecessor"
+    )
+    assert "transition_graph" not in contract
+
+
+def test_credential_profile_markdown_projects_lifecycle_corrective():
+    markdown = MD.read_text(encoding="utf-8")
+    assert "lifecycle registry CredentialProfile to dokładnie `ACTIVE`, `RETIRED`" in markdown
+    assert "nie dziedziczy stanów ExchangeAccount" in markdown
+    assert "intrinsic single-record consistency" in markdown
 
 
 def test_malformed_nested_context_fails_closed_for_all_handlers():
@@ -3867,7 +3994,8 @@ def test_retire_cannot_use_record_stored_under_false_id():
 
 def test_credential_lineage_rejects_predecessor_id_mismatch():
     current = sample_profile(
-        credential_profile_id="cred_new", rotated_from_credential_profile_id="cred_old"
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+        rotated_from_credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
     )
     old = sample_profile(
         credential_profile_id="cred_spoof",
@@ -3875,8 +4003,10 @@ def test_credential_lineage_rejects_predecessor_id_mismatch():
         retired_at_utc="2026-02-01T00:00:00Z",
     )
     ctx = {
-        "previous_profiles_by_id": {"cred_old": old},
-        "active_profile_ids_by_account_id": {"xacc_test_1": ["cred_new"]},
+        "previous_profiles_by_id": {"cred_01890f3a-2b4c-7abc-8def-0123456789ac": old},
+        "active_profile_ids_by_account_id": {
+            "xacc_test_1": ["cred_01890f3a-2b4c-7abc-8def-0123456789ab"]
+        },
     }
     assert (
         validate_credential_profile_binding(current, sample_account(), ctx)[1]
@@ -4392,17 +4522,20 @@ def test_profile_rejects_invalid_public_key_identifier_type():
 
 def test_lineage_runs_full_predecessor_profile_validator():
     current = sample_profile(
-        credential_profile_id="cred_new", rotated_from_credential_profile_id="cred_old"
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+        rotated_from_credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
     )
     old = sample_profile(
-        credential_profile_id="cred_old",
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
         lifecycle_state="RETIRED",
         retired_at_utc="2026-02-01T00:00:00Z",
         saas_sync_candidate=True,
     )
     ctx = {
-        "previous_profiles_by_id": {"cred_old": old},
-        "active_profile_ids_by_account_id": {"xacc_test_1": ["cred_new"]},
+        "previous_profiles_by_id": {"cred_01890f3a-2b4c-7abc-8def-0123456789ac": old},
+        "active_profile_ids_by_account_id": {
+            "xacc_test_1": ["cred_01890f3a-2b4c-7abc-8def-0123456789ab"]
+        },
     }
     assert validate_credential_profile_binding(current, sample_account(), ctx)[0] is False
 
@@ -4755,18 +4888,20 @@ def test_retired_profile_must_not_precede_creation():
 
 def test_lineage_rejects_invalid_timestamp_order():
     current = sample_profile(
-        credential_profile_id="cred_new",
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ab",
         created_at_utc="2026-01-01T00:00:00Z",
-        rotated_from_credential_profile_id="cred_old",
+        rotated_from_credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
     )
     old = sample_profile(
-        credential_profile_id="cred_old",
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
         lifecycle_state="RETIRED",
         created_at_utc="2025-01-01T00:00:00Z",
         retired_at_utc="2027-01-01T00:00:00Z",
     )
     assert (
-        validate_credential_lineage(current, {"previous_profiles_by_id": {"cred_old": old}})[0]
+        validate_credential_lineage(
+            current, {"previous_profiles_by_id": {"cred_01890f3a-2b4c-7abc-8def-0123456789ac": old}}
+        )[0]
         is False
     )
 
@@ -5212,27 +5347,75 @@ def profile_timeline(profile_id, created, retired=None, rotated=None, lifecycle=
 
 
 def test_two_node_credential_lineage_has_monotonic_timestamps():
-    current = profile_timeline("cred_new", "2026-07-01T00:00:00Z", None, "cred_old", "ACTIVE")
-    old = profile_timeline("cred_old", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")
-    assert validate_credential_lineage(current, {"previous_profiles_by_id": {"cred_old": old}})[0]
+    current = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+        "2026-07-01T00:00:00Z",
+        None,
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ac",
+        "ACTIVE",
+    )
+    old = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ac", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"
+    )
+    assert validate_credential_lineage(
+        current, {"previous_profiles_by_id": {"cred_01890f3a-2b4c-7abc-8def-0123456789ac": old}}
+    )[0]
 
 
 def test_three_node_credential_lineage_has_monotonic_timestamps():
-    current = profile_timeline("cred_new", "2026-07-01T00:00:00Z", None, "cred_old", "ACTIVE")
-    old = profile_timeline("cred_old", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", "cred_older")
-    older = profile_timeline("cred_older", "2025-01-01T00:00:00Z", "2025-12-01T00:00:00Z")
+    current = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+        "2026-07-01T00:00:00Z",
+        None,
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ac",
+        "ACTIVE",
+    )
+    old = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ac",
+        "2026-01-01T00:00:00Z",
+        "2026-02-01T00:00:00Z",
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ad",
+    )
+    older = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ad", "2025-01-01T00:00:00Z", "2025-12-01T00:00:00Z"
+    )
     assert validate_credential_lineage(
-        current, {"previous_profiles_by_id": {"cred_old": old, "cred_older": older}}
+        current,
+        {
+            "previous_profiles_by_id": {
+                "cred_01890f3a-2b4c-7abc-8def-0123456789ac": old,
+                "cred_01890f3a-2b4c-7abc-8def-0123456789ad": older,
+            }
+        },
     )[0]
 
 
 def test_lineage_rejects_older_profile_created_after_successor():
-    current = profile_timeline("cred_new", "2026-07-01T00:00:00Z", None, "cred_old", "ACTIVE")
-    old = profile_timeline("cred_old", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", "cred_older")
-    older = profile_timeline("cred_older", "2026-05-01T00:00:00Z", "2026-06-01T00:00:00Z")
+    current = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+        "2026-07-01T00:00:00Z",
+        None,
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ac",
+        "ACTIVE",
+    )
+    old = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ac",
+        "2026-01-01T00:00:00Z",
+        "2026-02-01T00:00:00Z",
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ad",
+    )
+    older = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ad", "2026-05-01T00:00:00Z", "2026-06-01T00:00:00Z"
+    )
     assert (
         validate_credential_lineage(
-            current, {"previous_profiles_by_id": {"cred_old": old, "cred_older": older}}
+            current,
+            {
+                "previous_profiles_by_id": {
+                    "cred_01890f3a-2b4c-7abc-8def-0123456789ac": old,
+                    "cred_01890f3a-2b4c-7abc-8def-0123456789ad": older,
+                }
+            },
         )[0]
         is False
     )
@@ -5247,10 +5430,20 @@ def test_lineage_accepts_valid_three_node_timeline():
 
 
 def test_lineage_timestamp_failure_never_raises():
-    current = profile_timeline("cred_new", "bad", None, "cred_old", "ACTIVE")
-    old = profile_timeline("cred_old", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")
+    current = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+        "bad",
+        None,
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ac",
+        "ACTIVE",
+    )
+    old = profile_timeline(
+        "cred_01890f3a-2b4c-7abc-8def-0123456789ac", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"
+    )
     assert (
-        validate_credential_lineage(current, {"previous_profiles_by_id": {"cred_old": old}})[0]
+        validate_credential_lineage(
+            current, {"previous_profiles_by_id": {"cred_01890f3a-2b4c-7abc-8def-0123456789ac": old}}
+        )[0]
         is False
     )
 
@@ -6665,7 +6858,9 @@ def test_context_rejects_retired_profile_in_active_index():
 
 def test_context_rejects_active_profile_in_previous_profiles():
     ctx = context()
-    ctx["previous_profiles_by_id"]["cred_old"] = sample_profile(credential_profile_id="cred_old")
+    ctx["previous_profiles_by_id"]["cred_01890f3a-2b4c-7abc-8def-0123456789ac"] = sample_profile(
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac"
+    )
     assert not validate_context(ctx)
 
 
@@ -6776,7 +6971,7 @@ def test_context_allows_disjoint_current_previous_ids(current, previous):
     ctx = context()
     if current == "credential_profiles_by_id":
         record = sample_profile(
-            credential_profile_id="cred_old",
+            credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
             lifecycle_state="RETIRED",
             retired_at_utc="2026-02-01T00:00:00Z",
         )
@@ -6795,7 +6990,7 @@ def test_context_allows_disjoint_current_previous_ids(current, previous):
         next(
             value
             for key, value in [
-                ("credential_profiles_by_id", "cred_old"),
+                ("credential_profiles_by_id", "cred_01890f3a-2b4c-7abc-8def-0123456789ac"),
                 ("catalogs_by_id", "cat_old"),
                 ("universes_by_id", "univ_old"),
                 ("account_capability_snapshots_by_id", "caps_old"),
@@ -6995,9 +7190,11 @@ def test_context_rejects_dangling_account_active_profile_id():
 
 
 def test_context_rejects_account_bound_to_retired_profile():
-    ctx = unrelated_account_context(active_credential_profile_id="cred_old")
-    ctx["credential_profiles_by_id"]["cred_old"] = sample_profile(
-        credential_profile_id="cred_old",
+    ctx = unrelated_account_context(
+        active_credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac"
+    )
+    ctx["credential_profiles_by_id"]["cred_01890f3a-2b4c-7abc-8def-0123456789ac"] = sample_profile(
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
         exchange_account_id="xacc_other",
         lifecycle_state="RETIRED",
         retired_at_utc="2026-02-01T00:00:00Z",
@@ -7069,7 +7266,7 @@ def test_context_accepts_null_optional_bindings_without_active_records():
 
 def retired_previous_profile(**overrides):
     return sample_profile(
-        credential_profile_id="cred_old",
+        credential_profile_id="cred_01890f3a-2b4c-7abc-8def-0123456789ac",
         lifecycle_state="RETIRED",
         retired_at_utc="2026-02-01T00:00:00Z",
         **overrides,
@@ -7078,23 +7275,25 @@ def retired_previous_profile(**overrides):
 
 def test_context_rejects_previous_profile_with_missing_account():
     ctx = context()
-    ctx["previous_profiles_by_id"]["cred_old"] = retired_previous_profile(
-        exchange_account_id="missing"
+    ctx["previous_profiles_by_id"]["cred_01890f3a-2b4c-7abc-8def-0123456789ac"] = (
+        retired_previous_profile(exchange_account_id="missing")
     )
     assert not validate_context(ctx)
 
 
 def test_context_rejects_previous_profile_exchange_mismatch():
     ctx = context()
-    ctx["previous_profiles_by_id"]["cred_old"] = retired_previous_profile(
-        exchange_id="paper_simulated_venue"
+    ctx["previous_profiles_by_id"]["cred_01890f3a-2b4c-7abc-8def-0123456789ac"] = (
+        retired_previous_profile(exchange_id="paper_simulated_venue")
     )
     assert not validate_context(ctx)
 
 
 def test_context_rejects_previous_profile_environment_mismatch():
     ctx = context()
-    ctx["previous_profiles_by_id"]["cred_old"] = retired_previous_profile(environment_scope="PAPER")
+    ctx["previous_profiles_by_id"]["cred_01890f3a-2b4c-7abc-8def-0123456789ac"] = (
+        retired_previous_profile(environment_scope="PAPER")
+    )
     assert not validate_context(ctx)
 
 
@@ -7104,15 +7303,17 @@ def test_context_rejects_unrelated_dangling_previous_profile():
 
 def test_activation_rejects_unrelated_dangling_previous_profile():
     ctx = context()
-    ctx["previous_profiles_by_id"]["cred_old"] = retired_previous_profile(
-        exchange_account_id="missing"
+    ctx["previous_profiles_by_id"]["cred_01890f3a-2b4c-7abc-8def-0123456789ac"] = (
+        retired_previous_profile(exchange_account_id="missing")
     )
     assert_context_and_activation_blocked(ctx)
 
 
 def test_context_accepts_valid_retired_previous_profile():
     ctx = context()
-    ctx["previous_profiles_by_id"]["cred_old"] = retired_previous_profile()
+    ctx["previous_profiles_by_id"]["cred_01890f3a-2b4c-7abc-8def-0123456789ac"] = (
+        retired_previous_profile()
+    )
     assert validate_context(ctx)
 
 

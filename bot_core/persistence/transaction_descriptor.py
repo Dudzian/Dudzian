@@ -8,7 +8,14 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 from .fingerprints import canonical_records, transaction_fingerprint_sha256
-from .records import PersistenceRecord, PersistenceRecordError, validate_persistence_record
+from .records import (
+    PersistenceRecord,
+    PersistenceRecordError,
+    validate_record_bucket,
+)
+
+_CURRENT_BUCKET = "DURABLE AUTHORITATIVE CURRENT STATE"
+_HISTORY_BUCKET = "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
 
 _ID = re.compile(
     r"^(?P<prefix>[a-z][a-z0-9]*)_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -80,13 +87,16 @@ class StateStoreTransactionDescriptor:
             "transaction_fingerprint_sha256",
         ):
             _sha(getattr(self, name), name)
-        for name in ("current_record_mutations", "immutable_history_appends"):
+        for name, bucket in (
+            ("current_record_mutations", _CURRENT_BUCKET),
+            ("immutable_history_appends", _HISTORY_BUCKET),
+        ):
             records = getattr(self, name)
             if not isinstance(records, tuple):
                 raise TransactionDescriptorError(f"{name} must be an immutable tuple")
             try:
                 for record in records:
-                    validate_persistence_record(record)
+                    validate_record_bucket(record, bucket)
             except (PersistenceRecordError, TypeError, ValueError) as exc:
                 raise TransactionDescriptorError(f"{name} contains an invalid record") from exc
             if list(records) != sorted(
