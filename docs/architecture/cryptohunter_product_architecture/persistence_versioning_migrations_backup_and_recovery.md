@@ -5696,7 +5696,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DERIVED_AND_CHECKED",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DOES_NOT_DEFINE",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_EXCHANGEACCOUNT"
     },
     "CredentialProfile metadata/reference": {
       "semantic_artifact": "exchange_accounts_and_instruments.json",
@@ -5841,7 +5861,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
+        "arrays": "SOURCE_DERIVED_AND_CHECKED",
+        "array_item_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "array_uniqueness": "SOURCE_DERIVED_AND_CHECKED",
+        "array_ordering": "SOURCE_DERIVED_AND_CHECKED",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DERIVED_AND_CHECKED",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DOES_NOT_DEFINE",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_CREDENTIALPROFILE_METADATA_REFERENCE"
     },
     "StrategyInstance current lifecycle/config": {
       "semantic_artifact": "strategy_market_data_and_execution_routing.json",
@@ -5899,7 +5939,15 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "prefix": "xroute"
         },
         "lifecycle_state": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "DRAFT",
+            "BOUND",
+            "ACTIVE",
+            "INACTIVE",
+            "RETIRED"
+          ],
+          "values_source_pointer": "/record_schemas/StrategyInstance/enum_registry/lifecycle_state"
         }
       },
       "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
@@ -5913,7 +5961,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DOES_NOT_DEFINE",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DOES_NOT_DEFINE",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_STRATEGYINSTANCE_CURRENT_LIFECYCLE_CONFIG"
     },
     "kill-switch state/generation": {
       "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
@@ -5932,10 +6000,22 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "nullable_fields": [],
       "upstream_field_schemas": {
         "scope_type": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values_source_pointer": "/scope_hierarchy/applicable_order",
+          "values": [
+            "PRODUCT_SYSTEM",
+            "WORKSPACE",
+            "PORTFOLIO",
+            "EXCHANGE_ACCOUNT",
+            "STRATEGY_INSTANCE",
+            "INSTRUMENT",
+            "EXECUTION_ROUTE"
+          ]
         },
         "scope_id": {
-          "type": "non_empty_string"
+          "type": "canonical_scope_id",
+          "scope_type_field": "scope_type",
+          "policy_source_pointer": "/scope_hierarchy/scope_id_policy"
         },
         "environment": {
           "type": "enum",
@@ -5946,22 +6026,28 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           ]
         },
         "state": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values_source_pointer": "/kill_switch_contract/states",
+          "values": [
+            "INACTIVE",
+            "ACTIVE"
+          ]
         },
         "source_revision": {
-          "type": "positive_integer"
+          "type": "positive_non_boolean_integer"
         },
         "effective_at_utc": {
-          "type": "timestamp"
+          "type": "canonical_utc_timestamp"
         },
         "generation": {
-          "type": "non_empty_string"
+          "type": "positive_non_boolean_integer"
         },
         "accepted_authority_fingerprint_sha256": {
-          "type": "sha256_hex"
+          "type": "sha256_lowercase_hex"
         },
         "record_fingerprint_sha256": {
-          "type": "sha256_hex"
+          "type": "terminal_fingerprint",
+          "derivation_source_pointer": "/kill_switch_contract/terminal_fingerprint"
         }
       },
       "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
@@ -5988,8 +6074,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "record_fingerprint_sha256"
         ],
         "input_shape": "JSON_OBJECT",
-        "encoding": "UTF-8",
-        "canonical_json": {
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
           "sort_keys": true,
           "separators": [
             ",",
@@ -5998,7 +6084,12 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "ensure_ascii": false,
           "allow_nan": false
         },
-        "digest_format": "lowercase_hex"
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY"
       },
       "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
       "stage2_contextual_rules_excluded": [
@@ -6007,7 +6098,74 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "semantic_constraints": {
+        "scope_id_policy": {
+          "scope_type_field": "scope_type",
+          "scope_id_field": "scope_id",
+          "bindings": {
+            "PRODUCT_SYSTEM": {
+              "type": "exact_literal",
+              "value": "product"
+            },
+            "WORKSPACE": {
+              "type": "canonical_uuid7_prefixed_id",
+              "prefix": "ws"
+            },
+            "PORTFOLIO": {
+              "type": "canonical_uuid7_prefixed_id",
+              "prefix": "port"
+            },
+            "EXCHANGE_ACCOUNT": {
+              "type": "canonical_uuid7_prefixed_id",
+              "prefix": "xacc"
+            },
+            "STRATEGY_INSTANCE": {
+              "type": "canonical_uuid7_prefixed_id",
+              "prefix": "sinst"
+            },
+            "INSTRUMENT": {
+              "type": "canonical_uuid7_prefixed_id",
+              "prefix": "instr"
+            },
+            "EXECUTION_ROUTE": {
+              "type": "canonical_uuid7_prefixed_id",
+              "prefix": "xroute"
+            }
+          },
+          "validation_stage": "STAGE_1_INTRINSIC",
+          "contextual_exclusions": [
+            "ANCESTRY",
+            "MEMBERSHIP",
+            "ACCEPTED_OR_CURRENT_DESIGNATION",
+            "HIERARCHY_APPLICABILITY"
+          ]
+        },
+        "generation_authority_split": {
+          "stage1": "positive non-boolean integer",
+          "stage2": "strict monotonic increase, no rollback/reuse, accepted/current designation"
+        }
+      },
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DERIVED_AND_CHECKED",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DERIVED_AND_CHECKED",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_KILL_SWITCH_STATE_GENERATION"
     },
     "Command accepted request": {
       "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
@@ -6235,7 +6393,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DERIVED_AND_CHECKED",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DOES_NOT_DEFINE",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_COMMAND_ACCEPTED_REQUEST"
     },
     "Event": {
       "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
@@ -6393,17 +6571,13 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "event_fingerprint_sha256"
         ],
         "input_shape": "CANONICAL_NFC_JSON_OBJECT",
+        "canonicalization": [
+          "complete immutable event envelope",
+          "recursive NFC keys and string values",
+          "canonical JSON sorted keys and compact separators"
+        ],
         "unicode_normalization": "NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED",
         "encoding": "UTF-8",
-        "canonical_json": {
-          "sort_keys": true,
-          "separators": [
-            ",",
-            ":"
-          ],
-          "ensure_ascii": false,
-          "allow_nan": false
-        },
         "digest_format": "lowercase_hex",
         "source_pointer": "/event_contract/fingerprint"
       },
@@ -6414,7 +6588,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DERIVED_AND_CHECKED",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DERIVED_AND_CHECKED",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_EVENT"
     },
     "OrderIntent": {
       "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
@@ -6642,7 +6836,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DERIVED_AND_CHECKED",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DOES_NOT_DEFINE",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_ORDERINTENT"
     },
     "Fill": {
       "semantic_artifact": "commands_events_order_lifecycle_and_idempotency.json",
@@ -6835,17 +7049,6 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "input_shape": "CANONICAL_NFC_JSON_OBJECT",
         "unicode_normalization": "NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED",
         "encoding": "UTF-8",
-        "canonical_json": {
-          "sort_keys": true,
-          "separators": [
-            ",",
-            ":"
-          ],
-          "ensure_ascii": false,
-          "allow_nan": false
-        },
-        "decimal_policy": "M0.5_CANONICAL_DECIMAL",
-        "timestamp_policy": "CANONICAL_UTC_RFC3339_Z",
         "digest_format": "lowercase_hex",
         "source_pointer": "/fill_contract/fingerprint"
       },
@@ -6856,7 +7059,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DERIVED_AND_CHECKED",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DERIVED_AND_CHECKED",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_FILL"
     },
     "LedgerEntry": {
       "semantic_artifact": "ledger_portfolio_capital_and_pnl.json",
@@ -6951,17 +7174,47 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           }
         },
         "account_role": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "OWNED_AVAILABLE",
+            "OWNED_RESERVED",
+            "TRADE_CLEARING",
+            "FEE_EXPENSE",
+            "REALIZED_PNL_CLASSIFICATION",
+            "EXTERNAL_CAPITAL",
+            "TRANSFER_CLEARING",
+            "RECONCILIATION_CLEARING"
+          ],
+          "values_source_pointer": "/account_roles keys"
         },
         "direction": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "DEBIT",
+            "CREDIT"
+          ],
+          "values_source_pointer": "/ledger_entry_schema/direction_registry"
         },
         "quantity": {
           "type": "decimal",
           "constraint": "positive"
         },
         "source_type": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "fill",
+            "fee",
+            "funding",
+            "interest",
+            "deposit",
+            "withdrawal",
+            "internal_transfer",
+            "capital_reservation",
+            "capital_release",
+            "realized_pnl",
+            "reconciliation_correction"
+          ],
+          "values_source_pointer": "/source_registry keys"
         },
         "accounting_source_identity": {
           "type": "non_empty_string"
@@ -6976,7 +7229,26 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "type": "positive_integer"
         },
         "posting_role": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "ASSET_RECEIVED",
+            "ASSET_PAID",
+            "TRADE_COUNTERPART",
+            "FEE_CLASSIFIED",
+            "FEE_PAID",
+            "CAPITAL_CLASSIFIED",
+            "RESERVE_AVAILABLE",
+            "RESERVE_HELD",
+            "TRANSFER_SOURCE",
+            "TRANSFER_DESTINATION",
+            "TRANSFER_CLEARING_SOURCE",
+            "TRANSFER_CLEARING_DESTINATION",
+            "PNL_CLASSIFIED",
+            "PNL_COUNTERPART",
+            "RECONCILIATION_OWNED",
+            "RECONCILIATION_COUNTERPART"
+          ],
+          "values_source_pointer": "/ledger_entry_schema/posting_role_registry"
         },
         "batch_fingerprint_sha256": {
           "type": "sha256_hex"
@@ -7023,7 +7295,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DERIVED_AND_CHECKED",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DOES_NOT_DEFINE",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_LEDGERENTRY"
     },
     "RiskDecision": {
       "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
@@ -7089,16 +7381,148 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "type": "timestamp"
         },
         "ordered_limit_results": {
-          "type": "array"
+          "type": "array_of_exact_LimitResult",
+          "item_schema_pointer": "/risk_decision_contract/limit_result_schema",
+          "min_items": 0,
+          "ordering": {
+            "semantic": true,
+            "validator_behavior": "REJECT_NON_CANONICAL_ORDER_NEVER_SORT",
+            "policy_results_key": [
+              "limit_type_registry_order",
+              "unit_asset_reference_lexicographic_field_tuple"
+            ],
+            "synthetic_position": "DISPATCH_RESERVATION_ECONOMICS_LAST"
+          },
+          "duplicates": {
+            "allowed": false,
+            "uniqueness_key": [
+              "limit_type",
+              "unit_asset_reference",
+              "supplying_policy_scope"
+            ]
+          },
+          "item_schema": {
+            "exact_fields": [
+              "limit_type",
+              "effective_threshold",
+              "observed_projected_value",
+              "unit_asset_reference",
+              "supplying_policy_scope",
+              "result",
+              "reason_code"
+            ],
+            "field_schemas": {
+              "limit_type": {
+                "type": "enum",
+                "values_source_pointer": "/risk_decision_contract/limit_result_type_registry",
+                "values": [
+                  "MAX_ORDER_QUANTITY",
+                  "MAX_ORDER_NOTIONAL",
+                  "MAX_POST_TRADE_POSITION_QUANTITY",
+                  "MAX_POST_TRADE_POSITION_NOTIONAL",
+                  "MAX_GROSS_EXPOSURE",
+                  "MIN_AVAILABLE_CAPITAL_AFTER_RESERVATION",
+                  "DISPATCH_RESERVATION_ECONOMICS"
+                ]
+              },
+              "effective_threshold": {
+                "type": "canonical_exact_fraction_string",
+                "nullable": false,
+                "float_forbidden": true,
+                "normalization": "REDUCED_NUMERATOR_SLASH_POSITIVE_DENOMINATOR"
+              },
+              "observed_projected_value": {
+                "type": "nullable_canonical_exact_fraction_string",
+                "nullable": true,
+                "float_forbidden": true,
+                "normalization": "REDUCED_NUMERATOR_SLASH_POSITIVE_DENOMINATOR"
+              },
+              "unit_asset_reference": {
+                "type": "exact_upstream_object",
+                "source_artifact": "exchange_accounts_and_instruments.json",
+                "source_pointer": "/asset_reference_contract",
+                "allowed_mapping_statuses": [
+                  "EXACT",
+                  "EXPLICIT_ALIAS"
+                ],
+                "mapping_status_registry_source_pointer": "/asset_reference_contract/mapping_statuses"
+              },
+              "supplying_policy_scope": {
+                "type": "conditional_supplying_policy_scope",
+                "ordinary_format": "scope_type + COLON + canonical scope_id",
+                "scope_type_registry_pointer": "/scope_hierarchy/applicable_order",
+                "scope_id_policy_pointer": "/scope_hierarchy/scope_id_policy",
+                "synthetic_limit_type": "DISPATCH_RESERVATION_ECONOMICS",
+                "synthetic_exact_value": "SYSTEM",
+                "authority_boundary": "LABEL_ONLY_NOT_ACCEPTED_POLICY_AUTHORITY"
+              },
+              "result": {
+                "type": "enum",
+                "values_source_pointer": "/risk_decision_contract/limit_result_result_registry",
+                "values": [
+                  "PASS",
+                  "FAIL",
+                  "INCOMPLETE"
+                ]
+              },
+              "reason_code": {
+                "type": "enum",
+                "values_source_pointer": "/risk_decision_contract/limit_result_reason_codes",
+                "values": [
+                  "PASS",
+                  "LIMIT_BREACH",
+                  "MISSING_REQUIRED_INPUT",
+                  "MISSING_VALUATION"
+                ]
+              }
+            },
+            "intrinsic_constraints": {
+              "observed_value_matrix": {
+                "PASS": "REQUIRED_NON_NULL",
+                "FAIL": "REQUIRED_NON_NULL",
+                "INCOMPLETE": "REQUIRED_NULL_BECAUSE_CURRENT_EMITTER_ONLY_USES_INCOMPLETE_WHEN_REQUIRED_TRUSTED_OBSERVATION_UNAVAILABLE"
+              },
+              "synthetic_dispatch_reservation_economics": {
+                "effective_threshold": "0/1",
+                "observed_projected_value": null,
+                "supplying_policy_scope": "SYSTEM",
+                "result": "INCOMPLETE",
+                "reason_code": "MISSING_VALUATION"
+              },
+              "policy_reason_matrix": {
+                "PASS": [
+                  "PASS"
+                ],
+                "FAIL": [
+                  "LIMIT_BREACH"
+                ],
+                "INCOMPLETE": [
+                  "MISSING_REQUIRED_INPUT"
+                ]
+              }
+            }
+          }
         },
         "kill_switch_result": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "OK",
+            "KILL_SWITCH_ACTIVE",
+            "TRUSTED_CONTEXT_FAILURE"
+          ],
+          "values_source_pointer": "/risk_decision_contract/kill_switch_result_registry"
         },
         "kill_switch_fence_sha256": {
           "type": "sha256_hex"
         },
         "decision": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "ALLOW",
+            "DENY",
+            "INCOMPLETE"
+          ],
+          "values_source_pointer": "/risk_decision_contract/decisions"
         },
         "decision_fingerprint_sha256": {
           "type": "sha256_hex"
@@ -7136,8 +7560,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "decision_fingerprint_sha256"
         ],
         "input_shape": "JSON_OBJECT",
-        "encoding": "UTF-8",
-        "canonical_json": {
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
           "sort_keys": true,
           "separators": [
             ",",
@@ -7146,7 +7570,12 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "ensure_ascii": false,
           "allow_nan": false
         },
-        "digest_format": "lowercase_hex"
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY"
       },
       "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
       "stage2_contextual_rules_excluded": [
@@ -7155,7 +7584,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DERIVED_AND_CHECKED",
+        "arrays": "SOURCE_DERIVED_AND_CHECKED",
+        "array_item_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "array_uniqueness": "SOURCE_DERIVED_AND_CHECKED",
+        "array_ordering": "SOURCE_DERIVED_AND_CHECKED",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DERIVED_AND_CHECKED",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_RISKDECISION"
     },
     "ExecutionLease immutable record": {
       "semantic_artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
@@ -7289,13 +7738,134 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "type": "timestamp"
         },
         "effective_policy_bindings": {
-          "type": "array"
+          "type": "array_of_exact_tuple",
+          "min_items": 1,
+          "tuple_length": 6,
+          "item_schema": [
+            {
+              "index": 0,
+              "name": "risk_policy_id",
+              "type": "canonical_uuid7_prefixed_id",
+              "prefix": "rpol"
+            },
+            {
+              "index": 1,
+              "name": "revision",
+              "type": "positive_non_boolean_integer"
+            },
+            {
+              "index": 2,
+              "name": "scope_type",
+              "type": "enum",
+              "values_source_pointer": "/scope_hierarchy/applicable_order"
+            },
+            {
+              "index": 3,
+              "name": "scope_id",
+              "type": "canonical_scope_id",
+              "scope_type_index": 2,
+              "policy_source_pointer": "/scope_hierarchy/scope_id_policy"
+            },
+            {
+              "index": 4,
+              "name": "action",
+              "type": "enum",
+              "values": [
+                "ALLOW",
+                "DENY"
+              ]
+            },
+            {
+              "index": 5,
+              "name": "semantic_fingerprint_sha256",
+              "type": "sha256_lowercase_hex"
+            }
+          ],
+          "ordering": {
+            "semantic": true,
+            "key": [
+              "scope_hierarchy.applicable_order(scope_type)",
+              "scope_id",
+              "revision"
+            ],
+            "validator_behavior": "REJECT_NON_CANONICAL_ORDER_NEVER_SORT"
+          },
+          "duplicates": {
+            "allowed": false,
+            "uniqueness_key_indexes": [
+              2,
+              3,
+              1
+            ],
+            "validator_behavior": "REJECT_NEVER_DEDUPLICATE"
+          }
         },
         "effective_policy_fingerprint_sha256": {
           "type": "sha256_hex"
         },
         "kill_switch_bindings": {
-          "type": "array"
+          "type": "array_of_exact_tuple",
+          "min_items": 0,
+          "tuple_length": 8,
+          "item_schema": [
+            {
+              "index": 0,
+              "name": "scope_type",
+              "schema_reference": "/kill_switch_contract/field_schemas/scope_type"
+            },
+            {
+              "index": 1,
+              "name": "scope_id",
+              "schema_reference": "/kill_switch_contract/field_schemas/scope_id",
+              "scope_type_index": 0
+            },
+            {
+              "index": 2,
+              "name": "state",
+              "schema_reference": "/kill_switch_contract/field_schemas/state"
+            },
+            {
+              "index": 3,
+              "name": "source_revision",
+              "schema_reference": "/kill_switch_contract/field_schemas/source_revision"
+            },
+            {
+              "index": 4,
+              "name": "effective_at_utc",
+              "schema_reference": "/kill_switch_contract/field_schemas/effective_at_utc"
+            },
+            {
+              "index": 5,
+              "name": "generation",
+              "schema_reference": "/kill_switch_contract/field_schemas/generation"
+            },
+            {
+              "index": 6,
+              "name": "accepted_authority_fingerprint_sha256",
+              "schema_reference": "/kill_switch_contract/field_schemas/accepted_authority_fingerprint_sha256"
+            },
+            {
+              "index": 7,
+              "name": "record_fingerprint_sha256",
+              "type": "sha256_lowercase_hex"
+            }
+          ],
+          "ordering": {
+            "semantic": true,
+            "key": [
+              "scope_hierarchy.applicable_order(scope_type)",
+              "scope_id"
+            ],
+            "validator_behavior": "REJECT_NON_CANONICAL_ORDER_NEVER_SORT"
+          },
+          "duplicates": {
+            "allowed": false,
+            "uniqueness_key_indexes": [
+              0,
+              1
+            ],
+            "validator_behavior": "REJECT_NEVER_DEDUPLICATE"
+          }
         },
         "kill_switch_fence_sha256": {
           "type": "sha256_hex"
@@ -7412,8 +7982,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "lease_fingerprint_sha256"
         ],
         "input_shape": "JSON_OBJECT",
-        "encoding": "UTF-8",
-        "canonical_json": {
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
           "sort_keys": true,
           "separators": [
             ",",
@@ -7422,7 +7992,12 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "ensure_ascii": false,
           "allow_nan": false
         },
-        "digest_format": "lowercase_hex"
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY"
       },
       "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
       "stage2_contextual_rules_excluded": [
@@ -7431,7 +8006,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DERIVED_AND_CHECKED",
+        "arrays": "SOURCE_DERIVED_AND_CHECKED",
+        "array_item_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "array_uniqueness": "SOURCE_DERIVED_AND_CHECKED",
+        "array_ordering": "SOURCE_DERIVED_AND_CHECKED",
+        "intrinsic_sibling_constraints": "SOURCE_DOES_NOT_DEFINE",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DERIVED_AND_CHECKED",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_EXECUTIONLEASE_IMMUTABLE_RECORD"
     },
     "SessionSecurityState current generation/state": {
       "semantic_artifact": "identity_device_authentication_and_secrets.json",
@@ -7465,7 +8060,13 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "prefix": "run"
         },
         "state": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "LOCKED",
+            "UNLOCKED",
+            "LOGGED_OUT"
+          ],
+          "values_source_pointer": "/registries/session_states"
         },
         "session_generation": {
           "type": "positive_integer"
@@ -7507,8 +8108,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "content_fingerprint_sha256"
         ],
         "input_shape": "JSON_OBJECT",
-        "encoding": "UTF-8",
-        "canonical_json": {
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
           "sort_keys": true,
           "separators": [
             ",",
@@ -7517,7 +8118,13 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "ensure_ascii": false,
           "allow_nan": false
         },
-        "digest_format": "lowercase_hex"
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+        "exact_fields_source_pointer": "/executable_boundary_schemas/SessionSecurityState"
       },
       "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
       "stage2_contextual_rules_excluded": [
@@ -7526,7 +8133,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DERIVED_AND_CHECKED",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_SESSIONSECURITYSTATE_CURRENT_GENERATION_STATE"
     },
     "SecretMetadataProjection": {
       "semantic_artifact": "identity_device_authentication_and_secrets.json",
@@ -7546,7 +8173,32 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "nullable_fields": [],
       "upstream_field_schemas": {
         "secret_reference": {
-          "type": "non_empty_string"
+          "type": "secure_store_reference",
+          "grammar": {
+            "upstream_pointer": "/credential_profile_contract/secure_store_reference_grammar",
+            "prefix": "secure-store://",
+            "locator": "non-empty opaque string",
+            "forbidden_characters": [
+              "whitespace",
+              "?",
+              "#",
+              "="
+            ],
+            "forbidden_payload_markers": [
+              "api_key",
+              "apikey",
+              "secret",
+              "password",
+              "token",
+              "private_key",
+              "credential_value",
+              "plaintext"
+            ],
+            "keyring_scheme_result": "SECRET_INVALID",
+            "raw_secret_in_domain_record": false,
+            "current_authority": "accepted SecretMetadataProjection plus canonical Core-owned scope-to-accepted-fingerprint map for exact revision",
+            "upstream_seed_boundary": "module-private fixture represents already accepted/current M0.5 projection; public Core API only validates use; ROTATE/REBIND only return authorized security request to M0.5 owner"
+          }
         },
         "secret_kind": {
           "type": "enum",
@@ -7577,13 +8229,32 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           ]
         },
         "permitted_operations": {
-          "type": "array"
+          "type": "canonical_unique_array_of_enum",
+          "items_source_pointer": "/registries/secret_use_operation_registry",
+          "min_items": 1,
+          "unique": true,
+          "canonical_order": "REGISTRY_ORDER",
+          "validator_behavior": "REJECT_NON_CANONICAL_ORDER_OR_DUPLICATES_NEVER_SORT_OR_DEDUPLICATE",
+          "validate_before_terminal_fingerprint": true,
+          "domain_separation": "SECRET_USE_OPERATIONS_NOT_ADMIN_OPERATION_POLICY_OR_M05_CREDENTIAL_PERMISSIONS",
+          "authority_boundary": "MEMBERSHIP_IN_INTRINSIC_METADATA_DOES_NOT_ESTABLISH_CURRENT_ACCEPTED_SECRET_AUTHORITY",
+          "values": [
+            "PRIVATE_DATA",
+            "ORDER_ENTRY"
+          ]
         },
         "secret_revision": {
           "type": "positive_integer"
         },
         "state": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "AVAILABLE",
+            "ROTATED",
+            "REVOKED",
+            "REPLACED"
+          ],
+          "values_source_pointer": "/registries/secret_states"
         },
         "content_fingerprint_sha256": {
           "type": "sha256_hex"
@@ -7623,8 +8294,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "content_fingerprint_sha256"
         ],
         "input_shape": "JSON_OBJECT",
-        "encoding": "UTF-8",
-        "canonical_json": {
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
           "sort_keys": true,
           "separators": [
             ",",
@@ -7633,7 +8304,13 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "ensure_ascii": false,
           "allow_nan": false
         },
-        "digest_format": "lowercase_hex"
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+        "exact_fields_source_pointer": "/executable_boundary_schemas/SecretMetadataProjection"
       },
       "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
       "stage2_contextual_rules_excluded": [
@@ -7642,7 +8319,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external venue or Core registry lookup",
         "M0.3 membership and restore authority",
         "LIVE readiness"
-      ]
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
+        "arrays": "SOURCE_DERIVED_AND_CHECKED",
+        "array_item_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "array_uniqueness": "SOURCE_DERIVED_AND_CHECKED",
+        "array_ordering": "SOURCE_DERIVED_AND_CHECKED",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DERIVED_AND_CHECKED",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DERIVED_AND_CHECKED",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_SECRETMETADATAPROJECTION"
     }
   },
   "direct_upstream_schema_policy": {
