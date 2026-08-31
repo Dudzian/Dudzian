@@ -5,9 +5,11 @@ from __future__ import annotations
 import ast
 import copy
 from decimal import Decimal, InvalidOperation
+from datetime import datetime
 import hashlib
 import inspect
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -20,6 +22,21 @@ ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs/architecture/cryptohunter_product_architecture"
 MACHINE_PATH = DOCS / "persistence_versioning_migrations_backup_and_recovery.json"
 MACHINE: dict[str, Any] = json.loads(MACHINE_PATH.read_text())
+RISK: dict[str, Any] = json.loads(
+    (DOCS / "risk_hierarchy_kill_switch_and_execution_lease.json").read_text()
+)
+IDENTITY: dict[str, Any] = json.loads(
+    (DOCS / "identity_device_authentication_and_secrets.json").read_text()
+)
+VOCABULARY: dict[str, Any] = json.loads((DOCS / "canonical_domain_vocabulary.json").read_text())
+EXCHANGE: dict[str, Any] = json.loads((DOCS / "exchange_accounts_and_instruments.json").read_text())
+STRATEGY: dict[str, Any] = json.loads(
+    (DOCS / "strategy_market_data_and_execution_routing.json").read_text()
+)
+COMMANDS: dict[str, Any] = json.loads(
+    (DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text()
+)
+LEDGER: dict[str, Any] = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
 SHA = "a" * 64
 SCOPE = (
     "acct_01890f3a-2b4c-7abc-8def-0123456789ab",
@@ -452,75 +469,1435 @@ def _source_exact_fields(name: str, source: dict[str, Any]) -> list[str]:
     return source["exact_fields"]
 
 
+@dataclass(frozen=True)
+class SourceExpectedDirectContract:
+    exact_fields: list[str]
+    nullable_fields: list[str]
+    field_schemas: dict[str, dict[str, Any]]
+    record_key_fields: list[str]
+    dimensions: dict[str, str]
+    terminal_fingerprint: dict[str, Any] | None
+    source_artifact: str
+    source_pointer: str
+    semantic_constraints: dict[str, Any]
+    stage1_scope: str
+    stage2_contextual_rules_excluded: list[str]
+
+
+DIRECT_STAGE2_AUTHORITY_EXCLUSIONS = [
+    "accepted/current authority or membership",
+    "trusted history and cross-record lineage resolution",
+    "external venue or Core registry lookup",
+    "M0.3 membership and restore authority",
+    "LIVE readiness",
+]
+DIRECT_STAGE1_SCOPE = "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY"
+
+
+def _entity_prefix(canonical_name: str) -> str:
+    matches = [
+        entry["id_prefix"]
+        for entry in VOCABULARY["entity_kinds"]
+        if entry["canonical_name"] == canonical_name
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"missing or duplicate canonical entity prefix: {canonical_name}")
+    return matches[0]
+
+
+def _id_schema(canonical_name: str) -> dict[str, Any]:
+    return {"type": "id", "prefix": _entity_prefix(canonical_name)}
+
+
+def _source_dimensions(
+    *,
+    canonical_ids: bool,
+    registries: bool,
+    constants: bool = False,
+    nested: bool = False,
+    arrays: bool = False,
+    unique: bool = False,
+    ordered: bool = False,
+    sibling: bool = False,
+    grammar: bool = False,
+    terminal: bool = False,
+) -> dict[str, str]:
+    checked = "SOURCE_DERIVED_AND_CHECKED"
+    absent = "SOURCE_DOES_NOT_DEFINE"
+    return {
+        "exact_fields": checked,
+        "nullable_fields": checked,
+        "field_schemas": checked,
+        "canonical_ids": checked if canonical_ids else absent,
+        "closed_registries": checked if registries else absent,
+        "constants": checked if constants else absent,
+        "nested_objects": checked if nested else absent,
+        "arrays": checked if arrays else absent,
+        "array_item_schemas": checked if arrays else absent,
+        "array_uniqueness": checked if unique else absent,
+        "array_ordering": checked if ordered else absent,
+        "intrinsic_sibling_constraints": checked if sibling else absent,
+        "reference_grammar": checked if grammar else absent,
+        "record_key_fields": checked,
+        "terminal_content_fingerprint": checked if terminal else absent,
+        "stage1_included_rules": checked,
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED",
+    }
+
+
+def _expected(
+    *,
+    fields: list[str],
+    nullable: list[str],
+    schemas: dict[str, dict[str, Any]],
+    key: list[str],
+    dimensions: dict[str, str],
+    artifact: str,
+    pointer: str,
+    terminal: dict[str, Any] | None = None,
+    semantic_constraints: dict[str, Any] | None = None,
+) -> SourceExpectedDirectContract:
+    if set(fields) != set(schemas):
+        raise AssertionError("upstream source builder did not cover every exact field")
+    constraints = {} if semantic_constraints is None else semantic_constraints
+    exact_dimensions = copy.deepcopy(dimensions)
+    exact_dimensions["intrinsic_sibling_constraints"] = (
+        "SOURCE_DERIVED_AND_CHECKED" if constraints else "SOURCE_DOES_NOT_DEFINE"
+    )
+    return SourceExpectedDirectContract(
+        fields,
+        nullable,
+        schemas,
+        key,
+        exact_dimensions,
+        terminal,
+        artifact,
+        pointer,
+        constraints,
+        DIRECT_STAGE1_SCOPE,
+        list(DIRECT_STAGE2_AUTHORITY_EXCLUSIONS),
+    )
+
+
+def _submit_order_constraints(source: dict[str, Any]) -> dict[str, Any]:
+    rules = source["constraints"]
+    return {
+        "source_pointer": "/command_registry/SUBMIT_ORDER/constraints",
+        "rules": rules,
+        "conditional_nullability": [
+            {"when": {"order_type": "MARKET"}, "field": "limit_price", "required": "NULL"},
+            {"when": {"order_type": "LIMIT"}, "field": "limit_price", "required": "NON_NULL"},
+            {"when": {"time_in_force": "GTD"}, "field": "expire_at_utc", "required": "NON_NULL"},
+            {"when_not": {"time_in_force": "GTD"}, "field": "expire_at_utc", "required": "NULL"},
+            {
+                "when": {"source_type": "STRATEGY_INSTANCE"},
+                "field": "strategy_instance_id",
+                "required": "NON_NULL",
+            },
+            {
+                "when_not": {"source_type": "STRATEGY_INSTANCE"},
+                "field": "strategy_instance_id",
+                "required": "NULL",
+            },
+        ],
+        "identity_inequality": {
+            "left": "order_id",
+            "right": "command_id",
+            "rule": "MUST_DIFFER",
+        },
+    }
+
+
+def _build_exchange_account(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    asset_identity = EXCHANGE["exchange_account_contract"]
+    schemas = {
+        "exchange_account_id": {"type": "id", "prefix": asset_identity["id_prefix"]},
+        "portfolio_id": _id_schema("Portfolio"),
+        "exchange_id": {"type": "non_empty_string"},
+        "environment": {"type": "enum", "values": EXCHANGE["environment_registry"]},
+        "market_type": {"type": "non_empty_string"},
+        "display_name": {"type": "non_empty_string"},
+        "lifecycle_state": {"type": "enum", "values": source["lifecycle_states"]},
+        "connection_state": {"type": "enum", "values": source["connection_states"]},
+        "execution_authorization": {"type": "enum", "values": source["execution_authorizations"]},
+        "external_account_identity_state": {
+            "type": "object",
+            "fields": ["canonical_reference"],
+            "field_schemas": {"canonical_reference": {"type": "non_empty_string"}},
+        },
+        "external_account_reference": {"type": "non_empty_string"},
+        "external_subaccount_reference": {"type": "non_empty_string"},
+        "active_credential_profile_id": {"type": "non_empty_string"},
+        "account_capability_snapshot_id": {"type": "non_empty_string"},
+        "created_at_utc": {"type": "timestamp"},
+        "retired_at_utc": {"type": "nullable_timestamp"},
+    }
+    return _expected(
+        fields=source["record_fields"],
+        nullable=[
+            "external_account_reference",
+            "external_subaccount_reference",
+            "active_credential_profile_id",
+            "account_capability_snapshot_id",
+            "retired_at_utc",
+        ],
+        schemas=schemas,
+        key=[source["id_field"]],
+        dimensions=_source_dimensions(
+            canonical_ids=True, registries=True, nested=True, sibling=True
+        ),
+        artifact="exchange_accounts_and_instruments.json",
+        pointer="/exchange_account_contract",
+        semantic_constraints={
+            "lifecycle_timestamp_policy": {
+                "source_pointer": "/exchange_account_contract/lifecycle_timestamp_policy",
+                "state_field": "lifecycle_state",
+                "created_field": "created_at_utc",
+                "retired_field": "retired_at_utc",
+            }
+        },
+    )
+
+
+def _build_credential_profile(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    schemas = {
+        "credential_profile_id": {"type": "id", "prefix": source["id_prefix"]},
+        "exchange_account_id": _id_schema("ExchangeAccount"),
+        "exchange_id": {"type": "non_empty_string"},
+        "environment_scope": {"type": "enum", "values": EXCHANGE["environment_registry"]},
+        "credential_purpose": {"type": "enum", "values": source["credential_purposes"]},
+        "secure_store_reference": {
+            "type": "secure_store_reference",
+            "grammar": source["secure_store_reference_grammar"],
+        },
+        "public_key_identifier": source["intrinsic_field_schemas"]["public_key_identifier"],
+        "permission_snapshot": {
+            "type": "unique_array_of_enum",
+            "values": source["permission_registry"],
+            "order": "PRESERVED",
+        },
+        "lifecycle_state": {"type": "enum", "values": source["lifecycle_states"]},
+        "created_at_utc": {"type": "timestamp"},
+        "rotated_from_credential_profile_id": source["intrinsic_field_schemas"][
+            "rotated_from_credential_profile_id"
+        ],
+        "retired_at_utc": source["intrinsic_field_schemas"]["retired_at_utc"],
+    }
+    return _expected(
+        fields=source["fields"],
+        nullable=source["nullable_fields"],
+        schemas=schemas,
+        key=[source["id_field"]],
+        dimensions=_source_dimensions(
+            canonical_ids=True,
+            registries=True,
+            arrays=True,
+            unique=True,
+            ordered=True,
+            sibling=True,
+            grammar=True,
+        ),
+        artifact="exchange_accounts_and_instruments.json",
+        pointer="/credential_profile_contract",
+        semantic_constraints={
+            "lifecycle_timestamp_policy": copy.deepcopy(source["lifecycle_timestamp_policy"]),
+            "self_cycle": {
+                "left": "credential_profile_id",
+                "right": "rotated_from_credential_profile_id",
+                "rule": "MUST_DIFFER_WHEN_RIGHT_NON_NULL",
+            },
+        },
+    )
+
+
+def _build_strategy_instance(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    entity_names = source["entity_references"]
+    schemas: dict[str, dict[str, Any]] = {}
+    for field in source["exact_fields"]:
+        if field == source["id_field"]:
+            schemas[field] = {"type": "id", "prefix": source["id_prefix"]}
+        elif field in entity_names:
+            canonical_name = entity_names[field].removesuffix("Projection")
+            schemas[field] = _id_schema(canonical_name)
+        elif field == "strategy_definition_version":
+            schemas[field] = {"type": "positive_integer"}
+        elif field == "lifecycle_state":
+            schemas[field] = {
+                "type": "enum",
+                "values": source["enum_registry"][field],
+                "values_source_pointer": "/record_schemas/StrategyInstance/enum_registry/lifecycle_state",
+            }
+        else:
+            raise AssertionError(f"unsupported StrategyInstance field: {field}")
+    return _expected(
+        fields=source["exact_fields"],
+        nullable=source["nullable_fields"],
+        schemas=schemas,
+        key=[source["id_field"]],
+        dimensions=_source_dimensions(canonical_ids=True, registries=True),
+        artifact="strategy_market_data_and_execution_routing.json",
+        pointer="/record_schemas/StrategyInstance",
+    )
+
+
+def _build_kill_switch(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    schemas = copy.deepcopy(source["field_schemas"])
+    schemas["scope_type"]["values"] = RISK["scope_hierarchy"]["applicable_order"]
+    schemas["state"]["values"] = source["states"]
+    return _expected(
+        fields=source["record_fields"],
+        nullable=[],
+        schemas=schemas,
+        key=["scope_type", "scope_id", "environment", "generation"],
+        dimensions=_source_dimensions(
+            canonical_ids=True, registries=True, sibling=True, grammar=True, terminal=True
+        ),
+        terminal=source["terminal_fingerprint"],
+        artifact="risk_hierarchy_kill_switch_and_execution_lease.json",
+        pointer="/kill_switch_contract",
+        semantic_constraints={
+            "scope_id_policy": copy.deepcopy(RISK["scope_hierarchy"]["scope_id_policy"]),
+            "generation_authority_split": {
+                "stage1": "positive non-boolean integer",
+                "stage2": "strict monotonic increase, no rollback/reuse, accepted/current designation",
+            },
+        },
+    )
+
+
+def _submit_expected(source: dict[str, Any], pointer: str) -> SourceExpectedDirectContract:
+    return _expected(
+        fields=source["request_fields"],
+        nullable=source["nullable_fields"],
+        schemas=copy.deepcopy(source["field_schemas"]),
+        key=["command_id" if pointer == "/command_registry" else "order_intent_id"],
+        dimensions=_source_dimensions(
+            canonical_ids=True, registries=True, constants=True, sibling=True
+        ),
+        artifact="commands_events_order_lifecycle_and_idempotency.json",
+        pointer=pointer,
+        semantic_constraints=_submit_order_constraints(source),
+    )
+
+
+def _build_command(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    return _submit_expected(source["SUBMIT_ORDER"], "/command_registry")
+
+
+def _build_order_intent(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    return _submit_expected(source, "/command_registry/SUBMIT_ORDER")
+
+
+def _build_event(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    envelope = source["envelope_schema"]
+    schemas = copy.deepcopy(envelope["field_schemas"])
+    schemas["event_type"] = {
+        "type": "enum",
+        "registry": "event_types",
+        "values": source["event_types"],
+    }
+    terminal = {
+        "field": "event_fingerprint_sha256",
+        "algorithm": "SHA-256",
+        "input_fields": [
+            field for field in envelope["fields"] if field != "event_fingerprint_sha256"
+        ],
+        "excluded_fields": envelope["fingerprint_excluded_fields"],
+        "input_shape": "CANONICAL_NFC_JSON_OBJECT",
+        "canonicalization": [
+            "complete immutable event envelope",
+            "recursive NFC keys and string values",
+            "canonical JSON sorted keys and compact separators",
+        ],
+        "unicode_normalization": "NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED",
+        "encoding": "UTF-8",
+        "digest_format": "lowercase_hex",
+        "source_pointer": "/event_contract/fingerprint",
+    }
+    return _expected(
+        fields=envelope["fields"],
+        nullable=envelope["nullable_fields"],
+        schemas=schemas,
+        key=["audit_event_id", "aggregate_version"],
+        dimensions=_source_dimensions(
+            canonical_ids=True, registries=True, nested=True, sibling=True, terminal=True
+        ),
+        terminal=terminal,
+        artifact="commands_events_order_lifecycle_and_idempotency.json",
+        pointer="/event_contract",
+        semantic_constraints={
+            "event_schema_registry": {
+                "event_type_source_pointer": "/event_contract/event_types",
+                "schema_source_pointer": "/event_contract/event_schema_registry",
+                "safe_payload_field": "safe_payload",
+                "required_scope_enforced": True,
+            }
+        },
+    )
+
+
+def _build_fill(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    terminal = copy.deepcopy(source["fingerprint"])
+    terminal.update(
+        input_shape="CANONICAL_NFC_JSON_OBJECT",
+        unicode_normalization="NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED",
+        encoding="UTF-8",
+        digest_format="lowercase_hex",
+        source_pointer="/fill_contract/fingerprint",
+    )
+    return _expected(
+        fields=source["fact_fields"],
+        nullable=source["nullable_fields"],
+        schemas=copy.deepcopy(source["field_schemas"]),
+        key=["fill_id"],
+        dimensions=_source_dimensions(
+            canonical_ids=True, registries=True, nested=True, sibling=True, terminal=True
+        ),
+        terminal=terminal,
+        artifact="commands_events_order_lifecycle_and_idempotency.json",
+        pointer="/fill_contract",
+        semantic_constraints={"fee_semantics": copy.deepcopy(source["fee_semantics"])},
+    )
+
+
+def _build_ledger(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    asset = EXCHANGE["asset_reference_contract"]
+    schemas = {
+        "ledger_entry_id": {"type": "id", "prefix": source["identity"]["prefix"]},
+        "workspace_id": _id_schema("Workspace"),
+        "portfolio_id": _id_schema("Portfolio"),
+        "environment": {"type": "enum", "values": EXCHANGE["environment_registry"]},
+        "exchange_account_id": _id_schema("ExchangeAccount"),
+        "strategy_instance_id": _id_schema("StrategyInstance"),
+        "asset_reference": {
+            "type": "asset_reference",
+            "fields": asset["fields"],
+            "field_schemas": {
+                "venue_asset_code": {"type": "non_empty_string"},
+                "canonical_display_code": {"type": "non_empty_string"},
+                "asset_namespace": {"type": "non_empty_string"},
+                "mapping_status": {"type": "enum", "values": asset["mapping_statuses"][:2]},
+            },
+        },
+        "account_role": {
+            "type": "enum",
+            "values": list(LEDGER["account_roles"]),
+            "values_source_pointer": "/account_roles keys",
+        },
+        "direction": {
+            "type": "enum",
+            "values": source["direction_registry"],
+            "values_source_pointer": "/ledger_entry_schema/direction_registry",
+        },
+        "quantity": {"type": "decimal", "constraint": "positive"},
+        "source_type": {
+            "type": "enum",
+            "values": list(LEDGER["source_registry"]),
+            "values_source_pointer": "/source_registry keys",
+        },
+        "accounting_source_identity": {"type": "non_empty_string"},
+        "accounting_source_fingerprint_sha256": {"type": "sha256_hex"},
+        "accounting_rule_version": {"type": "positive_integer"},
+        "posting_index": {"type": "positive_integer"},
+        "posting_role": {
+            "type": "enum",
+            "values": source["posting_role_registry"],
+            "values_source_pointer": "/ledger_entry_schema/posting_role_registry",
+        },
+        "batch_fingerprint_sha256": {"type": "sha256_hex"},
+        "effective_at_utc": {"type": "timestamp"},
+        "append_sequence": {"type": "positive_integer"},
+        "order_id": _id_schema("Order"),
+        "fill_id": _id_schema("Fill"),
+        "audit_event_id": _id_schema("AuditEvent"),
+        "correction_reason": {"type": "non_empty_string"},
+    }
+    return _expected(
+        fields=source["exact_fields"],
+        nullable=source["nullable_fields"],
+        schemas=schemas,
+        key=["ledger_entry_id", "append_sequence"],
+        dimensions=_source_dimensions(
+            canonical_ids=True, registries=True, nested=True, sibling=True
+        ),
+        artifact="ledger_portfolio_capital_and_pnl.json",
+        pointer="/ledger_entry_schema",
+        semantic_constraints={
+            "direction": {"pointer": "/ledger_entry_schema/direction_registry"},
+            "posting_role": {"pointer": "/ledger_entry_schema/posting_role_registry"},
+        },
+    )
+
+
+def _risk_scalar_schemas(fields: list[str]) -> dict[str, dict[str, Any]]:
+    submit_schemas = COMMANDS["command_registry"]["SUBMIT_ORDER"]["field_schemas"]
+    schemas: dict[str, dict[str, Any]] = {}
+    for field in fields:
+        if field in {"command_id", "order_id"}:
+            schemas[field] = {
+                "type": "id",
+                "prefix": submit_schemas[field]["prefix"],
+            }
+        elif field.endswith("_fingerprint_sha256") or field.endswith("_fence_sha256"):
+            schemas[field] = {"type": "sha256_hex"}
+        elif field == "scope_binding":
+            schemas[field] = {
+                "type": "object",
+                "fields": ["canonical_reference"],
+                "field_schemas": {"canonical_reference": {"type": "non_empty_string"}},
+            }
+        elif field == "environment":
+            schemas[field] = {"type": "enum", "values": EXCHANGE["environment_registry"]}
+        elif field == "evaluated_at_utc":
+            schemas[field] = {"type": "timestamp"}
+        elif field == "decision":
+            schemas[field] = {
+                "type": "enum",
+                "values": RISK["risk_decision_contract"]["decisions"],
+                "values_source_pointer": "/risk_decision_contract/decisions",
+            }
+        elif field == "decision_fingerprint_sha256":
+            schemas[field] = {"type": "sha256_hex"}
+    return schemas
+
+
+def _build_risk_decision(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    schemas = _risk_scalar_schemas(source["exact_fields"])
+    array = copy.deepcopy(RISK["risk_decision_contract"]["ordered_limit_results_array_schema"])
+    item = copy.deepcopy(RISK["risk_decision_contract"]["limit_result_schema"])
+    for field, registry in (
+        ("limit_type", "limit_result_type_registry"),
+        ("result", "limit_result_result_registry"),
+        ("reason_code", "limit_result_reason_codes"),
+    ):
+        item["field_schemas"][field]["values"] = RISK["risk_decision_contract"][registry]
+    array["item_schema"] = item
+    schemas["ordered_limit_results"] = array
+    schemas["kill_switch_result"] = {
+        "type": "enum",
+        "values": RISK["risk_decision_contract"]["kill_switch_result_registry"],
+        "values_source_pointer": "/risk_decision_contract/kill_switch_result_registry",
+    }
+    schemas["decision_fingerprint_sha256"] = {"type": "sha256_hex"}
+    return _expected(
+        fields=source["exact_fields"],
+        nullable=[],
+        schemas=schemas,
+        key=["command_id", "decision_fingerprint_sha256"],
+        dimensions=_source_dimensions(
+            canonical_ids=True,
+            registries=True,
+            nested=True,
+            arrays=True,
+            unique=True,
+            ordered=True,
+            sibling=True,
+            terminal=True,
+        ),
+        terminal=source["terminal_fingerprint"],
+        artifact="risk_hierarchy_kill_switch_and_execution_lease.json",
+        pointer="/executable_boundary_schemas/RiskDecision",
+        semantic_constraints={"decision": {"pointer": "/risk_decision_contract/decisions"}},
+    )
+
+
+def _lease_scalar_schema(field: str) -> dict[str, Any]:
+    submit_schemas = COMMANDS["command_registry"]["SUBMIT_ORDER"]["field_schemas"]
+    prefix_by_field = {
+        "execution_lease_id": RISK["execution_lease_contract"]["identity"]["prefix"],
+        "command_id": submit_schemas["command_id"]["prefix"],
+        "order_id": submit_schemas["order_id"]["prefix"],
+        "order_intent_id": submit_schemas["order_intent_id"]["prefix"],
+        "workspace_id": _entity_prefix("Workspace"),
+        "portfolio_id": _entity_prefix("Portfolio"),
+        "exchange_account_id": _entity_prefix("ExchangeAccount"),
+        "instrument_id": _entity_prefix("Instrument"),
+        "execution_route_id": _entity_prefix("ExecutionRoute"),
+        "strategy_instance_id": _entity_prefix("StrategyInstance"),
+    }
+    if field in prefix_by_field:
+        return {"type": "id", "prefix": prefix_by_field[field]}
+    if field.endswith("_fingerprint_sha256") or field.endswith("_fence_sha256"):
+        return {"type": "sha256_hex"}
+    if field in {"instrument_metadata_version"}:
+        return {"type": "positive_integer"}
+    if field in {"quantity", "reservation_original_quantity", "reservation_remaining_quantity"}:
+        return {"type": "decimal", "constraint": "positive"}
+    if field in {"issued_at_utc", "expires_at_utc", "order_expire_at_utc"}:
+        return {"type": "timestamp"}
+    if field == "environment":
+        return {"type": "enum", "values": EXCHANGE["environment_registry"]}
+    if field == "reservation_asset_reference":
+        asset = EXCHANGE["asset_reference_contract"]
+        return {
+            "type": "asset_reference",
+            "fields": asset["fields"],
+            "field_schemas": {
+                "venue_asset_code": {"type": "non_empty_string"},
+                "canonical_display_code": {"type": "non_empty_string"},
+                "asset_namespace": {"type": "non_empty_string"},
+                "mapping_status": {"type": "enum", "values": asset["mapping_statuses"][:2]},
+            },
+        }
+    if field == "source_identity":
+        return {
+            "type": "object",
+            "fields": ["canonical_reference"],
+            "field_schemas": {"canonical_reference": {"type": "non_empty_string"}},
+        }
+    if field in {
+        "exchange_id",
+        "side",
+        "order_type",
+        "limit_price",
+        "time_in_force",
+        "reservation_source_audit_event_id",
+    }:
+        return {"type": "non_empty_string"}
+    if field == "lease_fingerprint_sha256":
+        return {"type": "sha256_hex"}
+    raise AssertionError(f"unsupported M0.9 ExecutionLease field: {field}")
+
+
+def _build_execution_lease(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    schemas = {
+        field: _lease_scalar_schema(field)
+        for field in source["exact_fields"]
+        if field not in {"effective_policy_bindings", "kill_switch_bindings"}
+    }
+    bindings = RISK["execution_lease_contract"]["binding_array_schemas"]
+    schemas["effective_policy_bindings"] = copy.deepcopy(bindings["effective_policy_bindings"])
+    schemas["kill_switch_bindings"] = copy.deepcopy(bindings["kill_switch_bindings"])
+    return _expected(
+        fields=source["exact_fields"],
+        nullable=[],
+        schemas=schemas,
+        key=["execution_lease_id"],
+        dimensions=_source_dimensions(
+            canonical_ids=True,
+            registries=True,
+            nested=True,
+            arrays=True,
+            unique=True,
+            ordered=True,
+            terminal=True,
+        ),
+        terminal=source["terminal_fingerprint"],
+        artifact="risk_hierarchy_kill_switch_and_execution_lease.json",
+        pointer="/executable_boundary_schemas/ExecutionLease",
+    )
+
+
+def _build_session(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    schemas = {
+        "account_id": _id_schema("CryptoHunterAccount"),
+        "operator_id": _id_schema("OperatorIdentity"),
+        "device_installation_id": _id_schema("DeviceInstallation"),
+        "runtime_session_id": _id_schema("RuntimeSession"),
+        "state": {
+            "type": "enum",
+            "values": IDENTITY["registries"]["session_states"],
+            "values_source_pointer": "/registries/session_states",
+        },
+        "session_generation": {"type": "positive_integer"},
+        "security_generation": {"type": "positive_integer"},
+        "content_fingerprint_sha256": {"type": "sha256_hex"},
+    }
+    return _expected(
+        fields=source["exact_fields"],
+        nullable=[],
+        schemas=schemas,
+        key=[
+            "account_id",
+            "operator_id",
+            "device_installation_id",
+            "runtime_session_id",
+            "session_generation",
+            "security_generation",
+        ],
+        dimensions=_source_dimensions(
+            canonical_ids=True, registries=True, sibling=True, terminal=True
+        ),
+        terminal=source["terminal_fingerprint"],
+        artifact="identity_device_authentication_and_secrets.json",
+        pointer="/executable_boundary_schemas/SessionSecurityState",
+        semantic_constraints={"state": {"pointer": "/registries/session_states"}},
+    )
+
+
+def _build_secret(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    operations = copy.deepcopy(source["field_schemas"]["permitted_operations"])
+    operations["values"] = IDENTITY["registries"]["secret_use_operation_registry"]
+    schemas = {
+        "secret_reference": {
+            "type": "secure_store_reference",
+            "grammar": IDENTITY["secret_reference_policy"],
+        },
+        "secret_kind": {"type": "enum", "values": IDENTITY["registries"]["secret_kinds"]},
+        "exchange_account_id": _id_schema("ExchangeAccount"),
+        "credential_profile_id": _id_schema("CredentialProfile"),
+        "exchange_id": {"type": "non_empty_string"},
+        "environment": {"type": "enum", "values": IDENTITY["registries"]["environments"]},
+        "permitted_operations": operations,
+        "secret_revision": {"type": "positive_integer"},
+        "state": {
+            "type": "enum",
+            "values": IDENTITY["registries"]["secret_states"],
+            "values_source_pointer": "/registries/secret_states",
+        },
+        "content_fingerprint_sha256": {"type": "sha256_hex"},
+    }
+    return _expected(
+        fields=source["exact_fields"],
+        nullable=[],
+        schemas=schemas,
+        key=["secret_reference", "secret_revision"],
+        dimensions=_source_dimensions(
+            canonical_ids=True,
+            registries=True,
+            arrays=True,
+            unique=True,
+            ordered=True,
+            sibling=True,
+            grammar=True,
+            terminal=True,
+        ),
+        terminal=source["terminal_fingerprint"],
+        artifact="identity_device_authentication_and_secrets.json",
+        pointer="/executable_boundary_schemas/SecretMetadataProjection",
+        semantic_constraints={
+            "secret_kind": {"pointer": "/registries/secret_kinds"},
+            "state": {"pointer": "/registries/secret_states"},
+            "secret_reference": {"pointer": "/secret_reference_policy"},
+        },
+    )
+
+
+DIRECT_SOURCE_EXPECTATION_BUILDERS = {
+    "ExchangeAccount": _build_exchange_account,
+    "CredentialProfile metadata/reference": _build_credential_profile,
+    "StrategyInstance current lifecycle/config": _build_strategy_instance,
+    "kill-switch state/generation": _build_kill_switch,
+    "Command accepted request": _build_command,
+    "Event": _build_event,
+    "OrderIntent": _build_order_intent,
+    "Fill": _build_fill,
+    "LedgerEntry": _build_ledger,
+    "RiskDecision": _build_risk_decision,
+    "ExecutionLease immutable record": _build_execution_lease,
+    "SessionSecurityState current generation/state": _build_session,
+    "SecretMetadataProjection": _build_secret,
+}
+
+
+def _source_expected_direct_contract(
+    name: str, source: dict[str, Any]
+) -> SourceExpectedDirectContract:
+    builder = DIRECT_SOURCE_EXPECTATION_BUILDERS.get(name)
+    if builder is None:
+        raise AssertionError(f"unknown direct source expectation: {name}")
+    return builder(source)
+
+
+def _schema_semantics_match(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
+    return actual == expected
+
+
+def _direct_common_source_parity(
+    name: str, projection: dict[str, Any], source: dict[str, Any]
+) -> bool:
+    expected = _source_expected_direct_contract(name, source)
+    return (
+        projection.get("exact_fields") == expected.exact_fields
+        and projection.get("nullable_fields") == expected.nullable_fields
+        and projection.get("upstream_field_schemas") == expected.field_schemas
+        and projection.get("record_key_fields") == expected.record_key_fields
+        and projection.get("source_parity_dimension_classification") == expected.dimensions
+        and projection.get("terminal_fingerprint") == expected.terminal_fingerprint
+        and projection.get("semantic_constraints", {}) == expected.semantic_constraints
+        and projection.get("semantic_artifact") == expected.source_artifact
+        and projection.get("semantic_json_pointer") == expected.source_pointer
+        and projection.get("stage1_scope") == expected.stage1_scope
+        and projection.get("stage2_contextual_rules_excluded")
+        == expected.stage2_contextual_rules_excluded
+    )
+
+
+def _parity_exchange_account(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    schemas = projection.get("upstream_field_schemas", {})
+    return _direct_common_source_parity("ExchangeAccount", projection, source) and (
+        schemas["exchange_account_id"] == {"type": "id", "prefix": source["id_prefix"]}
+        and schemas["portfolio_id"] == {"type": "id", "prefix": "port"}
+        and schemas["environment"]["values"] == ["PAPER", "TESTNET", "LIVE"]
+        and schemas.get("lifecycle_state", {}).get("values") == source["lifecycle_states"]
+        and schemas.get("connection_state", {}).get("values") == source["connection_states"]
+        and schemas.get("execution_authorization", {}).get("values")
+        == source["execution_authorizations"]
+        and schemas["created_at_utc"]["type"] == "timestamp"
+        and schemas["retired_at_utc"]["type"] == "nullable_timestamp"
+        and projection["record_key_fields"] == [source["id_field"]]
+        and projection["semantic_constraints"]["lifecycle_timestamp_policy"]["source_pointer"]
+        == "/exchange_account_contract/lifecycle_timestamp_policy"
+    )
+
+
+def _parity_credential_profile(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    schemas = projection.get("upstream_field_schemas", {})
+    return _direct_common_source_parity(
+        "CredentialProfile metadata/reference", projection, source
+    ) and (
+        schemas["credential_profile_id"] == {"type": "id", "prefix": source["id_prefix"]}
+        and schemas["exchange_account_id"] == {"type": "id", "prefix": "xacc"}
+        and schemas["environment_scope"]["values"] == ["PAPER", "TESTNET", "LIVE"]
+        and schemas["public_key_identifier"]
+        == source["intrinsic_field_schemas"]["public_key_identifier"]
+        and schemas["created_at_utc"]["type"]
+        == source["intrinsic_field_schemas"]["created_at_utc"]["type"]
+        and schemas["retired_at_utc"] == source["intrinsic_field_schemas"]["retired_at_utc"]
+        and projection.get("nullable_fields") == source["nullable_fields"]
+        and schemas.get("credential_purpose", {}).get("values") == source["credential_purposes"]
+        and schemas.get("permission_snapshot", {}).get("type") == "unique_array_of_enum"
+        and schemas.get("permission_snapshot", {}).get("values") == source["permission_registry"]
+        and schemas.get("secure_store_reference", {}).get("grammar")
+        == source["secure_store_reference_grammar"]
+        and schemas.get("lifecycle_state", {}).get("values") == source["lifecycle_states"]
+        and schemas.get("rotated_from_credential_profile_id")
+        == source["intrinsic_field_schemas"]["rotated_from_credential_profile_id"]
+        and projection.get("semantic_constraints", {}).get("lifecycle_timestamp_policy")
+        == source["lifecycle_timestamp_policy"]
+        and projection["record_key_fields"] == [source["id_field"]]
+    )
+
+
+def _parity_strategy_instance(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    schema = projection.get("upstream_field_schemas", {}).get("lifecycle_state", {})
+    return _direct_common_source_parity(
+        "StrategyInstance current lifecycle/config", projection, source
+    ) and (
+        projection.get("nullable_fields") == source["nullable_fields"]
+        and schema.get("type") == "enum"
+        and schema.get("values") == source["enum_registry"]["lifecycle_state"]
+        and projection["record_key_fields"] == [source["id_field"]]
+        and projection["upstream_field_schemas"]["strategy_definition_version"]["type"]
+        == "positive_integer"
+    )
+
+
+def _parity_submit(name: str, projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    return _direct_common_source_parity(name, projection, source)
+
+
+def _parity_event(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    terminal = projection.get("terminal_fingerprint", {})
+    schemas = projection.get("upstream_field_schemas", {})
+    expected_schemas = copy.deepcopy(source["envelope_schema"]["field_schemas"])
+    expected_schemas["event_type"] = {
+        "type": "enum",
+        "values": source["event_types"],
+        "registry": "event_types",
+    }
+    expected_terminal = {
+        "field": "event_fingerprint_sha256",
+        "algorithm": "SHA-256",
+        "input_fields": [
+            field
+            for field in source["envelope_schema"]["fields"]
+            if field != "event_fingerprint_sha256"
+        ],
+        "excluded_fields": source["envelope_schema"]["fingerprint_excluded_fields"],
+        "input_shape": "CANONICAL_NFC_JSON_OBJECT",
+        "canonicalization": [
+            "complete immutable event envelope",
+            "recursive NFC keys and string values",
+            "canonical JSON sorted keys and compact separators",
+        ],
+        "unicode_normalization": "NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED",
+        "encoding": "UTF-8",
+        "digest_format": "lowercase_hex",
+        "source_pointer": "/event_contract/fingerprint",
+    }
+    return _direct_common_source_parity("Event", projection, source) and (
+        projection.get("nullable_fields") == source["envelope_schema"]["nullable_fields"]
+        and schemas == expected_schemas
+        and terminal == expected_terminal
+    )
+
+
+def _parity_fill(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    terminal = projection.get("terminal_fingerprint", {})
+    expected_terminal = copy.deepcopy(source["fingerprint"])
+    expected_terminal.update(
+        input_shape="CANONICAL_NFC_JSON_OBJECT",
+        unicode_normalization="NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED",
+        encoding="UTF-8",
+        digest_format="lowercase_hex",
+        source_pointer="/fill_contract/fingerprint",
+    )
+    return _direct_common_source_parity("Fill", projection, source) and (
+        projection.get("nullable_fields") == source["nullable_fields"]
+        and projection.get("upstream_field_schemas") == source["field_schemas"]
+        and projection.get("semantic_constraints", {}).get("fee_semantics")
+        == source["fee_semantics"]
+        and terminal == expected_terminal
+    )
+
+
+def _parity_kill_switch(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    schemas = projection.get("upstream_field_schemas", {})
+    return _direct_common_source_parity("kill-switch state/generation", projection, source) and (
+        schemas
+        == source["field_schemas"]
+        | {
+            "scope_type": source["field_schemas"]["scope_type"]
+            | {"values": RISK["scope_hierarchy"]["applicable_order"]},
+            "state": source["field_schemas"]["state"] | {"values": source["states"]},
+        }
+        and projection.get("terminal_fingerprint") == source["terminal_fingerprint"]
+    )
+
+
+def _parity_ledger(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    schemas = projection["upstream_field_schemas"]
+    ledger = json.loads((DOCS / "ledger_portfolio_capital_and_pnl.json").read_text())
+    return (
+        _direct_common_source_parity("LedgerEntry", projection, source)
+        and projection.get("nullable_fields") == source["nullable_fields"]
+        and schemas["direction"]
+        == {
+            "type": "enum",
+            "values": source["direction_registry"],
+            "values_source_pointer": "/ledger_entry_schema/direction_registry",
+        }
+        and schemas["posting_role"]
+        == {
+            "type": "enum",
+            "values": source["posting_role_registry"],
+            "values_source_pointer": "/ledger_entry_schema/posting_role_registry",
+        }
+        and schemas["account_role"]["values"] == list(ledger["account_roles"])
+        and schemas["source_type"]["values"] == list(ledger["source_registry"])
+        and schemas["quantity"] == {"type": "decimal", "constraint": "positive"}
+        and schemas["effective_at_utc"] == {"type": "timestamp"}
+        and projection["record_key_fields"] == ["ledger_entry_id", "append_sequence"]
+    )
+
+
+def _parity_risk(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    schema = projection.get("upstream_field_schemas", {})
+    array = schema.get("ordered_limit_results", {})
+    expected_array = copy.deepcopy(
+        RISK["risk_decision_contract"]["ordered_limit_results_array_schema"]
+    )
+    expected_item = copy.deepcopy(RISK["risk_decision_contract"]["limit_result_schema"])
+    for field, registry in (
+        ("limit_type", "limit_result_type_registry"),
+        ("result", "limit_result_result_registry"),
+        ("reason_code", "limit_result_reason_codes"),
+    ):
+        expected_item["field_schemas"][field]["values"] = RISK["risk_decision_contract"][registry]
+    expected_array["item_schema"] = expected_item
+    return _direct_common_source_parity("RiskDecision", projection, source) and (
+        array == expected_array
+        and schema.get("kill_switch_result", {}).get("values")
+        == RISK["risk_decision_contract"]["kill_switch_result_registry"]
+        and projection.get("terminal_fingerprint") == source["terminal_fingerprint"]
+    )
+
+
+def _parity_lease(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    schemas = projection.get("upstream_field_schemas", {})
+    bindings = RISK["execution_lease_contract"]["binding_array_schemas"]
+    return _direct_common_source_parity("ExecutionLease immutable record", projection, source) and (
+        schemas.get("effective_policy_bindings") == bindings["effective_policy_bindings"]
+        and schemas.get("kill_switch_bindings") == bindings["kill_switch_bindings"]
+        and projection.get("terminal_fingerprint") == source["terminal_fingerprint"]
+    )
+
+
+def _parity_session(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    return (
+        _direct_common_source_parity(
+            "SessionSecurityState current generation/state", projection, source
+        )
+        and projection["upstream_field_schemas"]["state"]
+        == {
+            "type": "enum",
+            "values": IDENTITY["registries"]["session_states"],
+            "values_source_pointer": "/registries/session_states",
+        }
+        and projection["record_key_fields"]
+        == [
+            "account_id",
+            "operator_id",
+            "device_installation_id",
+            "runtime_session_id",
+            "session_generation",
+            "security_generation",
+        ]
+        and projection.get("terminal_fingerprint") == source["terminal_fingerprint"]
+    )
+
+
+def _parity_secret(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    schema = projection["upstream_field_schemas"]["permitted_operations"]
+    expected = copy.deepcopy(source["field_schemas"]["permitted_operations"])
+    expected["values"] = IDENTITY["registries"]["secret_use_operation_registry"]
+    return (
+        _direct_common_source_parity("SecretMetadataProjection", projection, source)
+        and schema == expected
+        and projection["upstream_field_schemas"]["secret_reference"]["grammar"]
+        == IDENTITY["secret_reference_policy"]
+        and projection["upstream_field_schemas"]["secret_kind"]["values"]
+        == IDENTITY["registries"]["secret_kinds"]
+        and projection["upstream_field_schemas"]["state"]["values"]
+        == IDENTITY["registries"]["secret_states"]
+        and projection.get("terminal_fingerprint") == source["terminal_fingerprint"]
+    )
+
+
+DIRECT_SOURCE_PARITY_EXECUTORS = {
+    "ExchangeAccount": _parity_exchange_account,
+    "CredentialProfile metadata/reference": _parity_credential_profile,
+    "StrategyInstance current lifecycle/config": _parity_strategy_instance,
+    "kill-switch state/generation": _parity_kill_switch,
+    "Command accepted request": lambda p, s: _parity_submit("Command accepted request", p, s),
+    "Event": _parity_event,
+    "OrderIntent": lambda p, s: _parity_submit("OrderIntent", p, s),
+    "Fill": _parity_fill,
+    "LedgerEntry": _parity_ledger,
+    "RiskDecision": _parity_risk,
+    "ExecutionLease immutable record": _parity_lease,
+    "SessionSecurityState current generation/state": _parity_session,
+    "SecretMetadataProjection": _parity_secret,
+}
+
+
 def _direct_projection_is_source_derived(
     name: str, projection: dict[str, Any], source: dict[str, Any]
 ) -> bool:
-    if projection.get("exact_fields") != _source_exact_fields(name, source):
-        return False
-    if projection.get("stage1_scope") != "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY":
-        return False
-    if not projection.get("stage2_contextual_rules_excluded"):
-        return False
-    schemas = projection.get("upstream_field_schemas", {})
-    if name == "ExchangeAccount":
-        return (
-            schemas.get("lifecycle_state", {}).get("values") == source["lifecycle_states"]
-            and schemas.get("connection_state", {}).get("values") == source["connection_states"]
-            and schemas.get("execution_authorization", {}).get("values")
-            == source["execution_authorizations"]
-        )
-    if name == "CredentialProfile metadata/reference":
-        return (
-            projection.get("nullable_fields") == source["nullable_fields"]
-            and schemas.get("credential_purpose", {}).get("values") == source["credential_purposes"]
-            and schemas.get("permission_snapshot", {}).get("type") == "unique_array_of_enum"
-            and schemas.get("permission_snapshot", {}).get("values")
-            == source["permission_registry"]
-            and schemas.get("secure_store_reference", {}).get("grammar")
-            == source["secure_store_reference_grammar"]
-            and schemas.get("lifecycle_state", {}).get("values") == source["lifecycle_states"]
-            and schemas.get("rotated_from_credential_profile_id")
-            == source["intrinsic_field_schemas"]["rotated_from_credential_profile_id"]
-            and projection.get("semantic_constraints", {}).get("lifecycle_timestamp_policy")
-            == source["lifecycle_timestamp_policy"]
-        )
-    if name in {"Command accepted request", "OrderIntent"}:
-        submit = source["SUBMIT_ORDER"] if name == "Command accepted request" else source
-        return (
-            projection.get("nullable_fields") == submit["nullable_fields"]
-            and projection.get("upstream_field_schemas") == submit["field_schemas"]
-            and projection.get("semantic_constraints", {}).get("rules") == submit["constraints"]
-            and len(projection.get("semantic_constraints", {}).get("conditional_nullability", []))
-            == 6
-        )
-    if name == "Event":
-        terminal = projection.get("terminal_fingerprint", {})
-        return (
-            projection.get("nullable_fields") == source["envelope_schema"]["nullable_fields"]
-            and schemas.get("event_type", {}).get("values") == source["event_types"]
-            and terminal.get("field") == "event_fingerprint_sha256"
-            and terminal.get("input_shape") == "CANONICAL_NFC_JSON_OBJECT"
-            and terminal.get("unicode_normalization")
-            == "NFC_RECURSIVE_KEYS_AND_VALUES_COLLISION_FAIL_CLOSED"
-        )
-    if name == "Fill":
-        terminal = projection.get("terminal_fingerprint", {})
-        return (
-            projection.get("nullable_fields") == source["nullable_fields"]
-            and projection.get("upstream_field_schemas") == source["field_schemas"]
-            and projection.get("semantic_constraints", {}).get("fee_semantics")
-            == source["fee_semantics"]
-            and terminal.get("input_fields") == source["fingerprint"]["input_fields"]
-            and terminal.get("canonicalization") == source["fingerprint"]["canonicalization"]
-            and terminal.get("input_shape") == "CANONICAL_NFC_JSON_OBJECT"
-        )
-    return True
+    executor = DIRECT_SOURCE_PARITY_EXECUTORS.get(name)
+    return False if executor is None else executor(projection, source)
 
 
 @pytest.mark.parametrize("name", list(_direct_source_contracts()))
 def test_m011_direct_upstream_validator_registry_is_source_derived(name: str) -> None:
     projection, source = _direct_source_contracts()[name]
     assert _direct_projection_is_source_derived(name, projection, source)
+
+
+def test_discovered_direct_set_exactly_equals_explicit_executor_set() -> None:
+    discovered = set(_direct_source_contracts())
+    assert discovered == set(DIRECT_SOURCE_PARITY_EXECUTORS)
+    assert discovered == set(DIRECT_SOURCE_EXPECTATION_BUILDERS)
+
+
+def test_source_expectation_inventory_is_complete_and_matches_actual_projection() -> None:
+    for name, (projection, source) in _direct_source_contracts().items():
+        expected = _source_expected_direct_contract(name, source)
+        assert expected.source_artifact == projection["semantic_artifact"]
+        assert expected.source_pointer == projection["semantic_json_pointer"]
+        assert len(expected.exact_fields) == len(expected.field_schemas)
+        assert len(expected.field_schemas) == len(projection["upstream_field_schemas"])
+        assert set(expected.field_schemas) == set(projection["upstream_field_schemas"])
+        assert expected.field_schemas == projection["upstream_field_schemas"]
+        assert expected.semantic_constraints == projection.get("semantic_constraints", {})
+        assert expected.record_key_fields == projection["record_key_fields"]
+        assert expected.terminal_fingerprint == projection.get("terminal_fingerprint")
+        assert expected.stage1_scope == projection["stage1_scope"]
+        assert (
+            expected.stage2_contextual_rules_excluded
+            == projection["stage2_contextual_rules_excluded"]
+        )
+        assert expected.dimensions == projection["source_parity_dimension_classification"]
+
+
+def test_dimension_expectation_inventory_is_source_owned_and_exact() -> None:
+    for name, (projection, source) in _direct_source_contracts().items():
+        expected = _source_expected_direct_contract(name, source)
+        assert expected.dimensions == projection["source_parity_dimension_classification"]
+        assert set(expected.dimensions) == {
+            "exact_fields",
+            "nullable_fields",
+            "field_schemas",
+            "canonical_ids",
+            "closed_registries",
+            "constants",
+            "nested_objects",
+            "arrays",
+            "array_item_schemas",
+            "array_uniqueness",
+            "array_ordering",
+            "intrinsic_sibling_constraints",
+            "reference_grammar",
+            "record_key_fields",
+            "terminal_content_fingerprint",
+            "stage1_included_rules",
+            "stage2_excluded_rules",
+        }
+
+
+def test_source_expectation_builders_are_structurally_independent_of_m011() -> None:
+    forbidden_names = {"MACHINE", "projection", "direct_upstream_validator_registry"}
+    functions = [
+        _entity_prefix,
+        _id_schema,
+        _source_dimensions,
+        _expected,
+        _submit_order_constraints,
+        _submit_expected,
+        _risk_scalar_schemas,
+        _lease_scalar_schema,
+        *DIRECT_SOURCE_EXPECTATION_BUILDERS.values(),
+    ]
+    for function in functions:
+        tree = ast.parse(inspect.getsource(function))
+        referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        string_literals = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        assert not referenced & forbidden_names, function.__name__
+        assert "direct_upstream_validator_registry" not in string_literals, function.__name__
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda values: values.remove("accepted/current authority or membership"),
+        lambda values: values.remove("M0.3 membership and restore authority"),
+        lambda values: values.remove("LIVE readiness"),
+        lambda values: values.__setitem__(slice(None), ["INVENTED"]),
+        lambda values: values.__setitem__(slice(None), ["LIVE readiness"]),
+        lambda values: values.append("INVENTED SIXTH EXCLUSION"),
+        lambda values: values.reverse(),
+    ],
+)
+def test_exact_stage2_authority_boundary_rejects_every_drift(mutation) -> None:
+    name = "RiskDecision"
+    projection, source = _direct_source_contracts()[name]
+    candidate = copy.deepcopy(projection)
+    mutation(candidate["stage2_contextual_rules_excluded"])
+    assert not _direct_projection_is_source_derived(name, candidate, source)
+
+
+def _mutate_first_semantic_leaf(value: Any) -> None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if isinstance(nested, (dict, list)):
+                _mutate_first_semantic_leaf(nested)
+            elif isinstance(nested, bool):
+                value[key] = not nested
+            elif isinstance(nested, str):
+                value[key] = nested + "_MUTATED"
+            else:
+                value[key] = "MUTATED"
+            return
+    elif isinstance(value, list) and value:
+        if isinstance(value[0], (dict, list)):
+            _mutate_first_semantic_leaf(value[0])
+        else:
+            value[0] = "MUTATED"
+
+
+def test_every_nonempty_semantic_constraint_rejects_deep_leaf_mutation() -> None:
+    for name, (projection, source) in _direct_source_contracts().items():
+        expected = _source_expected_direct_contract(name, source)
+        if not expected.semantic_constraints:
+            continue
+        candidate = copy.deepcopy(projection)
+        _mutate_first_semantic_leaf(candidate["semantic_constraints"])
+        assert not _direct_projection_is_source_derived(name, candidate, source), name
+
+
+@pytest.mark.parametrize(
+    ("name", "path"),
+    [
+        ("ExchangeAccount", ("lifecycle_timestamp_policy", "created_field")),
+        ("ExchangeAccount", ("lifecycle_timestamp_policy", "retired_field")),
+        ("ExchangeAccount", ("lifecycle_timestamp_policy", "state_field")),
+        ("ExchangeAccount", ("lifecycle_timestamp_policy", "source_pointer")),
+        (
+            "CredentialProfile metadata/reference",
+            ("lifecycle_timestamp_policy", "ACTIVE", "retired_at_utc"),
+        ),
+        (
+            "CredentialProfile metadata/reference",
+            ("lifecycle_timestamp_policy", "RETIRED", "retired_at_utc"),
+        ),
+        (
+            "CredentialProfile metadata/reference",
+            ("lifecycle_timestamp_policy", "RETIRED", "ordering"),
+        ),
+        ("CredentialProfile metadata/reference", ("self_cycle", "left")),
+        ("CredentialProfile metadata/reference", ("self_cycle", "right")),
+        ("CredentialProfile metadata/reference", ("self_cycle", "rule")),
+        (
+            "kill-switch state/generation",
+            ("scope_id_policy", "bindings", "PRODUCT_SYSTEM", "value"),
+        ),
+        ("kill-switch state/generation", ("scope_id_policy", "bindings", "WORKSPACE", "prefix")),
+        ("kill-switch state/generation", ("scope_id_policy", "validation_stage")),
+        ("kill-switch state/generation", ("scope_id_policy", "contextual_exclusions", 0)),
+        ("kill-switch state/generation", ("generation_authority_split", "stage1")),
+        ("kill-switch state/generation", ("generation_authority_split", "stage2")),
+        ("Event", ("event_schema_registry", "event_type_source_pointer")),
+        ("Event", ("event_schema_registry", "schema_source_pointer")),
+        ("Fill", ("fee_semantics", "NONE")),
+        ("Fill", ("fee_semantics", "CHARGE")),
+        ("LedgerEntry", ("direction", "pointer")),
+        ("LedgerEntry", ("posting_role", "pointer")),
+        ("RiskDecision", ("decision", "pointer")),
+        ("SessionSecurityState current generation/state", ("state", "pointer")),
+        ("SecretMetadataProjection", ("secret_kind", "pointer")),
+        ("SecretMetadataProjection", ("state", "pointer")),
+        ("SecretMetadataProjection", ("secret_reference", "pointer")),
+    ],
+)
+def test_source_owned_semantic_constraint_leaf_mutations_fail(
+    name: str, path: tuple[Any, ...]
+) -> None:
+    projection, source = _direct_source_contracts()[name]
+    candidate = copy.deepcopy(projection)
+    target: Any = candidate["semantic_constraints"]
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = "MUTATED"
+    assert not _direct_projection_is_source_derived(name, candidate, source)
+
+
+@pytest.mark.parametrize("name", ["Command accepted request", "OrderIntent"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda constraints: constraints["conditional_nullability"][0].update(field="expire_at_utc"),
+        lambda constraints: constraints["conditional_nullability"][0]["when"].update(
+            order_type="LIMIT"
+        ),
+        lambda constraints: constraints["conditional_nullability"][0].update(required="NON_NULL"),
+        lambda constraints: constraints["conditional_nullability"].__setitem__(
+            slice(0, 2), list(reversed(constraints["conditional_nullability"][:2]))
+        ),
+        lambda constraints: constraints["conditional_nullability"].pop(),
+        lambda constraints: constraints["conditional_nullability"].append(
+            {"when": {"order_type": "INVENTED"}, "field": "limit_price", "required": "NULL"}
+        ),
+        lambda constraints: constraints["identity_inequality"].update(left="command_id"),
+        lambda constraints: constraints["identity_inequality"].update(right="order_id"),
+        lambda constraints: constraints["identity_inequality"].update(rule="MAY_EQUAL"),
+        lambda constraints: constraints.pop("identity_inequality"),
+    ],
+)
+def test_submit_order_exact_semantic_projection_rejects_mutation(name, mutation) -> None:
+    projection, source = _direct_source_contracts()[name]
+    candidate = copy.deepcopy(projection)
+    mutation(candidate["semantic_constraints"])
+    assert not _direct_projection_is_source_derived(name, candidate, source)
+
+
+@pytest.mark.parametrize("name", ["Command accepted request", "OrderIntent"])
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"order_type": "MARKET", "limit_price": None},
+        {"order_type": "LIMIT", "limit_price": "1"},
+        {"time_in_force": "GTC", "expire_at_utc": None},
+        {"time_in_force": "GTD", "expire_at_utc": "2026-01-01T00:00:00Z"},
+        {
+            "source_type": "STRATEGY_INSTANCE",
+            "strategy_instance_id": "sinst_01890f3a-2b4c-7abc-8def-0123456789ab",
+        },
+        {"source_type": "OPERATOR", "strategy_instance_id": None},
+    ],
+)
+def test_submit_order_positive_intrinsic_matrix(name: str, updates: dict[str, Any]) -> None:
+    payload = _direct_payload(name, "a", 1)
+    payload.update(updates)
+    assert _validate_direct_upstream_payload(name, payload)
+
+
+@pytest.mark.parametrize("name", ["Command accepted request", "OrderIntent"])
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"order_type": "MARKET", "limit_price": "1"},
+        {"order_type": "LIMIT", "limit_price": None},
+        {"time_in_force": "GTD", "expire_at_utc": None},
+        {"time_in_force": "GTC", "expire_at_utc": "2026-01-01T00:00:00Z"},
+        {"source_type": "STRATEGY_INSTANCE", "strategy_instance_id": None},
+        {
+            "source_type": "OPERATOR",
+            "strategy_instance_id": "sinst_01890f3a-2b4c-7abc-8def-0123456789ab",
+        },
+    ],
+)
+def test_submit_order_negative_intrinsic_matrix(name: str, updates: dict[str, Any]) -> None:
+    payload = _direct_payload(name, "a", 1)
+    payload.update(updates)
+    assert not _validate_direct_upstream_payload(name, payload)
+
+
+@pytest.mark.parametrize("name", ["Command accepted request", "OrderIntent"])
+def test_submit_order_identity_inequality_is_executable(name: str) -> None:
+    payload = _direct_payload(name, "a", 1)
+    payload["order_id"] = payload["command_id"]
+    assert not _submit_order_semantics_valid(
+        payload,
+        MACHINE["backup_contract"]["direct_upstream_validator_registry"][name][
+            "semantic_constraints"
+        ],
+    )
+    assert not _validate_direct_upstream_payload(name, payload)
+
+
+def test_projection_derived_self_attestation_attack_is_rejected() -> None:
+    for name, field, leaf, wrong in (
+        (
+            "SessionSecurityState current generation/state",
+            "session_generation",
+            "type",
+            "non_empty_string",
+        ),
+        ("SessionSecurityState current generation/state", "runtime_session_id", "prefix", "wrong"),
+    ):
+        projection, source = _direct_source_contracts()[name]
+        attacked = copy.deepcopy(projection)
+        attacked["upstream_field_schemas"][field][leaf] = wrong
+        circular_mirror = copy.deepcopy(attacked["upstream_field_schemas"])
+        assert attacked["upstream_field_schemas"] == circular_mirror
+        expected = _source_expected_direct_contract(name, source)
+        assert attacked["upstream_field_schemas"] != expected.field_schemas
+        assert not _direct_projection_is_source_derived(name, attacked, source)
+
+
+@pytest.mark.parametrize(
+    ("name", "field", "leaf"),
+    [
+        ("SessionSecurityState current generation/state", "session_generation", "type"),
+        ("SessionSecurityState current generation/state", "security_generation", "type"),
+        ("SessionSecurityState current generation/state", "runtime_session_id", "prefix"),
+        ("SessionSecurityState current generation/state", "device_installation_id", "prefix"),
+        ("SessionSecurityState current generation/state", "account_id", "prefix"),
+        ("SessionSecurityState current generation/state", "operator_id", "prefix"),
+        ("ExecutionLease immutable record", "execution_lease_id", "prefix"),
+        ("ExecutionLease immutable record", "command_id", "prefix"),
+        ("ExecutionLease immutable record", "order_id", "prefix"),
+        ("ExecutionLease immutable record", "instrument_metadata_version", "type"),
+        ("ExecutionLease immutable record", "quantity", "constraint"),
+        ("ExecutionLease immutable record", "issued_at_utc", "type"),
+        ("ExecutionLease immutable record", "expires_at_utc", "type"),
+        ("ExecutionLease immutable record", "reservation_asset_reference", "type"),
+        ("ExchangeAccount", "exchange_account_id", "prefix"),
+        ("ExchangeAccount", "portfolio_id", "prefix"),
+        ("ExchangeAccount", "created_at_utc", "type"),
+        ("ExchangeAccount", "retired_at_utc", "type"),
+        ("LedgerEntry", "ledger_entry_id", "prefix"),
+        ("LedgerEntry", "quantity", "constraint"),
+        ("LedgerEntry", "effective_at_utc", "type"),
+        ("LedgerEntry", "append_sequence", "type"),
+        ("LedgerEntry", "asset_reference", "type"),
+    ],
+)
+def test_source_owned_top_level_regressions_fail_parity(name: str, field: str, leaf: str) -> None:
+    projection, source = _direct_source_contracts()[name]
+    candidate = copy.deepcopy(projection)
+    candidate["upstream_field_schemas"][field][leaf] = "MUTATED"
+    assert not _direct_projection_is_source_derived(name, candidate, source)
+
+
+@pytest.mark.parametrize("name", list(_direct_source_contracts()))
+def test_every_direct_field_schema_type_mutation_breaks_source_parity(name: str) -> None:
+    projection, source = _direct_source_contracts()[name]
+    for field in projection["upstream_field_schemas"]:
+        candidate = copy.deepcopy(projection)
+        candidate["upstream_field_schemas"][field]["type"] = "UNKNOWN_MUTATED_TYPE"
+        assert not _direct_projection_is_source_derived(name, candidate, source), (name, field)
+
+
+def test_dimension_classification_labels_are_source_facts() -> None:
+    for name, dimension, wrong in (
+        ("RiskDecision", "arrays", "SOURCE_DOES_NOT_DEFINE"),
+        ("ExchangeAccount", "arrays", "SOURCE_DERIVED_AND_CHECKED"),
+    ):
+        projection, source = _direct_source_contracts()[name]
+        candidate = copy.deepcopy(projection)
+        candidate["source_parity_dimension_classification"][dimension] = wrong
+        assert not _direct_projection_is_source_derived(name, candidate, source)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "effective_threshold",
+        "observed_projected_value",
+        "unit_asset_reference",
+        "supplying_policy_scope",
+        "result",
+        "reason_code",
+    ],
+)
+def test_every_limit_result_field_schema_mutation_breaks_source_parity(field: str) -> None:
+    projection, source = _direct_source_contracts()["RiskDecision"]
+    candidate = copy.deepcopy(projection)
+    candidate["upstream_field_schemas"]["ordered_limit_results"]["item_schema"]["field_schemas"][
+        field
+    ]["type"] = "UNKNOWN_MUTATED_TYPE"
+    assert not _direct_projection_is_source_derived("RiskDecision", candidate, source)
+
+
+@pytest.mark.parametrize(
+    ("name", "field", "leaf"),
+    [
+        ("RiskDecision", "ordered_limit_results", "min_items"),
+        ("RiskDecision", "ordered_limit_results", "ordering"),
+        ("RiskDecision", "ordered_limit_results", "duplicates"),
+        ("ExecutionLease immutable record", "effective_policy_bindings", "min_items"),
+        ("ExecutionLease immutable record", "effective_policy_bindings", "ordering"),
+        ("ExecutionLease immutable record", "effective_policy_bindings", "duplicates"),
+        ("ExecutionLease immutable record", "kill_switch_bindings", "ordering"),
+        ("ExecutionLease immutable record", "kill_switch_bindings", "duplicates"),
+        ("SecretMetadataProjection", "permitted_operations", "min_items"),
+        ("SecretMetadataProjection", "permitted_operations", "unique"),
+        ("SecretMetadataProjection", "permitted_operations", "canonical_order"),
+    ],
+)
+def test_every_source_array_semantic_leaf_mutation_breaks_parity(
+    name: str, field: str, leaf: str
+) -> None:
+    projection, source = _direct_source_contracts()[name]
+    candidate = copy.deepcopy(projection)
+    schema = candidate["upstream_field_schemas"][field]
+    schema[leaf] = (
+        "MUTATED" if leaf not in {"min_items", "unique"} else (-1 if leaf == "min_items" else False)
+    )
+    assert not _direct_projection_is_source_derived(name, candidate, source)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Event",
+        "Fill",
+        "kill-switch state/generation",
+        "RiskDecision",
+        "ExecutionLease immutable record",
+        "SessionSecurityState current generation/state",
+        "SecretMetadataProjection",
+    ],
+)
+def test_every_terminal_semantic_leaf_mutation_breaks_source_parity(name: str) -> None:
+    projection, source = _direct_source_contracts()[name]
+    for leaf in projection["terminal_fingerprint"]:
+        candidate = copy.deepcopy(projection)
+        value = candidate["terminal_fingerprint"][leaf]
+        candidate["terminal_fingerprint"][leaf] = (
+            ["MUTATED"]
+            if isinstance(value, list)
+            else {"mutated": True}
+            if isinstance(value, dict)
+            else "MUTATED"
+        )
+        assert not _direct_projection_is_source_derived(name, candidate, source), (name, leaf)
 
 
 @pytest.mark.parametrize(
@@ -566,6 +1943,84 @@ def test_m011_direct_upstream_validator_registry_is_source_derived(name: str) ->
                 lifecycle_state={"type": "non_empty_string"}
             ),
         ),
+        (
+            "StrategyInstance current lifecycle/config",
+            lambda value: value["upstream_field_schemas"].update(
+                lifecycle_state={"type": "non_empty_string"}
+            ),
+        ),
+        (
+            "StrategyInstance current lifecycle/config",
+            lambda value: value.update(nullable_fields=[]),
+        ),
+        (
+            "StrategyInstance current lifecycle/config",
+            lambda value: value["upstream_field_schemas"]["lifecycle_state"]["values"].pop(),
+        ),
+        (
+            "StrategyInstance current lifecycle/config",
+            lambda value: value["upstream_field_schemas"]["lifecycle_state"]["values"].append(
+                "INVENTED"
+            ),
+        ),
+        (
+            "kill-switch state/generation",
+            lambda value: value["upstream_field_schemas"].update(
+                scope_type={"type": "non_empty_string"}
+            ),
+        ),
+        (
+            "kill-switch state/generation",
+            lambda value: value["upstream_field_schemas"].update(
+                scope_id={"type": "non_empty_string"}
+            ),
+        ),
+        (
+            "kill-switch state/generation",
+            lambda value: value["upstream_field_schemas"].update(
+                state={"type": "non_empty_string"}
+            ),
+        ),
+        (
+            "kill-switch state/generation",
+            lambda value: value["upstream_field_schemas"].update(generation={"type": "string"}),
+        ),
+        (
+            "RiskDecision",
+            lambda value: value["upstream_field_schemas"].update(
+                ordered_limit_results={"type": "array"}
+            ),
+        ),
+        (
+            "RiskDecision",
+            lambda value: value["upstream_field_schemas"].update(
+                kill_switch_result={"type": "non_empty_string"}
+            ),
+        ),
+        (
+            "ExecutionLease immutable record",
+            lambda value: value["upstream_field_schemas"].update(
+                effective_policy_bindings={"type": "array"}
+            ),
+        ),
+        (
+            "ExecutionLease immutable record",
+            lambda value: value["upstream_field_schemas"].update(
+                kill_switch_bindings={"type": "array"}
+            ),
+        ),
+        (
+            "SessionSecurityState current generation/state",
+            lambda value: value["upstream_field_schemas"].update(
+                state={"type": "non_empty_string"}
+            ),
+        ),
+        (
+            "SecretMetadataProjection",
+            lambda value: value["upstream_field_schemas"].update(
+                permitted_operations={"type": "array"}
+            ),
+        ),
     ],
 )
 def test_direct_source_fidelity_rejects_known_projection_drifts(name, mutation) -> None:
@@ -597,8 +2052,264 @@ def test_direct_terminal_fingerprint_projection_is_complete_and_fail_closed() ->
         assert derivation["field"] == field
         assert derivation["algorithm"] == "SHA-256"
         assert derivation["excluded_fields"] == [field]
-        assert derivation["digest_format"] == "lowercase_hex"
+        assert derivation["digest_format"] in {
+            "lowercase_hex",
+            "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        }
         assert set(derivation["input_fields"]) == set(direct[name]["exact_fields"]) - {field}
+
+
+def _rehash_direct(aspect: str, payload: dict[str, Any]) -> dict[str, Any]:
+    candidate = copy.deepcopy(payload)
+    terminal = _terminal_fingerprint_field(aspect)
+    assert terminal is not None
+    candidate[terminal] = _direct_terminal_fingerprint(aspect, candidate)
+    return candidate
+
+
+def _direct_schema_types() -> set[str]:
+    result: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            if isinstance(value.get("type"), str):
+                result.add(value["type"])
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(MACHINE["backup_contract"]["direct_upstream_validator_registry"])
+    return result
+
+
+def test_every_discovered_direct_schema_type_has_an_explicit_handler() -> None:
+    assert _direct_schema_types() <= IMPLEMENTED_DIRECT_SCHEMA_TYPES
+    assert not _field_schema_valid("unknown", "anything", {"type": "UNKNOWN_TYPE"})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "xTZ",
+        "abcTdefZ",
+        "2026-99-99T99:99:99Z",
+        "2026-01-01T00:00:00+00:00",
+        "2026-01-01T00:00:00z",
+        " 2026-01-01T00:00:00Z",
+    ],
+)
+def test_canonical_timestamp_rejects_lexically_plausible_invalid_values(bad: str) -> None:
+    assert not _canonical_timestamp(bad)
+
+
+def test_canonical_timestamp_accepts_source_grammar_without_wall_clock() -> None:
+    assert _canonical_timestamp("2026-01-01T00:00:00Z")
+    assert _canonical_timestamp("2026-01-01T00:00:00.123456789Z")
+
+
+@pytest.mark.parametrize("valid", ["0/1", "1/1", "-1/2", "3/2"])
+def test_canonical_fraction_accepts_only_reduced_one_representation(valid: str) -> None:
+    assert _canonical_fraction(valid)
+
+
+@pytest.mark.parametrize("bad", ["-0/1", "00/1", "1/00", "1/0", "2/2", 1.0])
+def test_canonical_fraction_rejects_noncanonical_representations(bad: Any) -> None:
+    assert not _canonical_fraction(bad)
+
+
+def test_direct_kill_switch_scope_id_is_context_aware() -> None:
+    payload = _direct_payload("kill-switch state/generation", "a", 1)
+    assert _validate_direct_upstream_payload("kill-switch state/generation", payload)
+    for scope_type, valid_scope in (
+        ("PRODUCT_SYSTEM", "product"),
+        ("WORKSPACE", _canonical_fixture_id("ws", "a")),
+        ("PORTFOLIO", _canonical_fixture_id("port", "a")),
+        ("EXCHANGE_ACCOUNT", _canonical_fixture_id("xacc", "a")),
+        ("STRATEGY_INSTANCE", _canonical_fixture_id("sinst", "a")),
+        ("INSTRUMENT", _canonical_fixture_id("instr", "a")),
+        ("EXECUTION_ROUTE", _canonical_fixture_id("xroute", "a")),
+    ):
+        candidate = copy.deepcopy(payload)
+        candidate.update(scope_type=scope_type, scope_id=valid_scope)
+        assert _validate_direct_upstream_payload(
+            "kill-switch state/generation",
+            _rehash_direct("kill-switch state/generation", candidate),
+        )
+        candidate["scope_id"] = _canonical_fixture_id("wrong", "a")
+        assert not _validate_direct_upstream_payload(
+            "kill-switch state/generation",
+            _rehash_direct("kill-switch state/generation", candidate),
+        )
+
+
+def test_event_safe_payload_is_exact_source_resolved_before_fingerprint() -> None:
+    payload = _direct_payload("Event", "a", 1)
+    assert _validate_direct_upstream_payload("Event", payload)
+    for bad_payload in (
+        {"side": "BUY", "order_type": "MARKET"},
+        {"side": "BUY", "order_type": "MARKET", "quantity": "1", "extra": "x"},
+        {"side": "BUY", "order_type": "MARKET", "quantity": 1.0},
+    ):
+        candidate = copy.deepcopy(payload)
+        candidate["safe_payload"] = bad_payload
+        assert not _validate_direct_upstream_payload("Event", _rehash_direct("Event", candidate))
+
+
+def test_non_empty_risk_decision_limit_result_is_executable() -> None:
+    payload = _direct_payload("RiskDecision", "a", 1)
+    assert payload["ordered_limit_results"]
+    assert _validate_direct_upstream_payload("RiskDecision", payload)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda item: item.pop("reason_code"),
+        lambda item: item.update(extra="x"),
+        lambda item: item.update(limit_type="UNKNOWN"),
+        lambda item: item.update(effective_threshold="-0/1"),
+        lambda item: item.update(effective_threshold="2/2"),
+        lambda item: item.update(effective_threshold=1.0),
+        lambda item: item.update(observed_projected_value=None),
+        lambda item: item.update(unit_asset_reference={}),
+        lambda item: item.update(supplying_policy_scope="SYSTEM"),
+        lambda item: item.update(supplying_policy_scope="WORKSPACE:product"),
+        lambda item: item.update(result="UNKNOWN"),
+        lambda item: item.update(reason_code="UNKNOWN"),
+        lambda item: item.update(result="FAIL", reason_code="PASS"),
+    ],
+)
+def test_rehashed_malformed_limit_result_remains_invalid(mutation) -> None:
+    payload = _direct_payload("RiskDecision", "a", 1)
+    mutation(payload["ordered_limit_results"][0])
+    assert not _validate_direct_upstream_payload(
+        "RiskDecision", _rehash_direct("RiskDecision", payload)
+    )
+
+
+def test_limit_result_duplicate_order_and_synthetic_position_fail_closed() -> None:
+    payload = _direct_payload("RiskDecision", "a", 1)
+    duplicate = copy.deepcopy(payload)
+    duplicate["ordered_limit_results"] *= 2
+    assert not _validate_direct_upstream_payload(
+        "RiskDecision", _rehash_direct("RiskDecision", duplicate)
+    )
+    second = _valid_limit_result("MAX_ORDER_NOTIONAL")
+    wrong_order = copy.deepcopy(payload)
+    wrong_order["ordered_limit_results"] = [second, _valid_limit_result()]
+    assert not _validate_direct_upstream_payload(
+        "RiskDecision", _rehash_direct("RiskDecision", wrong_order)
+    )
+    synthetic = _valid_limit_result("DISPATCH_RESERVATION_ECONOMICS")
+    synthetic.update(
+        effective_threshold="0/1",
+        observed_projected_value=None,
+        supplying_policy_scope="SYSTEM",
+        result="INCOMPLETE",
+        reason_code="MISSING_VALUATION",
+    )
+    wrong_synthetic = copy.deepcopy(payload)
+    wrong_synthetic["ordered_limit_results"] = [synthetic, _valid_limit_result()]
+    assert not _validate_direct_upstream_payload(
+        "RiskDecision", _rehash_direct("RiskDecision", wrong_synthetic)
+    )
+
+
+def _valid_kill_switch_binding() -> list[Any]:
+    return ["PRODUCT_SYSTEM", "product", "INACTIVE", 1, "2026-01-01T00:00:00Z", 1, SHA, SHA]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda item: item.pop(),
+        lambda item: item.__setitem__(0, _canonical_fixture_id("wrong", "a")),
+        lambda item: item.__setitem__(1, True),
+        lambda item: item.__setitem__(1, 0),
+        lambda item: item.__setitem__(2, "UNKNOWN"),
+        lambda item: item.__setitem__(3, _canonical_fixture_id("ws", "a")),
+        lambda item: item.__setitem__(4, "UNKNOWN"),
+        lambda item: item.__setitem__(5, "A" * 64),
+    ],
+)
+def test_rehashed_malformed_effective_policy_binding_remains_invalid(mutation) -> None:
+    payload = _direct_payload("ExecutionLease immutable record", "a", 1)
+    mutation(payload["effective_policy_bindings"][0])
+    assert not _validate_direct_upstream_payload(
+        "ExecutionLease immutable record",
+        _rehash_direct("ExecutionLease immutable record", payload),
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda item: item.pop(),
+        lambda item: item.__setitem__(1, _canonical_fixture_id("ws", "a")),
+        lambda item: item.__setitem__(2, "UNKNOWN"),
+        lambda item: item.__setitem__(3, True),
+        lambda item: item.__setitem__(4, "abcTdefZ"),
+        lambda item: item.__setitem__(5, True),
+        lambda item: item.__setitem__(6, "A" * 64),
+    ],
+)
+def test_rehashed_malformed_kill_switch_binding_remains_invalid(mutation) -> None:
+    payload = _direct_payload("ExecutionLease immutable record", "a", 1)
+    payload["kill_switch_bindings"] = [_valid_kill_switch_binding()]
+    mutation(payload["kill_switch_bindings"][0])
+    assert not _validate_direct_upstream_payload(
+        "ExecutionLease immutable record",
+        _rehash_direct("ExecutionLease immutable record", payload),
+    )
+
+
+def test_binding_duplicates_and_noncanonical_order_are_rejected() -> None:
+    payload = _direct_payload("ExecutionLease immutable record", "a", 1)
+    payload["effective_policy_bindings"] *= 2
+    assert not _validate_direct_upstream_payload(
+        "ExecutionLease immutable record",
+        _rehash_direct("ExecutionLease immutable record", payload),
+    )
+    payload = _direct_payload("ExecutionLease immutable record", "a", 1)
+    payload["kill_switch_bindings"] = [
+        [
+            "WORKSPACE",
+            _canonical_fixture_id("ws", "a"),
+            "INACTIVE",
+            1,
+            "2026-01-01T00:00:00Z",
+            1,
+            SHA,
+            SHA,
+        ],
+        _valid_kill_switch_binding(),
+    ]
+    assert not _validate_direct_upstream_payload(
+        "ExecutionLease immutable record",
+        _rehash_direct("ExecutionLease immutable record", payload),
+    )
+
+
+@pytest.mark.parametrize(
+    ("operations", "valid"),
+    [
+        (["PRIVATE_DATA"], True),
+        (["ORDER_ENTRY"], True),
+        (["PRIVATE_DATA", "ORDER_ENTRY"], True),
+        ([], False),
+        (["PRIVATE_DATA", "PRIVATE_DATA"], False),
+        (["UNKNOWN"], False),
+        (["ORDER_ENTRY", "PRIVATE_DATA"], False),
+        ("PRIVATE_DATA", False),
+    ],
+)
+def test_secret_operations_are_exact_and_remain_invalid_after_rehash(operations, valid) -> None:
+    payload = _direct_payload("SecretMetadataProjection", "a", 1)
+    payload["permitted_operations"] = operations
+    candidate = _rehash_direct("SecretMetadataProjection", payload)
+    assert _validate_direct_upstream_payload("SecretMetadataProjection", candidate) is valid
 
 
 def test_dependency_mutation_breaks_authored_attestation() -> None:
@@ -1758,6 +3469,12 @@ def _exact_entity_projection(payload: Any) -> bool:
 GENERIC_UUID7_ID = re.compile(
     r"^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
+RISK_ASSET_FIELDS = [
+    "venue_asset_code",
+    "canonical_display_code",
+    "asset_namespace",
+    "mapping_status",
+]
 DECIMAL_RE = re.compile(r"^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$")
 
 
@@ -1773,100 +3490,392 @@ def _terminal_fingerprint_field(aspect: str) -> str | None:
     }.get(aspect)
 
 
-def _field_schema_valid(field: str, value: Any, schema: dict[str, Any]) -> bool:
+def _nfc_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, list):
+        return [_nfc_value(item) for item in value]
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = unicodedata.normalize("NFC", key)
+            if normalized_key in normalized:
+                raise ValueError("NFC key collision")
+            normalized[normalized_key] = _nfc_value(item)
+        return normalized
+    return value
+
+
+def _direct_terminal_fingerprint(aspect: str, payload: dict[str, Any]) -> str:
+    contract = MACHINE["backup_contract"]["direct_upstream_validator_registry"][aspect]
+    derivation = contract["terminal_fingerprint"]
+    projection = {field: payload[field] for field in derivation["input_fields"]}
+    if aspect in {"Event", "Fill"}:
+        projection = _nfc_value(projection)
+    return _actual_fingerprint(projection)
+
+
+IMPLEMENTED_DIRECT_SCHEMA_TYPES = {
+    "constant",
+    "exact_literal",
+    "id",
+    "canonical_uuid7_prefixed_id",
+    "canonical_id",
+    "nullable_id",
+    "nullable_canonical_id",
+    "positive_integer",
+    "positive_non_boolean_integer",
+    "non_negative_integer",
+    "boolean",
+    "sha256_hex",
+    "sha256_lowercase_hex",
+    "terminal_fingerprint",
+    "enum",
+    "decimal",
+    "positive_decimal",
+    "non_negative_decimal",
+    "timestamp",
+    "canonical_utc_timestamp",
+    "nullable_timestamp",
+    "non_empty_string",
+    "string",
+    "nullable_non_empty_string",
+    "secure_store_reference",
+    "unique_array_of_enum",
+    "canonical_unique_array_of_enum",
+    "object",
+    "asset_reference",
+    "exact_upstream_object",
+    "canonical_scope_id",
+    "conditional_supplying_policy_scope",
+    "canonical_exact_fraction_string",
+    "nullable_canonical_exact_fraction_string",
+    "event_safe_payload",
+    "array_of_exact_LimitResult",
+    "array_of_exact_tuple",
+    "array_of_canonical_id",
+    "non_negative_decimal",
+    "positive_decimal",
+    "compound_scope",
+    "non_empty_object",
+    "risk_limits",
+    "array",
+}
+
+
+def _canonical_timestamp(value: Any) -> bool:
+    policy = json.loads((DOCS / "exchange_accounts_and_instruments.json").read_text())[
+        "timestamp_policy"
+    ]
+    if not isinstance(value, str) or re.fullmatch(policy["regex"], value) is None:
+        return False
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return False
+    return True
+
+
+def _canonical_fraction(value: Any, *, nullable: bool = False) -> bool:
+    if value is None:
+        return nullable
+    if not isinstance(value, str) or re.fullmatch(r"-?(0|[1-9][0-9]*)/[1-9][0-9]*", value) is None:
+        return False
+    numerator_text, denominator_text = value.split("/")
+    numerator, denominator = int(numerator_text), int(denominator_text)
+    return not (numerator == 0 and value != "0/1") and math.gcd(abs(numerator), denominator) == 1
+
+
+def _scope_id_valid(scope_type: Any, scope_id: Any) -> bool:
+    bindings = RISK["scope_hierarchy"]["scope_id_policy"]["bindings"]
+    rule = bindings.get(scope_type) if isinstance(scope_type, str) else None
+    if not isinstance(rule, dict) or not isinstance(scope_id, str):
+        return False
+    if rule["type"] == "exact_literal":
+        return scope_id == rule["value"]
+    return _field_schema_valid("scope_id", scope_id, {"type": "id", "prefix": rule["prefix"]})
+
+
+def _asset_reference_valid(value: Any, *, allowed: list[str] | None = None) -> bool:
+    source = json.loads((DOCS / "exchange_accounts_and_instruments.json").read_text())[
+        "asset_reference_contract"
+    ]
+    if not isinstance(value, dict) or set(value) != set(source["fields"]):
+        return False
+    if not all(
+        isinstance(value[field], str) and bool(value[field]) for field in source["fields"][:-1]
+    ):
+        return False
+    statuses = allowed if allowed is not None else source["mapping_statuses"]
+    return value["mapping_status"] in statuses
+
+
+def _limit_result_valid(item: Any, schema: dict[str, Any]) -> bool:
+    if not isinstance(item, dict) or set(item) != set(schema["exact_fields"]):
+        return False
+    for field in schema["exact_fields"]:
+        if not _field_schema_valid(
+            field, item[field], schema["field_schemas"][field], root_payload=item
+        ):
+            return False
+    result, observed, reason = item["result"], item["observed_projected_value"], item["reason_code"]
+    if (result in {"PASS", "FAIL"}) != (observed is not None):
+        return False
+    if result == "INCOMPLETE" and observed is not None:
+        return False
+    limit_type = item["limit_type"]
+    if limit_type == "DISPATCH_RESERVATION_ECONOMICS":
+        expected = {
+            "effective_threshold": "0/1",
+            "observed_projected_value": None,
+            "supplying_policy_scope": "SYSTEM",
+            "result": "INCOMPLETE",
+            "reason_code": "MISSING_VALUATION",
+        }
+        return all(item[key] == expected_value for key, expected_value in expected.items())
+    if item["supplying_policy_scope"] == "SYSTEM":
+        return False
+    return (
+        reason
+        in {"PASS": ["PASS"], "FAIL": ["LIMIT_BREACH"], "INCOMPLETE": ["MISSING_REQUIRED_INPUT"]}[
+            result
+        ]
+    )
+
+
+def _limit_results_valid(value: Any, schema: dict[str, Any]) -> bool:
+    if not isinstance(value, list) or len(value) < schema.get("min_items", 0):
+        return False
+    item_schema = schema.get("item_schema")
+    if not isinstance(item_schema, dict) or not all(
+        _limit_result_valid(item, item_schema) for item in value
+    ):
+        return False
+    unique = [
+        (
+            x["limit_type"],
+            json.dumps(x["unit_asset_reference"], sort_keys=True),
+            x["supplying_policy_scope"],
+        )
+        for x in value
+    ]
+    if len(unique) != len(set(unique)):
+        return False
+    registry = RISK["risk_decision_contract"]["limit_result_type_registry"]
+
+    def key(item: dict[str, Any]) -> tuple[Any, ...]:
+        synthetic = item["limit_type"] == "DISPATCH_RESERVATION_ECONOMICS"
+        asset = tuple(item["unit_asset_reference"][field] for field in RISK_ASSET_FIELDS)
+        return (1 if synthetic else 0, registry.index(item["limit_type"]), asset)
+
+    return value == sorted(value, key=key)
+
+
+def _tuple_array_valid(value: Any, schema: dict[str, Any]) -> bool:
+    if not isinstance(value, list) or len(value) < schema.get("min_items", 0):
+        return False
+    item_schemas = schema.get("item_schema")
+    if not isinstance(item_schemas, list):
+        return False
+    for item in value:
+        if not isinstance(item, list) or len(item) != schema.get("tuple_length"):
+            return False
+        for spec in item_schemas:
+            index = spec.get("index")
+            if not isinstance(index, int) or index >= len(item):
+                return False
+            resolved = spec
+            if "schema_reference" in spec:
+                ok, resolved = _resolve_pointer(RISK, spec["schema_reference"])
+                if not ok or not isinstance(resolved, dict):
+                    return False
+            if not _field_schema_valid(
+                spec.get("name", "tuple_item"), item[index], resolved, tuple_context=item
+            ):
+                return False
+    duplicates = schema.get("duplicates", {})
+    indexes = duplicates.get("uniqueness_key_indexes", [])
+    keys = [tuple(item[index] for index in indexes) for item in value]
+    if duplicates.get("allowed") is False and len(keys) != len(set(keys)):
+        return False
+    hierarchy = RISK["scope_hierarchy"]["applicable_order"]
+    if schema.get("tuple_length") == 6:
+        order_key = lambda item: (hierarchy.index(item[2]), item[3], item[1])
+    else:
+        order_key = lambda item: (hierarchy.index(item[0]), item[1])
+    return value == sorted(value, key=order_key)
+
+
+def _field_schema_valid(
+    field: str,
+    value: Any,
+    schema: dict[str, Any],
+    *,
+    root_payload: dict[str, Any] | None = None,
+    tuple_context: list[Any] | None = None,
+    aspect: str | None = None,
+) -> bool:
     kind = schema.get("type")
-    if kind == "constant":
-        return bool(value == schema.get("value"))
-    if kind == "id":
-        prefix = schema.get("prefix")
+    if kind not in IMPLEMENTED_DIRECT_SCHEMA_TYPES:
+        return False
+    if kind in {"constant", "exact_literal"}:
+        return value == schema.get("value")
+    if kind in {"id", "canonical_uuid7_prefixed_id", "canonical_id"}:
+        prefix = schema.get("prefix", schema.get("id_prefix"))
         return (
             isinstance(prefix, str)
             and isinstance(value, str)
-            and value.startswith(prefix + "_")
             and GENERIC_UUID7_ID.fullmatch(value) is not None
+            and value.startswith(prefix + "_")
         )
-    if kind == "positive_integer":
+    if kind in {"nullable_id", "nullable_canonical_id"}:
+        return value is None or _field_schema_valid(
+            field, value, {"type": "id", "prefix": schema.get("prefix", schema.get("id_prefix"))}
+        )
+    if kind in {"positive_integer", "positive_non_boolean_integer"}:
         return _positive(value)
     if kind == "non_negative_integer":
         return isinstance(value, int) and not isinstance(value, bool) and value >= 0
     if kind == "boolean":
         return isinstance(value, bool)
-    if kind == "sha256_hex":
+    if kind in {"sha256_hex", "sha256_lowercase_hex", "terminal_fingerprint"}:
         return isinstance(value, str) and SHA_RE.fullmatch(value) is not None
     if kind == "enum":
-        return value in schema.get("values", [])
-    if kind == "decimal":
+        values = schema.get("values")
+        if values is None and isinstance(schema.get("values_source_pointer"), str):
+            ok, values = _resolve_pointer(RISK, schema["values_source_pointer"])
+            if not ok:
+                return False
+        return value in values if isinstance(values, list) else False
+    if kind in {"decimal", "positive_decimal", "non_negative_decimal"}:
+        constraint = schema.get(
+            "constraint",
+            "positive"
+            if kind == "positive_decimal"
+            else "non_negative"
+            if kind == "non_negative_decimal"
+            else None,
+        )
         if not isinstance(value, str) or DECIMAL_RE.fullmatch(value) is None:
             return False
         try:
             number = Decimal(value)
         except InvalidOperation:
             return False
-        constraint = schema.get("constraint")
         return (constraint != "positive" or number > 0) and (
             constraint != "non_negative" or number >= 0
         )
-    if kind == "timestamp":
-        return isinstance(value, str) and value.endswith("Z") and "T" in value
+    if kind in {"timestamp", "canonical_utc_timestamp"}:
+        return _canonical_timestamp(value)
     if kind == "nullable_timestamp":
-        return value is None or _field_schema_valid(field, value, {"type": "timestamp"})
-    if kind == "nullable_canonical_id":
-        return value is None or _field_schema_valid(
-            field, value, {"type": "id", "prefix": schema.get("id_prefix")}
-        )
-    if kind == "nullable_id":
-        return value is None or _field_schema_valid(
-            field, value, {"type": "id", "prefix": schema.get("prefix")}
-        )
+        return value is None or _canonical_timestamp(value)
+    if kind in {"non_empty_string", "string"}:
+        return isinstance(value, str) and bool(value)
     if kind == "nullable_non_empty_string":
         return value is None or isinstance(value, str) and bool(value)
     if kind == "secure_store_reference":
-        if not isinstance(value, str) or not value.startswith("secure-store://"):
-            return False
-        locator = value[len("secure-store://") :]
         grammar = schema.get("grammar", {})
+        if not isinstance(value, str) or not value.startswith(
+            grammar.get("prefix", "secure-store://")
+        ):
+            return False
+        locator = value[len(grammar.get("prefix", "secure-store://")) :]
         return (
             bool(locator)
-            and not any(char.isspace() for char in value)
+            and not any(ch.isspace() for ch in value)
+            and not any(ch in value for ch in "?#=")
             and not any(
                 marker in value.lower() for marker in grammar.get("forbidden_payload_markers", [])
             )
-            and not any(char in value for char in "?#=")
         )
     if kind == "unique_array_of_enum":
         return (
             isinstance(value, list)
             and len(value) == len(set(value))
-            and all(item in schema.get("values", []) for item in value)
+            and all(x in schema.get("values", []) for x in value)
         )
-    if kind == "non_negative_decimal":
-        return _field_schema_valid(field, value, {"type": "decimal", "constraint": "non_negative"})
-    if kind == "positive_decimal":
-        return _field_schema_valid(field, value, {"type": "decimal", "constraint": "positive"})
-    if kind == "array":
-        return isinstance(value, list)
-    if kind == "event_safe_payload":
-        return isinstance(value, dict)
-    if kind == "array_of_canonical_id":
-        return isinstance(value, list) and all(
-            _field_schema_valid(field, item, {"type": "id", "prefix": schema.get("id_prefix")})
-            for item in value
+    if kind == "canonical_unique_array_of_enum":
+        values = schema.get("values", [])
+        return (
+            isinstance(value, list)
+            and len(value) >= schema.get("min_items", 0)
+            and len(value) == len(set(value))
+            and all(x in values for x in value)
+            and value == [x for x in values if x in value]
         )
     if kind in {"object", "asset_reference"}:
-        fields = schema.get("fields")
-        nested = schema.get("field_schemas")
+        fields, nested = schema.get("fields"), schema.get("field_schemas")
         return (
             isinstance(value, dict)
             and isinstance(fields, list)
             and isinstance(nested, dict)
             and set(value) == set(fields)
-            and all(_field_schema_valid(name, value[name], nested[name]) for name in fields)
+            and all(
+                _field_schema_valid(name, value[name], nested[name], root_payload=value)
+                for name in fields
+            )
         )
-    if kind == "canonical_id":
-        return _field_schema_valid(field, value, {"type": "id", "prefix": schema.get("id_prefix")})
+    if kind == "exact_upstream_object":
+        return _asset_reference_valid(value, allowed=schema.get("allowed_mapping_statuses"))
     if kind == "canonical_scope_id":
-        # Exact PRODUCT_SYSTEM literal versus entity prefix is checked cross-field.
-        return isinstance(value, str) and bool(value)
+        if tuple_context is None and root_payload is None:
+            return isinstance(value, str) and bool(value)
+        scope_type = (
+            tuple_context[schema["scope_type_index"]]
+            if tuple_context is not None and "scope_type_index" in schema
+            else root_payload.get(schema.get("scope_type_field", "scope_type"))
+            if root_payload
+            else None
+        )
+        return _scope_id_valid(scope_type, value)
+    if kind == "conditional_supplying_policy_scope":
+        if not root_payload or not isinstance(value, str):
+            return False
+        if root_payload.get("limit_type") == schema.get("synthetic_limit_type"):
+            return value == schema.get("synthetic_exact_value")
+        if ":" not in value:
+            return False
+        scope_type, scope_id = value.split(":", 1)
+        return _scope_id_valid(scope_type, scope_id)
+    if kind == "canonical_exact_fraction_string":
+        return _canonical_fraction(value)
+    if kind == "nullable_canonical_exact_fraction_string":
+        return _canonical_fraction(value, nullable=True)
+    if kind == "event_safe_payload":
+        if aspect is None and root_payload is None:
+            return isinstance(value, dict)
+        if aspect != "Event" or not root_payload:
+            return False
+        registry = json.loads(
+            (DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text()
+        )["event_contract"]["event_schema_registry"]
+        event_schema = registry.get(root_payload.get("event_type"))
+        if (
+            not isinstance(event_schema, dict)
+            or not isinstance(value, dict)
+            or set(value) != set(event_schema["safe_payload_fields"])
+        ):
+            return False
+        nullable = set(event_schema["nullable_fields"])
+        return all(
+            (value[name] is None and name in nullable)
+            or (
+                value[name] is not None
+                and _field_schema_valid(name, value[name], event_schema["field_schemas"][name])
+            )
+            for name in event_schema["safe_payload_fields"]
+        )
+    if kind == "array_of_exact_LimitResult":
+        return _limit_results_valid(value, schema)
+    if kind == "array_of_exact_tuple":
+        return _tuple_array_valid(value, schema)
+    if kind == "array_of_canonical_id":
+        return isinstance(value, list) and all(
+            _field_schema_valid(field, item, {"type": "id", "prefix": schema.get("id_prefix")})
+            for item in value
+        )
+    if kind == "array":
+        return isinstance(value, list)
     if kind == "compound_scope":
         return isinstance(value, str) and bool(value)
     if kind == "non_empty_object":
@@ -1879,16 +3888,33 @@ def _field_schema_valid(field: str, value: Any, schema: dict[str, Any]) -> bool:
             isinstance(item, list)
             and len(item) == 3
             and item[0] in schema.get("supported_limit_names", [])
-            and isinstance(item[1], str)
-            and re.fullmatch(r"-?(0|[1-9][0-9]*)/[1-9][0-9]*", item[1]) is not None
+            and _canonical_fraction(item[1])
             and isinstance(item[2], dict)
             and set(item[2]) == asset_fields
-            and all(isinstance(v, str) and v for v in item[2].values())
+            and all(isinstance(nested, str) and nested for nested in item[2].values())
             for item in value
         )
-    if kind in {"non_empty_string", "string"}:
-        return isinstance(value, str) and bool(value)
     return False
+
+
+def _submit_order_semantics_valid(payload: dict[str, Any], constraints: dict[str, Any]) -> bool:
+    conditional = constraints.get("conditional_nullability")
+    inequality = constraints.get("identity_inequality")
+    if not isinstance(conditional, list) or not isinstance(inequality, dict):
+        return False
+    for rule in conditional:
+        if not isinstance(rule, dict) or rule.get("required") not in {"NULL", "NON_NULL"}:
+            return False
+        condition = rule.get("when", rule.get("when_not"))
+        if not isinstance(condition, dict) or not isinstance(rule.get("field"), str):
+            return False
+        matches = all(payload.get(field) == value for field, value in condition.items())
+        applies = not matches if "when_not" in rule else matches
+        if applies and (payload.get(rule["field"]) is None) != (rule["required"] == "NULL"):
+            return False
+    if set(inequality) != {"left", "right", "rule"} or inequality["rule"] != "MUST_DIFFER":
+        return False
+    return payload.get(inequality["left"]) != payload.get(inequality["right"])
 
 
 def _validate_direct_upstream_payload(aspect: str, payload: Any) -> bool:
@@ -1905,7 +3931,9 @@ def _validate_direct_upstream_payload(aspect: str, payload: Any) -> bool:
         value = payload[field]
         if value is None and field not in nullable:
             return False
-        if value is not None and not _field_schema_valid(field, value, schemas.get(field, {})):
+        if value is not None and not _field_schema_valid(
+            field, value, schemas.get(field, {}), root_payload=payload, aspect=aspect
+        ):
             return False
     if "environment" in payload and payload["environment"] not in {"PAPER", "TESTNET", "LIVE"}:
         return False
@@ -1925,6 +3953,10 @@ def _validate_direct_upstream_payload(aspect: str, payload: Any) -> bool:
                 return False
         if isinstance(values, list) and payload[field] not in values:
             return False
+    if aspect in {"Command accepted request", "OrderIntent"} and not _submit_order_semantics_valid(
+        payload, contract.get("semantic_constraints", {})
+    ):
+        return False
     if aspect == "Event":
         source = _source_value(MACHINE["backup_contract"]["representation_registry"][aspect])
         event_schema = source["event_schema_registry"].get(payload["event_type"])
@@ -1943,9 +3975,7 @@ def _validate_direct_upstream_payload(aspect: str, payload: Any) -> bool:
             return False
     terminal = _terminal_fingerprint_field(aspect)
     if terminal is not None:
-        expected = _actual_fingerprint(
-            {key: value for key, value in payload.items() if key != terminal}
-        )
+        expected = _direct_terminal_fingerprint(aspect, payload)
         if payload[terminal] != expected:
             return False
     return True
@@ -2344,6 +4374,27 @@ def _canonical_fixture_id(prefix: str, suffix: str) -> str:
     return f"{prefix}_01890f3a-2b4c-7abc-8def-0123456789a{final}"
 
 
+def _valid_asset_reference(code: str = "USD") -> dict[str, str]:
+    return {
+        "venue_asset_code": code,
+        "canonical_display_code": code,
+        "asset_namespace": "ISO4217",
+        "mapping_status": "EXACT",
+    }
+
+
+def _valid_limit_result(limit_type: str = "MAX_ORDER_QUANTITY") -> dict[str, Any]:
+    return {
+        "limit_type": limit_type,
+        "effective_threshold": "1/1",
+        "observed_projected_value": "1/1",
+        "unit_asset_reference": _valid_asset_reference(),
+        "supplying_policy_scope": "PRODUCT_SYSTEM:product",
+        "result": "PASS",
+        "reason_code": "PASS",
+    }
+
+
 def _direct_fixture_value(
     aspect: str, field: str, schema: dict[str, Any], suffix: str, revision: int
 ) -> Any:
@@ -2354,20 +4405,37 @@ def _direct_fixture_value(
         return schema["value"]
     if kind == "id":
         return _canonical_fixture_id(schema["prefix"], suffix)
-    if kind == "positive_integer":
+    if kind in {"positive_integer", "positive_non_boolean_integer"}:
         return revision
-    if kind == "sha256_hex":
+    if kind in {"sha256_hex", "sha256_lowercase_hex", "terminal_fingerprint"}:
         return SHA
     if kind == "enum":
         return schema["values"][0]
     if kind == "decimal":
         return "1" if schema.get("constraint") == "positive" else "0"
-    if kind == "timestamp":
+    if kind in {"timestamp", "canonical_utc_timestamp"}:
         return "2026-01-01T00:00:00Z"
     if kind == "array":
         return []
     if kind == "unique_array_of_enum":
         return [schema["values"][0]]
+    if kind == "canonical_unique_array_of_enum":
+        return [schema["values"][0]]
+    if kind == "array_of_exact_LimitResult":
+        return []
+    if kind == "array_of_exact_tuple":
+        if schema.get("min_items", 0) == 0:
+            return []
+        return [
+            [
+                _canonical_fixture_id("rpol", suffix),
+                revision,
+                "PRODUCT_SYSTEM",
+                "product",
+                "ALLOW",
+                SHA,
+            ]
+        ]
     if kind == "secure_store_reference":
         return f"secure-store://reference-{suffix}"
     if kind == "event_safe_payload":
@@ -2421,11 +4489,24 @@ def _direct_payload(aspect: str, suffix: str, revision: int) -> dict[str, Any]:
     if aspect == "Event":
         payload["event_type"] = "ORDER_PLANNED"
         payload["safe_payload"] = {"side": "BUY", "order_type": "MARKET", "quantity": "1"}
+    if aspect in {"Command accepted request", "OrderIntent"}:
+        payload.update(
+            source_type="OPERATOR",
+            strategy_instance_id=None,
+            order_type="MARKET",
+            limit_price=None,
+            time_in_force="GTC",
+            expire_at_utc=None,
+        )
+    if aspect == "kill-switch state/generation":
+        payload["scope_type"] = "PRODUCT_SYSTEM"
+        payload["scope_id"] = "product"
+        payload["state"] = "INACTIVE"
+    if aspect == "RiskDecision":
+        payload["ordered_limit_results"] = [_valid_limit_result()]
     terminal = _terminal_fingerprint_field(aspect)
     if terminal is not None:
-        payload[terminal] = _actual_fingerprint(
-            {key: value for key, value in payload.items() if key != terminal}
-        )
+        payload[terminal] = _direct_terminal_fingerprint(aspect, payload)
     return payload
 
 
