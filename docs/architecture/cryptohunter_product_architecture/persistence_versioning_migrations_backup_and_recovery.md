@@ -8707,6 +8707,365 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "GENESIS_PREPARED_1_mismatch": "BACKUP_ROLLBACK_DETECTED_PENDING_PRESERVED",
     "NORMAL_PREPARED_candidate_at_committed": "RECOVERY_REQUIRED_PENDING_RETAINED_NO_ABORT",
     "LOCAL_G_PLUS_1_WAS_DURABLE_THEN_LOST_AND_G_RESTORED": "RECOVERY_REQUIRED_PENDING_RETAINED_NO_ABORT"
+  },
+  "s7c_restore_freshness": {
+    "status": "ARCHITECTURE_CLOSED",
+    "authority_owner": {
+      "milestone": "M0.3",
+      "authority_source": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+      "protected_projection_unchanged": true
+    },
+    "authority_boundary": {
+      "backup_envelope": "integrity-only candidate; never membership, authority, or LIVE readiness",
+      "local_state_store": "conflict detection and idempotency only; never restore authority",
+      "protected_projection_unchanged": true
+    },
+    "input_contracts": {
+      "candidate": "raw BackupEnvelope mapping accepted only when the existing full S7B validator returns VALID; validation status is never candidate-carried",
+      "external": "exact frozen M0.3 projection, intrinsically validated independently of membership",
+      "membership": "separate opaque resolved_ref, accepted_refs, and current_ref_by_scope; resolved ref must be accepted and exact current for scope",
+      "local": "separate read-path status plus real trusted observation values; caller supplies no classification label"
+    },
+    "candidate_preconditions": [
+      "envelope fingerprint",
+      "exact schema and supported version",
+      "exact environment and scope",
+      "generation and complete descriptors 1..G",
+      "descriptor continuity",
+      "nested PersistenceRecord and bucket fences",
+      "current/history semantics",
+      "forbidden secret scan with exact PinVerifier exception",
+      "state, transaction, and history-tail fingerprints"
+    ],
+    "scope": [
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256"
+    ],
+    "environment": {
+      "exact_match_required": true,
+      "cross_environment_fallback": false,
+      "TESTNET_to_LIVE": false
+    },
+    "closed_decision_registry": {
+      "NOOP_ALREADY_CURRENT": "authorized COMMITTED candidate is already the exact trusted local state; no write or authority mutation",
+      "RESTORE_EXTERNAL_COMMITTED_CURRENT": "build, verify, and atomically install exact externally COMMITTED target; never FINALIZE",
+      "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE": "restore or observe exact existing PREPARED target, rebuild fresh evidence, then use existing FINALIZE",
+      "DENY": "fail closed; perform no restore or protected action"
+    },
+    "external_lifecycle_cases": {
+      "UNINITIALIZED": "DENY every candidate, including G1; restore does not initialize authority",
+      "COMMITTED": "candidate generation and state fingerprint must exactly equal committed generation and state; transaction/history integrity comes from validated BackupEnvelope; current protected authority binds generation and state only",
+      "PREPARED": "candidate generation, state fingerprint, and transaction fingerprint must exactly equal prepared values, including genesis PREPARED1"
+    },
+    "freshness_truth_table": [
+      {
+        "case": "UNINITIALIZED_G1",
+        "external_eligibility": "DENIED",
+        "eligible_final_decisions": [
+          "DENY"
+        ]
+      },
+      {
+        "case": "COMMITTED_G_candidate_G_minus_1",
+        "external_eligibility": "DENIED",
+        "eligible_final_decisions": [
+          "DENY"
+        ]
+      },
+      {
+        "case": "COMMITTED_G_exact_G_state",
+        "external_eligibility": "AUTHORIZED_COMMITTED_TARGET",
+        "eligible_final_decisions": [
+          "NOOP_ALREADY_CURRENT",
+          "RESTORE_EXTERNAL_COMMITTED_CURRENT",
+          "DENY"
+        ]
+      },
+      {
+        "case": "COMMITTED_G_wrong_state",
+        "external_eligibility": "DENIED",
+        "eligible_final_decisions": [
+          "DENY"
+        ]
+      },
+      {
+        "case": "COMMITTED_G_candidate_G_plus_1",
+        "external_eligibility": "DENIED",
+        "eligible_final_decisions": [
+          "DENY"
+        ]
+      },
+      {
+        "case": "PREPARED_G_plus_1_candidate_G",
+        "external_eligibility": "DENIED",
+        "eligible_final_decisions": [
+          "DENY"
+        ]
+      },
+      {
+        "case": "PREPARED_G_plus_1_exact_state_transaction",
+        "external_eligibility": "AUTHORIZED_PREPARED_TARGET",
+        "eligible_final_decisions": [
+          "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE",
+          "DENY"
+        ]
+      },
+      {
+        "case": "PREPARED_G_plus_1_wrong_state",
+        "external_eligibility": "DENIED",
+        "eligible_final_decisions": [
+          "DENY"
+        ]
+      },
+      {
+        "case": "PREPARED_G_plus_1_wrong_transaction",
+        "external_eligibility": "DENIED",
+        "eligible_final_decisions": [
+          "DENY"
+        ]
+      },
+      {
+        "case": "PREPARED_G_plus_1_candidate_G_plus_2",
+        "external_eligibility": "DENIED",
+        "eligible_final_decisions": [
+          "DENY"
+        ]
+      },
+      {
+        "case": "GENESIS_PREPARED_1_exact_state_transaction",
+        "external_eligibility": "AUTHORIZED_PREPARED_TARGET",
+        "eligible_final_decisions": [
+          "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE",
+          "DENY"
+        ]
+      }
+    ],
+    "prepared_freshness_floor": "prepared_generation",
+    "invariants": {
+      "valid_backup": "VALID_BACKUP != AUTHORIZED_RESTORE",
+      "no_authority_from_hash": true,
+      "current_membership_required": true,
+      "protected_actions_forbidden": [
+        "PREPARE",
+        "ABORT"
+      ],
+      "no_backup_abort": "A restored committed-baseline backup MUST NEVER authorize, enable or manufacture the local observation required to ABORT an already PREPARED protected candidate.",
+      "possession_never_establishes": [
+        "accepted membership",
+        "current membership",
+        "protected freshness",
+        "restore authority",
+        "LIVE readiness"
+      ],
+      "backup_cannot": [
+        "mint, select, or replace current protected ref",
+        "create PREPARED state",
+        "advance protected generation",
+        "abort protected pending generation"
+      ]
+    },
+    "local_state_rules": {
+      "EMPTY": "allow isolated application only after exact external authorization",
+      "BEHIND": "allow isolated application only after exact external authorization",
+      "EXACT_COMMITTED": "NOOP_ALREADY_CURRENT",
+      "EXACT_PREPARED": "no second restore commit; fresh S3/S4 then FINALIZE",
+      "SAME_GENERATION_DIFFERENT_STATE": "DENY; no overwrite",
+      "AHEAD": "DENY; STORE_AHEAD_WITHOUT_PROTECTED_PENDING",
+      "NO_TRUSTED_LOCAL_OBSERVATION": "may restore exact externally authorized target but absence grants no authority",
+      "CORRUPT_OR_UNREADABLE": "treat as no trusted observation; never repair in place; build and verify outside live store"
+    },
+    "protocol": {
+      "kind": "recoverable ordered protocol, NOT cross-resource ACID",
+      "cross_resource_acid": false,
+      "steps": [
+        "fully validate BackupEnvelope",
+        "independently resolve exact external accepted/current protected authority",
+        "evaluate freshness gate",
+        "build isolated candidate StateStore",
+        "write complete snapshot/history/descriptors to isolated store",
+        "read_verified_snapshot() isolated store",
+        "prove isolated metadata and fingerprints equal envelope",
+        "atomically install or replace live local store",
+        "reopen and read_verified_snapshot() live store",
+        "publish fresh S4 LocalDurableStateEvidence from fresh S3 observation",
+        "reconcile external authority when PREPARED or re-resolve when COMMITTED",
+        "final local verified stability check"
+      ],
+      "live_write_before_atomic_install": false,
+      "restore_is_merge": false,
+      "restore_is_migration": false
+    },
+    "fresh_evidence": {
+      "backup_may_restore_S4_refs_or_membership": false,
+      "registry_after_restore": "EMPTY",
+      "rebuild": "publish_verified_state(restored_live_store) from fresh S3 verified observation",
+      "finalize_requires": [
+        "accepted/current evidence membership",
+        "exact scope",
+        "exact generation",
+        "exact state fingerprint",
+        "exact transaction fingerprint",
+        "DURABLE_COMMITTED"
+      ]
+    },
+    "external_reconciliation": {
+      "COMMITTED": "no FINALIZE or revision mutation; re-resolve exact same opaque current ref/scope/G/state then final local check",
+      "unexpected_external_change_before_or_independent_of_restore_finalize": "DENY",
+      "authorized_single_finalize_attempt_transition": "same current opaque ref PREPARED expected target -> COMMITTED expected target is allowed terminal outcome",
+      "FINALIZE_ACK_LOSS": "action max once; re-resolve same opaque current ref and scope; expected COMMITTED target plus exact local means success, otherwise DENY; never blind retry"
+    },
+    "crash_matrix": [
+      {
+        "point": "before isolated restore",
+        "live_effect": "UNCHANGED",
+        "external_effect": "UNCHANGED",
+        "recovery_action": "SAFE_RETRY",
+        "second_restore_write_allowed": false,
+        "protected_action_allowed": null
+      },
+      {
+        "point": "during isolated creation",
+        "live_effect": "UNCHANGED",
+        "external_effect": "UNCHANGED",
+        "recovery_action": "DISCARD_AND_REBUILD_ISOLATED",
+        "second_restore_write_allowed": false,
+        "protected_action_allowed": null
+      },
+      {
+        "point": "after isolated verification before install",
+        "live_effect": "UNCHANGED",
+        "external_effect": "UNCHANGED",
+        "recovery_action": "SAFE_RETRY",
+        "second_restore_write_allowed": false,
+        "protected_action_allowed": null
+      },
+      {
+        "point": "after install before fresh evidence",
+        "live_effect": "EXACT_RESTORED_TARGET",
+        "external_effect": "UNCHANGED",
+        "recovery_action": "OBSERVE_EXACT_LOCAL_AND_REBUILD_FRESH_EVIDENCE",
+        "second_restore_write_allowed": false,
+        "protected_action_allowed": null
+      },
+      {
+        "point": "after evidence before FINALIZE",
+        "live_effect": "EXACT_RESTORED_TARGET",
+        "external_effect": "EXISTING_PENDING_RETAINED",
+        "recovery_action": "RESOLVE_EVIDENCE_AND_FINALIZE_EXISTING_PENDING",
+        "second_restore_write_allowed": false,
+        "protected_action_allowed": "FINALIZE"
+      },
+      {
+        "point": "FINALIZE ACK loss",
+        "live_effect": "EXACT_RESTORED_TARGET",
+        "external_effect": "UNKNOWN_UNTIL_RERESOLUTION",
+        "recovery_action": "RERESOLVE_SAME_REF_NO_BLIND_RETRY",
+        "second_restore_write_allowed": false,
+        "protected_action_allowed": null
+      }
+    ],
+    "idempotency": {
+      "committed_local_exact": "NOOP_ALREADY_CURRENT; no rewrite, authority mutation, or revision",
+      "finalized_pending_repeated": "now exact COMMITTED => NOOP_ALREADY_CURRENT",
+      "post_install_resume": "no second restore write"
+    },
+    "candidate_selection": {
+      "validation": "every raw envelope passes existing full S7B validator",
+      "filter": "exact external-authorized target only",
+      "ranking": {
+        "generation": false,
+        "timestamp": false,
+        "filename": false,
+        "descriptor_chain_length": false
+      },
+      "zero_eligible": "DENY",
+      "one_eligible": "select",
+      "more_than_one_eligible": "DENY ambiguity, including equal state with distinct transaction/history/envelope lineage"
+    },
+    "persisted_vs_ephemeral": {
+      "temporary_isolated_store": "permitted but never authority",
+      "new_durable_restore_tables": false
+    },
+    "deferred": "production S7C and all migrations (S8) remain unstarted",
+    "two_phase_decision": {
+      "phase_A_external_eligibility": [
+        "DENIED",
+        "AUTHORIZED_COMMITTED_TARGET",
+        "AUTHORIZED_PREPARED_TARGET"
+      ],
+      "phase_B_final_decision": "external eligibility plus internally classified trusted local observation emits only closed_decision_registry tokens"
+    },
+    "closed_decision_invariant": "every final decision emitted by assessment, local cross-product, truth-table final-decision fields, and selector belongs to closed_decision_registry",
+    "exact_protected_source_projection": [
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "lifecycle",
+      "committed_generation",
+      "committed_state_fingerprint_sha256",
+      "prepared_generation",
+      "prepared_state_fingerprint_sha256",
+      "prepared_transaction_fingerprint_sha256",
+      "authority_revision",
+      "authority_source",
+      "content_fingerprint_sha256"
+    ],
+    "environment_binding": {
+      "external_environment_field": false,
+      "COMMITTED": "candidate environment is state-fingerprint-bound; exact protected committed state fingerprint supplies the binding",
+      "PREPARED": "candidate environment is state- and transaction-fingerprint-bound; exact protected prepared state and transaction supply the binding",
+      "state_projection_pointer": "/state_store_fingerprint_contract/state_fingerprint/projection_fields",
+      "transaction_projection_pointer": "/state_store_fingerprint_contract/transaction_fingerprint/projection_fields"
+    },
+    "local_observation_model": {
+      "availability": [
+        "VERIFIED_EMPTY",
+        "NO_TRUSTED_OBSERVATION",
+        "CORRUPT_OR_UNREADABLE",
+        "VERIFIED_STATE"
+      ],
+      "verified_fields": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+        "environment",
+        "generation",
+        "state_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+        "history_tail_fingerprint_sha256"
+      ],
+      "derived_classifications": [
+        "EMPTY",
+        "NO_TRUSTED_LOCAL_OBSERVATION",
+        "CORRUPT_OR_UNREADABLE",
+        "BEHIND",
+        "EXACT",
+        "SAME_GENERATION_DIFFERENT_STATE",
+        "SAME_GENERATION_STATE_MATCH_LINEAGE_MISMATCH",
+        "AHEAD",
+        "SCOPE_CONFLICT",
+        "ENVIRONMENT_CONFLICT"
+      ],
+      "exact": "scope, environment, generation, state, transaction, and history-tail all equal candidate",
+      "lineage_mismatch": "DENY for COMMITTED and PREPARED"
+    },
+    "protected_action_inventory": {
+      "allowed": [
+        {
+          "action": "FINALIZE",
+          "condition": "exact existing PREPARED target after fresh accepted/current S4 evidence"
+        }
+      ],
+      "forbidden": [
+        "PREPARE",
+        "ABORT",
+        "replacement",
+        "mint current",
+        "set current"
+      ]
+    },
+    "truth_table_final_decision_semantics": "eligible_final_decisions is the exact complete set of Phase-B final decisions reachable across trusted local inputs after the row Phase-A outcome; authorized targets include DENY for local conflicts"
   }
 }
 ```

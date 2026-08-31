@@ -45,6 +45,265 @@ SCOPE = (
 )
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
+RESTORE_DECISIONS = {
+    "NOOP_ALREADY_CURRENT",
+    "RESTORE_EXTERNAL_COMMITTED_CURRENT",
+    "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE",
+    "DENY",
+}
+PROTECTED_FIELDS = {
+    "account_id",
+    "device_installation_id",
+    "state_store_identity_fingerprint_sha256",
+    "lifecycle",
+    "committed_generation",
+    "committed_state_fingerprint_sha256",
+    "prepared_generation",
+    "prepared_state_fingerprint_sha256",
+    "prepared_transaction_fingerprint_sha256",
+    "authority_revision",
+    "authority_source",
+    "content_fingerprint_sha256",
+}
+
+
+def _protected_record_valid(value: Any) -> bool:
+    if not isinstance(value, dict) or set(value) != PROTECTED_FIELDS:
+        return False
+    if not _canonical_scope(value["account_id"], value["device_installation_id"]):
+        return False
+    if (
+        not isinstance(value["state_store_identity_fingerprint_sha256"], str)
+        or SHA_RE.fullmatch(value["state_store_identity_fingerprint_sha256"]) is None
+    ):
+        return False
+    if value["authority_source"] != "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY" or not _positive(
+        value["authority_revision"]
+    ):
+        return False
+    projection = {key: item for key, item in value.items() if key != "content_fingerprint_sha256"}
+    if value["content_fingerprint_sha256"] != _actual_fingerprint(projection):
+        return False
+    committed = (value["committed_generation"], value["committed_state_fingerprint_sha256"])
+    prepared = (
+        value["prepared_generation"],
+        value["prepared_state_fingerprint_sha256"],
+        value["prepared_transaction_fingerprint_sha256"],
+    )
+    lifecycle = value["lifecycle"]
+    if lifecycle == "UNINITIALIZED":
+        return committed == (None, None) and prepared == (None, None, None)
+    if lifecycle == "COMMITTED":
+        return (
+            _positive(committed[0])
+            and isinstance(committed[1], str)
+            and SHA_RE.fullmatch(committed[1]) is not None
+            and prepared == (None, None, None)
+        )
+    if (
+        lifecycle != "PREPARED"
+        or not _positive(prepared[0])
+        or any(not isinstance(item, str) or SHA_RE.fullmatch(item) is None for item in prepared[1:])
+    ):
+        return False
+    genesis = committed == (None, None)
+    normal = (
+        _positive(committed[0])
+        and isinstance(committed[1], str)
+        and SHA_RE.fullmatch(committed[1]) is not None
+    )
+    return (genesis and prepared[0] == 1) or (normal and prepared[0] == committed[0] + 1)
+
+
+def _current_membership(record: dict[str, Any], membership: dict[str, Any]) -> bool:
+    scope = (
+        record["account_id"],
+        record["device_installation_id"],
+        record["state_store_identity_fingerprint_sha256"],
+    )
+    ref = membership.get("resolved_ref")
+    return (
+        isinstance(ref, str)
+        and ref in membership.get("accepted_refs", set())
+        and membership.get("current_ref_by_scope", {}).get(scope) == ref
+    )
+
+
+def _backup_summary(backup: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "scope": (
+            backup["account_id"],
+            backup["device_installation_id"],
+            backup["state_store_identity_fingerprint_sha256"],
+        ),
+        "environment": backup["environment"],
+        "generation": backup["local_protected_freshness_generation"],
+        "state": backup["state_fingerprint_sha256"],
+        "transaction": backup["transaction_fingerprint_sha256"],
+        "history": backup["history_tail_fingerprint_sha256"],
+        "envelope": backup["envelope_fingerprint_sha256"],
+    }
+
+
+def classify_trusted_local(candidate: dict[str, Any], local_input: dict[str, Any]) -> str:
+    status = local_input.get("status")
+    if status == "VERIFIED_EMPTY":
+        return "EMPTY"
+    if status == "NO_TRUSTED_OBSERVATION":
+        return "NO_TRUSTED_LOCAL_OBSERVATION"
+    if status == "CORRUPT_OR_UNREADABLE":
+        return "CORRUPT_OR_UNREADABLE"
+    local = local_input.get("observation")
+    if status != "VERIFIED_STATE" or not isinstance(local, dict):
+        return "INVALID_LOCAL_INPUT"
+    scope = (
+        local.get("account_id"),
+        local.get("device_installation_id"),
+        local.get("state_store_identity_fingerprint_sha256"),
+    )
+    if scope != candidate["scope"]:
+        return "SCOPE_CONFLICT"
+    if local.get("environment") != candidate["environment"]:
+        return "ENVIRONMENT_CONFLICT"
+    generation = local.get("generation")
+    if not _positive(generation):
+        return "INVALID_LOCAL_INPUT"
+    if generation < candidate["generation"]:
+        return "BEHIND"
+    if generation > candidate["generation"]:
+        return "AHEAD"
+    if local.get("state_fingerprint_sha256") != candidate["state"]:
+        return "SAME_GENERATION_DIFFERENT_STATE"
+    if (
+        local.get("transaction_fingerprint_sha256") != candidate["transaction"]
+        or local.get("history_tail_fingerprint_sha256") != candidate["history"]
+    ):
+        return "SAME_GENERATION_STATE_MATCH_LINEAGE_MISMATCH"
+    return "EXACT"
+
+
+def _external_eligibility(
+    backup: dict[str, Any], external: dict[str, Any] | None, membership: dict[str, Any]
+) -> str:
+    if (
+        _validate_backup(backup) != "VALID"
+        or external is None
+        or not _protected_record_valid(external)
+        or not _current_membership(external, membership)
+    ):
+        return "DENIED"
+    candidate = _backup_summary(backup)
+    if candidate["scope"] != (
+        external["account_id"],
+        external["device_installation_id"],
+        external["state_store_identity_fingerprint_sha256"],
+    ):
+        return "DENIED"
+    if (
+        external["lifecycle"] == "COMMITTED"
+        and candidate["generation"] == external["committed_generation"]
+        and candidate["state"] == external["committed_state_fingerprint_sha256"]
+    ):
+        return "AUTHORIZED_COMMITTED_TARGET"
+    if (
+        external["lifecycle"] == "PREPARED"
+        and candidate["generation"] == external["prepared_generation"]
+        and candidate["state"] == external["prepared_state_fingerprint_sha256"]
+        and candidate["transaction"] == external["prepared_transaction_fingerprint_sha256"]
+    ):
+        return "AUTHORIZED_PREPARED_TARGET"
+    return "DENIED"
+
+
+def assess_restore_candidate(
+    backup: dict[str, Any],
+    external: dict[str, Any] | None,
+    membership: dict[str, Any],
+    local_input: dict[str, Any],
+) -> str:
+    eligibility = _external_eligibility(backup, external, membership)
+    if eligibility == "DENIED":
+        return "DENY"
+    local_class = classify_trusted_local(_backup_summary(backup), local_input)
+    if local_class in {
+        "SCOPE_CONFLICT",
+        "ENVIRONMENT_CONFLICT",
+        "SAME_GENERATION_DIFFERENT_STATE",
+        "SAME_GENERATION_STATE_MATCH_LINEAGE_MISMATCH",
+        "AHEAD",
+        "INVALID_LOCAL_INPUT",
+    }:
+        return "DENY"
+    if local_class == "EXACT" and eligibility == "AUTHORIZED_COMMITTED_TARGET":
+        return "NOOP_ALREADY_CURRENT"
+    if eligibility == "AUTHORIZED_COMMITTED_TARGET":
+        return "RESTORE_EXTERNAL_COMMITTED_CURRENT"
+    return "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE"
+
+
+def select_restore_candidate(
+    candidates: list[dict[str, Any]], external: dict[str, Any], membership: dict[str, Any]
+) -> tuple[str, dict[str, Any] | None]:
+    eligible = [
+        candidate
+        for candidate in candidates
+        if _external_eligibility(candidate, external, membership) != "DENIED"
+    ]
+    if len(eligible) != 1:
+        return "DENY", None
+    eligibility = _external_eligibility(eligible[0], external, membership)
+    decision = (
+        "RESTORE_EXTERNAL_COMMITTED_CURRENT"
+        if eligibility == "AUTHORIZED_COMMITTED_TARGET"
+        else "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE"
+    )
+    return decision, eligible[0]
+
+
+def reconcile_finalize_outcome(
+    backup: dict[str, Any],
+    pre_finalize: dict[str, Any],
+    expected_ref: str,
+    terminal: dict[str, Any],
+    terminal_membership: dict[str, Any],
+    local_input: dict[str, Any],
+) -> str:
+    if (
+        _validate_backup(backup) != "VALID"
+        or not _protected_record_valid(pre_finalize)
+        or not _protected_record_valid(terminal)
+    ):
+        return "DENY"
+    candidate = _backup_summary(backup)
+    scope = candidate["scope"]
+    protected_scope = lambda value: (
+        value["account_id"],
+        value["device_installation_id"],
+        value["state_store_identity_fingerprint_sha256"],
+    )
+    prepared_exact = (
+        pre_finalize["lifecycle"] == "PREPARED"
+        and protected_scope(pre_finalize) == scope
+        and pre_finalize["prepared_generation"] == candidate["generation"]
+        and pre_finalize["prepared_state_fingerprint_sha256"] == candidate["state"]
+        and pre_finalize["prepared_transaction_fingerprint_sha256"] == candidate["transaction"]
+    )
+    terminal_exact = (
+        terminal["lifecycle"] == "COMMITTED"
+        and protected_scope(terminal) == scope
+        and terminal["committed_generation"] == candidate["generation"]
+        and terminal["committed_state_fingerprint_sha256"] == candidate["state"]
+    )
+    same_current_ref = terminal_membership.get(
+        "resolved_ref"
+    ) == expected_ref and _current_membership(terminal, terminal_membership)
+    local_exact = classify_trusted_local(candidate, local_input) == "EXACT"
+    return (
+        "NOOP_ALREADY_CURRENT"
+        if prepared_exact and terminal_exact and same_current_ref and local_exact
+        else "DENY"
+    )
+
 
 def _resolve_pointer(document: Any, pointer: Any) -> tuple[bool, Any]:
     if not isinstance(pointer, str) or not pointer.startswith("/"):
@@ -9539,3 +9798,615 @@ def test_descriptor_backup_remains_candidate_without_any_authority_by_possession
         "restore authority",
     }
     assert "LocalDurableStateEvidence payload" in contract["excludes"]
+
+
+def _s7c_backup(generation: int = 2) -> dict[str, Any]:
+    value = _valid_backup()
+    descriptors = _descriptor_chain(generation)
+    final = descriptors[-1]
+    value.update(
+        local_protected_freshness_generation=generation,
+        state_fingerprint_sha256=final["post_state_fingerprint_sha256"],
+        transaction_fingerprint_sha256=final["transaction_fingerprint_sha256"],
+        history_tail_fingerprint_sha256=final["post_history_tail_fingerprint_sha256"],
+        integrity_metadata={"state_store_transaction_descriptors": descriptors},
+    )
+    value["envelope_fingerprint_sha256"] = _actual_fingerprint(_canonical_backup_projection(value))
+    assert _validate_backup(value) == "VALID"
+    return value
+
+
+def _s7c_protected(backup: dict[str, Any], lifecycle: str = "COMMITTED") -> dict[str, Any]:
+    value = {
+        "account_id": backup["account_id"],
+        "device_installation_id": backup["device_installation_id"],
+        "state_store_identity_fingerprint_sha256": backup[
+            "state_store_identity_fingerprint_sha256"
+        ],
+        "lifecycle": lifecycle,
+        "committed_generation": None,
+        "committed_state_fingerprint_sha256": None,
+        "prepared_generation": None,
+        "prepared_state_fingerprint_sha256": None,
+        "prepared_transaction_fingerprint_sha256": None,
+        "authority_revision": 7,
+        "authority_source": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
+        "content_fingerprint_sha256": "",
+    }
+    if lifecycle == "COMMITTED":
+        value.update(
+            committed_generation=backup["local_protected_freshness_generation"],
+            committed_state_fingerprint_sha256=backup["state_fingerprint_sha256"],
+        )
+    elif lifecycle == "PREPARED":
+        value.update(
+            prepared_generation=backup["local_protected_freshness_generation"],
+            prepared_state_fingerprint_sha256=backup["state_fingerprint_sha256"],
+            prepared_transaction_fingerprint_sha256=backup["transaction_fingerprint_sha256"],
+        )
+        if backup["local_protected_freshness_generation"] > 1:
+            value.update(
+                committed_generation=backup["local_protected_freshness_generation"] - 1,
+                committed_state_fingerprint_sha256="9" * 64,
+            )
+    value["content_fingerprint_sha256"] = _actual_fingerprint(
+        {key: item for key, item in value.items() if key != "content_fingerprint_sha256"}
+    )
+    assert _protected_record_valid(value)
+    return value
+
+
+def _s7c_membership(record: dict[str, Any], *, historical: bool = False) -> dict[str, Any]:
+    scope = (
+        record["account_id"],
+        record["device_installation_id"],
+        record["state_store_identity_fingerprint_sha256"],
+    )
+    return {
+        "resolved_ref": "protected:1",
+        "accepted_refs": {"protected:1"},
+        "current_ref_by_scope": {scope: "protected:2" if historical else "protected:1"},
+    }
+
+
+def _s7c_local(
+    backup: dict[str, Any], generation: int | None = None, **updates: Any
+) -> dict[str, Any]:
+    observation = {
+        "account_id": backup["account_id"],
+        "device_installation_id": backup["device_installation_id"],
+        "state_store_identity_fingerprint_sha256": backup[
+            "state_store_identity_fingerprint_sha256"
+        ],
+        "environment": backup["environment"],
+        "generation": generation or backup["local_protected_freshness_generation"],
+        "state_fingerprint_sha256": backup["state_fingerprint_sha256"],
+        "transaction_fingerprint_sha256": backup["transaction_fingerprint_sha256"],
+        "history_tail_fingerprint_sha256": backup["history_tail_fingerprint_sha256"],
+    }
+    observation.update(updates)
+    return {"status": "VERIFIED_STATE", "observation": observation}
+
+
+def test_s7c_closed_decisions_cover_every_executable_and_canonical_emission() -> None:
+    contract = MACHINE["restore_contract"]["s7c_restore_freshness"]
+    registry = set(contract["closed_decision_registry"])
+    canonical = {
+        decision
+        for row in contract["freshness_truth_table"]
+        for decision in row["eligible_final_decisions"]
+    }
+    backup = _s7c_backup()
+    external = _s7c_protected(backup)
+    membership = _s7c_membership(external)
+    emitted = {
+        assess_restore_candidate(backup, external, membership, {"status": status})
+        for status in ("VERIFIED_EMPTY", "NO_TRUSTED_OBSERVATION", "CORRUPT_OR_UNREADABLE")
+    }
+    emitted.add(select_restore_candidate([backup], external, membership)[0])
+    assert canonical | emitted <= registry
+    mutated = copy.deepcopy(contract["freshness_truth_table"])
+    mutated[0]["eligible_final_decisions"] = ["MAYBE_RESTORE"]
+    assert not {d for row in mutated for d in row["eligible_final_decisions"]} <= registry
+
+
+def test_s7c_environment_is_bound_without_external_environment_field() -> None:
+    state_fields = MACHINE["state_store_fingerprint_contract"]["state_fingerprint"][
+        "projection_fields"
+    ]
+    tx_fields = MACHINE["state_store_fingerprint_contract"]["transaction_fingerprint"][
+        "projection_fields"
+    ]
+    assert "environment" in state_fields and "environment" in tx_fields
+    assert (
+        "environment" not in PROTECTED_FIELDS and "environment_observation" not in PROTECTED_FIELDS
+    )
+    backup = _s7c_backup()
+    external = _s7c_protected(backup)
+    membership = _s7c_membership(external)
+    changed = copy.deepcopy(backup)
+    changed["environment"] = "TESTNET"
+    for descriptor in changed["integrity_metadata"]["state_store_transaction_descriptors"]:
+        descriptor["environment"] = "TESTNET"
+        descriptor["post_state_fingerprint_sha256"] = _actual_fingerprint(
+            {"environment": "TESTNET", "generation": descriptor["target_generation"]}
+        )
+        _rehash_descriptor(descriptor)
+    descriptors = changed["integrity_metadata"]["state_store_transaction_descriptors"]
+    for previous, current in zip(descriptors, descriptors[1:], strict=False):
+        current["pre_state_fingerprint_sha256"] = previous["post_state_fingerprint_sha256"]
+        _rehash_descriptor(current)
+    changed.update(
+        state_fingerprint_sha256=descriptors[-1]["post_state_fingerprint_sha256"],
+        transaction_fingerprint_sha256=descriptors[-1]["transaction_fingerprint_sha256"],
+    )
+    changed["envelope_fingerprint_sha256"] = _actual_fingerprint(
+        _canonical_backup_projection(changed)
+    )
+    assert _validate_backup(changed) == "VALID"
+    assert (
+        assess_restore_candidate(changed, external, membership, {"status": "VERIFIED_EMPTY"})
+        == "DENY"
+    )
+
+
+@pytest.mark.parametrize("membership_kind", ["missing", "historical", "raw"])
+def test_s7c_valid_candidate_hash_never_replaces_current_membership(membership_kind: str) -> None:
+    backup = _s7c_backup()
+    external = _s7c_protected(backup)
+    membership = _s7c_membership(external)
+    if membership_kind == "missing":
+        membership["accepted_refs"] = set()
+    elif membership_kind == "historical":
+        membership = _s7c_membership(external, historical=True)
+    else:
+        membership = {}
+    assert _validate_backup(backup) == "VALID"
+    assert (
+        assess_restore_candidate(backup, external, membership, {"status": "VERIFIED_EMPTY"})
+        == "DENY"
+    )
+
+
+def test_s7c_rejects_invalid_backup_and_invalid_external_intrinsics() -> None:
+    backup = _s7c_backup()
+    external = _s7c_protected(backup)
+    membership = _s7c_membership(external)
+    invalid = copy.deepcopy(backup)
+    invalid["envelope_fingerprint_sha256"] = "0" * 64
+    assert (
+        assess_restore_candidate(invalid, external, membership, {"status": "VERIFIED_EMPTY"})
+        == "DENY"
+    )
+    for mutation in ("fingerprint", "lifecycle"):
+        malformed = copy.deepcopy(external)
+        if mutation == "fingerprint":
+            malformed["content_fingerprint_sha256"] = "0" * 64
+        else:
+            malformed["prepared_generation"] = 3
+        assert (
+            assess_restore_candidate(backup, malformed, membership, {"status": "VERIFIED_EMPTY"})
+            == "DENY"
+        )
+
+
+@pytest.mark.parametrize(
+    ("local", "committed", "prepared"),
+    [
+        (
+            {"status": "VERIFIED_EMPTY"},
+            "RESTORE_EXTERNAL_COMMITTED_CURRENT",
+            "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE",
+        ),
+        (
+            {"status": "NO_TRUSTED_OBSERVATION"},
+            "RESTORE_EXTERNAL_COMMITTED_CURRENT",
+            "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE",
+        ),
+        (
+            {"status": "CORRUPT_OR_UNREADABLE"},
+            "RESTORE_EXTERNAL_COMMITTED_CURRENT",
+            "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE",
+        ),
+    ],
+)
+def test_s7c_local_availability_cross_product(
+    local: dict[str, Any], committed: str, prepared: str
+) -> None:
+    backup = _s7c_backup()
+    c = _s7c_protected(backup)
+    p = _s7c_protected(backup, "PREPARED")
+    assert assess_restore_candidate(backup, c, _s7c_membership(c), local) == committed
+    assert assess_restore_candidate(backup, p, _s7c_membership(p), local) == prepared
+
+
+def test_s7c_local_classification_is_derived_from_values_and_fails_closed() -> None:
+    backup = _s7c_backup()
+    committed = _s7c_protected(backup)
+    membership = _s7c_membership(committed)
+    assert (
+        assess_restore_candidate(backup, committed, membership, _s7c_local(backup))
+        == "NOOP_ALREADY_CURRENT"
+    )
+    assert (
+        assess_restore_candidate(backup, committed, membership, _s7c_local(backup, 1))
+        == "RESTORE_EXTERNAL_COMMITTED_CURRENT"
+    )
+    mutations = (
+        {"state_fingerprint_sha256": "8" * 64},
+        {"transaction_fingerprint_sha256": "8" * 64},
+        {"generation": 3},
+        {"account_id": "acct_wrong"},
+        {"environment": "LIVE"},
+    )
+    for update in mutations:
+        assert (
+            assess_restore_candidate(backup, committed, membership, _s7c_local(backup, **update))
+            == "DENY"
+        )
+
+
+def test_s7c_prepared_local_transaction_mismatch_denies_finalize() -> None:
+    backup = _s7c_backup()
+    external = _s7c_protected(backup, "PREPARED")
+    assert (
+        assess_restore_candidate(
+            backup,
+            external,
+            _s7c_membership(external),
+            _s7c_local(backup, transaction_fingerprint_sha256="8" * 64),
+        )
+        == "DENY"
+    )
+    assert (
+        assess_restore_candidate(backup, external, _s7c_membership(external), _s7c_local(backup))
+        == "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE"
+    )
+
+
+def test_s7c_selector_filters_authority_and_denies_ambiguity() -> None:
+    g1, g2, g3 = (_s7c_backup(n) for n in (1, 2, 3))
+    external = _s7c_protected(g2)
+    membership = _s7c_membership(external)
+    decision, selected = select_restore_candidate([g1, g3, g2], external, membership)
+    assert decision == "RESTORE_EXTERNAL_COMMITTED_CURRENT" and selected == g2
+    assert select_restore_candidate([g1, g3], external, membership) == ("DENY", None)
+    distinct_lineage = copy.deepcopy(g2)
+    distinct_lineage["integrity_metadata"]["state_store_transaction_descriptors"][0][
+        "state_store_schema_version"
+    ] = 2
+    _rehash_descriptor(
+        distinct_lineage["integrity_metadata"]["state_store_transaction_descriptors"][0]
+    )
+    distinct_lineage["envelope_fingerprint_sha256"] = _actual_fingerprint(
+        _canonical_backup_projection(distinct_lineage)
+    )
+    assert _validate_backup(distinct_lineage) == "VALID" and distinct_lineage != g2
+    assert select_restore_candidate([g2, distinct_lineage], external, membership) == ("DENY", None)
+
+
+def _s7c_truth_fixture(case: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    g1, g2, g3, g4 = (_s7c_backup(n) for n in (1, 2, 3, 4))
+    if case == "UNINITIALIZED_G1":
+        return g1, _s7c_protected(g1, "UNINITIALIZED")
+    if case == "COMMITTED_G_candidate_G_minus_1":
+        return g1, _s7c_protected(g2)
+    if case == "COMMITTED_G_exact_G_state":
+        return g2, _s7c_protected(g2)
+    if case == "COMMITTED_G_wrong_state":
+        external = _s7c_protected(g2)
+        external["committed_state_fingerprint_sha256"] = "8" * 64
+    elif case == "COMMITTED_G_candidate_G_plus_1":
+        return g3, _s7c_protected(g2)
+    elif case == "PREPARED_G_plus_1_candidate_G":
+        return g2, _s7c_protected(g3, "PREPARED")
+    elif case == "PREPARED_G_plus_1_exact_state_transaction":
+        return g3, _s7c_protected(g3, "PREPARED")
+    elif case == "PREPARED_G_plus_1_wrong_state":
+        external = _s7c_protected(g3, "PREPARED")
+        external["prepared_state_fingerprint_sha256"] = "8" * 64
+    elif case == "PREPARED_G_plus_1_wrong_transaction":
+        external = _s7c_protected(g3, "PREPARED")
+        external["prepared_transaction_fingerprint_sha256"] = "8" * 64
+    elif case == "PREPARED_G_plus_1_candidate_G_plus_2":
+        return g4, _s7c_protected(g3, "PREPARED")
+    else:
+        return g1, _s7c_protected(g1, "PREPARED")
+    external["content_fingerprint_sha256"] = _actual_fingerprint(
+        {key: item for key, item in external.items() if key != "content_fingerprint_sha256"}
+    )
+    return g2 if case.startswith("COMMITTED") else g3, external
+
+
+def _s7c_local_cross_product(backup: dict[str, Any]) -> list[dict[str, Any]]:
+    generation = backup["local_protected_freshness_generation"]
+    values = [
+        {"status": "VERIFIED_EMPTY"},
+        {"status": "NO_TRUSTED_OBSERVATION"},
+        {"status": "CORRUPT_OR_UNREADABLE"},
+        _s7c_local(backup),
+        _s7c_local(backup, state_fingerprint_sha256="8" * 64),
+        _s7c_local(backup, transaction_fingerprint_sha256="8" * 64),
+        _s7c_local(backup, history_tail_fingerprint_sha256="8" * 64),
+        _s7c_local(backup, generation=generation + 1),
+        _s7c_local(backup, account_id="acct_wrong"),
+        _s7c_local(backup, environment="LIVE"),
+    ]
+    if generation > 1:
+        values.append(_s7c_local(backup, generation=generation - 1))
+    return values
+
+
+def _actual_final_decisions(backup: dict[str, Any], external: dict[str, Any]) -> set[str]:
+    membership = _s7c_membership(external)
+    return {
+        assess_restore_candidate(backup, external, membership, local)
+        for local in _s7c_local_cross_product(backup)
+    }
+
+
+@pytest.mark.parametrize(
+    "row",
+    MACHINE["restore_contract"]["s7c_restore_freshness"]["freshness_truth_table"],
+    ids=lambda row: row["case"],
+)
+def test_s7c_canonical_truth_table_has_exact_phase_a_and_phase_b_parity(
+    row: dict[str, Any],
+) -> None:
+    backup, external = _s7c_truth_fixture(row["case"])
+    membership = _s7c_membership(external)
+    assert _external_eligibility(backup, external, membership) == row["external_eligibility"]
+    assert _actual_final_decisions(backup, external) == set(row["eligible_final_decisions"])
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "COMMITTED_G_exact_G_state",
+        "PREPARED_G_plus_1_exact_state_transaction",
+        "GENESIS_PREPARED_1_exact_state_transaction",
+    ],
+)
+def test_s7c_valid_closed_token_truth_table_drift_is_detected(case: str) -> None:
+    row = next(
+        row
+        for row in MACHINE["restore_contract"]["s7c_restore_freshness"]["freshness_truth_table"]
+        if row["case"] == case
+    )
+    backup, external = _s7c_truth_fixture(case)
+    actual = _actual_final_decisions(backup, external)
+    mutated_expected = {"DENY"}
+    assert mutated_expected <= RESTORE_DECISIONS
+    assert actual == set(row["eligible_final_decisions"])
+    assert actual != mutated_expected
+
+
+EXPECTED_S7C_CRASH_MATRIX = [
+    {
+        "point": "before isolated restore",
+        "live_effect": "UNCHANGED",
+        "external_effect": "UNCHANGED",
+        "recovery_action": "SAFE_RETRY",
+        "second_restore_write_allowed": False,
+        "protected_action_allowed": None,
+    },
+    {
+        "point": "during isolated creation",
+        "live_effect": "UNCHANGED",
+        "external_effect": "UNCHANGED",
+        "recovery_action": "DISCARD_AND_REBUILD_ISOLATED",
+        "second_restore_write_allowed": False,
+        "protected_action_allowed": None,
+    },
+    {
+        "point": "after isolated verification before install",
+        "live_effect": "UNCHANGED",
+        "external_effect": "UNCHANGED",
+        "recovery_action": "SAFE_RETRY",
+        "second_restore_write_allowed": False,
+        "protected_action_allowed": None,
+    },
+    {
+        "point": "after install before fresh evidence",
+        "live_effect": "EXACT_RESTORED_TARGET",
+        "external_effect": "UNCHANGED",
+        "recovery_action": "OBSERVE_EXACT_LOCAL_AND_REBUILD_FRESH_EVIDENCE",
+        "second_restore_write_allowed": False,
+        "protected_action_allowed": None,
+    },
+    {
+        "point": "after evidence before FINALIZE",
+        "live_effect": "EXACT_RESTORED_TARGET",
+        "external_effect": "EXISTING_PENDING_RETAINED",
+        "recovery_action": "RESOLVE_EVIDENCE_AND_FINALIZE_EXISTING_PENDING",
+        "second_restore_write_allowed": False,
+        "protected_action_allowed": "FINALIZE",
+    },
+    {
+        "point": "FINALIZE ACK loss",
+        "live_effect": "EXACT_RESTORED_TARGET",
+        "external_effect": "UNKNOWN_UNTIL_RERESOLUTION",
+        "recovery_action": "RERESOLVE_SAME_REF_NO_BLIND_RETRY",
+        "second_restore_write_allowed": False,
+        "protected_action_allowed": None,
+    },
+]
+
+
+def _crash_matrix_exact(value: Any) -> bool:
+    return value == EXPECTED_S7C_CRASH_MATRIX
+
+
+def test_s7c_crash_matrix_and_protected_actions_are_exact() -> None:
+    contract = MACHINE["restore_contract"]["s7c_restore_freshness"]
+    assert _crash_matrix_exact(contract["crash_matrix"])
+    assert contract["protected_action_inventory"] == {
+        "allowed": [
+            {
+                "action": "FINALIZE",
+                "condition": "exact existing PREPARED target after fresh accepted/current S4 evidence",
+            }
+        ],
+        "forbidden": ["PREPARE", "ABORT", "replacement", "mint current", "set current"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("live_effect", "SECOND_RESTORE_WRITE"),
+        ("external_effect", "ABORT"),
+        ("recovery_action", "BLIND_FINALIZE_RETRY"),
+        ("second_restore_write_allowed", True),
+        ("protected_action_allowed", "PREPARE"),
+    ],
+)
+def test_s7c_every_crash_semantic_column_mutation_fails_exact_validator(
+    field: str, value: Any
+) -> None:
+    mutated = copy.deepcopy(EXPECTED_S7C_CRASH_MATRIX)
+    mutated[3][field] = value
+    assert not _crash_matrix_exact(mutated)
+
+
+def _rehash_protected(record: dict[str, Any]) -> None:
+    record["content_fingerprint_sha256"] = _actual_fingerprint(
+        {key: item for key, item in record.items() if key != "content_fingerprint_sha256"}
+    )
+
+
+def _ack_loss_result(
+    backup: dict[str, Any],
+    prepared: dict[str, Any],
+    terminal: dict[str, Any],
+    membership: dict[str, Any],
+    local: dict[str, Any],
+) -> str:
+    return reconcile_finalize_outcome(backup, prepared, "protected:1", terminal, membership, local)
+
+
+def test_s7c_finalize_ack_loss_derives_exact_local_and_revalidates_terminal_membership() -> None:
+    backup = _s7c_backup()
+    prepared = _s7c_protected(backup, "PREPARED")
+    terminal = _s7c_protected(backup)
+    membership = _s7c_membership(terminal)
+    assert (
+        _ack_loss_result(backup, prepared, terminal, membership, _s7c_local(backup))
+        == "NOOP_ALREADY_CURRENT"
+    )
+    assert (
+        _ack_loss_result(
+            backup,
+            prepared,
+            terminal,
+            _s7c_membership(terminal, historical=True),
+            _s7c_local(backup),
+        )
+        == "DENY"
+    )
+    changed_ref = _s7c_membership(terminal)
+    changed_ref["resolved_ref"] = "protected:2"
+    changed_ref["accepted_refs"].add("protected:2")
+    scope = next(iter(changed_ref["current_ref_by_scope"]))
+    changed_ref["current_ref_by_scope"][scope] = "protected:2"
+    assert _ack_loss_result(backup, prepared, terminal, changed_ref, _s7c_local(backup)) == "DENY"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "rehash"),
+    [
+        ("partial", False),
+        ("fingerprint", False),
+        ("source", True),
+        ("scope", True),
+        ("generation", True),
+        ("state", True),
+    ],
+)
+def test_s7c_finalize_ack_loss_rejects_invalid_or_wrong_terminal(
+    mutation: str, rehash: bool
+) -> None:
+    backup = _s7c_backup()
+    prepared = _s7c_protected(backup, "PREPARED")
+    terminal = _s7c_protected(backup)
+    if mutation == "partial":
+        terminal.pop("authority_revision")
+    elif mutation == "fingerprint":
+        terminal["content_fingerprint_sha256"] = "0" * 64
+    elif mutation == "source":
+        terminal["authority_source"] = "CALLER"
+    elif mutation == "scope":
+        terminal["device_installation_id"] = "dev_wrong"
+    elif mutation == "generation":
+        terminal["committed_generation"] += 1
+    else:
+        terminal["committed_state_fingerprint_sha256"] = "8" * 64
+    if rehash:
+        _rehash_protected(terminal)
+    assert (
+        _ack_loss_result(
+            backup, prepared, terminal, _s7c_membership(_s7c_protected(backup)), _s7c_local(backup)
+        )
+        == "DENY"
+    )
+
+
+@pytest.mark.parametrize(
+    "local_update",
+    [
+        {"transaction_fingerprint_sha256": "8" * 64},
+        {"history_tail_fingerprint_sha256": "8" * 64},
+        {"account_id": "acct_wrong"},
+        {"environment": "LIVE"},
+        {"generation": 3},
+    ],
+)
+def test_s7c_finalize_ack_loss_rejects_non_exact_local(local_update: dict[str, Any]) -> None:
+    backup = _s7c_backup()
+    prepared = _s7c_protected(backup, "PREPARED")
+    terminal = _s7c_protected(backup)
+    assert (
+        _ack_loss_result(
+            backup,
+            prepared,
+            terminal,
+            _s7c_membership(terminal),
+            _s7c_local(backup, **local_update),
+        )
+        == "DENY"
+    )
+
+
+def test_s7c_finalize_ack_loss_rejects_invalid_backup() -> None:
+    backup = _s7c_backup()
+    prepared = _s7c_protected(backup, "PREPARED")
+    terminal = _s7c_protected(backup)
+    backup["envelope_fingerprint_sha256"] = "0" * 64
+    assert (
+        _ack_loss_result(
+            backup, prepared, terminal, _s7c_membership(terminal), _s7c_local(_s7c_backup())
+        )
+        == "DENY"
+    )
+
+
+def test_s7c_every_final_function_output_stays_in_closed_registry() -> None:
+    backup = _s7c_backup()
+    committed = _s7c_protected(backup)
+    prepared = _s7c_protected(backup, "PREPARED")
+    outputs = {
+        assess_restore_candidate(backup, committed, _s7c_membership(committed), local)
+        for local in _s7c_local_cross_product(backup)
+    }
+    outputs.add(select_restore_candidate([backup], committed, _s7c_membership(committed))[0])
+    outputs.add(
+        reconcile_finalize_outcome(
+            backup,
+            prepared,
+            "protected:1",
+            committed,
+            _s7c_membership(committed),
+            _s7c_local(backup),
+        )
+    )
+    assert outputs <= RESTORE_DECISIONS
