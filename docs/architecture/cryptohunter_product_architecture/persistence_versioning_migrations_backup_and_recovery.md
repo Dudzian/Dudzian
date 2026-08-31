@@ -5600,7 +5600,12 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "prefix": "port"
         },
         "exchange_id": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "paper_simulated_venue",
+            "generic_testnet_venue"
+          ],
+          "values_source_pointer": "/exchange_registry_contract/entries[status=ENABLED]/exchange_id"
         },
         "environment": {
           "type": "enum",
@@ -5611,10 +5616,18 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           ]
         },
         "market_type": {
-          "type": "non_empty_string"
+          "type": "enum",
+          "values": [
+            "SPOT",
+            "MARGIN",
+            "PERPETUAL",
+            "DELIVERY_FUTURES",
+            "OPTIONS"
+          ],
+          "values_source_pointer": "/market_type_registry"
         },
         "display_name": {
-          "type": "non_empty_string"
+          "type": "string"
         },
         "lifecycle_state": {
           "type": "enum",
@@ -5648,15 +5661,15 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           ]
         },
         "external_account_identity_state": {
-          "type": "object",
-          "fields": [
-            "canonical_reference"
+          "type": "enum",
+          "values": [
+            "UNVERIFIED",
+            "VERIFYING",
+            "VERIFIED",
+            "MISMATCH",
+            "UNAVAILABLE"
           ],
-          "field_schemas": {
-            "canonical_reference": {
-              "type": "non_empty_string"
-            }
-          }
+          "values_source_pointer": "/external_account_identity_contract/states"
         },
         "external_account_reference": {
           "type": "non_empty_string"
@@ -5686,7 +5699,47 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "source_pointer": "/exchange_account_contract/lifecycle_timestamp_policy",
           "state_field": "lifecycle_state",
           "created_field": "created_at_utc",
-          "retired_field": "retired_at_utc"
+          "retired_field": "retired_at_utc",
+          "state_rules": {
+            "DRAFT": "retired_at_utc null",
+            "ACTIVE": "retired_at_utc null",
+            "DISABLED": "retired_at_utc null",
+            "RETIRED": "valid retired_at_utc not before created_at_utc"
+          },
+          "ordering_comparison": "CANONICAL_TIMESTAMP_TEMPORAL_NOT_LEXICAL"
+        },
+        "build_time_exchange_registry_binding": {
+          "source_pointer": "/exchange_registry_contract",
+          "registry_classification": "FROZEN_BUILD_TIME_INTRINSIC_NOT_RUNTIME_EXTERNAL_AUTHORITY",
+          "closed_build_time_registry": true,
+          "enabled_entries": [
+            {
+              "exchange_id": "paper_simulated_venue",
+              "supported_environments": [
+                "PAPER"
+              ],
+              "supported_market_types": [
+                "SPOT",
+                "MARGIN",
+                "PERPETUAL",
+                "DELIVERY_FUTURES",
+                "OPTIONS"
+              ]
+            },
+            {
+              "exchange_id": "generic_testnet_venue",
+              "supported_environments": [
+                "TESTNET"
+              ],
+              "supported_market_types": [
+                "SPOT",
+                "PERPETUAL"
+              ]
+            }
+          ],
+          "exchange_id_rule": "MUST_MATCH_ENABLED_ENTRY",
+          "environment_rule": "MUST_BE_IN_SELECTED_ENTRY_SUPPORTED_ENVIRONMENTS",
+          "market_type_rule": "MUST_BE_IN_SELECTED_ENTRY_SUPPORTED_MARKET_TYPES"
         }
       },
       "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
@@ -5704,7 +5757,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
         "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
         "constants": "SOURCE_DOES_NOT_DEFINE",
-        "nested_objects": "SOURCE_DERIVED_AND_CHECKED",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
         "arrays": "SOURCE_DOES_NOT_DEFINE",
         "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
         "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
@@ -5733,7 +5786,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "lifecycle_state",
         "created_at_utc",
         "rotated_from_credential_profile_id",
-        "retired_at_utc"
+        "retired_at_utc",
+        "saas_sync_candidate"
       ],
       "nullable_fields": [
         "public_key_identifier",
@@ -5825,6 +5879,11 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "type": "nullable_timestamp",
           "policy_pointer": "/timestamp_policy",
           "nullability": "CONDITIONAL_ON_LIFECYCLE_STATE"
+        },
+        "saas_sync_candidate": {
+          "type": "exact_literal",
+          "value": false,
+          "source_pointer": "/credential_profile_contract/saas_sync_candidate"
         }
       },
       "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
@@ -5868,7 +5927,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
         "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
         "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
-        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "constants": "SOURCE_DERIVED_AND_CHECKED",
         "nested_objects": "SOURCE_DOES_NOT_DEFINE",
         "arrays": "SOURCE_DERIVED_AND_CHECKED",
         "array_item_schemas": "SOURCE_DERIVED_AND_CHECKED",

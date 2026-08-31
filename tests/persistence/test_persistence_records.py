@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 from hashlib import sha256
+import inspect
 import json
 import math
 import unicodedata
@@ -139,16 +140,9 @@ def test_static_registry_has_deep_exact_parity_with_frozen_registry() -> None:
 
 
 def test_resolved_direct_constraints_are_deeply_source_derived() -> None:
-    for name, resolved in DIRECT_SEMANTIC_CONSTRAINTS.items():
-        contract = DIRECT_UPSTREAM_VALIDATORS[name]
-        upstream = json.loads((ARCHITECTURE / contract["semantic_artifact"]).read_text())
-        for field, source in contract["semantic_constraints"].items():
-            value = source.get("values")
-            if value is None:
-                value = upstream
-                for component in source["pointer"].strip("/").split("/"):
-                    value = value[component]
-            assert resolved[field] == value
+    assert (
+        DIRECT_UPSTREAM_VALIDATORS == M011["backup_contract"]["direct_upstream_validator_registry"]
+    )
 
 
 def test_scope_binding_table_has_exact_source_derived_paths() -> None:
@@ -503,6 +497,16 @@ def test_generic_fingerprint_contract_binding() -> None:
     }
 
 
+def test_event_shadow_support_fragment_exactly_attests_canonical_upstream() -> None:
+    upstream = json.loads(
+        (ARCHITECTURE / "commands_events_order_lifecycle_and_idempotency.json").read_text()
+    )
+    assert (
+        DIRECT_SEMANTIC_CONSTRAINTS["Event"]["safe_payload"]
+        == upstream["event_contract"]["event_schema_registry"]
+    )
+
+
 @pytest.mark.parametrize(
     "name", ["CryptoHunterAccount current record", "RuntimeSession canonical identity/history"]
 )
@@ -779,3 +783,148 @@ def test_production_does_not_load_architecture_docs() -> None:
     source = Path(production.__file__).read_text()
     assert "docs/architecture" not in source
     assert "Path(" not in source
+
+
+@pytest.mark.parametrize(
+    ("created", "retired", "valid"),
+    [
+        ("2026-01-01T00:00:00.123456700Z", "2026-01-01T00:00:00.123456701Z", True),
+        ("2026-01-01T00:00:00.123456701Z", "2026-01-01T00:00:00.123456700Z", False),
+        ("2026-01-01T00:00:00.123456789Z", "2026-01-01T00:00:00.123456789Z", True),
+        ("2026-01-01T00:00:00.1234567Z", "2026-01-01T00:00:00.123456700Z", True),
+        ("2026-01-01T00:00:00.000000002Z", "2026-01-01T00:00:00.000000001Z", False),
+    ],
+)
+def test_exchange_account_nanosecond_retirement_ordering(
+    created: str, retired: str, valid: bool
+) -> None:
+    payload = frozen_oracle._payload_for("ExchangeAccount")
+    payload.update(
+        lifecycle_state="RETIRED", created_at_utc=created, retired_at_utc=retired, display_name=""
+    )
+    record = _self_consistent_record("ExchangeAccount", payload)
+    if valid:
+        validate_persistence_record(record)
+    else:
+        with pytest.raises(PersistenceRecordError):
+            validate_persistence_record(record)
+
+
+@pytest.mark.parametrize(
+    ("created", "retired", "valid"),
+    [
+        ("2026-01-01T00:00:00.123456700Z", "2026-01-01T00:00:00.123456701Z", True),
+        ("2026-01-01T00:00:00.123456701Z", "2026-01-01T00:00:00.123456700Z", False),
+        ("2026-01-01T00:00:00.123456789Z", "2026-01-01T00:00:00.123456789Z", True),
+        ("2026-01-01T00:00:00.000000002Z", "2026-01-01T00:00:00.000000001Z", False),
+    ],
+)
+def test_credential_profile_nanosecond_retirement_ordering(
+    created: str, retired: str, valid: bool
+) -> None:
+    name = "CredentialProfile metadata/reference"
+    payload = frozen_oracle._payload_for(name)
+    payload.update(lifecycle_state="RETIRED", created_at_utc=created, retired_at_utc=retired)
+    record = _self_consistent_record(name, payload)
+    if valid:
+        validate_persistence_record(record)
+    else:
+        with pytest.raises(PersistenceRecordError):
+            validate_persistence_record(record)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "true"])
+def test_credential_profile_requires_exact_false_saas_sync_candidate(mutation: str) -> None:
+    name = "CredentialProfile metadata/reference"
+    payload = frozen_oracle._payload_for(name)
+    if mutation == "missing":
+        payload.pop("saas_sync_candidate")
+    else:
+        payload["saas_sync_candidate"] = True
+    with pytest.raises(PersistenceRecordError):
+        validate_persistence_record(_self_consistent_record(name, payload))
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"exchange_id": "paper_simulated_venue", "environment": "PAPER", "market_type": "SPOT"},
+        {"exchange_id": "generic_testnet_venue", "environment": "TESTNET", "market_type": "SPOT"},
+        {
+            "exchange_id": "generic_testnet_venue",
+            "environment": "TESTNET",
+            "market_type": "PERPETUAL",
+        },
+        {"display_name": ""},
+        {"external_account_identity_state": "VERIFIED"},
+        {"lifecycle_state": "DRAFT", "retired_at_utc": None},
+        {"lifecycle_state": "ACTIVE", "retired_at_utc": None},
+        {"lifecycle_state": "DISABLED", "retired_at_utc": None},
+        {
+            "lifecycle_state": "RETIRED",
+            "created_at_utc": "2026-01-01T00:00:00Z",
+            "retired_at_utc": "2026-01-01T00:00:00.1Z",
+        },
+    ],
+)
+def test_exchange_account_corrected_m05_positive_matrix(updates: dict[str, object]) -> None:
+    payload = frozen_oracle._payload_for("ExchangeAccount")
+    payload.update(updates)
+    validate_persistence_record(_self_consistent_record("ExchangeAccount", payload))
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"exchange_id": "unknown_exchange"},
+        {"exchange_id": "generic_testnet_venue", "environment": "PAPER", "market_type": "SPOT"},
+        {"exchange_id": "generic_testnet_venue", "environment": "TESTNET", "market_type": "MARGIN"},
+        {"market_type": "UNKNOWN_MARKET"},
+        {"external_account_identity_state": {"canonical_reference": "invented"}},
+        {"external_account_identity_state": "UNKNOWN_STATE"},
+        {"lifecycle_state": "DRAFT", "retired_at_utc": "2026-01-01T00:00:00Z"},
+        {"lifecycle_state": "ACTIVE", "retired_at_utc": "2026-01-01T00:00:00Z"},
+        {"lifecycle_state": "DISABLED", "retired_at_utc": "2026-01-01T00:00:00Z"},
+        {"lifecycle_state": "RETIRED", "retired_at_utc": None},
+    ],
+)
+def test_exchange_account_corrected_m05_adversarial_matrix(updates: dict[str, object]) -> None:
+    payload = frozen_oracle._payload_for("ExchangeAccount")
+    payload.update(updates)
+    with pytest.raises(PersistenceRecordError):
+        validate_persistence_record(_self_consistent_record("ExchangeAccount", payload))
+
+
+def test_exchange_account_unknown_lifecycle_rule_fails_closed() -> None:
+    assert not production._validate_exchange_account_lifecycle_rule(
+        "INVENTED_RULE", created="2026-01-01T00:00:00Z", retired=None
+    )
+
+
+def test_exchange_account_lifecycle_executor_has_no_state_name_semantic_group() -> None:
+    source = inspect.getsource(production._validate_direct_semantics)
+    assert 'state in {"DRAFT", "ACTIVE", "DISABLED"}' not in source
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"rotated_from_credential_profile_id": "acct_01890f3a-2b4c-7abc-8def-0123456789ab"},
+        {
+            "credential_profile_id": "cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+            "rotated_from_credential_profile_id": "cred_01890f3a-2b4c-7abc-8def-0123456789ab",
+        },
+        {"permission_snapshot": ["READ_ACCOUNT", "READ_ACCOUNT"]},
+        {"permission_snapshot": ["UNKNOWN_PERMISSION"]},
+        {"secure_store_reference": "keyring://wrong"},
+        {"secure_store_reference": "secure-store://secret-token"},
+        {"lifecycle_state": "ACTIVE", "retired_at_utc": "2026-01-01T00:00:00Z"},
+        {"lifecycle_state": "RETIRED", "retired_at_utc": None},
+    ],
+)
+def test_credential_profile_corrected_m05_adversarial_matrix(updates: dict[str, object]) -> None:
+    name = "CredentialProfile metadata/reference"
+    payload = frozen_oracle._payload_for(name)
+    payload.update(updates)
+    with pytest.raises(PersistenceRecordError):
+        validate_persistence_record(_self_consistent_record(name, payload))

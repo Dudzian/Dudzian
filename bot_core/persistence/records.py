@@ -68,30 +68,45 @@ _REGISTRY = PERSISTENCE_RECORD_REGISTRY
 
 FIELD_VALIDATOR_CAPABILITIES = frozenset(
     {
-        "array",
+        "array_of_exact_LimitResult",
+        "array_of_exact_tuple",
         "array_of_canonical_id",
         "asset_reference",
-        "boolean",
+        "canonical_exact_fraction_string",
         "canonical_id",
         "canonical_scope_id",
+        "canonical_unique_array_of_enum",
+        "canonical_utc_timestamp",
+        "canonical_uuid7_prefixed_id",
+        "conditional_supplying_policy_scope",
         "compound_scope",
         "constant",
         "decimal",
         "enum",
         "event_safe_payload",
+        "exact_literal",
+        "exact_upstream_object",
         "id",
         "integer",
+        "boolean",
         "non_empty_string",
-        "non_negative_integer",
+        "nullable_canonical_exact_fraction_string",
         "nullable_canonical_id",
+        "nullable_non_empty_string",
         "nullable_timestamp",
+        "non_negative_integer",
         "object",
-        "positive_decimal",
         "positive_integer",
+        "positive_decimal",
+        "positive_non_boolean_integer",
         "risk_limits",
+        "secure_store_reference",
         "sha256_hex",
-        "string",
+        "sha256_lowercase_hex",
+        "terminal_fingerprint",
         "timestamp",
+        "unique_array_of_enum",
+        "string",
     }
 )
 SEMANTIC_FINGERPRINT_SHAPE_CAPABILITIES = frozenset(
@@ -266,9 +281,9 @@ def _validate_runtime_session(record: PersistenceRecord) -> None:
 
 def _valid_field(value: object, contract: Mapping[str, object]) -> bool:
     kind = contract.get("type")
-    if kind == "constant":
+    if kind in {"constant", "exact_literal"}:
         return value == contract.get("value")
-    if kind in {"canonical_id", "id"}:
+    if kind in {"canonical_id", "canonical_uuid7_prefixed_id", "id"}:
         prefix = contract.get("id_prefix", contract.get("prefix"))
         return (
             isinstance(prefix, str)
@@ -277,13 +292,13 @@ def _valid_field(value: object, contract: Mapping[str, object]) -> bool:
                 (match := _CANONICAL_ID_RE.fullmatch(value)) and match.group("prefix") == prefix
             )
         )
-    if kind == "positive_integer":
+    if kind in {"positive_integer", "positive_non_boolean_integer"}:
         return isinstance(value, int) and not isinstance(value, bool) and value > 0
     if kind == "non_negative_integer":
         return isinstance(value, int) and not isinstance(value, bool) and value >= 0
     if kind == "boolean":
         return isinstance(value, bool)
-    if kind == "sha256_hex":
+    if kind in {"sha256_hex", "sha256_lowercase_hex", "terminal_fingerprint"}:
         return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
     if kind == "enum":
         return value in contract.get("values", ())
@@ -301,7 +316,7 @@ def _valid_field(value: object, contract: Mapping[str, object]) -> bool:
         return (constraint != "positive" or number > 0) and (
             constraint != "non_negative" or number >= 0
         )
-    if kind == "timestamp":
+    if kind in {"timestamp", "canonical_utc_timestamp"}:
         if (
             not isinstance(value, str)
             or re.fullmatch(
@@ -322,14 +337,24 @@ def _valid_field(value: object, contract: Mapping[str, object]) -> bool:
         return value is None or _valid_field(
             value, {"type": "canonical_id", "id_prefix": contract.get("id_prefix")}
         )
-    if kind == "array":
-        return isinstance(value, (list, tuple))
+    if kind == "nullable_non_empty_string":
+        return value is None or (isinstance(value, str) and bool(value))
+    if kind in {"unique_array_of_enum", "canonical_unique_array_of_enum"}:
+        values = contract.get("values", ())
+        if not isinstance(value, (list, tuple)) or len(value) < contract.get("min_items", 0):
+            return False
+        if any(item not in values for item in value) or len(set(value)) != len(value):
+            return False
+        order = contract.get("canonical_order")
+        if order == "REGISTRY_ORDER":
+            return list(value) == [x for x in values if x in value]
+        return not isinstance(order, list) or list(value) == [x for x in order if x in value]
     if kind == "array_of_canonical_id":
         return isinstance(value, (list, tuple)) and all(
             _valid_field(item, {"type": "canonical_id", "id_prefix": contract.get("id_prefix")})
             for item in value
         )
-    if kind in {"object", "asset_reference"}:
+    if kind in {"object", "asset_reference", "exact_upstream_object"}:
         fields = contract.get("fields")
         schemas = contract.get("field_schemas")
         return (
@@ -339,10 +364,64 @@ def _valid_field(value: object, contract: Mapping[str, object]) -> bool:
             and set(value) == set(fields)
             and all(_valid_field(value[name], schemas[name]) for name in fields)
         )
-    if kind in {"non_empty_object", "event_safe_payload"}:
-        return isinstance(value, Mapping) and bool(value)
-    if kind in {"non_empty_string", "string"}:
+    if kind in {"canonical_exact_fraction_string", "nullable_canonical_exact_fraction_string"}:
+        if value is None:
+            return kind.startswith("nullable_")
+        if (
+            not isinstance(value, str)
+            or re.fullmatch(r"(?:0|[1-9][0-9]*|-[1-9][0-9]*)/[1-9][0-9]*", value) is None
+        ):
+            return False
+        numerator, denominator = map(int, value.split("/"))
+        return math.gcd(abs(numerator), denominator) == 1 and (numerator != 0 or denominator == 1)
+    if kind == "secure_store_reference":
+        grammar = contract.get("grammar")
+        if not isinstance(value, str) or not isinstance(grammar, Mapping):
+            return False
+        prefix = grammar.get("prefix")
+        if (
+            not isinstance(prefix, str)
+            or not value.startswith(prefix)
+            or not value.removeprefix(prefix)
+        ):
+            return False
+        locator = value.removeprefix(prefix)
+        markers = grammar.get("forbidden_payload_markers", ())
+        return not any(
+            character.isspace() or character in "?#=" for character in locator
+        ) and not any(marker in locator.casefold() for marker in markers)
+    if kind == "non_empty_string":
         return isinstance(value, str) and bool(value)
+    if kind == "string":
+        return isinstance(value, str)
+    return False
+
+
+def _parse_canonical_timestamp_order_key(value: object) -> tuple[datetime, int] | None:
+    if not _valid_field(value, {"type": "timestamp"}) or not isinstance(value, str):
+        return None
+    body = value[:-1]
+    whole_second, separator, fraction = body.partition(".")
+    try:
+        exact_second = datetime.strptime(whole_second, "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+    return exact_second, int(fraction.ljust(9, "0")) if separator else 0
+
+
+def _canonical_timestamp_le(left: object, right: object) -> bool:
+    left_key = _parse_canonical_timestamp_order_key(left)
+    right_key = _parse_canonical_timestamp_order_key(right)
+    return left_key is not None and right_key is not None and left_key <= right_key
+
+
+def _validate_exchange_account_lifecycle_rule(
+    rule: object, *, created: object, retired: object
+) -> bool:
+    if rule == "retired_at_utc null":
+        return retired is None
+    if rule == "valid retired_at_utc not before created_at_utc":
+        return retired is not None and _canonical_timestamp_le(created, retired)
     return False
 
 
@@ -355,6 +434,127 @@ _SCOPE_PREFIXES = {
     "INSTRUMENT": "instr",
     "EXECUTION_ROUTE": "xroute",
 }
+_SCOPE_ORDER = tuple(_SCOPE_PREFIXES)
+
+
+def _valid_supplying_scope(
+    value: object, limit_type: object, contract: Mapping[str, object]
+) -> bool:
+    if limit_type == contract.get("synthetic_limit_type"):
+        return value == contract.get("synthetic_exact_value")
+    if not isinstance(value, str) or ":" not in value:
+        return False
+    scope_type, scope_id = value.split(":", 1)
+    return scope_type in _SCOPE_PREFIXES and _valid_context_field(
+        "scope_id",
+        scope_id,
+        {"type": "canonical_scope_id", "scope_type_field": "scope_type"},
+        {"scope_type": scope_type},
+    )
+
+
+def _asset_schema() -> Mapping[str, object]:
+    return DIRECT_UPSTREAM_VALIDATORS["Fill"]["upstream_field_schemas"]["fee_asset_reference"]
+
+
+def _validate_limit_results(value: object, contract: Mapping[str, object]) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) < contract.get("min_items", 0):
+        return False
+    item_schema = contract["item_schema"]
+    fields = item_schema["exact_fields"]
+    schemas = item_schema["field_schemas"]
+    seen: set[tuple[object, ...]] = set()
+    keys: list[tuple[object, ...]] = []
+    limit_order = schemas["limit_type"]["values"]
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != set(fields):
+            return False
+        for field in fields:
+            schema = schemas[field]
+            if schema.get("type") == "exact_upstream_object":
+                if not _valid_field(item[field], _asset_schema()):
+                    return False
+            elif not _valid_context_field(field, item[field], schema, item):
+                return False
+        result = item["result"]
+        observed = item["observed_projected_value"]
+        if (result in {"PASS", "FAIL"}) != (observed is not None):
+            return False
+        reason_matrix = item_schema["intrinsic_constraints"]["policy_reason_matrix"]
+        synthetic = item["limit_type"] == "DISPATCH_RESERVATION_ECONOMICS"
+        if synthetic:
+            expected = item_schema["intrinsic_constraints"][
+                "synthetic_dispatch_reservation_economics"
+            ]
+            if any(item[name] != expected_value for name, expected_value in expected.items()):
+                return False
+        elif item["reason_code"] not in reason_matrix[result]:
+            return False
+        uniqueness = tuple(item[name] for name in contract["duplicates"]["uniqueness_key"])
+        frozen_uniqueness = tuple(
+            canonical_json(_thaw_json(x)) if isinstance(x, Mapping) else x for x in uniqueness
+        )
+        if frozen_uniqueness in seen:
+            return False
+        seen.add(frozen_uniqueness)
+        asset = item["unit_asset_reference"]
+        asset_key = tuple(asset[name] for name in _asset_schema()["fields"])
+        keys.append(
+            (len(limit_order) if synthetic else limit_order.index(item["limit_type"]), asset_key)
+        )
+    return keys == sorted(keys)
+
+
+def _resolved_tuple_schema(item: Mapping[str, object]) -> Mapping[str, object] | None:
+    if "type" in item:
+        return item
+    reference = item.get("schema_reference")
+    prefix = "/kill_switch_contract/field_schemas/"
+    if not isinstance(reference, str) or not reference.startswith(prefix):
+        return None
+    field = reference.removeprefix(prefix)
+    return DIRECT_UPSTREAM_VALIDATORS["kill-switch state/generation"]["upstream_field_schemas"].get(
+        field
+    )
+
+
+def _validate_exact_tuples(value: object, contract: Mapping[str, object]) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) < contract.get("min_items", 0):
+        return False
+    rows: list[tuple[object, ...]] = []
+    seen: set[tuple[object, ...]] = set()
+    specs = contract["item_schema"]
+    for row in value:
+        if not isinstance(row, (list, tuple)) or len(row) != contract["tuple_length"]:
+            return False
+        for spec in specs:
+            schema = _resolved_tuple_schema(spec)
+            if schema is None:
+                return False
+            index = spec["index"]
+            if schema.get("type") == "canonical_scope_id":
+                scope_index = spec.get("scope_type_index")
+                if not isinstance(scope_index, int) or not _valid_context_field(
+                    "scope_id",
+                    row[index],
+                    {**schema, "scope_type_field": "scope_type"},
+                    {"scope_type": row[scope_index]},
+                ):
+                    return False
+            elif schema.get("type") == "enum" and "values" not in schema:
+                if row[index] not in _SCOPE_ORDER:
+                    return False
+            elif not _valid_field(row[index], schema):
+                return False
+        unique = tuple(row[index] for index in contract["duplicates"]["uniqueness_key_indexes"])
+        if unique in seen:
+            return False
+        seen.add(unique)
+        scope_index = next(spec["index"] for spec in specs if spec["name"] == "scope_type")
+        scope_id_index = next(spec["index"] for spec in specs if spec["name"] == "scope_id")
+        revision = next((row[spec["index"]] for spec in specs if spec["name"] == "revision"), 0)
+        rows.append((_SCOPE_ORDER.index(row[scope_index]), row[scope_id_index], revision))
+    return rows == sorted(rows)
 
 
 def _validate_event_safe_payload(event_type: object, safe: object) -> bool:
@@ -426,6 +626,12 @@ def _valid_context_field(
         return _validate_risk_limits(value, contract)
     if kind == "event_safe_payload":
         return _validate_event_safe_payload(payload.get("event_type"), value)
+    if kind == "conditional_supplying_policy_scope":
+        return _valid_supplying_scope(value, payload.get("limit_type"), contract)
+    if kind == "array_of_exact_LimitResult":
+        return _validate_limit_results(value, contract)
+    if kind == "array_of_exact_tuple":
+        return _validate_exact_tuples(value, contract)
     return _valid_field(value, contract)
 
 
@@ -510,12 +716,63 @@ def _validate_local_schema(value: object, schema: Mapping[str, object]) -> bool:
 
 
 def _validate_direct_semantics(name: str, payload: Mapping[str, object]) -> None:
-    constraints = DIRECT_SEMANTIC_CONSTRAINTS.get(name, {})
-    for field, expected in constraints.items():
-        if field in {"safe_payload", "fee_semantics", "secret_reference"}:
-            continue
-        if isinstance(expected, (list, tuple)) and payload[field] not in expected:
-            raise PersistenceRecordError(f"direct upstream semantic constraint failed: {field}")
+    contract = DIRECT_UPSTREAM_VALIDATORS[name]
+    constraints = contract.get("semantic_constraints", {})
+    lifecycle = constraints.get("lifecycle_timestamp_policy")
+    if isinstance(lifecycle, Mapping):
+        state = payload["lifecycle_state"]
+        retired = payload["retired_at_utc"]
+        state_rules = lifecycle.get("state_rules")
+        if isinstance(state_rules, Mapping):
+            rule = state_rules.get(state)
+            if not _validate_exchange_account_lifecycle_rule(
+                rule, created=payload["created_at_utc"], retired=retired
+            ):
+                raise PersistenceRecordError("ExchangeAccount lifecycle timestamp rule failed")
+        elif state == "ACTIVE" and retired is not None:
+            raise PersistenceRecordError("ACTIVE record cannot have retired_at_utc")
+        elif state == "RETIRED" and (
+            retired is None or not _canonical_timestamp_le(payload["created_at_utc"], retired)
+        ):
+            raise PersistenceRecordError("RETIRED timestamp policy violated")
+    registry_binding = constraints.get("build_time_exchange_registry_binding")
+    if isinstance(registry_binding, Mapping):
+        entries = registry_binding.get("enabled_entries")
+        selected = (
+            next(
+                (
+                    entry
+                    for entry in entries
+                    if isinstance(entry, Mapping)
+                    and entry.get("exchange_id") == payload["exchange_id"]
+                ),
+                None,
+            )
+            if isinstance(entries, list)
+            else None
+        )
+        if (
+            not isinstance(selected, Mapping)
+            or payload["environment"] not in selected.get("supported_environments", ())
+            or payload["market_type"] not in selected.get("supported_market_types", ())
+        ):
+            raise PersistenceRecordError("build-time exchange registry binding failed")
+    conditional = constraints.get("conditional_nullability", ())
+    for rule in conditional:
+        condition = rule.get("when")
+        matches = isinstance(condition, Mapping) and all(
+            payload[key] == val for key, val in condition.items()
+        )
+        condition_not = rule.get("when_not")
+        if isinstance(condition_not, Mapping):
+            matches = not all(payload[key] == val for key, val in condition_not.items())
+        if matches and ((rule["required"] == "NULL") != (payload[rule["field"]] is None)):
+            raise PersistenceRecordError("conditional nullability constraint failed")
+    inequality = constraints.get("identity_inequality") or constraints.get("self_cycle")
+    if isinstance(inequality, Mapping):
+        right = payload[inequality["right"]]
+        if right is not None and payload[inequality["left"]] == right:
+            raise PersistenceRecordError("identity inequality constraint failed")
     if name == "Event":
         if not _validate_event_safe_payload(payload["event_type"], payload["safe_payload"]):
             raise PersistenceRecordError("Event safe_payload violates event registry")
@@ -533,7 +790,7 @@ def _validate_direct_semantics(name: str, payload: Mapping[str, object]) -> None
             if reference.get("asset_namespace") != payload["exchange_id"]:
                 raise PersistenceRecordError("Fill fee asset namespace mismatch")
     elif name == "SecretMetadataProjection":
-        policy = constraints["secret_reference"]
+        policy = contract["upstream_field_schemas"]["secret_reference"]["grammar"]
         reference = payload["secret_reference"]
         if (
             not isinstance(reference, str)
@@ -543,6 +800,19 @@ def _validate_direct_semantics(name: str, payload: Mapping[str, object]) -> None
             or any(marker in reference.casefold() for marker in policy["forbidden_payload_markers"])
         ):
             raise PersistenceRecordError("secret_reference violates opaque-reference policy")
+
+
+def _direct_terminal_fingerprint(
+    contract: Mapping[str, object], payload: Mapping[str, object]
+) -> tuple[str, str] | None:
+    terminal = contract.get("terminal_fingerprint")
+    if not isinstance(terminal, Mapping):
+        return None
+    field = terminal["field"]
+    projected = {name: payload[name] for name in terminal["input_fields"]}
+    if terminal.get("input_shape") == "CANONICAL_NFC_JSON_OBJECT":
+        projected = _nfc_json(projected)  # type: ignore[assignment]
+    return str(field), _fingerprint(projected)
 
 
 def _derive_record_key(name: str, entry: Mapping[str, Any], payload: Mapping[str, Any]) -> str:
@@ -716,24 +986,18 @@ def _validate_generic(record: PersistenceRecord, entry: Mapping[str, Any]) -> No
             (value[field] is None and field in nullable)
             or (
                 value[field] is not None
-                and _valid_field(value[field], contract["upstream_field_schemas"][field])
+                and _valid_context_field(
+                    field, value[field], contract["upstream_field_schemas"][field], value
+                )
             )
             for field in value
         ):
+            if record.representation_name == "Event":
+                raise PersistenceRecordError("Event safe_payload or field schema invalid")
             raise PersistenceRecordError("direct upstream payload invalid")
         _validate_direct_semantics(record.representation_name, value)
-        terminal = {
-            "Event": "event_fingerprint_sha256",
-            "Fill": "fill_fingerprint_sha256",
-            "kill-switch state/generation": "record_fingerprint_sha256",
-            "RiskDecision": "decision_fingerprint_sha256",
-            "ExecutionLease immutable record": "lease_fingerprint_sha256",
-            "SessionSecurityState current generation/state": "content_fingerprint_sha256",
-            "SecretMetadataProjection": "content_fingerprint_sha256",
-        }.get(record.representation_name)
-        if terminal and value[terminal] != _fingerprint(
-            {key: item for key, item in value.items() if key != terminal}
-        ):
+        terminal = _direct_terminal_fingerprint(contract, value)
+        if terminal is not None and value[terminal[0]] != terminal[1]:
             raise PersistenceRecordError("direct upstream terminal fingerprint mismatch")
     elif category == "M011_LOCAL_SCHEMA":
         schema = LOCAL_SCHEMA_CONTRACTS[entry["projection_schema_if_any"]]
