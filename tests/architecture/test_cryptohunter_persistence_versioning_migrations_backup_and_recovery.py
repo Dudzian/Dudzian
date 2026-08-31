@@ -451,7 +451,7 @@ def _source_exact_fields(name: str, source: dict[str, Any]) -> list[str]:
     if name == "ExchangeAccount":
         return source["record_fields"]
     if name == "CredentialProfile metadata/reference":
-        return source["fields"]
+        return source["fields"] + ["saas_sync_candidate"]
     if name == "StrategyInstance current lifecycle/config":
         return source["exact_fields"]
     if name == "kill-switch state/generation":
@@ -610,20 +610,37 @@ def _submit_order_constraints(source: dict[str, Any]) -> dict[str, Any]:
 
 def _build_exchange_account(source: dict[str, Any]) -> SourceExpectedDirectContract:
     asset_identity = EXCHANGE["exchange_account_contract"]
+    enabled_exchanges = [
+        {
+            "exchange_id": entry["exchange_id"],
+            "supported_environments": entry["supported_environments"],
+            "supported_market_types": entry["supported_market_types"],
+        }
+        for entry in EXCHANGE["exchange_registry_contract"]["entries"]
+        if entry["status"] == "ENABLED"
+    ]
     schemas = {
         "exchange_account_id": {"type": "id", "prefix": asset_identity["id_prefix"]},
         "portfolio_id": _id_schema("Portfolio"),
-        "exchange_id": {"type": "non_empty_string"},
+        "exchange_id": {
+            "type": "enum",
+            "values": [entry["exchange_id"] for entry in enabled_exchanges],
+            "values_source_pointer": "/exchange_registry_contract/entries[status=ENABLED]/exchange_id",
+        },
         "environment": {"type": "enum", "values": EXCHANGE["environment_registry"]},
-        "market_type": {"type": "non_empty_string"},
-        "display_name": {"type": "non_empty_string"},
+        "market_type": {
+            "type": "enum",
+            "values": EXCHANGE["market_type_registry"],
+            "values_source_pointer": "/market_type_registry",
+        },
+        "display_name": {"type": "string"},
         "lifecycle_state": {"type": "enum", "values": source["lifecycle_states"]},
         "connection_state": {"type": "enum", "values": source["connection_states"]},
         "execution_authorization": {"type": "enum", "values": source["execution_authorizations"]},
         "external_account_identity_state": {
-            "type": "object",
-            "fields": ["canonical_reference"],
-            "field_schemas": {"canonical_reference": {"type": "non_empty_string"}},
+            "type": "enum",
+            "values": EXCHANGE["external_account_identity_contract"]["states"],
+            "values_source_pointer": "/external_account_identity_contract/states",
         },
         "external_account_reference": {"type": "non_empty_string"},
         "external_subaccount_reference": {"type": "non_empty_string"},
@@ -643,9 +660,7 @@ def _build_exchange_account(source: dict[str, Any]) -> SourceExpectedDirectContr
         ],
         schemas=schemas,
         key=[source["id_field"]],
-        dimensions=_source_dimensions(
-            canonical_ids=True, registries=True, nested=True, sibling=True
-        ),
+        dimensions=_source_dimensions(canonical_ids=True, registries=True, sibling=True),
         artifact="exchange_accounts_and_instruments.json",
         pointer="/exchange_account_contract",
         semantic_constraints={
@@ -654,7 +669,20 @@ def _build_exchange_account(source: dict[str, Any]) -> SourceExpectedDirectContr
                 "state_field": "lifecycle_state",
                 "created_field": "created_at_utc",
                 "retired_field": "retired_at_utc",
-            }
+                "state_rules": copy.deepcopy(source["lifecycle_timestamp_policy"]),
+                "ordering_comparison": "CANONICAL_TIMESTAMP_TEMPORAL_NOT_LEXICAL",
+            },
+            "build_time_exchange_registry_binding": {
+                "source_pointer": "/exchange_registry_contract",
+                "registry_classification": "FROZEN_BUILD_TIME_INTRINSIC_NOT_RUNTIME_EXTERNAL_AUTHORITY",
+                "closed_build_time_registry": EXCHANGE["exchange_registry_contract"][
+                    "closed_build_time_registry"
+                ],
+                "enabled_entries": enabled_exchanges,
+                "exchange_id_rule": "MUST_MATCH_ENABLED_ENTRY",
+                "environment_rule": "MUST_BE_IN_SELECTED_ENTRY_SUPPORTED_ENVIRONMENTS",
+                "market_type_rule": "MUST_BE_IN_SELECTED_ENTRY_SUPPORTED_MARKET_TYPES",
+            },
         },
     )
 
@@ -682,15 +710,21 @@ def _build_credential_profile(source: dict[str, Any]) -> SourceExpectedDirectCon
             "rotated_from_credential_profile_id"
         ],
         "retired_at_utc": source["intrinsic_field_schemas"]["retired_at_utc"],
+        "saas_sync_candidate": {
+            "type": "exact_literal",
+            "value": source["saas_sync_candidate"],
+            "source_pointer": "/credential_profile_contract/saas_sync_candidate",
+        },
     }
     return _expected(
-        fields=source["fields"],
+        fields=source["fields"] + ["saas_sync_candidate"],
         nullable=source["nullable_fields"],
         schemas=schemas,
         key=[source["id_field"]],
         dimensions=_source_dimensions(
             canonical_ids=True,
             registries=True,
+            constants=True,
             arrays=True,
             unique=True,
             ordered=True,
@@ -1229,6 +1263,10 @@ def _parity_exchange_account(projection: dict[str, Any], source: dict[str, Any])
         schemas["exchange_account_id"] == {"type": "id", "prefix": source["id_prefix"]}
         and schemas["portfolio_id"] == {"type": "id", "prefix": "port"}
         and schemas["environment"]["values"] == ["PAPER", "TESTNET", "LIVE"]
+        and schemas["market_type"]["values"] == EXCHANGE["market_type_registry"]
+        and schemas["display_name"] == {"type": "string"}
+        and schemas["external_account_identity_state"]["values"]
+        == EXCHANGE["external_account_identity_contract"]["states"]
         and schemas.get("lifecycle_state", {}).get("values") == source["lifecycle_states"]
         and schemas.get("connection_state", {}).get("values") == source["connection_states"]
         and schemas.get("execution_authorization", {}).get("values")
@@ -1238,6 +1276,12 @@ def _parity_exchange_account(projection: dict[str, Any], source: dict[str, Any])
         and projection["record_key_fields"] == [source["id_field"]]
         and projection["semantic_constraints"]["lifecycle_timestamp_policy"]["source_pointer"]
         == "/exchange_account_contract/lifecycle_timestamp_policy"
+        and projection["semantic_constraints"]["lifecycle_timestamp_policy"]["state_rules"]
+        == source["lifecycle_timestamp_policy"]
+        and projection["semantic_constraints"]["build_time_exchange_registry_binding"][
+            "closed_build_time_registry"
+        ]
+        is True
     )
 
 
@@ -1263,6 +1307,12 @@ def _parity_credential_profile(projection: dict[str, Any], source: dict[str, Any
         and schemas.get("lifecycle_state", {}).get("values") == source["lifecycle_states"]
         and schemas.get("rotated_from_credential_profile_id")
         == source["intrinsic_field_schemas"]["rotated_from_credential_profile_id"]
+        and schemas.get("saas_sync_candidate")
+        == {
+            "type": "exact_literal",
+            "value": source["saas_sync_candidate"],
+            "source_pointer": "/credential_profile_contract/saas_sync_candidate",
+        }
         and projection.get("semantic_constraints", {}).get("lifecycle_timestamp_policy")
         == source["lifecycle_timestamp_policy"]
         and projection["record_key_fields"] == [source["id_field"]]
@@ -1485,6 +1535,122 @@ def test_m011_direct_upstream_validator_registry_is_source_derived(name: str) ->
     assert _direct_projection_is_source_derived(name, projection, source)
 
 
+def test_m05_exchange_account_build_time_registry_and_source_types_are_executable() -> None:
+    payload = _direct_payload("ExchangeAccount", "a", 1)
+    payload["display_name"] = ""
+    assert _validate_direct_upstream_payload("ExchangeAccount", payload)
+
+    payload["exchange_id"] = "unknown_exchange"
+    assert not _validate_direct_upstream_payload("ExchangeAccount", payload)
+
+    payload = _direct_payload("ExchangeAccount", "a", 1)
+    payload.update(exchange_id="generic_testnet_venue", environment="TESTNET", market_type="SPOT")
+    assert _validate_direct_upstream_payload("ExchangeAccount", payload)
+    payload["environment"] = "PAPER"
+    assert not _validate_direct_upstream_payload("ExchangeAccount", payload)
+    payload.update(environment="TESTNET", market_type="MARGIN")
+    assert not _validate_direct_upstream_payload("ExchangeAccount", payload)
+
+    payload = _direct_payload("ExchangeAccount", "a", 1)
+    payload["external_account_identity_state"] = {"canonical_reference": "invented"}
+    assert not _validate_direct_upstream_payload("ExchangeAccount", payload)
+
+
+@pytest.mark.parametrize("state", ["DRAFT", "ACTIVE", "DISABLED"])
+def test_m05_exchange_account_non_retired_lifecycle_requires_null_timestamp(state: str) -> None:
+    payload = _direct_payload("ExchangeAccount", "a", 1)
+    payload["lifecycle_state"] = state
+    assert _validate_direct_upstream_payload("ExchangeAccount", payload)
+    payload["retired_at_utc"] = "2026-01-01T00:00:00Z"
+    assert not _validate_direct_upstream_payload("ExchangeAccount", payload)
+
+
+@pytest.mark.parametrize(
+    ("created", "retired", "valid"),
+    [
+        ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00.1Z", True),
+        ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", True),
+        ("2026-01-01T00:00:00.1Z", "2026-01-01T00:00:00Z", False),
+        ("2026-01-01T00:00:00.123456700Z", "2026-01-01T00:00:00.123456701Z", True),
+        ("2026-01-01T00:00:00.123456701Z", "2026-01-01T00:00:00.123456700Z", False),
+        ("2026-01-01T00:00:00.123456789Z", "2026-01-01T00:00:00.123456789Z", True),
+        ("2026-01-01T00:00:00.1234567Z", "2026-01-01T00:00:00.123456700Z", True),
+        ("2026-01-01T00:00:00.000000002Z", "2026-01-01T00:00:00.000000001Z", False),
+    ],
+)
+def test_m05_exchange_account_retirement_uses_temporal_fractional_ordering(
+    created: str, retired: str, valid: bool
+) -> None:
+    payload = _direct_payload("ExchangeAccount", "a", 1)
+    payload.update(lifecycle_state="RETIRED", created_at_utc=created, retired_at_utc=retired)
+    assert _validate_direct_upstream_payload("ExchangeAccount", payload) is valid
+
+
+def test_m05_credential_profile_saas_literal_and_intrinsic_matrix_are_executable() -> None:
+    payload = _direct_payload("CredentialProfile metadata/reference", "a", 1)
+    assert payload["saas_sync_candidate"] is False
+    assert _validate_direct_upstream_payload("CredentialProfile metadata/reference", payload)
+    missing = copy.deepcopy(payload)
+    missing.pop("saas_sync_candidate")
+    assert not _validate_direct_upstream_payload("CredentialProfile metadata/reference", missing)
+    payload["saas_sync_candidate"] = True
+    assert not _validate_direct_upstream_payload("CredentialProfile metadata/reference", payload)
+
+    payload = _direct_payload("CredentialProfile metadata/reference", "a", 1)
+    payload["rotated_from_credential_profile_id"] = _canonical_fixture_id("cred", "b")
+    assert _validate_direct_upstream_payload("CredentialProfile metadata/reference", payload)
+    payload["rotated_from_credential_profile_id"] = _canonical_fixture_id("acct", "b")
+    assert not _validate_direct_upstream_payload("CredentialProfile metadata/reference", payload)
+
+
+@pytest.mark.parametrize(
+    ("state", "created", "retired", "valid"),
+    [
+        ("ACTIVE", "2026-01-01T00:00:00Z", None, True),
+        ("ACTIVE", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", False),
+        ("RETIRED", "2026-01-01T00:00:00Z", None, False),
+        ("RETIRED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00.1Z", True),
+        ("RETIRED", "2026-01-01T00:00:00.1Z", "2026-01-01T00:00:00Z", False),
+        ("RETIRED", "2026-01-01T00:00:00.123456700Z", "2026-01-01T00:00:00.123456701Z", True),
+        ("RETIRED", "2026-01-01T00:00:00.123456701Z", "2026-01-01T00:00:00.123456700Z", False),
+        ("RETIRED", "2026-01-01T00:00:00.123456789Z", "2026-01-01T00:00:00.123456789Z", True),
+        ("RETIRED", "2026-01-01T00:00:00.000000002Z", "2026-01-01T00:00:00.000000001Z", False),
+    ],
+)
+def test_m05_credential_profile_lifecycle_uses_temporal_fractional_ordering(
+    state: str, created: str, retired: str | None, valid: bool
+) -> None:
+    payload = _direct_payload("CredentialProfile metadata/reference", "a", 1)
+    payload.update(lifecycle_state=state, created_at_utc=created, retired_at_utc=retired)
+    assert (
+        _validate_direct_upstream_payload("CredentialProfile metadata/reference", payload) is valid
+    )
+
+
+def test_m011_timestamp_order_key_matches_m05_nanosecond_algorithm() -> None:
+    parsed = _parse_canonical_timestamp_order_key("2026-01-01T00:00:00.1234567Z")
+    assert parsed == (datetime(2026, 1, 1, 0, 0, 0), 123_456_700)
+    assert _parse_canonical_timestamp_order_key("2026-01-01T00:00:00.1234567890Z") is None
+
+
+def test_other_eleven_direct_contracts_remain_frozen() -> None:
+    expected = {
+        "StrategyInstance current lifecycle/config": "757311c7368e385b0242d7c80b8a3bf07537dcb6b7891fb766b8978409945c4e",
+        "kill-switch state/generation": "8d98c3a68379a6a2e89308f7e2458869afb0fa9f40b04d9d1b21782f1b556770",
+        "Command accepted request": "e58ec1f0430ac7fb854b5906f5686f680cf3fbbdb201628776b864a5cee9d4e6",
+        "Event": "73c58fb1ccc6b5ca07e126180872328e66af4189d1294a08d80ef040a6ff058c",
+        "OrderIntent": "82626955bcc9dd612d77def8a6392dd5f4b0c3af09dea4ae0d0ba53b2692e880",
+        "Fill": "3e1f9dcf87b5d8d8b8c1a3288bd8960a024e9a1abefd292b41492b3ec699741e",
+        "LedgerEntry": "e246e18743904a91dbbd12308f0b19ebc0fb707f9683c031e76e34bf77340bff",
+        "RiskDecision": "99b2a1acceb4f12130909a005feaea272650d402e85ac6d00cbde78ad53cbdb2",
+        "ExecutionLease immutable record": "daaa5bf1a42fba5dcc27df3ee6bc3d55c5b3141a5e19f21e5d88d4c4f58afaa1",
+        "SessionSecurityState current generation/state": "166b159d7df286c2ea3cc80f007f065955bf284ff5fe3ade4ef2dcb87dbfcf01",
+        "SecretMetadataProjection": "aa978f3fe6cd645b320463943da998e0d04a6ab6a2f07c8ec41d3b27c1ca9cee",
+    }
+    direct = MACHINE["backup_contract"]["direct_upstream_validator_registry"]
+    assert {name: _actual_fingerprint(direct[name]) for name in expected} == expected
+
+
 def test_discovered_direct_set_exactly_equals_explicit_executor_set() -> None:
     discovered = set(_direct_source_contracts())
     assert discovered == set(DIRECT_SOURCE_PARITY_EXECUTORS)
@@ -1617,6 +1783,20 @@ def test_every_nonempty_semantic_constraint_rejects_deep_leaf_mutation() -> None
         ("ExchangeAccount", ("lifecycle_timestamp_policy", "retired_field")),
         ("ExchangeAccount", ("lifecycle_timestamp_policy", "state_field")),
         ("ExchangeAccount", ("lifecycle_timestamp_policy", "source_pointer")),
+        ("ExchangeAccount", ("lifecycle_timestamp_policy", "state_rules", "DRAFT")),
+        ("ExchangeAccount", ("lifecycle_timestamp_policy", "state_rules", "DISABLED")),
+        (
+            "ExchangeAccount",
+            ("build_time_exchange_registry_binding", "exchange_id_rule"),
+        ),
+        (
+            "ExchangeAccount",
+            ("build_time_exchange_registry_binding", "environment_rule"),
+        ),
+        (
+            "ExchangeAccount",
+            ("build_time_exchange_registry_binding", "market_type_rule"),
+        ),
         (
             "CredentialProfile metadata/reference",
             ("lifecycle_timestamp_policy", "ACTIVE", "retired_at_utc"),
@@ -3576,6 +3756,34 @@ def _canonical_timestamp(value: Any) -> bool:
     return True
 
 
+def _parse_canonical_timestamp_order_key(value: Any) -> tuple[datetime, int] | None:
+    """Return the M0.5 UTC whole-second plus exact nanosecond ordering key."""
+
+    policy = EXCHANGE["timestamp_policy"]
+    if (
+        not isinstance(value, str)
+        or not value.endswith("Z")
+        or re.fullmatch(policy["regex"], value) is None
+    ):
+        return None
+    body = value[:-1]
+    whole_second, separator, fraction = body.partition(".")
+    if separator and not 1 <= len(fraction) <= 9:
+        return None
+    try:
+        exact_second = datetime.strptime(whole_second, "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+    nanoseconds = int(fraction.ljust(9, "0")) if separator else 0
+    return exact_second, nanoseconds
+
+
+def _canonical_timestamp_le(left: Any, right: Any) -> bool:
+    left_key = _parse_canonical_timestamp_order_key(left)
+    right_key = _parse_canonical_timestamp_order_key(right)
+    return left_key is not None and right_key is not None and left_key <= right_key
+
+
 def _canonical_fraction(value: Any, *, nullable: bool = False) -> bool:
     if value is None:
         return nullable
@@ -3769,8 +3977,10 @@ def _field_schema_valid(
         return _canonical_timestamp(value)
     if kind == "nullable_timestamp":
         return value is None or _canonical_timestamp(value)
-    if kind in {"non_empty_string", "string"}:
+    if kind == "non_empty_string":
         return isinstance(value, str) and bool(value)
+    if kind == "string":
+        return isinstance(value, str)
     if kind == "nullable_non_empty_string":
         return value is None or isinstance(value, str) and bool(value)
     if kind == "secure_store_reference":
@@ -3957,6 +4167,45 @@ def _validate_direct_upstream_payload(aspect: str, payload: Any) -> bool:
         payload, contract.get("semantic_constraints", {})
     ):
         return False
+    if aspect == "ExchangeAccount":
+        semantics = contract.get("semantic_constraints", {})
+        registry = semantics.get("build_time_exchange_registry_binding", {})
+        entries = registry.get("enabled_entries", [])
+        selected = next(
+            (entry for entry in entries if entry.get("exchange_id") == payload["exchange_id"]),
+            None,
+        )
+        if (
+            not isinstance(selected, dict)
+            or payload["environment"] not in selected.get("supported_environments", [])
+            or payload["market_type"] not in selected.get("supported_market_types", [])
+        ):
+            return False
+        lifecycle = semantics.get("lifecycle_timestamp_policy", {})
+        rules = lifecycle.get("state_rules", {})
+        state = payload["lifecycle_state"]
+        retired = payload["retired_at_utc"]
+        if state not in rules:
+            return False
+        if state in {"DRAFT", "ACTIVE", "DISABLED"} and retired is not None:
+            return False
+        if state == "RETIRED" and (
+            not _canonical_timestamp(retired)
+            or not _canonical_timestamp_le(payload["created_at_utc"], retired)
+        ):
+            return False
+    if aspect == "CredentialProfile metadata/reference":
+        state = payload["lifecycle_state"]
+        retired = payload["retired_at_utc"]
+        if state == "ACTIVE" and retired is not None:
+            return False
+        if state == "RETIRED" and (
+            not _canonical_timestamp(retired)
+            or not _canonical_timestamp_le(payload["created_at_utc"], retired)
+        ):
+            return False
+        if payload["rotated_from_credential_profile_id"] == payload["credential_profile_id"]:
+            return False
     if aspect == "Event":
         source = _source_value(MACHINE["backup_contract"]["representation_registry"][aspect])
         event_schema = source["event_schema_registry"].get(payload["event_type"])
@@ -4401,7 +4650,7 @@ def _direct_fixture_value(
     kind = schema.get("type")
     if field == "event_type":
         return "ORDER_PLANNED"
-    if kind == "constant":
+    if kind in {"constant", "exact_literal"}:
         return schema["value"]
     if kind == "id":
         return _canonical_fixture_id(schema["prefix"], suffix)
