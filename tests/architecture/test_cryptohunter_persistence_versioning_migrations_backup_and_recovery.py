@@ -4748,14 +4748,12 @@ def _derive_record_key(aspect: str, entry: dict[str, Any], payload: dict[str, An
             return (
                 f"migration-transition:{payload['migration_id']}:{payload['transition_revision']}"
             )
-        if strategy == "MIGRATION_ID_CURRENT_REVISION":
-            return f"migration-current:{payload['migration_id']}:{payload['current_transition_revision']}"
+        if strategy == "MIGRATION_ID_CURRENT":
+            return f"migration-current:{payload['migration_id']}"
         if strategy == "HANDOFF_ID_TRANSITION_REVISION":
             return f"handoff-transition:{payload['handoff_id']}:{payload['transition_revision']}"
-        if strategy == "HANDOFF_ID_CURRENT_REVISION":
-            return (
-                f"handoff-current:{payload['handoff_id']}:{payload['current_transition_revision']}"
-            )
+        if strategy == "HANDOFF_ID_CURRENT":
+            return f"handoff-current:{payload['handoff_id']}"
         return None
     except (KeyError, TypeError):
         return None

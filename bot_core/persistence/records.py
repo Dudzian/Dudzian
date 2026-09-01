@@ -842,9 +842,9 @@ def _derive_record_key(name: str, entry: Mapping[str, Any], payload: Mapping[str
         "BOOTSTRAP_SCOPE_GENERATION_REVISION_CLAIM": "bootstrap-history:{account_id}:{device_installation_id}:{bootstrap_generation}:{bootstrap_revision}:{claim_fingerprint_sha256}",
         "STATE_STORE_SCOPE_GENERATION": "state-store:{account_id}:{device_installation_id}:{state_store_identity_fingerprint_sha256}:{protected_freshness_generation}",
         "MIGRATION_ID_TRANSITION_REVISION": "migration-transition:{migration_id}:{transition_revision}",
-        "MIGRATION_ID_CURRENT_REVISION": "migration-current:{migration_id}:{current_transition_revision}",
+        "MIGRATION_ID_CURRENT": "migration-current:{migration_id}",
         "HANDOFF_ID_TRANSITION_REVISION": "handoff-transition:{handoff_id}:{transition_revision}",
-        "HANDOFF_ID_CURRENT_REVISION": "handoff-current:{handoff_id}:{current_transition_revision}",
+        "HANDOFF_ID_CURRENT": "handoff-current:{handoff_id}",
     }
     if strategy == "CANONICAL_OBJECT_ID_REVISION":
         return f"object:{payload['semantic_object']}:{payload['object_id']}:{payload['revision']}"

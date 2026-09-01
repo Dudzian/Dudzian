@@ -911,6 +911,37 @@
         "hash_recomputation_occurs_only_after_intrinsic_validation": true,
         "role": "local structural/semantic integrity only, not authority",
         "failure": "FAIL CLOSED / DURABLE STATE INTEGRITY FAILURE / NO EVIDENCE PUBLICATION / NO FINALIZE / RECOVERY REQUIRED"
+      },
+      "identity_stable_lifecycle_current_replacement": {
+        "representations": [
+          "Migration current state/designation",
+          "SecretHandoff current state/designation"
+        ],
+        "physical_key_semantics": "one identity-stable current slot per migration_id or handoff_id; lifecycle revision remains inside current_transition_revision and its designation fingerprint",
+        "transition_preconditions": [
+          "verified current slot contains exact expected identity, revision, state, and designation fingerprint",
+          "verified immutable history tail is the exact expected revision",
+          "next transition revision is contiguous and legal"
+        ],
+        "atomic_effect": [
+          "append exact next immutable transition PersistenceRecord",
+          "upsert exact next current PersistenceRecord at the same identity-stable record_key",
+          "commit StateStoreMetadata G+1 and StateStoreTransactionDescriptor G+1 in the same local SQLite semantic transaction"
+        ],
+        "descriptor_declaration": "current_record_mutations contains exactly the incoming same-key replacement carrier; immutable_history_appends contains exactly the next transition carrier",
+        "deletion_required": false,
+        "current_record_deletions_field_added": false,
+        "pre_post_binding": "descriptor pre-state fingerprint binds current revision N; descriptor post-state fingerprint binds replacement current revision N+1",
+        "idempotency": "an identical already-durable transition/current designation is zero-mutation success with no generation advance and no new descriptor",
+        "reject": [
+          "missing or multiple semantic current slots",
+          "stale expected current",
+          "current/history mismatch",
+          "conflicting same revision",
+          "revision gap",
+          "illegal transition"
+        ],
+        "architecture_counterexample_closed": "revision-dependent physical keys required an undeclared deletion to retire revision N; identity-stable keys make revision N to N+1 an ordinary declared same-key current mutation"
       }
     }
   },
@@ -1343,7 +1374,195 @@
       "current": "MigrationCurrentState only",
       "history": "MigrationTransitionRecord only",
       "MigrationRecord": "immutable descriptor/plan; no state field"
-    }
+    },
+    "no_persisted_fingerprint_self_reference": {
+      "absolute_rule": "no persisted record may contain a fingerprint of any projection that directly or transitively contains that persisted record",
+      "forbidden_cycles": [
+        "transition -> enclosing transaction descriptor -> transition",
+        "transition -> resulting StateStore state/history projection -> transition",
+        "current designation -> resulting StateStore state projection -> current designation"
+      ],
+      "failure": "CONTRACT INVALID / FAIL CLOSED"
+    },
+    "hash_dependency_dag": {
+      "topological_order": [
+        "fresh verified pre-transition StateStore snapshot",
+        "MigrationTransitionRecord pre-transition observation fields",
+        "transition and current payload fingerprints",
+        "current/history PersistenceRecord carriers",
+        "candidate current projection and immutable history projection",
+        "history_tail_fingerprint_sha256",
+        "post StateStore state_fingerprint_sha256",
+        "StateStoreTransactionDescriptor projection containing exact carriers",
+        "StateStoreTransactionDescriptor.transaction_fingerprint_sha256",
+        "atomic durable commit",
+        "fresh verified post-commit observation"
+      ],
+      "back_edges_allowed": false,
+      "transition_fields_known_before_enclosing_write": true,
+      "historical_cycle_rejected": "a target transaction or target state fingerprint cannot be embedded in a lifecycle carrier included by that target projection"
+    },
+    "source_baseline_plan_binding": {
+      "MigrationRecord": {
+        "pre_state_fingerprint_sha256": "exact source/baseline verified StateStore state fingerprint from which the plan was created",
+        "transaction_fingerprint_sha256": "exact source/baseline verified current StateStore transaction fingerprint",
+        "protected_freshness_generation": "exact source/baseline verified protected generation",
+        "post_state_fingerprint_sha256": "deterministically derived expected target state fingerprint computed from the complete candidate target current/history projection after lifecycle carriers have been built solely from pre-transaction values; never embedded in those carriers"
+      },
+      "candidate_only": true,
+      "mints_migration_permission": false,
+      "dynamic_revalidation": "all source baseline values are re-derived from one verified StateStore snapshot and compared exactly before execution"
+    },
+    "transition_pre_transaction_observation_binding": {
+      "applies_to_states": [
+        "PREPARED",
+        "APPLYING",
+        "DURABLE_MIGRATED",
+        "COMPLETED",
+        "FAILED"
+      ],
+      "transaction_fingerprint_sha256": "exact verified pre-transition StateStoreMetadata.transaction_fingerprint_sha256",
+      "state_fingerprint_sha256": "exact verified pre-transition StateStoreMetadata.state_fingerprint_sha256",
+      "protected_freshness_generation": "exact verified pre-transition StateStoreMetadata.protected_freshness_generation",
+      "single_snapshot_required": true,
+      "future_result_binding": false,
+      "meaning": "EXACT DURABLE OBSERVATION FROM WHICH THIS LIFECYCLE TRANSITION WAS AUTHORIZED"
+    },
+    "current_pre_transition_observation_binding": {
+      "authoritative_state_fingerprint_sha256": "equals latest MigrationTransitionRecord.state_fingerprint_sha256; this is the pre-transition observation, not the post-write current StateStore fingerprint",
+      "protected_freshness_generation": "equals latest MigrationTransitionRecord.protected_freshness_generation",
+      "revision_and_state": "equal exact latest transition revision and state"
+    },
+    "static_intent_authority": {
+      "chosen_model": "TRUSTED_SEALED_BUILD_TIME_MIGRATION_DEFINITION_REGISTRY",
+      "definition": "MigrationDefinition",
+      "definition_durability": "NON_DURABLE TRUSTED PRODUCT CONFIGURATION",
+      "definition_exact_fields": [
+        "migration_id",
+        "source_schema_version",
+        "target_schema_version",
+        "ordered_path",
+        "rollback_policy"
+      ],
+      "forbidden_definition_fields": [
+        "scope",
+        "environment",
+        "pre_state_fingerprint_sha256",
+        "post_state_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+        "protected_freshness_generation"
+      ],
+      "lookup": "migration_id -> exact MigrationDefinition -> registered deterministic planning/execution implementation",
+      "registration": "trusted build/package initialization only; no caller or runtime registration API",
+      "sealed_after_initialization": true,
+      "duplicate_migration_id": "FAIL CLOSED",
+      "fallback": false,
+      "nearest_version_lookup": false,
+      "path_only_execution_authority": false,
+      "unknown_migration_id": "FAIL CLOSED",
+      "empty_registry": "NO MIGRATIONS AUTHORIZED",
+      "candidate_static_match_required_before": [
+        "runtime source binding",
+        "lifecycle validation",
+        "terminal-state handling",
+        "recovery",
+        "target derivation",
+        "execution"
+      ],
+      "authority_scope": "select exact product-supported static migration definition and associated implementation only; does not mint M0.3 authority, runtime permission, StateStore authority, generation, or restore authority",
+      "migration_id_scope": "identifies one static product definition reusable across accounts, devices, environments, and source generations"
+    },
+    "durable_migrated_materialization_gate": {
+      "input": [
+        "exact trusted registry plan and registered operation",
+        "one fresh verified StateStore snapshot after commit",
+        "exact durable lifecycle current/history or recovery-equivalent target transaction recognition",
+        "exact current M0.3 protected authority observation"
+      ],
+      "required": [
+        "target schema equals registered target",
+        "current descriptor expected_current_generation equals plan source protected generation",
+        "current descriptor pre_state_fingerprint_sha256 equals plan source state fingerprint",
+        "descriptor chain continuity and exact scope/environment/StateStore identity",
+        "actual descriptor and metadata transaction fingerprint exact equality",
+        "actual metadata state fingerprint equals deterministically derived plan post_state_fingerprint_sha256",
+        "lifecycle current is DURABLE_MIGRATED or recovery proves the exact same migration transaction before establishing it"
+      ],
+      "transition_contains_actual_target_transaction_fingerprint": false,
+      "actual_target_fingerprints_source": "fresh verified post-commit StateStore and M0.3 PREPARE/current reconciliation"
+    },
+    "MigrationDefinition": {
+      "type": "object",
+      "durable": false,
+      "additionalProperties": false,
+      "required": [
+        "migration_id",
+        "source_schema_version",
+        "target_schema_version",
+        "ordered_path",
+        "rollback_policy"
+      ],
+      "field_class": "STATIC_REGISTRY_BOUND"
+    },
+    "MigrationRecord_field_authority_classification": {
+      "STATIC_REGISTRY_BOUND": [
+        "migration_id",
+        "source_schema_version",
+        "target_schema_version",
+        "ordered_path",
+        "rollback_policy"
+      ],
+      "RUNTIME_VERIFIED_SOURCE_BOUND": [
+        "scope",
+        "environment",
+        "pre_state_fingerprint_sha256",
+        "transaction_fingerprint_sha256",
+        "protected_freshness_generation"
+      ],
+      "RUNTIME_DERIVED_TARGET_BOUND": [
+        "post_state_fingerprint_sha256"
+      ]
+    },
+    "runtime_instance_binding": {
+      "input": [
+        "trusted MigrationDefinition",
+        "candidate MigrationRecord",
+        "one fresh verified StateStore snapshot",
+        "appropriate current M0.3 observation when orchestration requires it"
+      ],
+      "exact_checks": [
+        "candidate static fields equal MigrationDefinition",
+        "scope equals snapshot account_id and device_installation_id",
+        "environment equals snapshot environment",
+        "source schema equals definition and snapshot schema",
+        "pre_state_fingerprint_sha256 equals snapshot state fingerprint",
+        "transaction_fingerprint_sha256 equals snapshot transaction fingerprint",
+        "protected_freshness_generation equals snapshot protected generation",
+        "post_state_fingerprint_sha256 equals deterministic target derivation"
+      ],
+      "caller_values_are_authority": false,
+      "failure": "FAIL CLOSED"
+    },
+    "target_derivation": {
+      "inputs": [
+        "trusted MigrationDefinition and registered planner",
+        "fresh verified source snapshot",
+        "complete candidate target current/history projection",
+        "pre-known lifecycle carrier values under hash_dependency_dag"
+      ],
+      "output": "post_state_fingerprint_sha256",
+      "stored_in_MigrationDefinition": false,
+      "caller_assertion_authoritative": false,
+      "self_reference": false
+    },
+    "production_check_order": [
+      "resolve migration_id in trusted sealed registry",
+      "compare exact static candidate fields",
+      "bind runtime source fields from fresh verified snapshot and M0.3 observation",
+      "validate durable lifecycle relation",
+      "derive and verify target",
+      "execute or recover"
+    ]
   },
   "backup_contract": {
     "candidate_only": true,
@@ -5375,7 +5594,7 @@
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "373f053dc554f96e6b5bf0cb71e7e247c9063c2054aaa27a71644675abeae9d1",
-        "record_key_strategy": "MIGRATION_ID_CURRENT_REVISION"
+        "record_key_strategy": "MIGRATION_ID_CURRENT"
       },
       "Migration transition/history revisions": {
         "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
@@ -5405,7 +5624,7 @@
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "80d6392f1101f7c33d047f87fa1a9c0506ebce58d9936b82c7537b8a6e811247",
-        "record_key_strategy": "HANDOFF_ID_CURRENT_REVISION"
+        "record_key_strategy": "HANDOFF_ID_CURRENT"
       },
       "SecretHandoff transition/history revisions": {
         "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
@@ -8312,9 +8531,9 @@
     },
     "lifecycle_record_key_discriminators": {
       "MIGRATION_ID_TRANSITION_REVISION": "migration-transition",
-      "MIGRATION_ID_CURRENT_REVISION": "migration-current",
+      "MIGRATION_ID_CURRENT": "migration-current",
       "HANDOFF_ID_TRANSITION_REVISION": "handoff-transition",
-      "HANDOFF_ID_CURRENT_REVISION": "handoff-current"
+      "HANDOFF_ID_CURRENT": "handoff-current"
     },
     "restore_candidate_revalidation_orchestration": {
       "ordered_stages": [
@@ -9016,11 +9235,13 @@
         },
         "metadata_fingerprint_sha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$",
+          "derivation": "SHA-256 canonical JSON of exact reconciliation_metadata"
         },
         "operation_fingerprint_sha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$",
+          "derivation": "SHA-256 canonical JSON of exact identity-independent operation projection: scope, operation, old_reference, new_reference, metadata_fingerprint_sha256"
         },
         "reconciliation_metadata": {
           "type": "object"
@@ -9151,6 +9372,35 @@
       "current": "SecretHandoffCurrentState only",
       "history": "SecretHandoffTransitionRecord only",
       "SecretHandoffRecord": "immutable descriptor; no state field"
+    },
+    "descriptor_fingerprint_binding": {
+      "metadata_fingerprint_sha256": {
+        "projection": [
+          "reconciliation_metadata"
+        ],
+        "shape": "exact normalized JSON value of reconciliation_metadata",
+        "canonicalization": "M0.11 canonical JSON then SHA-256"
+      },
+      "operation_fingerprint_sha256": {
+        "projection": [
+          "scope",
+          "operation",
+          "old_reference",
+          "new_reference",
+          "metadata_fingerprint_sha256"
+        ],
+        "handoff_id_included": false,
+        "canonicalization": "M0.11 canonical JSON object then SHA-256",
+        "acyclic": true
+      },
+      "intrinsic_validation": "both fingerprints are recomputed and compared before descriptor use",
+      "lifecycle_binding": "every transition and current operation fingerprint must equal the intrinsically valid descriptor; every transition metadata fingerprint must equal it",
+      "same_handoff_id_substitution": "FAIL CLOSED"
+    },
+    "descriptor_immutability": {
+      "reconciliation_metadata": "deep immutable normalized JSON snapshot at construction/deserialization",
+      "caller_alias_retained": false,
+      "raw_secret_payload_allowed": false
     }
   },
   "writer_concurrency": {
@@ -9987,11 +10237,13 @@
         },
         "metadata_fingerprint_sha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$",
+          "derivation": "SHA-256 canonical JSON of exact reconciliation_metadata"
         },
         "operation_fingerprint_sha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$",
+          "derivation": "SHA-256 canonical JSON of exact identity-independent operation projection: scope, operation, old_reference, new_reference, metadata_fingerprint_sha256"
         },
         "reconciliation_metadata": {
           "type": "object"

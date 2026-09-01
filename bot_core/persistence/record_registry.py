@@ -3835,7 +3835,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "373f053dc554f96e6b5bf0cb71e7e247c9063c2054aaa27a71644675abeae9d1",
-        "record_key_strategy": "MIGRATION_ID_CURRENT_REVISION",
+        "record_key_strategy": "MIGRATION_ID_CURRENT",
     },
     "Migration transition/history revisions": {
         "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
@@ -3865,7 +3865,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "80d6392f1101f7c33d047f87fa1a9c0506ebce58d9936b82c7537b8a6e811247",
-        "record_key_strategy": "HANDOFF_ID_CURRENT_REVISION",
+        "record_key_strategy": "HANDOFF_ID_CURRENT",
     },
     "SecretHandoff transition/history revisions": {
         "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",

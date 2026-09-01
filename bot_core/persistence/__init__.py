@@ -7,6 +7,13 @@ from .transaction_descriptor import (
     StateStoreTransactionDescriptor,
     TransactionDescriptorError,
 )
+from .migration_protocol import (
+    MigrationCoordinator,
+    MigrationDefinition,
+    MigrationRecord,
+    MigrationRegistry,
+)
+from .secret_handoff import SecretHandoffCoordinator, SecretHandoffRecord
 
 __all__ = [
     "PersistenceRecord",
@@ -21,4 +28,10 @@ __all__ = [
     "StateStoreTransactionDescriptor",
     "TransactionDescriptorError",
     "validate_persistence_record",
+    "MigrationCoordinator",
+    "MigrationDefinition",
+    "MigrationRecord",
+    "MigrationRegistry",
+    "SecretHandoffCoordinator",
+    "SecretHandoffRecord",
 ]
