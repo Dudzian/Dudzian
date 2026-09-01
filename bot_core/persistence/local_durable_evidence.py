@@ -172,6 +172,21 @@ class LocalDurableEvidenceRegistry:
 
         return self.resolve_current(scope, ref) is not None
 
+    def invalidate_scope(self, scope: EvidenceScope) -> None:
+        """Remove accepted/current process-local evidence for exactly one scope."""
+
+        if not isinstance(scope, tuple) or len(scope) != 3:
+            raise ValueError("scope must contain the exact evidence identity")
+        with self._lock:
+            stale = [
+                ref
+                for ref, evidence in self._accepted.items()
+                if _intrinsically_valid(evidence) and self._scope(evidence) == scope
+            ]
+            for ref in stale:
+                del self._accepted[ref]
+            self._current.pop(scope, None)
+
     def resolve_current(
         self, scope: EvidenceScope, ref: object
     ) -> LocalDurableStateEvidence | None:
