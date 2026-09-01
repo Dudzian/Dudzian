@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from typing import Any
+from threading import RLock
+from typing import Any, Iterator
 
 from bot_core.persistence.fingerprints import (
     canonical_json,
@@ -184,23 +187,33 @@ class StateStoreSnapshot:
 class SQLiteStateStore:
     """SQLite-backed, fail-closed durable StateStore kernel."""
 
+    _handles_lock = RLock()
+    _open_handles: dict[Path, int] = {}
+
     def __init__(self, path: str | Path, *, busy_timeout_ms: int = 30_000) -> None:
-        self._path = Path(path)
+        self._path = Path(path).resolve()
+        self._closed = False
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(
-            self._path, isolation_level=None, timeout=busy_timeout_ms / 1000
-        )
-        try:
-            self._connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-            mode = self._connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
-            self._connection.execute("PRAGMA synchronous = FULL")
-            self._connection.execute("PRAGMA foreign_keys = ON")
-            if str(mode).lower() != "wal":
-                raise StateStoreError("SQLite did not enable WAL journal mode")
-            self._create_schema()
-        except BaseException:
-            self._connection.close()
-            raise
+        # Opening and registering use the same path gate as atomic replacement.
+        # Therefore no unregistered connection can retain the old inode while a
+        # successful replacement publishes a new main file at this pathname.
+        with self._handles_lock:
+            self._connection = sqlite3.connect(
+                self._path, isolation_level=None, timeout=busy_timeout_ms / 1000
+            )
+            try:
+                self._connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
+                mode = self._connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+                self._connection.execute("PRAGMA synchronous = FULL")
+                self._connection.execute("PRAGMA foreign_keys = ON")
+                if str(mode).lower() != "wal":
+                    raise StateStoreError("SQLite did not enable WAL journal mode")
+                self._create_schema()
+                self._open_handles[self._path] = self._open_handles.get(self._path, 0) + 1
+            except BaseException:
+                self._connection.close()
+                self._closed = True
+                raise
 
     def _create_schema(self) -> None:
         self._connection.execute("""CREATE TABLE IF NOT EXISTS state_store_metadata (
@@ -218,7 +231,108 @@ class SQLiteStateStore:
             PRIMARY KEY (state_store_identity_fingerprint_sha256, target_generation))""")
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._connection.close()
+        self._closed = True
+        with self._handles_lock:
+            remaining = self._open_handles.get(self._path, 1) - 1
+            if remaining:
+                self._open_handles[self._path] = remaining
+            else:
+                self._open_handles.pop(self._path, None)
+
+    @property
+    def path(self) -> Path:
+        """Return the filesystem identity of this store (not an authority reference)."""
+
+        return self._path
+
+    @classmethod
+    @contextmanager
+    def installation_gate(cls, live_path: str | Path) -> Iterator[None]:
+        """Require path quiescence, then serialize classify/checkpoint/install."""
+
+        target = Path(live_path).resolve()
+        with cls._handles_lock:
+            if cls._open_handles.get(target, 0):
+                raise StateStoreError("live StateStore has pre-existing process-local handles")
+            yield
+
+    def write_restored_snapshot(self, snapshot: StateStoreSnapshot) -> None:
+        """Write an exact verified snapshot into a new, empty isolated store.
+
+        This deliberately cannot repair or merge an initialized store.  Restore
+        orchestration verifies the resulting database through the ordinary read
+        path before it can be installed as live.
+        """
+
+        if not isinstance(snapshot, StateStoreSnapshot):
+            raise StateStoreError("restore input must be a StateStoreSnapshot")
+        self.verify_snapshot(snapshot)
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            if self._snapshot_inside_transaction() is not None:
+                raise StateStoreError("isolated restore target is not empty")
+            self._write_metadata(snapshot.metadata)
+            for table, records in (
+                ("state_store_current_records", snapshot.current_records),
+                ("state_store_immutable_history", snapshot.immutable_history),
+            ):
+                self._connection.executemany(
+                    f"INSERT INTO {table} (record_key, representation_name, record_json) VALUES (?, ?, ?)",
+                    [
+                        (record.record_key, record.representation_name, self._encode_record(record))
+                        for record in records
+                    ],
+                )
+            self._connection.executemany(
+                "INSERT INTO state_store_transaction_descriptors (state_store_identity_fingerprint_sha256, target_generation, descriptor_json) VALUES (?, ?, ?)",
+                [
+                    (
+                        descriptor.state_store_identity_fingerprint_sha256,
+                        descriptor.target_generation,
+                        canonical_json(descriptor.to_mapping()),
+                    )
+                    for descriptor in snapshot.transaction_descriptors
+                ],
+            )
+            self._connection.execute("COMMIT")
+        except BaseException:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+
+    def prepare_for_atomic_install(self) -> None:
+        """Checkpoint and close every handle owned by this SQLite store."""
+
+        try:
+            row = self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if row is None or row[0] != 0:
+                raise StateStoreError("SQLite WAL checkpoint did not complete")
+        finally:
+            self.close()
+
+    @staticmethod
+    def atomic_replace(isolated_path: str | Path, live_path: str | Path) -> None:
+        """Atomically replace one closed same-filesystem live database file."""
+
+        source, target = Path(isolated_path).resolve(), Path(live_path).resolve()
+        if source.parent.resolve() != target.parent.resolve():
+            raise StateStoreError("atomic restore requires a same-directory isolated store")
+        with SQLiteStateStore._handles_lock:
+            if SQLiteStateStore._open_handles.get(target, 0):
+                raise StateStoreError("live StateStore still has an open process-local handle")
+            try:
+                # For readable stores the caller has already checkpointed and
+                # closed SQLite. For corrupt/missing stores these are untrusted
+                # orphan artifacts. Removing them under the path gate before
+                # publishing the new main eliminates new-main/old-WAL recovery.
+                Path(f"{target}-wal").unlink(missing_ok=True)
+                Path(f"{target}-shm").unlink(missing_ok=True)
+                os.replace(source, target)
+            except OSError as exc:
+                raise StateStoreError("atomic StateStore replacement failed") from exc
 
     def __enter__(self) -> SQLiteStateStore:
         return self
