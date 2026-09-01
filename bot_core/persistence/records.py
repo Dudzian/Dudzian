@@ -24,6 +24,10 @@ from .record_registry import (
     LOCAL_SCHEMA_CONTRACTS,
     PERSISTENCE_RECORD_REGISTRY,
 )
+from .migration_execution_contract import (
+    MigrationExecutionContractError,
+    validate_raw_migration_execution_declaration,
+)
 
 
 class PersistenceRecordError(ValueError):
@@ -70,6 +74,7 @@ FIELD_VALIDATOR_CAPABILITIES = frozenset(
     {
         "array_of_exact_LimitResult",
         "array_of_exact_tuple",
+        "array",
         "array_of_canonical_id",
         "asset_reference",
         "canonical_exact_fraction_string",
@@ -88,6 +93,7 @@ FIELD_VALIDATOR_CAPABILITIES = frozenset(
         "exact_upstream_object",
         "id",
         "integer",
+        "json_value",
         "boolean",
         "non_empty_string",
         "nullable_canonical_exact_fraction_string",
@@ -709,8 +715,29 @@ def _validate_local_schema(value: object, schema: Mapping[str, object]) -> bool:
             and value >= schema.get("minimum", value)
         )
     if kind == "string":
-        return isinstance(value, str) and (
-            "pattern" not in schema or re.fullmatch(str(schema["pattern"]), value) is not None
+        return (
+            isinstance(value, str)
+            and len(value) >= schema.get("minLength", 0)
+            and ("pattern" not in schema or re.fullmatch(str(schema["pattern"]), value) is not None)
+        )
+    if kind == "json_value":
+        if value is None or isinstance(value, (str, bool, int)):
+            return True
+        if isinstance(value, float):
+            return math.isfinite(value)
+        if isinstance(value, (list, tuple)):
+            return all(_validate_local_schema(item, {"type": "json_value"}) for item in value)
+        if isinstance(value, Mapping):
+            return all(
+                isinstance(key, str) and _validate_local_schema(item, {"type": "json_value"})
+                for key, item in value.items()
+            )
+        return False
+    if kind == "array":
+        return (
+            isinstance(value, (list, tuple))
+            and len(value) >= schema.get("minItems", 0)
+            and all(_validate_local_schema(item, schema["items"]) for item in value)
         )
     return False
 
@@ -845,6 +872,7 @@ def _derive_record_key(name: str, entry: Mapping[str, Any], payload: Mapping[str
         "MIGRATION_ID_CURRENT": "migration-current:{migration_id}",
         "HANDOFF_ID_TRANSITION_REVISION": "handoff-transition:{handoff_id}:{transition_revision}",
         "HANDOFF_ID_CURRENT": "handoff-current:{handoff_id}",
+        "MIGRATION_ID_TARGET_GENERATION": "migration-execution:{migration_id}:{target_generation}",
     }
     if strategy == "CANONICAL_OBJECT_ID_REVISION":
         return f"object:{payload['semantic_object']}:{payload['object_id']}:{payload['revision']}"
@@ -1003,6 +1031,13 @@ def _validate_generic(record: PersistenceRecord, entry: Mapping[str, Any]) -> No
         schema = LOCAL_SCHEMA_CONTRACTS[entry["projection_schema_if_any"]]
         if not _validate_local_schema(payload, schema):
             raise PersistenceRecordError("local payload violates exact frozen schema")
+        if record.representation_name == "Migration execution declaration":
+            try:
+                validate_raw_migration_execution_declaration(payload)
+            except MigrationExecutionContractError as exc:
+                raise PersistenceRecordError(
+                    "migration declaration intrinsic validation failed"
+                ) from exc
     else:
         raise PersistenceRecordError("unsupported representation category")
     if record.record_key != _derive_record_key(record.representation_name, entry, payload):

@@ -1068,7 +1068,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "Migration current state/designation": "DURABLE AUTHORITATIVE CURRENT STATE",
     "Migration transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
     "SecretHandoff current state/designation": "DURABLE AUTHORITATIVE CURRENT STATE",
-    "SecretHandoff transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
+    "SecretHandoff transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "Migration execution declaration": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
   },
   "local_integrity_descriptors": {
     "StateStoreTransactionDescriptor": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY; not PersistenceRecord; excluded from canonical immutable history and state/history fingerprints"
@@ -1653,7 +1654,112 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "validate durable lifecycle relation",
     "derive and verify target",
     "execute or recover"
-  ]
+  ],
+  "migration_execution_declaration": {
+    "purpose": "exact durable declaration of permitted non-PersistenceRecord SQLite DDL/DML effects",
+    "authority": "LOCAL INTEGRITY AND RECOVERY EVIDENCE ONLY",
+    "not_authority": [
+      "independent execution authority",
+      "M0.3 authority",
+      "restore authority"
+    ],
+    "definition_fingerprint_projection": [
+      "migration_id",
+      "source_schema_version",
+      "target_schema_version",
+      "ordered_path",
+      "rollback_policy"
+    ],
+    "planner_boundary": "trusted deterministic planner returns immutable MigrationExecutionPlan and receives no SQLite connection or mutation authority",
+    "executor_owner": "StateStore only",
+    "operation_model": {
+      "kinds": [
+        "DDL",
+        "DML"
+      ],
+      "ordered": true,
+      "one_statement_per_operation": true,
+      "executescript_forbidden": true,
+      "statement_utf8_fingerprinted": true,
+      "parameters": "exact canonical JSON-safe immutable values",
+      "opaque_callbacks_forbidden": true
+    },
+    "sqlite_schema_fingerprint": {
+      "source": "sqlite_schema",
+      "projection_fields": [
+        "type",
+        "name",
+        "tbl_name",
+        "sql"
+      ],
+      "included_types": [
+        "table",
+        "index",
+        "view",
+        "trigger"
+      ],
+      "excluded_names": "sqlite_% including internal tables and implicit indexes",
+      "null_sql": "preserved as JSON null",
+      "ordering": [
+        "type",
+        "name",
+        "tbl_name",
+        "sql"
+      ],
+      "canonicalization": "UTF-8 canonical JSON then SHA-256"
+    },
+    "transaction_binding": {
+      "carrier_bucket": "immutable_history_appends",
+      "required_companions": [
+        "exact DURABLE_MIGRATED transition carrier"
+      ],
+      "descriptor_shape_changed": false,
+      "ordinary_transaction_projection_changed": false
+    },
+    "declared_non_record_effect_rule": "SQLITE DDL/DML IS PERMITTED ONLY WHEN EXACTLY DECLARED BY THE SINGLE ENCLOSING MigrationExecutionDeclaration; ANY EXTRA OR DIFFERENT EFFECT IS UNDECLARED MIGRATION EFFECT / FAIL CLOSED / ROLLBACK",
+    "state_store_owned_execution": [
+      "open one local SQLite transaction",
+      "verify exact source snapshot, generation, and SQLite schema fingerprint",
+      "execute exact ordered operations with SQLite single-statement boundary",
+      "record declared PersistenceRecord semantic effects",
+      "verify executed count and exact operation equality",
+      "verify target SQLite schema fingerprint and target schema version",
+      "verify candidate semantic post-state and lifecycle pre-transition binding",
+      "construct and verify unchanged 14-field descriptor containing declaration carrier",
+      "write metadata and commit atomically"
+    ],
+    "lost_ack_recognition": [
+      "target schema version and SQLite schema fingerprint",
+      "exact immutable declaration and trusted definition fingerprint",
+      "exact ordered operation-plan fingerprint",
+      "source state, history, generation and target generation",
+      "descriptor contains declaration carrier and binds metadata transaction fingerprint",
+      "exact lifecycle target relation"
+    ],
+    "restore_stage_2": "historical local evidence only; revalidate against trusted current definition, actual installed SQLite schema, descriptor/history/lifecycle and external M0.3 authority; never blindly execute or re-execute",
+    "hash_dependency_dag": [
+      "trusted MigrationDefinition",
+      "definition fingerprint",
+      "fresh source snapshot",
+      "MigrationExecutionPlan",
+      "ordered operation-plan fingerprint",
+      "pre/target SQLite schema fingerprints",
+      "MigrationExecutionDeclaration payload",
+      "declaration PersistenceRecord carrier",
+      "pre-known DURABLE_MIGRATED lifecycle carriers",
+      "candidate current/history projections",
+      "post StateStore state fingerprint",
+      "unchanged 14-field descriptor",
+      "transaction fingerprint",
+      "atomic commit",
+      "fresh post-commit verification"
+    ],
+    "forbidden_dependency_edges": [
+      "declaration -> enclosing transaction fingerprint",
+      "declaration -> resulting post-StateStore fingerprint",
+      "operation plan -> descriptor or descriptor-derived fingerprint"
+    ]
+  }
 }
 ```
 
@@ -5736,6 +5842,21 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
       "semantic_contract_fingerprint_sha256": "bc3f5ebe91ed245b3b360d003ef4f1ada7d48f62ac6b15c4ac103b2794f3d864",
       "record_key_strategy": "HANDOFF_ID_TRANSITION_REVISION"
+    },
+    "Migration execution declaration": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_LOCAL_SCHEMA",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/MigrationExecutionDeclaration",
+      "semantic_object_or_invariant": "Migration execution declaration",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "MigrationExecutionDeclaration",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "8c408cd1ed6a5d2a0d531f27aa2a9f3b891f2d81cec4bacf7ede91c5ea75b2aa",
+      "record_key_strategy": "MIGRATION_ID_TARGET_GENERATION"
     }
   },
   "canonical_durable_records": "array of exact PersistenceRecord carriers for durable current facts",
@@ -10772,6 +10893,197 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "pattern": "^[0-9a-f]{64}$"
       }
     }
+  },
+  "MigrationSqlOperation": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ordinal",
+      "operation_id",
+      "operation_kind",
+      "statement",
+      "parameters"
+    ],
+    "properties": {
+      "ordinal": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "operation_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "operation_kind": {
+        "enum": [
+          "DDL",
+          "DML"
+        ]
+      },
+      "statement": {
+        "type": "string",
+        "minLength": 1,
+        "single_sql_statement": true
+      },
+      "parameters": {
+        "type": "array",
+        "items": {
+          "type": "json_value"
+        },
+        "immutable_runtime_form": true
+      }
+    }
+  },
+  "MigrationExecutionDeclaration": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "migration_id",
+      "source_schema_version",
+      "target_schema_version",
+      "ordered_path",
+      "rollback_policy",
+      "migration_definition_fingerprint_sha256",
+      "account_id",
+      "device_installation_id",
+      "environment",
+      "state_store_identity_fingerprint_sha256",
+      "expected_current_generation",
+      "target_generation",
+      "pre_state_fingerprint_sha256",
+      "pre_history_tail_fingerprint_sha256",
+      "pre_sqlite_schema_fingerprint_sha256",
+      "target_sqlite_schema_fingerprint_sha256",
+      "operations",
+      "operation_plan_fingerprint_sha256"
+    ],
+    "properties": {
+      "migration_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "source_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "target_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "ordered_path": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "rollback_policy": {
+        "enum": [
+          "FORWARD_ONLY"
+        ]
+      },
+      "migration_definition_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "account_id": "canonical M0.2 AccountId",
+      "device_installation_id": "canonical M0.2 DeviceInstallationId",
+      "environment": {
+        "enum": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "state_store_identity_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "expected_current_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "target_generation": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "pre_state_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "pre_history_tail_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "pre_sqlite_schema_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "target_sqlite_schema_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "operations": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ordinal",
+            "operation_id",
+            "operation_kind",
+            "statement",
+            "parameters"
+          ],
+          "properties": {
+            "ordinal": {
+              "type": "integer",
+              "minimum": 1,
+              "boolean_allowed": false
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "operation_kind": {
+              "enum": [
+                "DDL",
+                "DML"
+              ]
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1,
+              "single_sql_statement": true
+            },
+            "parameters": {
+              "type": "array",
+              "items": {
+                "type": "json_value"
+              },
+              "immutable_runtime_form": true
+            }
+          }
+        },
+        "canonical_order": "ordinal_contiguous_1_to_N"
+      },
+      "operation_plan_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "intrinsic_constraints": [
+      "target_schema_version > source_schema_version",
+      "target_generation == expected_current_generation + 1",
+      "operation ordinals are contiguous 1..N",
+      "operation_plan_fingerprint_sha256 equals canonical JSON SHA-256 of exact ordered operations",
+      "no enclosing transaction or post-StateStore fingerprint fields"
+    ]
   }
 }
 ```

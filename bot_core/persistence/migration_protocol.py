@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from threading import RLock
-from typing import Any
+from typing import Any, Protocol
 
 from .fingerprints import canonical_json_sha256
 from .lifecycle_records import (
@@ -16,6 +16,8 @@ from .lifecycle_records import (
     validate_chain,
 )
 from .state_store import StateStoreSnapshot
+from .migration_execution import MigrationExecutionPlan
+from .migration_execution_contract import migration_definition_fingerprint
 
 MIGRATION_STATES = frozenset({"PREPARED", "APPLYING", "DURABLE_MIGRATED", "COMPLETED", "FAILED"})
 MIGRATION_TRANSITIONS = {
@@ -127,6 +129,15 @@ class MigrationDefinition:
             and record.target_schema_version == self.target_schema_version
             and record.ordered_path == self.ordered_path
             and record.rollback_policy == self.rollback_policy
+        )
+
+    def fingerprint(self) -> str:
+        return migration_definition_fingerprint(
+            migration_id=self.migration_id,
+            source_schema_version=self.source_schema_version,
+            target_schema_version=self.target_schema_version,
+            ordered_path=self.ordered_path,
+            rollback_policy=self.rollback_policy,
         )
 
 
@@ -242,15 +253,20 @@ def migration_target_materialized(
     )
 
 
-MigrationStep = Callable[[object], object]
+class MigrationPlanner(Protocol):
+    """Trusted deterministic planner without database mutation authority."""
+
+    def __call__(self, snapshot: StateStoreSnapshot) -> MigrationExecutionPlan: ...
 
 
 class MigrationRegistry:
     """Sealed trusted build-time registry; an empty registry authorizes nothing."""
 
-    def __init__(self, entries: Iterable[tuple[MigrationDefinition, MigrationStep]] = ()) -> None:
+    def __init__(
+        self, entries: Iterable[tuple[MigrationDefinition, MigrationPlanner]] = ()
+    ) -> None:
         definitions: dict[str, MigrationDefinition] = {}
-        steps: dict[str, MigrationStep] = {}
+        steps: dict[str, MigrationPlanner] = {}
         for definition, step in entries:
             if definition.migration_id in definitions:
                 raise MigrationError("duplicate migration definition ID")
@@ -271,7 +287,7 @@ class MigrationRegistry:
             raise MigrationError("candidate static fields do not match trusted definition")
         return definition
 
-    def resolve(self, record: MigrationRecord) -> MigrationStep:
+    def resolve(self, record: MigrationRecord) -> MigrationPlanner:
         self.assert_static_match(record)
         try:
             return self._steps[record.migration_id]
@@ -292,8 +308,8 @@ class MigrationCoordinator:
         current: Mapping[str, Any] | None,
         *,
         verified_schema_version: int,
-        apply_once: Callable[[MigrationStep], None],
-        finalize: Callable[[], None],
+        apply_once: Any,
+        finalize: Any,
     ) -> str:
         with self._lock:
             self._registry.assert_static_match(record)
