@@ -13,6 +13,13 @@ from .migration_protocol import (
     MigrationRecord,
     MigrationRegistry,
 )
+from .migration_execution import (
+    MigrationExecutionDeclaration,
+    MigrationExecutionError,
+    MigrationExecutionPlan,
+    MigrationSqlOperation,
+    sqlite_schema_fingerprint,
+)
 from .secret_handoff import SecretHandoffCoordinator, SecretHandoffRecord
 
 __all__ = [
@@ -32,6 +39,11 @@ __all__ = [
     "MigrationDefinition",
     "MigrationRecord",
     "MigrationRegistry",
+    "MigrationExecutionDeclaration",
+    "MigrationExecutionError",
+    "MigrationExecutionPlan",
+    "MigrationSqlOperation",
+    "sqlite_schema_fingerprint",
     "SecretHandoffCoordinator",
     "SecretHandoffRecord",
 ]

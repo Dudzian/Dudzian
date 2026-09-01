@@ -62,7 +62,7 @@
       "milestone_id": "M0.11",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json",
       "canonical_schema_version": "1.0.0",
-      "sha256": "358cf7873555a06b459cf16e4fa746be4c1c40397585e5794590d67f63e2dae7"
+      "sha256": "a68b507da723642e392ee6481cc9ae2fbfccb4030ac992184ff887a947927a4b"
     }
   ]
 }

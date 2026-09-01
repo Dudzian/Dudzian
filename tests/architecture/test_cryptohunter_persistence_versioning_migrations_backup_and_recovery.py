@@ -2999,6 +2999,7 @@ _EXPECTED_DURABILITY = {
     "LocalDurableEvidence accepted/current registry/designation": _E,
     "Migration current state/designation": _A,
     "Migration transition/history revisions": _H,
+    "Migration execution declaration": _H,
     "SecretHandoff current state/designation": _A,
     "SecretHandoff transition/history revisions": _H,
 }
@@ -3430,6 +3431,13 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "semantic_owner_milestone": "M0.11",
         "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
         "semantic_json_pointer": "/executable_boundary_schemas/MigrationTransitionRecord",
+        "carrier_strategy": "PERSISTENCE_RECORD",
+    },
+    "Migration execution declaration": {
+        "representation_category": "M011_LOCAL_SCHEMA",
+        "semantic_owner_milestone": "M0.11",
+        "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+        "semantic_json_pointer": "/executable_boundary_schemas/MigrationExecutionDeclaration",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "SecretHandoff current state/designation": {
@@ -4676,6 +4684,8 @@ def _validate_category_payload(aspect: str, entry: dict[str, Any], payload: Any)
         schema_name = entry["projection_schema_if_any"]
         if schema_name == "StateStoreMetadata":
             return _validate_metadata(payload) == "VALID"
+        if schema_name == "MigrationExecutionDeclaration":
+            return _validate_migration_execution_declaration(payload)
         validators = {
             "MigrationTransitionRecord": _validate_migration_transition,
             "MigrationCurrentState": _validate_migration_current,
@@ -4750,6 +4760,8 @@ def _derive_record_key(aspect: str, entry: dict[str, Any], payload: dict[str, An
             )
         if strategy == "MIGRATION_ID_CURRENT":
             return f"migration-current:{payload['migration_id']}"
+        if strategy == "MIGRATION_ID_TARGET_GENERATION":
+            return f"migration-execution:{payload['migration_id']}:{payload['target_generation']}"
         if strategy == "HANDOFF_ID_TRANSITION_REVISION":
             return f"handoff-transition:{payload['handoff_id']}:{payload['transition_revision']}"
         if strategy == "HANDOFF_ID_CURRENT":
@@ -5099,6 +5111,7 @@ def _payload_for(
                 "PREPARED" if revision == 1 else "APPLYING",
             ),
             "MigrationCurrentState": _migration_current(_migration_transition(1, None, "PREPARED")),
+            "MigrationExecutionDeclaration": _migration_execution_declaration(),
             "SecretHandoffTransitionRecord": _handoff_transition(
                 revision,
                 None if revision == 1 else "PREPARED",
@@ -5698,6 +5711,94 @@ def _validate_migration_current(value: Any) -> bool:
     )
 
 
+def _architecture_one_statement(statement: Any) -> bool:
+    if not isinstance(statement, str) or not statement.strip() or "\x00" in statement:
+        return False
+    quote: str | None = None
+    semicolons: list[int] = []
+    index = 0
+    while index < len(statement):
+        character = statement[index]
+        if quote is None and character in {"'", '"', "`", "["}:
+            quote = "]" if character == "[" else character
+        elif quote is not None and character == quote:
+            if quote != "]" and index + 1 < len(statement) and statement[index + 1] == quote:
+                index += 1
+            else:
+                quote = None
+        elif quote is None and character == ";":
+            semicolons.append(index)
+        index += 1
+    return quote is None and (not semicolons or semicolons == [len(statement.rstrip()) - 1])
+
+
+def _validate_migration_execution_declaration(value: Any) -> bool:
+    schema = MACHINE["executable_boundary_schemas"]["MigrationExecutionDeclaration"]
+    if not isinstance(value, dict) or set(value) != set(schema["required"]):
+        return False
+    if not all(
+        isinstance(value.get(name), str) and value[name]
+        for name in ("migration_id", "account_id", "device_installation_id")
+    ):
+        return False
+    if not _canonical_scope(value["account_id"], value["device_installation_id"]):
+        return False
+    if not all(
+        _positive(value.get(name))
+        for name in (
+            "source_schema_version",
+            "target_schema_version",
+            "expected_current_generation",
+            "target_generation",
+        )
+    ):
+        return False
+    if (
+        value["target_schema_version"] <= value["source_schema_version"]
+        or value["target_generation"] != value["expected_current_generation"] + 1
+        or value["environment"] not in {"PAPER", "TESTNET", "LIVE"}
+        or value["rollback_policy"] != "FORWARD_ONLY"
+    ):
+        return False
+    path = value["ordered_path"]
+    operations = value["operations"]
+    if (
+        not isinstance(path, list)
+        or not all(isinstance(item, str) and item for item in path)
+        or not isinstance(operations, list)
+        or not operations
+    ):
+        return False
+    operation_fields = {"ordinal", "operation_id", "operation_kind", "statement", "parameters"}
+    for ordinal, operation in enumerate(operations, 1):
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != operation_fields
+            or operation["ordinal"] != ordinal
+            or isinstance(operation["ordinal"], bool)
+            or not isinstance(operation["operation_id"], str)
+            or not operation["operation_id"]
+            or operation["operation_kind"] not in {"DDL", "DML"}
+            or not _architecture_one_statement(operation["statement"])
+            or not isinstance(operation["parameters"], list)
+        ):
+            return False
+        try:
+            json.dumps(operation["parameters"], allow_nan=False)
+        except (TypeError, ValueError):
+            return False
+    static = {
+        "migration_id": value["migration_id"],
+        "source_schema_version": value["source_schema_version"],
+        "target_schema_version": value["target_schema_version"],
+        "ordered_path": path,
+        "rollback_policy": value["rollback_policy"],
+    }
+    return value["migration_definition_fingerprint_sha256"] == _actual_fingerprint(
+        static
+    ) and value["operation_plan_fingerprint_sha256"] == _actual_fingerprint(operations)
+
+
 def _validate_handoff_transition(value: Any) -> bool:
     fields = {
         "handoff_id",
@@ -5778,6 +5879,70 @@ def _migration_transition(
         value, "transition_fingerprint_sha256"
     )
     return value
+
+
+def _migration_execution_declaration() -> dict[str, Any]:
+    operations = [
+        {
+            "ordinal": 1,
+            "operation_id": "create-widget",
+            "operation_kind": "DDL",
+            "statement": "CREATE TABLE widget(id INTEGER)",
+            "parameters": [],
+        }
+    ]
+    value = {
+        "migration_id": "migration-1",
+        "source_schema_version": 1,
+        "target_schema_version": 2,
+        "ordered_path": ["create-widget"],
+        "rollback_policy": "FORWARD_ONLY",
+        "migration_definition_fingerprint_sha256": "",
+        "account_id": SCOPE[0],
+        "device_installation_id": SCOPE[1],
+        "environment": "PAPER",
+        "state_store_identity_fingerprint_sha256": SHA,
+        "expected_current_generation": 1,
+        "target_generation": 2,
+        "pre_state_fingerprint_sha256": SHA,
+        "pre_history_tail_fingerprint_sha256": SHA,
+        "pre_sqlite_schema_fingerprint_sha256": SHA,
+        "target_sqlite_schema_fingerprint_sha256": "b" * 64,
+        "operations": operations,
+        "operation_plan_fingerprint_sha256": _actual_fingerprint(operations),
+    }
+    value["migration_definition_fingerprint_sha256"] = _actual_fingerprint(
+        {
+            name: value[name]
+            for name in (
+                "migration_id",
+                "source_schema_version",
+                "target_schema_version",
+                "ordered_path",
+                "rollback_policy",
+            )
+        }
+    )
+    return value
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.update(target_generation=3),
+        lambda value: value.update(target_schema_version=1),
+        lambda value: value["operations"][0].update(ordinal=2),
+        lambda value: value.update(migration_definition_fingerprint_sha256="0" * 64),
+        lambda value: value.update(operation_plan_fingerprint_sha256="0" * 64),
+        lambda value: value["operations"][0].update(statement="CREATE TABLE a(x); DROP TABLE a"),
+    ],
+)
+def test_migration_execution_architecture_oracle_rejects_intrinsic_corruption(
+    mutation: Any,
+) -> None:
+    value = _migration_execution_declaration()
+    mutation(value)
+    assert not _validate_migration_execution_declaration(value)
 
 
 def _migration_current(transition: dict[str, Any]) -> dict[str, Any]:
@@ -6270,9 +6435,9 @@ def test_exact_pending_g_plus_one_finalizes_and_mismatch_preserves_pending() -> 
     assert external == before
 
 
-def test_exact_63_row_representation_registry_closure() -> None:
+def test_exact_64_row_representation_registry_closure() -> None:
     registry = MACHINE["backup_contract"]["representation_registry"]
-    assert len(registry) == 63 and set(registry) == set(_EXPECTED_DURABILITY)
+    assert len(registry) == 64 and set(registry) == set(_EXPECTED_DURABILITY)
     assert all(
         entry["durability_class"] == _EXPECTED_DURABILITY[aspect]
         for aspect, entry in registry.items()
