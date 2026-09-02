@@ -28,6 +28,10 @@ from .migration_execution_contract import (
     MigrationExecutionContractError,
     validate_raw_migration_execution_declaration,
 )
+from .secret_handoff_contract import (
+    SecretHandoffContractError,
+    validate_raw_secret_handoff_record,
+)
 
 
 class PersistenceRecordError(ValueError):
@@ -872,6 +876,7 @@ def _derive_record_key(name: str, entry: Mapping[str, Any], payload: Mapping[str
         "MIGRATION_ID_CURRENT": "migration-current:{migration_id}",
         "HANDOFF_ID_TRANSITION_REVISION": "handoff-transition:{handoff_id}:{transition_revision}",
         "HANDOFF_ID_CURRENT": "handoff-current:{handoff_id}",
+        "HANDOFF_ID_DESCRIPTOR": "handoff-descriptor:{handoff_id}",
         "MIGRATION_ID_TARGET_GENERATION": "migration-execution:{migration_id}:{target_generation}",
     }
     if strategy == "CANONICAL_OBJECT_ID_REVISION":
@@ -1037,6 +1042,13 @@ def _validate_generic(record: PersistenceRecord, entry: Mapping[str, Any]) -> No
             except MigrationExecutionContractError as exc:
                 raise PersistenceRecordError(
                     "migration declaration intrinsic validation failed"
+                ) from exc
+        elif record.representation_name == "SecretHandoff immutable descriptor":
+            try:
+                validate_raw_secret_handoff_record(payload)
+            except SecretHandoffContractError as exc:
+                raise PersistenceRecordError(
+                    "secret handoff descriptor intrinsic validation failed"
                 ) from exc
     else:
         raise PersistenceRecordError("unsupported representation category")

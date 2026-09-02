@@ -40,6 +40,10 @@ ACCOUNT_ID = "acct_01890f4c-7b9a-7cc1-8a2b-123456789abc"
 OTHER_ACCOUNT_ID = "acct_01890f4c-7b9a-7cc1-8a2b-123456789abd"
 SESSION_ID = "run_01890f4c-7b9a-7cc1-8a2b-123456789abc"
 DEVICE_ID = "dev_01890f4c-7b9a-7cc1-8a2b-123456789abc"
+ScopePath = tuple[str | int, ...]
+_INDEXED_ACCOUNT_DEVICE_SCOPE_RULE = (
+    "scope is exactly [canonical account_id, canonical device_installation_id]"
+)
 
 
 def fingerprint(value: object) -> str:
@@ -146,12 +150,12 @@ def test_resolved_direct_constraints_are_deeply_source_derived() -> None:
 
 
 def test_scope_binding_table_has_exact_source_derived_paths() -> None:
-    expected: dict[str, dict[str, tuple[tuple[str, ...], ...]]] = {}
+    expected: dict[str, dict[str, tuple[ScopePath, ...]]] = {}
     direct = M011["backup_contract"]["direct_upstream_validator_registry"]
     for name in FROZEN_PERSISTENCE_NAMES:
         entry = CANONICAL_REGISTRY[name]
-        account: list[tuple[str, ...]] = []
-        device: list[tuple[str, ...]] = []
+        account: list[ScopePath] = []
+        device: list[ScopePath] = []
         category = entry["representation_category"]
         if name == "CryptoHunterAccount current record":
             account.append(("entity_id",))
@@ -174,17 +178,27 @@ def test_scope_binding_table_has_exact_source_derived_paths() -> None:
             if "device_installation_id" in exact:
                 device.append(("device_installation_id",))
         elif category == "M011_LOCAL_SCHEMA":
-            properties = LOCAL_SCHEMA_CONTRACTS[entry["projection_schema_if_any"]].get(
-                "properties", {}
-            )
+            schema = LOCAL_SCHEMA_CONTRACTS[entry["projection_schema_if_any"]]
+            properties = schema.get("properties", {})
             if "account_id" in properties:
                 account.append(("account_id",))
             if "device_installation_id" in properties:
                 device.append(("device_installation_id",))
+            if _INDEXED_ACCOUNT_DEVICE_SCOPE_RULE in schema.get("intrinsic_constraints", ()):
+                account.append(("scope", 0))
+                device.append(("scope", 1))
         if name in {"bootstrap consumed fence", "bootstrap accepted/consumption history"}:
             account = [("account_id",)]
             device = [("device_installation_id",)]
         expected[name] = {"account_paths": tuple(account), "device_paths": tuple(device)}
+    assert expected["SecretHandoff immutable descriptor"] == {
+        "account_paths": (("scope", 0),),
+        "device_paths": (("scope", 1),),
+    }
+    assert (
+        STATE_STORE_SCOPE_BINDINGS["SecretHandoff immutable descriptor"]
+        == expected["SecretHandoff immutable descriptor"]
+    )
     assert STATE_STORE_SCOPE_BINDINGS == expected
 
 

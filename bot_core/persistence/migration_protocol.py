@@ -36,6 +36,8 @@ class MigrationError(LifecycleIntegrityError):
 
 @dataclass(frozen=True, slots=True)
 class MigrationRecord:
+    """Ephemeral, snapshot-bound runtime candidate; never durable authority."""
+
     migration_id: str
     source_schema_version: int
     target_schema_version: int
@@ -218,6 +220,37 @@ def bind_runtime_migration_instance(
         or record.post_state_fingerprint_sha256 != derived_post_state_fingerprint_sha256
     ):
         raise MigrationError("runtime migration instance is not exactly source/target bound")
+
+
+def derive_runtime_migration_record(
+    definition: MigrationDefinition,
+    snapshot: StateStoreSnapshot,
+    *,
+    derived_post_state_fingerprint_sha256: str,
+) -> MigrationRecord:
+    """Reconstruct a runtime binding from sealed authority and a fresh snapshot."""
+
+    metadata = snapshot.metadata
+    record = MigrationRecord(
+        migration_id=definition.migration_id,
+        source_schema_version=definition.source_schema_version,
+        target_schema_version=definition.target_schema_version,
+        ordered_path=definition.ordered_path,
+        scope=(metadata.account_id, metadata.device_installation_id),
+        environment=metadata.environment,
+        pre_state_fingerprint_sha256=metadata.state_fingerprint_sha256,
+        post_state_fingerprint_sha256=derived_post_state_fingerprint_sha256,
+        transaction_fingerprint_sha256=metadata.transaction_fingerprint_sha256,
+        protected_freshness_generation=metadata.protected_freshness_generation,
+        rollback_policy=definition.rollback_policy,
+    )
+    bind_runtime_migration_instance(
+        definition,
+        record,
+        snapshot,
+        derived_post_state_fingerprint_sha256=derived_post_state_fingerprint_sha256,
+    )
+    return record
 
 
 def migration_target_materialized(

@@ -147,12 +147,17 @@ def _validate_record_store_scope(
             raise StateStoreError("RuntimeSession record is outside StateStore scope")
         return
 
-    def at_path(value: object, path: tuple[str, ...]) -> object:
+    def at_path(value: object, path: tuple[str | int, ...]) -> object:
         current = value
         for part in path:
-            if not isinstance(current, Mapping):
-                raise StateStoreError("record scope path is absent")
-            current = current[part]
+            if isinstance(part, int):
+                if not isinstance(current, (list, tuple)) or part >= len(current):
+                    raise StateStoreError("record scope index is absent")
+                current = current[part]
+            else:
+                if not isinstance(current, Mapping) or part not in current:
+                    raise StateStoreError("record scope path is absent")
+                current = current[part]
         return current
 
     binding = STATE_STORE_SCOPE_BINDINGS[record.representation_name]
@@ -544,6 +549,59 @@ class SQLiteStateStore:
             self.verify_snapshot(snapshot)
         return snapshot
 
+    @staticmethod
+    def _select_lifecycle(
+        snapshot: StateStoreSnapshot,
+        *,
+        identity: str,
+        current_name: str,
+        history_name: str,
+        current_key: str,
+        history_key_prefix: str,
+    ) -> tuple[PersistenceRecord | None, tuple[PersistenceRecord, ...]]:
+        current = tuple(
+            record
+            for record in snapshot.current_records
+            if record.representation_name == current_name and record.record_key == current_key
+        )
+        history = tuple(
+            sorted(
+                (
+                    record
+                    for record in snapshot.immutable_history
+                    if record.representation_name == history_name
+                    and record.record_key.startswith(history_key_prefix)
+                ),
+                key=lambda record: int(record.record_key.rsplit(":", 1)[1]),
+            )
+        )
+        if len(current) > 1:
+            raise StateStoreError(f"duplicate current lifecycle carrier for {identity}")
+        return (current[0] if current else None), history
+
+    def read_lifecycle_records(
+        self,
+        *,
+        identity: str,
+        current_name: str,
+        history_name: str,
+        current_key: str,
+        history_key_prefix: str,
+    ) -> tuple[PersistenceRecord | None, tuple[PersistenceRecord, ...]]:
+        """Read one lifecycle only from a fresh, fully verified SQLite snapshot."""
+
+        snapshot = self.read_verified_snapshot()
+        if snapshot is None:
+            raise StateStoreError("lifecycle read requires initialized StateStore")
+        return self._select_lifecycle(
+            snapshot,
+            identity=identity,
+            current_name=current_name,
+            history_name=history_name,
+            current_key=current_key,
+            history_key_prefix=history_key_prefix,
+        )
+
     def commit_prepared_metadata(
         self, metadata: StateStoreMetadata, *, expected_current_generation: int | None
     ) -> None:
@@ -823,4 +881,9 @@ class SQLiteStateStore:
             raise
 
 
-__all__ = ["SQLiteStateStore", "StateStoreError", "StateStoreMetadata", "StateStoreSnapshot"]
+__all__ = [
+    "SQLiteStateStore",
+    "StateStoreError",
+    "StateStoreMetadata",
+    "StateStoreSnapshot",
+]
