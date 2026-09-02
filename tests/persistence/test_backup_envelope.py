@@ -19,6 +19,12 @@ from bot_core.persistence.fingerprints import (
     transaction_fingerprint_sha256,
 )
 from bot_core.persistence.records import PersistenceRecord, validate_persistence_record
+from bot_core.persistence.secret_handoff import (
+    SecretHandoffRecord,
+    handoff_descriptor_carrier,
+    secret_metadata_fingerprint,
+    secret_operation_fingerprint,
+)
 from bot_core.persistence.state_store import SQLiteStateStore, StateStoreError
 from tests.persistence.test_state_store_records import _account, _commit, _metadata, _runtime
 from tests.architecture import (
@@ -109,6 +115,41 @@ def test_g2_contains_complete_chain_and_full_state(tmp_path: Path) -> None:
     last = backup.integrity_metadata.state_store_transaction_descriptors[-1]
     assert last.post_state_fingerprint_sha256 == backup.state_fingerprint_sha256
     assert last.transaction_fingerprint_sha256 == backup.transaction_fingerprint_sha256
+
+
+def test_secret_handoff_descriptor_round_trips_as_immutable_recovery_history(
+    tmp_path: Path,
+) -> None:
+    state_store_metadata = _metadata()
+    account = state_store_metadata.account_id
+    device = state_store_metadata.device_installation_id
+    metadata = {"cleanup": True}
+    metadata_hash = secret_metadata_fingerprint(metadata)
+    operation_hash = secret_operation_fingerprint(
+        scope=(account, device),
+        operation="ROTATE",
+        old_reference="secure-ref:old",
+        new_reference="secure-ref:new",
+        metadata_fingerprint_sha256=metadata_hash,
+    )
+    carrier = handoff_descriptor_carrier(
+        SecretHandoffRecord(
+            "handoff-1",
+            (account, device),
+            "ROTATE",
+            "secure-ref:old",
+            "secure-ref:new",
+            metadata_hash,
+            operation_hash,
+            metadata,
+        )
+    )
+    with SQLiteStateStore(tmp_path / "handoff.sqlite3") as store:
+        _commit(store, state_store_metadata, current=(_account(),), history=(carrier,))
+        backup = create_backup_envelope(store)
+    assert backup is not None and backup.immutable_recovery_history == (carrier,)
+    restored = validate_backup_envelope(backup.to_mapping())
+    assert restored.immutable_recovery_history == (carrier,)
 
 
 def test_real_store_and_backup_preserve_pin_verifier_revision(tmp_path: Path) -> None:

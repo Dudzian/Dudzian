@@ -9,13 +9,18 @@ from threading import RLock
 from types import MappingProxyType
 from typing import Any, Protocol
 
-from .fingerprints import canonical_json_sha256
-
 from .lifecycle_records import (
     LifecycleIntegrityError,
     fingerprint_without,
     persistence_record,
     validate_chain,
+)
+from .records import PersistenceRecord
+from .secret_handoff_contract import (
+    SecretHandoffContractError,
+    secret_metadata_fingerprint_value,
+    secret_operation_fingerprint_value,
+    validate_raw_secret_handoff_record,
 )
 
 HANDOFF_TRANSITIONS = {
@@ -77,6 +82,10 @@ class SecretHandoffRecord:
             metadata_fingerprint_sha256=self.metadata_fingerprint_sha256,
         ):
             raise SecretHandoffError("operation fingerprint does not bind exact operation")
+        try:
+            validate_raw_secret_handoff_record(self.to_mapping())
+        except SecretHandoffContractError as exc:
+            raise SecretHandoffError(str(exc)) from exc
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "SecretHandoffRecord":
@@ -103,7 +112,7 @@ class SecretHandoffRecord:
 
 def _freeze_json(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int, float)):
-        canonical_json_sha256(value)  # rejects non-finite JSON numbers
+        secret_metadata_fingerprint_value({"value": value})
         return value
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
@@ -123,7 +132,7 @@ def _thaw_json(value: Any) -> Any:
 
 
 def secret_metadata_fingerprint(metadata: Mapping[str, Any]) -> str:
-    return canonical_json_sha256(_thaw_json(metadata))
+    return secret_metadata_fingerprint_value(_thaw_json(metadata))
 
 
 def secret_operation_fingerprint(
@@ -134,14 +143,12 @@ def secret_operation_fingerprint(
     new_reference: str | None,
     metadata_fingerprint_sha256: str,
 ) -> str:
-    return canonical_json_sha256(
-        {
-            "scope": list(scope),
-            "operation": operation,
-            "old_reference": old_reference,
-            "new_reference": new_reference,
-            "metadata_fingerprint_sha256": metadata_fingerprint_sha256,
-        }
+    return secret_operation_fingerprint_value(
+        scope=scope,
+        operation=operation,
+        old_reference=old_reference,
+        new_reference=new_reference,
+        metadata_fingerprint_sha256=metadata_fingerprint_sha256,
     )
 
 
@@ -175,6 +182,25 @@ def handoff_current_carrier(value: Mapping[str, Any]):
         f"handoff-current:{value['handoff_id']}",
         value,
     )
+
+
+def handoff_descriptor_carrier(record: SecretHandoffRecord) -> PersistenceRecord:
+    """Create the immutable descriptor through the ordinary Stage-1 path."""
+
+    return persistence_record(
+        "SecretHandoff immutable descriptor",
+        f"handoff-descriptor:{record.handoff_id}",
+        record.to_mapping(),
+    )
+
+
+def validate_handoff_descriptor_identity(
+    existing: PersistenceRecord, candidate: PersistenceRecord
+) -> None:
+    """Fail closed when one durable handoff identity is assigned different facts."""
+
+    if existing.record_key != candidate.record_key or existing != candidate:
+        raise SecretHandoffError("immutable handoff descriptor conflict")
 
 
 def validate_secret_handoff_lifecycle(

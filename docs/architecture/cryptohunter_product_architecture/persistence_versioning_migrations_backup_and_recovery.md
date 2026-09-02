@@ -1069,7 +1069,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "Migration transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
     "SecretHandoff current state/designation": "DURABLE AUTHORITATIVE CURRENT STATE",
     "SecretHandoff transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
-    "Migration execution declaration": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
+    "Migration execution declaration": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "SecretHandoff immutable descriptor": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
   },
   "local_integrity_descriptors": {
     "StateStoreTransactionDescriptor": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY; not PersistenceRecord; excluded from canonical immutable history and state/history fingerprints"
@@ -1465,14 +1466,15 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
   "lifecycle_authority": {
     "current": "MigrationCurrentState only",
     "history": "MigrationTransitionRecord only",
-    "MigrationRecord": "immutable descriptor/plan; no state field"
+    "MigrationRecord": "ephemeral snapshot-bound runtime source/target binding; no persistence or restore authority"
   },
   "no_persisted_fingerprint_self_reference": {
     "absolute_rule": "no persisted record may contain a fingerprint of any projection that directly or transitively contains that persisted record",
     "forbidden_cycles": [
       "transition -> enclosing transaction descriptor -> transition",
       "transition -> resulting StateStore state/history projection -> transition",
-      "current designation -> resulting StateStore state projection -> current designation"
+      "current designation -> resulting StateStore state projection -> current designation",
+      "MigrationRecord.post_state_fingerprint_sha256 -> hypothetical MigrationRecord carrier -> candidate target projection -> MigrationRecord.post_state_fingerprint_sha256"
     ],
     "failure": "CONTRACT INVALID / FAIL CLOSED"
   },
@@ -1759,6 +1761,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "declaration -> resulting post-StateStore fingerprint",
       "operation plan -> descriptor or descriptor-derived fingerprint"
     ]
+  },
+  "runtime_durability": {
+    "classification": "EPHEMERAL RUNTIME / SNAPSHOT-BOUND CANDIDATE",
+    "PersistenceRecord_representation": null,
+    "durable_current_membership": false,
+    "immutable_history_membership": false,
+    "BackupEnvelope_membership": false,
+    "restore_authority": false,
+    "same_migration_id_dynamic_rebinding_allowed": true
+  },
+  "restart_rebinding": {
+    "inputs": [
+      "durable MigrationCurrentState and MigrationTransitionRecord identity",
+      "sealed MigrationRegistry MigrationDefinition",
+      "one fresh verified StateStore snapshot",
+      "trusted deterministic planner",
+      "validated lifecycle context"
+    ],
+    "output": "newly derived ephemeral MigrationRecord candidate",
+    "caller_runtime_values_are_authority": false,
+    "stale_runtime_binding": "FAIL CLOSED"
   }
 }
 ```
@@ -5813,6 +5836,21 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "semantic_contract_fingerprint_sha256": "dbfb4057660044098fabce44b2b641b75ad61926fd88fff9029eac3fa3f08cca",
       "record_key_strategy": "MIGRATION_ID_TRANSITION_REVISION"
     },
+    "SecretHandoff immutable descriptor": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_LOCAL_SCHEMA",
+      "semantic_owner_milestone": "M0.11",
+      "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/SecretHandoffRecord",
+      "semantic_object_or_invariant": "SecretHandoff immutable descriptor",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": "SecretHandoffRecord",
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "587fae17c57d45fb00144786a980f239bf3bcc92221e116f509e67494e11a7f6",
+      "record_key_strategy": "HANDOFF_ID_DESCRIPTOR"
+    },
     "SecretHandoff current state/designation": {
       "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
       "representation_category": "M011_LOCAL_SCHEMA",
@@ -8750,7 +8788,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "MIGRATION_ID_TRANSITION_REVISION": "migration-transition",
     "MIGRATION_ID_CURRENT": "migration-current",
     "HANDOFF_ID_TRANSITION_REVISION": "handoff-transition",
-    "HANDOFF_ID_CURRENT": "handoff-current"
+    "HANDOFF_ID_CURRENT": "handoff-current",
+    "HANDOFF_ID_DESCRIPTOR": "handoff-descriptor"
   },
   "restore_candidate_revalidation_orchestration": {
     "ordered_stages": [
@@ -8916,7 +8955,14 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "integrity_metadata.state_store_transaction_descriptors[*].current_record_mutations",
     "integrity_metadata.state_store_transaction_descriptors[*].immutable_history_appends"
   ],
-  "no_authority_by_descriptor_possession": true
+  "no_authority_by_descriptor_possession": true,
+  "secret_handoff_descriptor_restore": {
+    "collection": "immutable_recovery_history",
+    "round_trip": "exact carrier preserved",
+    "stage_1": "intrinsic carrier validity only",
+    "stage_2": "candidate historical evidence revalidated against lifecycle, scope, and external SecretHandoff reconciliation state",
+    "restorable_authority": false
+  }
 }
 ```
 
@@ -9633,6 +9679,48 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "reconciliation_metadata": "deep immutable normalized JSON snapshot at construction/deserialization",
     "caller_alias_retained": false,
     "raw_secret_payload_allowed": false
+  },
+  "durable_descriptor": {
+    "representation_name": "SecretHandoff immutable descriptor",
+    "projection_schema": "SecretHandoffRecord",
+    "durability": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "carrier_strategy": "PERSISTENCE_RECORD",
+    "restorable_authority": false,
+    "record_key_strategy": "HANDOFF_ID_DESCRIPTOR",
+    "physical_record_key": "handoff-descriptor:{handoff_id}",
+    "write_policy": "GENESIS ONLY; NO REPLACEMENT; NO DELETION",
+    "restart_role": "local durable candidate requiring external reconciliation"
+  },
+  "genesis_accounting": {
+    "one_StateStoreTransactionDescriptor": true,
+    "immutable_history_appends": [
+      "SecretHandoff immutable descriptor",
+      "SecretHandoffTransitionRecord revision 1 PREPARED"
+    ],
+    "current_record_mutations": [
+      "SecretHandoffCurrentState PREPARED"
+    ],
+    "partial_committed_window": "FORBIDDEN",
+    "subsequent_transitions": {
+      "immutable_history_appends": [
+        "one next SecretHandoffTransitionRecord revision"
+      ],
+      "current_record_mutations": [
+        "replace same-key SecretHandoffCurrentState"
+      ],
+      "descriptor_mutation": "FORBIDDEN"
+    }
+  },
+  "restart_reconstruction": {
+    "inputs": [
+      "SecretHandoff immutable descriptor",
+      "SecretHandoff transition history",
+      "SecretHandoff current designation"
+    ],
+    "result": "complete local durable handoff candidate",
+    "external_truth": "secure-store reconciliation required",
+    "caller_descriptor_required": false,
+    "process_local_attempted_state_authority": false
   }
 }
 ```
@@ -10462,40 +10550,46 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "reconciliation_metadata"
     ],
     "properties": {
-      "handoff_id": "canonical durable identifier",
-      "scope": [
-        "account_id",
-        "device_installation_id"
-      ],
+      "handoff_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scope": {
+        "type": "array",
+        "minItems": 2,
+        "items": {
+          "type": "json_value"
+        }
+      },
       "operation": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
       "old_reference": {
-        "type": [
-          "string",
-          "null"
-        ]
+        "type": "json_value"
       },
       "new_reference": {
-        "type": [
-          "string",
-          "null"
-        ]
+        "type": "json_value"
       },
       "metadata_fingerprint_sha256": {
         "type": "string",
-        "pattern": "^[0-9a-f]{64}$",
-        "derivation": "SHA-256 canonical JSON of exact reconciliation_metadata"
+        "pattern": "^[0-9a-f]{64}$"
       },
       "operation_fingerprint_sha256": {
         "type": "string",
-        "pattern": "^[0-9a-f]{64}$",
-        "derivation": "SHA-256 canonical JSON of exact identity-independent operation projection: scope, operation, old_reference, new_reference, metadata_fingerprint_sha256"
+        "pattern": "^[0-9a-f]{64}$"
       },
       "reconciliation_metadata": {
-        "type": "object"
+        "type": "json_value"
       }
-    }
+    },
+    "intrinsic_constraints": [
+      "scope is exactly [canonical account_id, canonical device_installation_id]",
+      "old_reference and new_reference are opaque string or null references, never secret payloads",
+      "reconciliation_metadata is a canonical JSON-safe object with string keys and finite numbers",
+      "metadata_fingerprint_sha256 is recomputed from exact reconciliation_metadata",
+      "operation_fingerprint_sha256 is recomputed from scope, operation, old_reference, new_reference, and metadata_fingerprint_sha256"
+    ]
   },
   "MigrationTransitionRecord": {
     "type": "object",
@@ -10769,6 +10863,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "LocalDurableEvidence accepted/current registry/designation",
           "Migration current state/designation",
           "Migration transition/history revisions",
+          "SecretHandoff immutable descriptor",
           "SecretHandoff current state/designation",
           "SecretHandoff transition/history revisions"
         ]
@@ -11133,7 +11228,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
   "architecture_only": true,
   "all_adversarial_invariants_green": true,
   "true_upstream_semantic_gaps": 0,
-  "representation_registry": "63/63 structured, zero true upstream semantic gaps, no synthetic record kinds",
+  "representation_registry": "65/65 structured, zero true upstream semantic gaps, no synthetic record kinds",
   "immutable_upstream_provenance": "ALL_WRAPPERS_DIRECT_OR_LOSSLESS_COMPOSITE_SOURCE_DERIVED",
   "immutable_history_wrapper_count": 14
 }

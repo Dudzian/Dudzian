@@ -3000,6 +3000,7 @@ _EXPECTED_DURABILITY = {
     "Migration current state/designation": _A,
     "Migration transition/history revisions": _H,
     "Migration execution declaration": _H,
+    "SecretHandoff immutable descriptor": _H,
     "SecretHandoff current state/designation": _A,
     "SecretHandoff transition/history revisions": _H,
 }
@@ -3438,6 +3439,13 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "semantic_owner_milestone": "M0.11",
         "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
         "semantic_json_pointer": "/executable_boundary_schemas/MigrationExecutionDeclaration",
+        "carrier_strategy": "PERSISTENCE_RECORD",
+    },
+    "SecretHandoff immutable descriptor": {
+        "representation_category": "M011_LOCAL_SCHEMA",
+        "semantic_owner_milestone": "M0.11",
+        "semantic_artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+        "semantic_json_pointer": "/executable_boundary_schemas/SecretHandoffRecord",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "SecretHandoff current state/designation": {
@@ -4686,6 +4694,48 @@ def _validate_category_payload(aspect: str, entry: dict[str, Any], payload: Any)
             return _validate_metadata(payload) == "VALID"
         if schema_name == "MigrationExecutionDeclaration":
             return _validate_migration_execution_declaration(payload)
+        if schema_name == "SecretHandoffRecord":
+            fields = {
+                "handoff_id",
+                "scope",
+                "operation",
+                "old_reference",
+                "new_reference",
+                "metadata_fingerprint_sha256",
+                "operation_fingerprint_sha256",
+                "reconciliation_metadata",
+            }
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != fields
+                or not isinstance(payload["handoff_id"], str)
+                or not payload["handoff_id"]
+                or not isinstance(payload["scope"], list)
+                or len(payload["scope"]) != 2
+                or not _canonical_scope(*payload["scope"])
+                or not isinstance(payload["operation"], str)
+                or not payload["operation"]
+                or any(
+                    value is not None and not isinstance(value, str)
+                    for value in (payload["old_reference"], payload["new_reference"])
+                )
+                or not isinstance(payload["reconciliation_metadata"], dict)
+            ):
+                return False
+            metadata_fingerprint = _actual_fingerprint(payload["reconciliation_metadata"])
+            operation_fingerprint = _actual_fingerprint(
+                {
+                    "scope": payload["scope"],
+                    "operation": payload["operation"],
+                    "old_reference": payload["old_reference"],
+                    "new_reference": payload["new_reference"],
+                    "metadata_fingerprint_sha256": metadata_fingerprint,
+                }
+            )
+            return (
+                payload["metadata_fingerprint_sha256"] == metadata_fingerprint
+                and payload["operation_fingerprint_sha256"] == operation_fingerprint
+            )
         validators = {
             "MigrationTransitionRecord": _validate_migration_transition,
             "MigrationCurrentState": _validate_migration_current,
@@ -4766,6 +4816,8 @@ def _derive_record_key(aspect: str, entry: dict[str, Any], payload: dict[str, An
             return f"handoff-transition:{payload['handoff_id']}:{payload['transition_revision']}"
         if strategy == "HANDOFF_ID_CURRENT":
             return f"handoff-current:{payload['handoff_id']}"
+        if strategy == "HANDOFF_ID_DESCRIPTOR":
+            return f"handoff-descriptor:{payload['handoff_id']}"
         return None
     except (KeyError, TypeError):
         return None
@@ -5103,6 +5155,26 @@ def _payload_for(
             "source_fingerprint_sha256": entry["semantic_contract_fingerprint_sha256"],
         }
     if category == "M011_LOCAL_SCHEMA":
+        handoff_metadata = {"cleanup": True}
+        metadata_fingerprint = _actual_fingerprint(handoff_metadata)
+        handoff_record = {
+            "handoff_id": "handoff-1",
+            "scope": [SCOPE[0], SCOPE[1]],
+            "operation": "ROTATE",
+            "old_reference": "secure-ref:old",
+            "new_reference": "secure-ref:new",
+            "metadata_fingerprint_sha256": metadata_fingerprint,
+            "operation_fingerprint_sha256": _actual_fingerprint(
+                {
+                    "scope": [SCOPE[0], SCOPE[1]],
+                    "operation": "ROTATE",
+                    "old_reference": "secure-ref:old",
+                    "new_reference": "secure-ref:new",
+                    "metadata_fingerprint_sha256": metadata_fingerprint,
+                }
+            ),
+            "reconciliation_metadata": handoff_metadata,
+        }
         return {
             "StateStoreMetadata": _metadata(protected_freshness_generation=revision),
             "MigrationTransitionRecord": _migration_transition(
@@ -5112,6 +5184,7 @@ def _payload_for(
             ),
             "MigrationCurrentState": _migration_current(_migration_transition(1, None, "PREPARED")),
             "MigrationExecutionDeclaration": _migration_execution_declaration(),
+            "SecretHandoffRecord": handoff_record,
             "SecretHandoffTransitionRecord": _handoff_transition(
                 revision,
                 None if revision == 1 else "PREPARED",
@@ -6435,9 +6508,9 @@ def test_exact_pending_g_plus_one_finalizes_and_mismatch_preserves_pending() -> 
     assert external == before
 
 
-def test_exact_64_row_representation_registry_closure() -> None:
+def test_exact_65_row_representation_registry_closure() -> None:
     registry = MACHINE["backup_contract"]["representation_registry"]
-    assert len(registry) == 64 and set(registry) == set(_EXPECTED_DURABILITY)
+    assert len(registry) == 65 and set(registry) == set(_EXPECTED_DURABILITY)
     assert all(
         entry["durability_class"] == _EXPECTED_DURABILITY[aspect]
         for aspect, entry in registry.items()
@@ -6451,6 +6524,35 @@ def test_exact_64_row_representation_registry_closure() -> None:
         for entry in registry.values()
     )
     assert MACHINE["closure_conditions"]["true_upstream_semantic_gaps"] == 0
+
+
+def test_asymmetric_lifecycle_descriptor_model_is_frozen() -> None:
+    registry = MACHINE["backup_contract"]["representation_registry"]
+    assert all(
+        entry["projection_schema_if_any"] != "MigrationRecord" for entry in registry.values()
+    )
+    descriptor = registry["SecretHandoff immutable descriptor"]
+    assert descriptor["record_key_strategy"] == "HANDOFF_ID_DESCRIPTOR"
+    assert descriptor["restorable_authority"] is False
+
+
+def test_immutable_handoff_descriptor_is_excluded_from_current_replacement() -> None:
+    replacement = MACHINE["state_store_fingerprint_contract"]["durable_transaction_descriptor"][
+        "identity_stable_lifecycle_current_replacement"
+    ]
+    assert replacement["representations"] == [
+        "Migration current state/designation",
+        "SecretHandoff current state/designation",
+    ]
+    assert "SecretHandoff immutable descriptor" not in replacement["representations"]
+
+    handoff = MACHINE["external_resource_handoff"]
+    assert (
+        handoff["durable_descriptor"]["write_policy"] == "GENESIS ONLY; NO REPLACEMENT; NO DELETION"
+    )
+    assert handoff["genesis_accounting"]["subsequent_transitions"]["descriptor_mutation"] == (
+        "FORBIDDEN"
+    )
 
 
 @pytest.mark.parametrize("aspect", list(_EXPECTED_DURABILITY))

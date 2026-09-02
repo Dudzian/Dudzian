@@ -15,11 +15,13 @@ from bot_core.persistence.secret_handoff import (
 )
 
 H = "a" * 64
+ACCOUNT = "acct_01890f3a-2b4c-7abc-8def-0123456789ab"
+DEVICE = "dev_01890f3a-2b4c-7abc-8def-0123456789ab"
 
 
 def descriptor(**changes):
     metadata = changes.pop("reconciliation_metadata", {"cleanup": True})
-    scope = changes.pop("scope", ("acct", "dev"))
+    scope = changes.pop("scope", (ACCOUNT, DEVICE))
     operation = changes.pop("operation", "ROTATE")
     old_reference = changes.pop("old_reference", "ref:old")
     new_reference = changes.pop("new_reference", "ref:new")
@@ -182,8 +184,8 @@ def test_descriptor_deeply_snapshots_reconciliation_metadata():
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("scope", ("other", "dev")),
-        ("scope", ("acct", "other")),
+        ("scope", ("acct_01890f3a-2b4c-7abc-8def-0123456789ac", DEVICE)),
+        ("scope", (ACCOUNT, "dev_01890f3a-2b4c-7abc-8def-0123456789ac")),
         ("operation", "REPLACE"),
         ("old_reference", "ref:different-old"),
         ("new_reference", "ref:different-new"),
