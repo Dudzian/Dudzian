@@ -21,6 +21,7 @@ from .migration_execution import (
     sqlite_schema_fingerprint,
 )
 from .migration_execution_engine import MigrationExecutionCoordinator
+from .migration_completion import DurableMigrationCompletionCoordinator
 from .secret_handoff import SecretHandoffCoordinator, SecretHandoffRecord
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "MigrationRecord",
     "MigrationRegistry",
     "MigrationExecutionDeclaration",
+    "DurableMigrationCompletionCoordinator",
     "MigrationExecutionCoordinator",
     "MigrationExecutionError",
     "MigrationExecutionPlan",
