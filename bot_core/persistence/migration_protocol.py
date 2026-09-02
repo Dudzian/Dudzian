@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from threading import RLock
 from typing import Any, Protocol
 
@@ -15,7 +15,11 @@ from .lifecycle_records import (
     persistence_record,
     validate_chain,
 )
-from .state_store import StateStoreSnapshot
+from .protected_freshness_handoff import (
+    ProtectedFreshnessHandoffCoordinator,
+    ProtectedFreshnessHandoffError,
+)
+from .state_store import SQLiteStateStore, StateStoreSnapshot
 from .migration_execution import MigrationExecutionPlan
 from .migration_execution_contract import migration_definition_fingerprint
 
@@ -370,3 +374,199 @@ class MigrationCoordinator:
 
 
 PRODUCTION_MIGRATION_REGISTRY = MigrationRegistry()
+
+
+@dataclass(frozen=True, slots=True)
+class DurableMigrationLifecycle:
+    """Validated durable view of one sealed migration definition."""
+
+    definition: MigrationDefinition
+    history: tuple[Mapping[str, Any], ...]
+    current: Mapping[str, Any] | None
+
+
+class DurableMigrationLifecycleCoordinator:
+    """StateStore-backed semantic CAS entry points for migration lifecycle facts."""
+
+    def __init__(
+        self,
+        store: SQLiteStateStore,
+        registry: MigrationRegistry,
+        protected: ProtectedFreshnessHandoffCoordinator,
+    ) -> None:
+        self._store = store
+        self._registry = registry
+        self._protected = protected
+
+    def discover(self, migration_id: str) -> DurableMigrationLifecycle:
+        snapshot = self._store.read_verified_snapshot()
+        if snapshot is None:
+            raise MigrationError("migration lifecycle requires initialized StateStore")
+        return self._view(snapshot, migration_id)
+
+    def _view(self, snapshot: StateStoreSnapshot, migration_id: str) -> DurableMigrationLifecycle:
+        definition = self._registry.definition_for(migration_id)
+        current_record, history_records = SQLiteStateStore._select_lifecycle(
+            snapshot,
+            identity=migration_id,
+            current_name="Migration current state/designation",
+            history_name="Migration transition/history revisions",
+            current_key=f"migration-current:{migration_id}",
+            history_key_prefix=f"migration-transition:{migration_id}:",
+        )
+        history = tuple(record.payload for record in history_records)
+        current = None if current_record is None else current_record.payload
+        try:
+            validate_chain(
+                history,
+                current,
+                identity_field="migration_id",
+                allowed=MIGRATION_TRANSITIONS,
+                transition_hash_field="transition_fingerprint_sha256",
+                current_hash_field="designation_fingerprint_sha256",
+            )
+            if current is not None and (
+                current["authoritative_state_fingerprint_sha256"]
+                != history[-1]["state_fingerprint_sha256"]
+                or current["protected_freshness_generation"]
+                != history[-1]["protected_freshness_generation"]
+            ):
+                raise MigrationError("current designation is not bound to latest observation")
+        except (LifecycleIntegrityError, KeyError, TypeError, ValueError) as exc:
+            raise MigrationError(str(exc)) from exc
+        return DurableMigrationLifecycle(definition, history, current)
+
+    def prepare(self, migration_id: str) -> DurableMigrationLifecycle:
+        return self._advance(migration_id, expected=None, target="PREPARED")
+
+    def begin_applying(self, migration_id: str) -> DurableMigrationLifecycle:
+        return self._advance(migration_id, expected="PREPARED", target="APPLYING")
+
+    def fail(self, migration_id: str) -> DurableMigrationLifecycle:
+        return self._advance(
+            migration_id, expected=("PREPARED", "APPLYING", "DURABLE_MIGRATED"), target="FAILED"
+        )
+
+    def complete(self, migration_id: str) -> DurableMigrationLifecycle:
+        return self._advance(migration_id, expected="DURABLE_MIGRATED", target="COMPLETED")
+
+    def record_durable_migrated(
+        self, migration_id: str, materialization: MigrationRecord
+    ) -> DurableMigrationLifecycle:
+        if materialization.migration_id != migration_id:
+            raise MigrationError("materialization proof identity mismatch")
+        return self._advance(
+            migration_id,
+            expected="APPLYING",
+            target="DURABLE_MIGRATED",
+            materialization=materialization,
+        )
+
+    def _advance(
+        self,
+        migration_id: str,
+        *,
+        expected: str | tuple[str, ...] | None,
+        target: str,
+        materialization: MigrationRecord | None = None,
+    ) -> DurableMigrationLifecycle:
+        lifecycle = self.discover(migration_id)
+        state = None if lifecycle.current is None else str(lifecycle.current["state"])
+        if state == target:
+            return self._recover_duplicate(migration_id, target)
+        allowed_predecessors = (expected,) if isinstance(expected, str) else expected
+        if state is not None or expected is not None:
+            if allowed_predecessors is None or state not in allowed_predecessors:
+                raise MigrationError(f"expected {expected!r}, found {state!r}")
+
+        def build(source: StateStoreSnapshot):
+            authoritative = self._view(source, migration_id)
+            source_state = (
+                None if authoritative.current is None else str(authoritative.current["state"])
+            )
+            if source_state == target:
+                raise _LifecycleAlreadyApplied
+            if source_state is not None or expected is not None:
+                if allowed_predecessors is None or source_state not in allowed_predecessors:
+                    raise MigrationError(f"expected {expected!r}, found {source_state!r}")
+            if materialization is not None and not migration_target_materialized(
+                authoritative.definition, materialization, source
+            ):
+                raise MigrationError("verified migration target is not materially proven")
+            required_schema = (
+                authoritative.definition.source_schema_version
+                if target in {"PREPARED", "APPLYING"}
+                else authoritative.definition.target_schema_version
+                if target == "COMPLETED"
+                else None
+            )
+            if (
+                required_schema is not None
+                and source.metadata.state_store_schema_version != required_schema
+            ):
+                raise MigrationError(
+                    f"{target} requires verified StateStore schema {required_schema}"
+                )
+            observation = source.metadata
+            revision = len(authoritative.history) + 1
+            transition = migration_transition(
+                migration_id=migration_id,
+                transition_revision=revision,
+                previous_state=source_state,
+                state=target,
+                transaction_fingerprint_sha256=observation.transaction_fingerprint_sha256,
+                state_fingerprint_sha256=observation.state_fingerprint_sha256,
+                protected_freshness_generation=observation.protected_freshness_generation,
+            )
+            current = migration_current(
+                migration_id=migration_id,
+                current_transition_revision=revision,
+                state=target,
+                authoritative_state_fingerprint_sha256=observation.state_fingerprint_sha256,
+                protected_freshness_generation=observation.protected_freshness_generation,
+            )
+            return (
+                replace(
+                    observation,
+                    protected_freshness_generation=observation.protected_freshness_generation + 1,
+                ),
+                (migration_current_carrier(current),),
+                (migration_transition_carrier(transition),),
+            )
+
+        try:
+            self._protected.advance_protected_mutation(build)
+        except _LifecycleAlreadyApplied:
+            return self._recover_duplicate(migration_id, target)
+        except MigrationError:
+            raise
+        except (ProtectedFreshnessHandoffError, RuntimeError) as exc:
+            raise MigrationError("protected migration CAS failed") from exc
+        return self.discover(migration_id)
+
+    def _recover_duplicate(self, migration_id: str, target: str) -> DurableMigrationLifecycle:
+        snapshot = self._store.read_verified_snapshot()
+        if snapshot is None:
+            raise MigrationError("migration lifecycle requires initialized StateStore")
+        lifecycle = self._view(snapshot, migration_id)
+        if lifecycle.current is None or lifecycle.current["state"] != target:
+            raise MigrationError("durable migration duplicate is no longer current")
+        scope = (
+            snapshot.metadata.account_id,
+            snapshot.metadata.device_installation_id,
+            snapshot.metadata.state_store_identity_fingerprint_sha256,
+        )
+        try:
+            recovered = self._protected.recover_protected_state(scope)
+        except ProtectedFreshnessHandoffError as exc:
+            raise MigrationError("protected migration duplicate recovery failed") from exc
+        if recovered != snapshot.metadata:
+            raise MigrationError("protected migration duplicate recovery changed local state")
+        current = self.discover(migration_id)
+        if current.current is None or current.current["state"] != target:
+            raise MigrationError("migration duplicate changed during protected recovery")
+        return current
+
+
+class _LifecycleAlreadyApplied(RuntimeError):
+    pass
