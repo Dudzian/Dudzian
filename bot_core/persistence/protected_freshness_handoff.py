@@ -19,7 +19,7 @@ from .local_durable_evidence import (
     LocalDurableStateEvidence,
 )
 from .records import PersistenceRecord
-from .state_store import SQLiteStateStore, StateStoreMetadata
+from .state_store import SQLiteStateStore, StateStoreMetadata, StateStoreSnapshot
 
 _ID_RE = re.compile(
     r"^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -447,6 +447,7 @@ class ProtectedFreshnessHandoffCoordinator:
         *,
         current_records: Iterable[PersistenceRecord] = (),
         immutable_history: Iterable[PersistenceRecord] = (),
+        _expected_source: StateStoreMetadata | None = None,
     ) -> StateStoreMetadata:
         with self._lock:
             if self._recovery_required:
@@ -458,6 +459,12 @@ class ProtectedFreshnessHandoffCoordinator:
             )
             ref, external = self._external(scope)
             before = self._store.read_verified_snapshot()
+            if _expected_source is not None and (
+                before is None or before.metadata != _expected_source
+            ):
+                raise ProtectedFreshnessHandoffError(
+                    "protected mutation source changed before advancement"
+                )
             expected = None if before is None else before.metadata.protected_freshness_generation
             if external.lifecycle == "PREPARED":
                 self._bind_recovery(scope)
@@ -582,3 +589,30 @@ class ProtectedFreshnessHandoffCoordinator:
             self._assert_local_still_matches(candidate)
             self._clear_recovery()
             return candidate
+
+    def advance_protected_mutation(
+        self,
+        builder: Callable[
+            [StateStoreSnapshot],
+            tuple[
+                StateStoreMetadata,
+                tuple[PersistenceRecord, ...],
+                tuple[PersistenceRecord, ...],
+            ],
+        ],
+    ) -> StateStoreMetadata:
+        """Build records from the precise verified pre-transition observation."""
+
+        with self._lock:
+            source = self._store.read_verified_snapshot()
+            if source is None:
+                raise ProtectedFreshnessHandoffError(
+                    "protected semantic mutation requires initialized StateStore"
+                )
+            metadata, current, history = builder(source)
+            return self.advance_protected_state(
+                metadata,
+                current_records=current,
+                immutable_history=history,
+                _expected_source=source.metadata,
+            )

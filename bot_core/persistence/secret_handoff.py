@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from enum import Enum
 from threading import RLock
 from types import MappingProxyType
@@ -16,6 +16,11 @@ from .lifecycle_records import (
     validate_chain,
 )
 from .records import PersistenceRecord
+from .protected_freshness_handoff import (
+    ProtectedFreshnessHandoffCoordinator,
+    ProtectedFreshnessHandoffError,
+)
+from .state_store import SQLiteStateStore, StateStoreSnapshot
 from .secret_handoff_contract import (
     SecretHandoffContractError,
     secret_metadata_fingerprint_value,
@@ -281,3 +286,182 @@ class SecretHandoffCoordinator:
             if first_dispatch:
                 raise SecretHandoffError("external operation did not start")
             raise SecretHandoffError("restart cannot blind retry a PREPARED handoff")
+
+
+@dataclass(frozen=True, slots=True)
+class DurableSecretHandoffLifecycle:
+    descriptor: SecretHandoffRecord | None
+    history: tuple[Mapping[str, Any], ...]
+    current: Mapping[str, Any] | None
+
+
+class DurableSecretHandoffLifecycleCoordinator:
+    """Durable semantic CAS boundary; it never performs secure-store mutation."""
+
+    def __init__(
+        self,
+        store: SQLiteStateStore,
+        protected: ProtectedFreshnessHandoffCoordinator,
+    ) -> None:
+        self._store = store
+        self._protected = protected
+
+    def discover(self, handoff_id: str) -> DurableSecretHandoffLifecycle:
+        snapshot = self._store.read_verified_snapshot()
+        if snapshot is None:
+            raise SecretHandoffError("handoff lifecycle requires initialized StateStore")
+        return self._view(snapshot, handoff_id)
+
+    def _view(self, snapshot: StateStoreSnapshot, handoff_id: str) -> DurableSecretHandoffLifecycle:
+        descriptors = tuple(
+            item
+            for item in snapshot.immutable_history
+            if item.representation_name == "SecretHandoff immutable descriptor"
+            and item.record_key == f"handoff-descriptor:{handoff_id}"
+        )
+        if len(descriptors) > 1:
+            raise SecretHandoffError("duplicate immutable handoff descriptor")
+        try:
+            descriptor = (
+                None if not descriptors else SecretHandoffRecord(**dict(descriptors[0].payload))
+            )
+            current_record, history_records = SQLiteStateStore._select_lifecycle(
+                snapshot,
+                identity=handoff_id,
+                current_name="SecretHandoff current state/designation",
+                history_name="SecretHandoff transition/history revisions",
+                current_key=f"handoff-current:{handoff_id}",
+                history_key_prefix=f"handoff-transition:{handoff_id}:",
+            )
+            history = tuple(item.payload for item in history_records)
+            current = None if current_record is None else current_record.payload
+            if descriptor is None:
+                if history or current is not None:
+                    raise SecretHandoffError("handoff lifecycle has no immutable descriptor")
+            else:
+                if descriptor.handoff_id != handoff_id:
+                    raise SecretHandoffError("immutable descriptor identity mismatch")
+                validate_secret_handoff_lifecycle(descriptor, history, current)
+        except (LifecycleIntegrityError, KeyError, TypeError, ValueError) as exc:
+            raise SecretHandoffError(str(exc)) from exc
+        return DurableSecretHandoffLifecycle(descriptor, history, current)
+
+    def prepare(self, descriptor: SecretHandoffRecord) -> DurableSecretHandoffLifecycle:
+        return self._advance(descriptor, expected=None, target="PREPARED", genesis=True)
+
+    def record_external_outcome(
+        self, handoff_id: str, outcome: ExternalOutcome
+    ) -> DurableSecretHandoffLifecycle:
+        lifecycle = self.discover(handoff_id)
+        if lifecycle.descriptor is None:
+            raise SecretHandoffError("handoff descriptor is unavailable")
+        if outcome is ExternalOutcome.COMMITTED:
+            target = "COMMITTED"
+        elif outcome is ExternalOutcome.UNRESOLVED:
+            target = "UNKNOWN_RECONCILIATION"
+        else:
+            raise SecretHandoffError("external NOT_STARTED is not a durable transition")
+        return self._advance(lifecycle.descriptor, expected="PREPARED", target=target)
+
+    def mark_cleanup_pending(self, handoff_id: str) -> DurableSecretHandoffLifecycle:
+        lifecycle = self.discover(handoff_id)
+        if lifecycle.descriptor is None:
+            raise SecretHandoffError("handoff descriptor is unavailable")
+        return self._advance(lifecycle.descriptor, expected="COMMITTED", target="CLEANUP_PENDING")
+
+    def _advance(
+        self,
+        descriptor: SecretHandoffRecord,
+        *,
+        expected: str | None,
+        target: str,
+        genesis: bool = False,
+    ) -> DurableSecretHandoffLifecycle:
+        def build(source: StateStoreSnapshot):
+            lifecycle = self._view(source, descriptor.handoff_id)
+            state = None if lifecycle.current is None else str(lifecycle.current["state"])
+            if lifecycle.descriptor is not None:
+                validate_handoff_descriptor_identity(
+                    handoff_descriptor_carrier(lifecycle.descriptor),
+                    handoff_descriptor_carrier(descriptor),
+                )
+            if state == target:
+                raise _HandoffAlreadyApplied
+            if state != expected:
+                raise SecretHandoffError(f"expected {expected!r}, found {state!r}")
+            if genesis != (lifecycle.descriptor is None):
+                raise SecretHandoffError("invalid handoff descriptor genesis semantics")
+            metadata = source.metadata
+            if descriptor.scope != (metadata.account_id, metadata.device_installation_id):
+                raise SecretHandoffError("handoff descriptor is outside StateStore scope")
+            revision = len(lifecycle.history) + 1
+            transition = handoff_transition(
+                handoff_id=descriptor.handoff_id,
+                transition_revision=revision,
+                previous_state=state,
+                state=target,
+                operation_fingerprint_sha256=descriptor.operation_fingerprint_sha256,
+                metadata_fingerprint_sha256=descriptor.metadata_fingerprint_sha256,
+            )
+            current = handoff_current(
+                handoff_id=descriptor.handoff_id,
+                current_transition_revision=revision,
+                state=target,
+                operation_fingerprint_sha256=descriptor.operation_fingerprint_sha256,
+            )
+            history = [handoff_transition_carrier(transition)]
+            if genesis:
+                history.insert(0, handoff_descriptor_carrier(descriptor))
+            return (
+                replace(
+                    metadata,
+                    protected_freshness_generation=metadata.protected_freshness_generation + 1,
+                ),
+                (handoff_current_carrier(current),),
+                tuple(history),
+            )
+
+        try:
+            self._protected.advance_protected_mutation(build)
+        except _HandoffAlreadyApplied:
+            return self._recover_duplicate(descriptor, target)
+        except SecretHandoffError:
+            raise
+        except (ProtectedFreshnessHandoffError, RuntimeError) as exc:
+            raise SecretHandoffError("protected handoff CAS failed") from exc
+        return self.discover(descriptor.handoff_id)
+
+    def _recover_duplicate(
+        self, descriptor: SecretHandoffRecord, target: str
+    ) -> DurableSecretHandoffLifecycle:
+        snapshot = self._store.read_verified_snapshot()
+        if snapshot is None:
+            raise SecretHandoffError("handoff lifecycle requires initialized StateStore")
+        lifecycle = self._view(snapshot, descriptor.handoff_id)
+        if lifecycle.descriptor is None:
+            raise SecretHandoffError("handoff descriptor is unavailable")
+        validate_handoff_descriptor_identity(
+            handoff_descriptor_carrier(lifecycle.descriptor),
+            handoff_descriptor_carrier(descriptor),
+        )
+        if lifecycle.current is None or lifecycle.current["state"] != target:
+            raise SecretHandoffError("durable handoff duplicate is no longer current")
+        scope = (
+            snapshot.metadata.account_id,
+            snapshot.metadata.device_installation_id,
+            snapshot.metadata.state_store_identity_fingerprint_sha256,
+        )
+        try:
+            recovered = self._protected.recover_protected_state(scope)
+        except ProtectedFreshnessHandoffError as exc:
+            raise SecretHandoffError("protected handoff duplicate recovery failed") from exc
+        if recovered != snapshot.metadata:
+            raise SecretHandoffError("protected handoff duplicate recovery changed local state")
+        current = self.discover(descriptor.handoff_id)
+        if current.current is None or current.current["state"] != target:
+            raise SecretHandoffError("handoff duplicate changed during protected recovery")
+        return current
+
+
+class _HandoffAlreadyApplied(RuntimeError):
+    pass
