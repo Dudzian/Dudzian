@@ -331,6 +331,17 @@ class MigrationRegistry:
         except KeyError as exc:
             raise MigrationError("exact migration path unavailable") from exc
 
+    def planner_for(self, definition: MigrationDefinition) -> MigrationPlanner:
+        """Resolve only a definition object minted by this sealed registry."""
+
+        trusted = self.definition_for(definition.migration_id)
+        if definition is not trusted:
+            raise MigrationError("planner requires the exact trusted definition")
+        try:
+            return self._steps[definition.migration_id]
+        except KeyError as exc:
+            raise MigrationError("exact migration path unavailable") from exc
+
 
 class MigrationCoordinator:
     """Serializes an ID and derives recovery solely from validated durable carriers."""
