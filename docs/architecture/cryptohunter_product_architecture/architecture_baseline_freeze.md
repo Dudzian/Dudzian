@@ -15,7 +15,7 @@ Cel: `INTEGRITY_GUARD_ONLY_NOT_RUNTIME_AUTHORITY`.
 | M0.8 | `docs/architecture/cryptohunter_product_architecture/ledger_portfolio_capital_and_pnl.json` | `1.0.0` | `bdf70ab825298ee689718de794ee6f9d39211405db0f735db19816119c2d46fd` |
 | M0.9 | `docs/architecture/cryptohunter_product_architecture/risk_hierarchy_kill_switch_and_execution_lease.json` | `1.0.0` | `f7b3fb943d3aa503b4ea6810ea084f17f5bc830f82eab7ce98b3ea5d63eb0537` |
 | M0.10 | `docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json` | `1.0.0` | `dd7a23a4f40001a929ab16135876b5d1cb850d3a4f136c7e7d21e01a1c38e61e` |
-| M0.11 | `docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json` | `1.0.0` | `f6ba48c6959528cc525e70e9beb2e6476502d531fd908ade938d9780ce3a538a` |
+| M0.11 | `docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json` | `1.0.0` | `5707ba1b5995c5419f80c360b0428b8328d1cb848c3334c5e307ffe1d5ce36e5` |
 
 Baseline M0.2–M0.11 jest zamrożony. Zmiana któregokolwiek canonical JSON wymaga jawnej aktualizacji freeze manifestu.
 

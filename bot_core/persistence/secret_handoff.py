@@ -246,7 +246,15 @@ class ExternalOutcome(Enum):
 class SecretExternalResourcePort(Protocol):
     def begin(self, descriptor: SecretHandoffRecord) -> ExternalOutcome: ...
     def reconcile(self, descriptor: SecretHandoffRecord) -> ExternalOutcome: ...
-    def cleanup(self, descriptor: SecretHandoffRecord) -> None: ...
+    def cleanup(self, descriptor: SecretHandoffRecord) -> None:
+        """Request idempotent, at-least-once-safe cleanup for this exact handoff.
+
+        A normal return means that cleanup was accepted or was already satisfied.
+        An exception or lost acknowledgement permits redelivery of the exact same
+        immutable descriptor; adapters must make repeats externally equivalent to
+        one accepted cleanup request.
+        """
+        ...
 
 
 class SecretHandoffCoordinator:
