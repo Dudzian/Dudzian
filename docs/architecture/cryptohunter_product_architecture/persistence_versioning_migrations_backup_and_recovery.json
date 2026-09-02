@@ -9423,6 +9423,48 @@
     ],
     "secret_payload_fields": 0,
     "unknown_outcome": "RECONCILIATION_REQUIRED_NO_BLIND_RETRY",
+    "cleanup_contract": {
+      "semantic_operation": "IDEMPOTENT_CLEANUP_REQUEST",
+      "request_meaning": "REQUEST_OR_SCHEDULE_OBSOLETE_EXTERNAL_SECRET_REFERENCE_CLEANUP",
+      "delivery": "AT_LEAST_ONCE",
+      "duplicate_policy": "EXACT_SAME_HANDOFF_SAFE",
+      "idempotency_scope": "EXACT_IMMUTABLE_HANDOFF_IDENTITY",
+      "identity_fields": [
+        "handoff_id",
+        "intrinsically_valid_SecretHandoffRecord",
+        "operation_fingerprint_sha256",
+        "metadata_fingerprint_sha256",
+        "old_reference",
+        "new_reference",
+        "reconciliation_metadata"
+      ],
+      "same_handoff_id_conflict": "FAIL_CLOSED",
+      "operation_fingerprint_only_equivalence": "FORBIDDEN",
+      "success_meaning": "REQUEST_ACCEPTED_OR_ALREADY_SATISFIED",
+      "durable_target_after_success": "CLEANUP_PENDING",
+      "failure_or_ack_loss": "REMAIN_COMMITTED_AND_REDELIVER_SAFE",
+      "cleanup_uncertainty_state": "NO_UNKNOWN_RECONCILIATION",
+      "observable_repeat_guarantee": "N_GTE_1_CALLS_EXTERNALLY_EQUIVALENT_TO_ONE_ACCEPTED_CLEANUP_REQUEST",
+      "repeat_must_not": [
+        "DELETE_OR_REVOKE_UNRELATED_NEW_SECRET",
+        "ADVANCE_DESTRUCTIVE_OPERATION_TWICE",
+        "ROTATE_CREDENTIALS_TWICE",
+        "MUTATE_DIFFERENT_HANDOFF",
+        "CREATE_SEMANTIC_CLEANUP_JOB_MULTIPLICITY_THAT_CHANGES_INTENDED_RESULT"
+      ],
+      "allowed_adapter_realizations": [
+        "NATIVE_EXTERNAL_IDEMPOTENCY_KEY_FOR_EXACT_HANDOFF_IDENTITY",
+        "DELETE_OR_REVOKE_IF_PRESENT",
+        "AUTHORITATIVE_NO_OP_IF_OBSOLETE_REFERENCE_ABSENT",
+        "DEDUPLICATED_CLEANUP_SCHEDULING",
+        "OTHER_EXACT_REPEAT_EQUIVALENCE_GUARANTEE"
+      ],
+      "retry_contract_separation": {
+        "prepared_initial_mutation": "RECONCILIATION_REQUIRED_NO_BLIND_RETRY",
+        "committed_cleanup_request": "IDEMPOTENT_AT_LEAST_ONCE_REDELIVERY_SAFE"
+      },
+      "new_durable_lifecycle_state": false
+    },
     "durable_lifecycle": {
       "transition_record": "SecretHandoffTransitionRecord",
       "transition_schema": {
