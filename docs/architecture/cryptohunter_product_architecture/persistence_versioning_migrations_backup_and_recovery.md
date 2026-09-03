@@ -9464,6 +9464,609 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
 }
 ```
 
+## `physical_sqlite_restore_artifact_contract`
+
+```json
+{
+  "status": "PHYSICAL_ARTIFACT_AUTHENTICATION_TRUST_ROOT_STILL_BLOCKED",
+  "architecture_scope": "NON_CRYPTOGRAPHIC_ARTIFACT_AND_RESTORE_SEMANTICS_FROZEN; PRODUCTION_AUTHENTICITY_GATE_NOT_CLOSED",
+  "trust_root_audit": {
+    "decision": "NO_SUITABLE_EXISTING_INDEPENDENT_TRUST_ROOT",
+    "findings": [
+      "M0.3 protected-state authority governs restore freshness and membership, not backup artifact authentication",
+      "M0.10 defines opaque secure-store references and external secret payload custody but no backup-purpose authenticate/verify capability, key ownership, provisioning, lifetime, rotation, or recovery contract",
+      "MigrationExecutionAuthority independently seals schema materialization expectations but has no authority over arbitrary backed-up row bytes",
+      "StateStore and BackupEnvelope fingerprints are intrinsic SHA-256 integrity only",
+      "production SecretStore stores exchange credentials and exposes no backup artifact authentication port"
+    ],
+    "reuse_decision": "NONE; repurposing exchange credentials, PIN verifiers, M0.3 state, or candidate-carried material is forbidden",
+    "missing_prerequisite": {
+      "name": "BackupArtifactAuthenticationAuthority",
+      "separate_architecture_work_required": [
+        "independent authority owner and lifetime",
+        "protected key/reference provisioning, rotation, recovery, and revocation semantics",
+        "purpose/domain-separated backup authenticate operation and restore verify operation",
+        "process-local capability acquisition that never exposes raw key material",
+        "availability and failure contract across backup creation and restore"
+      ],
+      "required_properties": [
+        "PRE_EXISTING",
+        "INDEPENDENT_OF_RESTORE_CANDIDATE",
+        "CANDIDATE_CANNOT_MINT_OR_REPLACE",
+        "NO_RAW_KEY_EXPOSURE",
+        "PURPOSE_SEPARATED"
+      ],
+      "until_closed": "POST_STRUCTURAL_PHYSICAL_BACKUP_CREATION_AND_RESTORE_ARE_NOT_PRODUCTION_READY"
+    },
+    "forbidden_shortcuts": [
+      "candidate self-authentication",
+      "hash possession as authority",
+      "invented signing or MAC key",
+      "treating M0.3 as backup authentication authority",
+      "treating generic secret references as an authenticate/verify API"
+    ]
+  },
+  "artifact_model": {
+    "bundle_name": "TrustedPhysicalBackupArtifact",
+    "outer_bundle_components": [
+      "semantic BackupEnvelope",
+      "self-contained physical SQLite database artifact",
+      "immutable PhysicalSQLiteArtifactManifest",
+      "PhysicalArtifactAuthenticationProof"
+    ],
+    "component_separation": "raw SQLite bytes and authentication proof are outside BackupEnvelope JSON",
+    "raw_sqlite_bytes_are_PersistenceRecord": false,
+    "physical_artifact_is_M0_3_authority": false,
+    "candidate_only": true,
+    "production_use_blocked_until_authentication_prerequisite_closed": true,
+    "contains_candidate_carried_data_and_proof_only": true,
+    "may_carry_trust_authority_or_capability": false
+  },
+  "verification_input_boundary": {
+    "candidate_bundle": {
+      "name": "TrustedPhysicalBackupArtifact",
+      "classification": "DURABLE CANDIDATE BUNDLE",
+      "candidate_carried": true,
+      "serializable_components": "EXACTLY_OUTER_BUNDLE_COMPONENTS",
+      "authority_capability_member": false
+    },
+    "authentication_proof": {
+      "name": "PhysicalArtifactAuthenticationProof",
+      "candidate_carried": true,
+      "authority": false,
+      "meaning": "PROOF_INPUT_ONLY_REQUIRES_INDEPENDENT_VERIFICATION"
+    },
+    "verification_capability": {
+      "name": "BackupArtifactAuthenticationAuthorityCapability",
+      "classification": "FUTURE PRE-EXISTING EXTERNAL VALIDATION INPUT",
+      "production_exists": false,
+      "process_local": true,
+      "pre_existing": true,
+      "durable": false,
+      "candidate_carried": false,
+      "serializable_into_bundle": false,
+      "permitted_in_BackupEnvelope": false,
+      "permitted_in_StateStore": false,
+      "acquisition": "INDEPENDENTLY_FROM_RESTORE_CANDIDATE",
+      "unavailable": "RESTORE_REJECTED",
+      "raw_key_exposed": false
+    },
+    "invariant": "RESTORE_CANDIDATE_MAY_CARRY_AUTHENTICATION_PROOF_BUT_NEVER_AUTHENTICATION_AUTHORITY"
+  },
+  "physical_artifact_admission_boundary": {
+    "classification": "PRE_LIFECYCLE_STAGE_ARTIFACT_ADMISSION_PREREQUISITE",
+    "lifecycle_authority_stage": false,
+    "not": [
+      "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION",
+      "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+      "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+      "M0_3_RESTORE_FRESHNESS",
+      "restore authority",
+      "M0.3 authority",
+      "lifecycle authority"
+    ],
+    "purpose": "determine only whether candidate-carried physical artifact is eligible to enter lifecycle restore-validation pipeline",
+    "required_when": "physical artifact is required for candidate materialization state",
+    "ordered_steps": [
+      {
+        "step": "MINIMAL_OUTER_DECODE",
+        "actions": [
+          "locate BackupEnvelope candidate",
+          "locate PhysicalSQLiteArtifactManifest",
+          "locate PhysicalArtifactAuthenticationProof",
+          "locate physical SQLite bytes"
+        ],
+        "opens_SQLite_database": false
+      },
+      {
+        "step": "INTRINSIC_AUTHENTICATION_PAYLOAD_BINDING",
+        "actions": [
+          "validate manifest structure",
+          "verify manifest_fingerprint_sha256",
+          "verify physical_artifact_byte_length",
+          "verify physical_artifact_sha256",
+          "verify BackupEnvelope candidate fingerprint and authenticated-payload binding"
+        ],
+        "opens_SQLite_database": false
+      },
+      {
+        "step": "EXTERNAL_PROOF_VERIFICATION",
+        "actions": [
+          "verify PhysicalArtifactAuthenticationProof using pre-existing external process-local BackupArtifactAuthenticationAuthorityCapability"
+        ],
+        "opens_SQLite_database": false,
+        "candidate_self_authentication": false
+      },
+      {
+        "step": "AUTHENTICATED_CANDIDATE_INTRINSIC_PHYSICAL_VALIDATION",
+        "actions": [
+          "open SQLite candidate in isolated filesystem context",
+          "run full PRAGMA integrity_check or exact full equivalent",
+          "verify self-contained WAL/SHM semantics",
+          "compute candidate sqlite_schema_fingerprint_sha256",
+          "read candidate StateStore semantic snapshot",
+          "validate candidate-intrinsic identity, scope, schema, generation, state, and transaction facts",
+          "compare candidate physical semantic contents with candidate BackupEnvelope bindings"
+        ],
+        "opens_SQLite_database": true,
+        "authority_decision": false
+      },
+      {
+        "step": "ADMISSION_RESULT",
+        "result": "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY",
+        "opens_SQLite_database": false
+      }
+    ],
+    "invariants": [
+      "UNAUTHENTICATED_PHYSICAL_SQLITE_BYTES_MUST_NOT_BE_OPENED_AS_A_RESTORE_DATABASE",
+      "PHYSICAL_ARTIFACT_ADMISSION_DOES_NOT_CHANGE_STAGE_1_AUTHORITY_CLASSIFICATION"
+    ],
+    "authentication_failure_or_unavailability": "RESTORE_REJECTED",
+    "fallback": false,
+    "successful_admission_grants": "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY",
+    "successful_admission_does_not_grant": [
+      "restore promotion",
+      "current membership",
+      "lifecycle authority",
+      "M0.3 authority",
+      "SecretHandoff authority",
+      "LIVE readiness",
+      "business-resume permission"
+    ],
+    "physical_artifact_authentication_role": "PRE_LIFECYCLE_STAGE_ADMISSION_AUTHENTICITY_GATE",
+    "successful_authentication_establishes_restore_authority": false,
+    "four_lifecycle_stages_begin_after_successful_admission_when_required": true,
+    "reorders_four_lifecycle_stages": false,
+    "intrinsic_physical_validation": {
+      "classification": "AUTHENTICATED_CANDIDATE_INTRINSIC_PHYSICAL_VALIDATION",
+      "authority": false,
+      "establishes_current_authorization": false
+    }
+  },
+  "manifest": {
+    "name": "PhysicalSQLiteArtifactManifest",
+    "immutable": true,
+    "additional_fields": false,
+    "exact_fields": [
+      "artifact_format_version",
+      "account_id",
+      "device_installation_id",
+      "environment",
+      "state_store_identity_fingerprint_sha256",
+      "state_store_schema_version",
+      "local_protected_freshness_generation",
+      "state_fingerprint_sha256",
+      "transaction_fingerprint_sha256",
+      "backup_envelope_fingerprint_sha256",
+      "physical_artifact_sha256",
+      "physical_artifact_byte_length",
+      "sqlite_schema_fingerprint_sha256",
+      "manifest_fingerprint_sha256"
+    ],
+    "fingerprint": {
+      "field": "manifest_fingerprint_sha256",
+      "projection": "all exact manifest fields except manifest_fingerprint_sha256",
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "canonical_json": {
+        "sort_keys": true,
+        "separators": [
+          ",",
+          ":"
+        ],
+        "ensure_ascii": false,
+        "allow_nan": false
+      },
+      "digest": "lowercase hexadecimal",
+      "meaning": "STRUCTURAL_BINDING_ONLY"
+    },
+    "bindings": "exactly binds BackupEnvelope scope, store identity/schema, generation/state/transaction consistency point, envelope fingerprint, physical bytes/length, and SQLite schema",
+    "timestamp_authority": false,
+    "authentication_payload_requirement": "future independent proof MUST authenticate the exact manifest canonical payload or an unambiguous canonical payload transitively committing manifest_fingerprint_sha256, physical_artifact_sha256, and backup_envelope_fingerprint_sha256"
+  },
+  "consistent_snapshot": {
+    "required_class": "SQLITE_CONSISTENT_SNAPSHOT_PRIMITIVE",
+    "examples": [
+      "SQLite Online Backup API",
+      "another SQLite-supported equivalent producing one consistent database snapshot"
+    ],
+    "semantic_physical_rule": "BackupEnvelope and physical image MUST represent the same exact durable StateStore generation, state fingerprint, and transaction fingerprint",
+    "mismatched_consistency_points": "RESTORE_REJECTED",
+    "business_state_mutation_solely_for_backup": false,
+    "forbidden": [
+      "naive filesystem copy of a live WAL-mode database",
+      "copying only main database while committed state may remain in WAL",
+      "concurrent database-page reads without a SQLite-consistent snapshot primitive"
+    ],
+    "output": "SELF_CONTAINED_DATABASE_IMAGE_NO_EXTERNAL_WAL_DEPENDENCY"
+  },
+  "integrity_authenticity": {
+    "physical_artifact_sha256": "BYTE_INTEGRITY_ONLY",
+    "manifest_fingerprint_sha256": "STRUCTURAL_BINDING_ONLY",
+    "backup_envelope_fingerprint_sha256": "CANDIDATE_INTRINSIC_INTEGRITY_ONLY",
+    "independent_authentication_proof": "PHYSICAL_ARTIFACT_AUTHENTICITY_GATE",
+    "hash_possession_grants_authority": false,
+    "candidate_may_carry_or_mint_trust_root": false,
+    "proof_without_pre_existing_authority": "RESTORE_REJECTED",
+    "valid_proof_does_not_establish": [
+      "M0.3 authority",
+      "current protected membership",
+      "current lifecycle authority",
+      "SecretHandoff external authority",
+      "restore promotion",
+      "LIVE readiness"
+    ]
+  },
+  "sqlite_validation": {
+    "context": "ISOLATED_FILESYSTEM_CONTEXT_NEVER_LIVE_STORE_LOCATION",
+    "full_integrity_check": "PRAGMA integrity_check MUST return exactly ok, or equivalent exact full SQLite integrity verification",
+    "quick_check_alone_sufficient": false,
+    "required": [
+      "opens as expected SQLite database",
+      "full SQLite integrity succeeds",
+      "expected StateStore database identity is present",
+      "exact account_id, device_installation_id, and environment",
+      "exact state_store_schema_version",
+      "exact sqlite_schema_fingerprint_sha256",
+      "semantic StateStore snapshot reads through normal validation logic",
+      "semantic snapshot exactly matches BackupEnvelope bindings",
+      "exact generation, state fingerprint, and transaction fingerprint",
+      "no unexpected attached database dependency"
+    ],
+    "sqlite_schema_match_alone_sufficient": false,
+    "schema_fingerprint": {
+      "algorithm": "REUSE_EXISTING_MIGRATION_SQLITE_SCHEMA_FINGERPRINT",
+      "canonical_pointer": "/migration_protocol/migration_execution_declaration/sqlite_schema_fingerprint",
+      "candidate_only_derivation_forbidden": true,
+      "authenticates_arbitrary_DML_rows": false,
+      "candidate_computation_before_stage_2": "ALLOWED_INTRINSIC_FACT_COLLECTION_ONLY",
+      "MigrationExecutionAuthority_comparison_before_stage_2": false,
+      "authoritative_comparison_location": "/physical_sqlite_restore_artifact_contract/restore_workflow/stage_2_composition/components/MIGRATION_RESTORE_AUTHORITY_REVALIDATION"
+    },
+    "wal_sidecar_policy": {
+      "rule": "SELF_CONTAINED_DATABASE_IMAGE_NO_EXTERNAL_WAL_DEPENDENCY",
+      "source_WAL_or_SHM_authoritative_input": false,
+      "unexpected_or_stale_WAL_or_SHM_grants_authority": false,
+      "candidate_may_attach_live_location_sidecars": false,
+      "live_file_deletion_behavior_defined_here": false
+    }
+  },
+  "materialization_policy": {
+    "invariants": [
+      "POST_STRUCTURAL_MIGRATION_RESTORE_REQUIRES_TRUSTED_PHYSICAL_STATE_ARTIFACT",
+      "BACKUP_ENVELOPE_ALONE_CANNOT_RECONSTRUCT_ARBITRARY_MIGRATION_DDL_DML_EFFECTS",
+      "RESTORE_MUST_NOT_REPLAY_MIGRATION_SQL_TO_MANUFACTURE_MATERIALIZATION"
+    ],
+    "validation_subject": "physical DDL/DML materialization actually backed up",
+    "restore_executes_migration_SQL": false,
+    "migration_execution_is_restore_verification": false,
+    "dml_authenticity": "schema fingerprint protects structure only; future independent authentication proof must authenticate a manifest committing the exact physical artifact SHA-256, thereby transitively protecting arbitrary physical row materialization"
+  },
+  "restore_workflow": {
+    "canonical_authority_stages": [
+      "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION",
+      "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+      "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+      "M0_3_RESTORE_FRESHNESS"
+    ],
+    "ordered_steps": [
+      "complete physical_artifact_admission_boundary when physical artifact is required",
+      "perform canonical Stage-1 STRUCTURAL_PERSISTENCE_RECORD_VALIDATION intrinsic semantic candidate/carrier validation",
+      "perform every applicable Stage-2 component defined by stage_2_composition",
+      "perform current-designation Stage-3 relational validation",
+      "perform pre-install M0.3 restore authority/freshness assessment",
+      "continue through exactly one applicable path contract"
+    ],
+    "stage_2_stage_3_m0_3_remain_conjunctive": true,
+    "authority_stage_interpretation": {
+      "M0_3_RESTORE_FRESHNESS": "PRE_INSTALL_M0_3_RESTORE_AUTHORITY_AND_FRESHNESS_ASSESSMENT",
+      "later_existing_PREPARED_recovery_finalization": "POST_INSTALL_ACTION_WHEN_REQUIRED_BY_EXISTING_PROTECTED_RECOVERY_PROTOCOL; NOT_A_REORDERING_OF_AUTHORITY_STAGES",
+      "filesystem_install_location_defines_authority_stage_order": false
+    },
+    "pre_install_M0_3_assessment": {
+      "outcomes": [
+        "DENIED",
+        "AUTHORIZED_COMMITTED_TARGET",
+        "AUTHORIZED_PREPARED_TARGET"
+      ],
+      "prepared_outcome": "requires already-frozen existing external M0.3 PREPARED recovery/finalization path",
+      "new_M0_3_states": false,
+      "new_PREPARE_or_ABORT": false
+    },
+    "ordinary_installing_path": [
+      "complete physical artifact admission prerequisite when required",
+      "perform canonical Stage-1 intrinsic semantic candidate/carrier validation",
+      "perform all applicable Stage-2 authority components including exactly one INITIAL_STAGE_2 SecretHandoff observation when applicable",
+      "current-designation Stage-3 relational validation",
+      "pre-install M0.3 restore authority/freshness assessment passes as AUTHORIZED_COMMITTED_TARGET",
+      "PRE_INSTALL SecretHandoff freshness fence when applicable immediately before atomic install",
+      "atomic candidate install",
+      "reopen installed StateStore and verify required local facts",
+      "FINAL_PROMOTION SecretHandoff freshness fence when applicable",
+      "all remaining existing promotion/readiness gates",
+      "promotion/readiness"
+    ],
+    "ordinary_installing_path_forbidden_M0_3_actions": [
+      "PREPARE",
+      "ABORT"
+    ],
+    "existing_external_M0_3_PREPARED_installing_path": [
+      "complete physical artifact admission prerequisite when required",
+      "perform canonical Stage-1 intrinsic semantic candidate/carrier validation",
+      "perform all applicable Stage-2 authority components including exactly one INITIAL_STAGE_2 SecretHandoff observation when applicable",
+      "current-designation Stage-3 relational validation",
+      "pre-install M0.3 assessment identifies AUTHORIZED_PREPARED_TARGET",
+      "PRE_INSTALL SecretHandoff freshness fence when applicable immediately before atomic install",
+      "atomic candidate install",
+      "reopen installed StateStore and verify required local facts",
+      "fresh FINAL_PROMOTION-type SecretHandoff observation immediately before existing M0.3 recovery/finalization",
+      "perform existing M0.3 recovery/finalization",
+      "after successful finalization freshly invoke FINAL_PROMOTION again immediately before restore promotion/readiness/evidence release",
+      "promotion/readiness only after every remaining gate succeeds"
+    ],
+    "existing_external_M0_3_PREPARED_rules": {
+      "pre_finalization_observation_reuse_at_final_promotion": "FORBIDDEN",
+      "fence_types": [
+        "INITIAL_STAGE_2",
+        "PRE_INSTALL",
+        "FINAL_PROMOTION"
+      ],
+      "fourth_fence_type_created": false,
+      "cross_resource_ACID": false,
+      "completed_M0_3_finalization_rollback_if_later_fence_fails": "NOT_CLAIMED_AND_FORBIDDEN"
+    },
+    "NOOP_ALREADY_CURRENT_existing_external_M0_3_PREPARED": {
+      "physical_artifact_role": "NOT_INVOLVED_IN_TRUE_NOOP_PATH",
+      "authoritative_contract_pointer": "/backup_contract/restore_lifecycle_authority_contract/secret_handoff_restore_authority/freshness_and_fencing_contract/NOOP_ALREADY_CURRENT",
+      "duplicate_competing_NOOP_contract": false,
+      "authority_prefix": [
+        "perform canonical Stage-1 intrinsic semantic candidate/carrier validation",
+        "perform all applicable Stage-2 authority components including exactly one INITIAL_STAGE_2 SecretHandoff observation when applicable",
+        "perform current-designation Stage-3 relational validation",
+        "perform M0.3 restore assessment/freshness"
+      ],
+      "PRE_INSTALL": "NOT_APPLICABLE_NO_INSTALL_OCCURS",
+      "atomic_install": "NOT_APPLICABLE",
+      "physical_artifact_materialization": "NOT_APPLICABLE",
+      "prepared_later_sequence": "USE_AUTHORITATIVE_CONTRACT_EXISTING_EXTERNAL_M0_3_PREPARED_SEQUENCE_WITH_TWO_FRESH_FINAL_PROMOTION_INVOCATIONS",
+      "pre_finalization_observation_reuse": "FORBIDDEN"
+    },
+    "stage_2_composition": {
+      "stage": "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+      "components": [
+        {
+          "name": "MIGRATION_RESTORE_AUTHORITY_REVALIDATION",
+          "applicability": "Migration family records require authority",
+          "action": "revalidate against pre-existing sealed Migration restore authority",
+          "authority_checks": [
+            "MigrationDefinition binding",
+            "MigrationExecutionAuthority binding",
+            "operation-plan fingerprint binding where applicable",
+            "independently sealed pre/target sqlite schema fingerprint comparison",
+            "required migration declaration/materialization relation",
+            "candidate-computed SQLite schema fingerprint compared with independently sealed expected fingerprint appropriate to lifecycle/materialization state"
+          ],
+          "authority_source": "PRE_EXISTING_SEALED_MIGRATION_AUTHORITY_NEVER_CANDIDATE_DERIVED",
+          "migration_SQL_execution": false,
+          "reconstructs_authority_from_candidate": false,
+          "schema_fingerprint_authenticates_arbitrary_DML_rows": false,
+          "DML_protection": "authenticated exact physical artifact bytes committed by manifest proof",
+          "semantic_role": "VALIDATES_EXPECTED_MIGRATION_SEMANTICS_DOES_NOT_RECREATE_DML"
+        },
+        {
+          "name": "SECRET_HANDOFF_INITIAL_STAGE_2",
+          "applicability": "one or more SecretHandoff family records exist",
+          "action": "freshly observe every candidate SecretHandoff descriptor through pre-existing read-only external authority"
+        }
+      ],
+      "completion": "EVERY_APPLICABLE_COMPONENT_MUST_SUCCEED_BEFORE_CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+      "invariants": [
+        "ALL_APPLICABLE_STAGE_2_AUTHORITY_COMPONENTS_COMPLETE_BEFORE_STAGE_3",
+        "INITIAL_STAGE_2_SECRET_HANDOFF_OBSERVATION_IS_PART_OF_STAGE_2_NOT_A_POST_STAGE_3_FENCE"
+      ],
+      "invocation_count": {
+        "SECRET_HANDOFF_INITIAL_STAGE_2": "EXACTLY_ONCE_WHEN_APPLICABLE_PER_RESTORE_PATH"
+      },
+      "not_new_restore_stage": true
+    },
+    "secret_handoff_fence_roles": {
+      "INITIAL_STAGE_2": {
+        "role": "SEMANTIC_EXTERNAL_AUTHORITY_REVALIDATION",
+        "stage_membership": "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+        "before": "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION"
+      },
+      "PRE_INSTALL": {
+        "role": "PATH_SPECIFIC_TOCTOU_FRESHNESS_FENCE",
+        "stage_membership": false,
+        "timing": "after pre-install M0.3 assessment and immediately before atomic install"
+      },
+      "FINAL_PROMOTION": {
+        "role": "FINAL_OR_REPEATED_TOCTOU_FRESHNESS_FENCE",
+        "stage_membership": false,
+        "timing": "after install/reopen or on NOOP at final authority-sensitive boundaries",
+        "multiple_invocations_on_PREPARED_recovery_path": true
+      },
+      "later_repeated_observations_reorder_canonical_authority_stages": false
+    },
+    "pre_stage_2_candidate_fact_policy": {
+      "allowed": [
+        "compute candidate sqlite_schema_fingerprint_sha256",
+        "validate intrinsic physical structure",
+        "collect candidate migration/materialization facts"
+      ],
+      "forbidden": [
+        "accept candidate schema as authorized because it matches candidate-carried data",
+        "compare candidate materialization against MigrationExecutionAuthority as an authority decision",
+        "treat migration materialization as authority-validated"
+      ],
+      "MigrationExecutionAuthority_consulted_for_authority_decision": false
+    },
+    "physical_artifact_authentication_role": "PRE_LIFECYCLE_STAGE_ADMISSION_AUTHENTICITY_GATE",
+    "successful_authentication_establishes_restore_authority": false,
+    "layers": {
+      "LAYER_A_PHYSICAL_ARTIFACT_ADMISSION": {
+        "classification": "OUTER_PREREQUISITE_NOT_LIFECYCLE_STAGE",
+        "contract_pointer": "/physical_sqlite_restore_artifact_contract/physical_artifact_admission_boundary",
+        "result": "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY"
+      },
+      "LAYER_B_CANONICAL_LIFECYCLE_RESTORE_VALIDATION": {
+        "ordered_authority_stages": [
+          "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION",
+          "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+          "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+          "M0_3_RESTORE_FRESHNESS"
+        ],
+        "starts_only_after_layer_A_when_physical_artifact_required": true
+      }
+    }
+  },
+  "atomic_install": {
+    "product_semantics": "ATOMIC_LIVE_REPLACEMENT",
+    "candidate_completely_validated_before_replacement": true,
+    "pre_install_failure_live_effect": "UNCHANGED",
+    "partially_copied_database_may_become_live": false,
+    "destination_and_restart_reopen_behavior": "DETERMINISTIC",
+    "installed_store_reopened_and_verified_before_readiness": true,
+    "PRE_INSTALL_fence_when_applicable": true,
+    "FINAL_PROMOTION_fence_when_applicable": true,
+    "cross_resource_ACID": false,
+    "external_SecretHandoff_or_M0_3_atomic_with_filesystem_replacement": false,
+    "install_itself_grants": {
+      "restore_authority": false,
+      "M0.3_authority": false,
+      "LIVE_readiness": false,
+      "business_resume_permission": false
+    },
+    "post_install_failure": "MAY_LEAVE_VALID_INSTALLED_LOCAL_CANDIDATE_NOT_PROMOTED_NOT_READY",
+    "post_install_rollback_guarantee": false
+  },
+  "backup_creation": {
+    "ordered_steps": [
+      "obtain one physical image with SQLITE_CONSISTENT_SNAPSHOT_PRIMITIVE",
+      "derive BackupEnvelope from the same represented durable consistency point or prove exact generation/state/transaction identity",
+      "compute physical_artifact_sha256 and byte length",
+      "build canonical immutable manifest",
+      "authenticate manifest through independent trusted authority",
+      "output bundle only after every component succeeds"
+    ],
+    "mixed_generation_output_valid": false,
+    "authentication_authority_missing_or_unavailable": "BACKUP_CREATION_FAILED",
+    "mutate_business_state_solely_to_create_backup": false
+  },
+  "failure_policy": {
+    "outcome": "RESTORE_REJECTED",
+    "no_repair": true,
+    "no_SQL_replay": true,
+    "no_authority_minting": true,
+    "no_semantic_only_fallback_post_structural": true,
+    "fail_closed_conditions": [
+      "required physical artifact missing",
+      "malformed manifest",
+      "manifest fingerprint mismatch",
+      "physical artifact hash mismatch",
+      "authentication proof missing",
+      "authentication authority unavailable",
+      "authentication proof invalid",
+      "BackupEnvelope and manifest mismatch",
+      "manifest and physical database mismatch",
+      "SQLite integrity failure",
+      "SQLite schema fingerprint mismatch",
+      "StateStore identity mismatch",
+      "generation mismatch",
+      "state fingerprint mismatch",
+      "transaction fingerprint mismatch",
+      "semantic snapshot mismatch",
+      "required migration materialization mismatch"
+    ]
+  },
+  "representation_classification": {
+    "raw_secret_payload_field_count": 0,
+    "representations": {
+      "BackupEnvelope": {
+        "durable": true,
+        "candidate_carried": true,
+        "authority": false,
+        "restorable_authority": false,
+        "contains_raw_secrets": false,
+        "permitted_in_BackupEnvelope": true,
+        "permitted_in_StateStore": false,
+        "authenticated_externally": false
+      },
+      "PhysicalSQLiteDatabaseArtifact": {
+        "durable": true,
+        "candidate_carried": true,
+        "authority": false,
+        "restorable_authority": false,
+        "contains_raw_secrets": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "authenticated_externally": "TRANSITIVELY_BY_FUTURE_PROOF"
+      },
+      "PhysicalSQLiteArtifactManifest": {
+        "durable": true,
+        "candidate_carried": true,
+        "authority": false,
+        "restorable_authority": false,
+        "contains_raw_secrets": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "authenticated_externally": "REQUIRED_BY_FUTURE_PROOF"
+      },
+      "PhysicalArtifactAuthenticationProof": {
+        "durable": true,
+        "candidate_carried": true,
+        "authority": false,
+        "restorable_authority": false,
+        "contains_raw_secrets": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "authenticated_externally": "VERIFIED_BY_PROCESS_LOCAL_AUTHORITY"
+      },
+      "BackupArtifactAuthenticationAuthorityCapability": {
+        "durable": false,
+        "candidate_carried": false,
+        "authority": true,
+        "restorable_authority": false,
+        "contains_raw_secrets": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "authenticated_externally": false
+      },
+      "TrustedPhysicalBackupArtifact": {
+        "durable": true,
+        "candidate_carried": true,
+        "authority": false,
+        "restorable_authority": false,
+        "contains_raw_secrets": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "authenticated_externally": "REQUIRED_BEFORE_ELIGIBLE_CANDIDATE"
+      }
+    }
+  }
+}
+```
+
 ## `restore_contract`
 
 ```json
