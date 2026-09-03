@@ -9255,6 +9255,167 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "unknown_handoff": "RESTORE_REJECTED",
         "scope_or_fingerprint_mismatch": "RESTORE_REJECTED",
         "fallback_to_SecretExternalResourcePort_reconcile": "FORBIDDEN"
+      },
+      "freshness_and_fencing_contract": {
+        "observation_semantics": {
+          "required_result": "CURRENT_AUTHORITATIVE_OBSERVATION_AT_CALL_TIME",
+          "prohibited_substitutes": [
+            "cached previous observation",
+            "BackupEnvelope-carried observation",
+            "StateStore-carried observation",
+            "caller-provided observation",
+            "stale process-local accepted observation"
+          ],
+          "current_authority_unavailable": "RESTORE_REJECTED",
+          "durable_observation_record": "FORBIDDEN",
+          "authority_revision": "FORBIDDEN"
+        },
+        "family_applicability": {
+          "zero_SecretHandoff_family_records": "ALL_SECRET_HANDOFF_FENCES_NOT_APPLICABLE; SecretHandoffRestoreAuthorityPort not required",
+          "one_or_more_SecretHandoff_family_records": {
+            "descriptor_coverage": "every fence APPLICABLE_TO_CURRENT_RESTORE_PATH must observe EVERY descriptor",
+            "skip_policy": "NO_APPLICABLE_FENCE_MAY_BE_SKIPPED",
+            "absent_path_operation": "operation-specific fence is NOT_APPLICABLE, not satisfied"
+          }
+        },
+        "required_restore_time_fences": {
+          "exact_count": 3,
+          "exact_count_semantics": "EXACTLY_THREE_DEFINED_FENCE_TYPES; not a maximum invocation count; a fence TYPE may be invoked more than once on one restore path when multiple authority-sensitive boundaries require a current observation",
+          "ordered_names": [
+            "INITIAL_STAGE_2",
+            "PRE_INSTALL",
+            "FINAL_PROMOTION"
+          ],
+          "INITIAL_STAGE_2": {
+            "timing": "before M0.3 freshness",
+            "action": "freshly observe EVERY candidate SecretHandoff descriptor",
+            "requirements_per_observation": [
+              "intrinsic observation validity",
+              "exact handoff_id binding",
+              "exact scope binding",
+              "exact operation fingerprint",
+              "exact metadata fingerprint",
+              "allowed lifecycle/external-state relation"
+            ],
+            "failure": "RESTORE_REJECTED_FOR_ENTIRE_CANDIDATE",
+            "partial_acceptance": "FORBIDDEN"
+          },
+          "PRE_INSTALL": {
+            "timing": "after isolated candidate construction and verification and immediately before atomic live StateStore installation",
+            "action": "freshly re-observe EVERY candidate SecretHandoff descriptor",
+            "requirement": "every current observation forms an allowed pair with the same candidate lifecycle",
+            "incompatible_or_unavailable": "RESTORE_REJECTED",
+            "live_store_on_failure": "MUST_REMAIN_UNCHANGED"
+          },
+          "FINAL_PROMOTION": {
+            "timing": "immediately before granting final restore promotion, LIVE readiness, business-resume permission, or usable fresh evidence",
+            "action": "freshly observe EVERY candidate SecretHandoff descriptor with current authoritative observations",
+            "incompatible_or_unavailable": "FAIL_CLOSED",
+            "must_not_gain": [
+              "LIVE readiness",
+              "business-resume permission",
+              "restore authority promotion",
+              "fresh evidence usable to authorize protected finalization/promotion"
+            ],
+            "external_secret_system_mutation": "FORBIDDEN"
+          }
+        },
+        "repeated_observation_rule": {
+          "external_state_identity_required": false,
+          "initial_allowed_then_later_different_but_allowed": "ALLOWED",
+          "example": "candidate PREPARED: NOT_STARTED then COMMITTED is allowed because each pairing is valid for PREPARED",
+          "allowed_then_incompatible": "RESTORE_REJECTED",
+          "allowed_then_unavailable_or_error": "RESTORE_REJECTED",
+          "infer_external_progression_from_timestamps_or_local_generation": "FORBIDDEN"
+        },
+        "existing_external_M0_3_PREPARED_finalize_gate": {
+          "fence_type": "FINAL_PROMOTION",
+          "fourth_restore_time_fence_created": false,
+          "mapping": "REPEATED_INVOCATION_OF_THE_SAME_FINAL_PROMOTION_FENCE_TYPE_AT_TWO_AUTHORITY_SENSITIVE_BOUNDARIES",
+          "required_sequence": [
+            "fresh FINAL_PROMOTION-type observation of EVERY descriptor immediately before existing M0.3 recovery/finalization",
+            "perform existing M0.3 recovery/finalization",
+            "after successful finalization, freshly invoke FINAL_PROMOTION again immediately before actual restore promotion, readiness, or evidence release"
+          ],
+          "pre_finalization_observation_reuse": "FORBIDDEN_AS_PROOF_OF_CURRENT_SECRET_HANDOFF_AUTHORITY_AFTER_M0.3_FINALIZATION",
+          "reason": "SecretHandoff external authority is mutable and no frozen cross-resource ACID transaction spans SecretHandoff authority and M0.3 finalization",
+          "pre_finalization_observation_failure": [
+            "DO_NOT_PERFORM_M0.3_FINALIZATION",
+            "FAIL_CLOSED"
+          ],
+          "post_finalization_pre_promotion_observation_failure": [
+            "DO_NOT_GRANT_LIVE_READINESS",
+            "DO_NOT_GRANT_BUSINESS_RESUME_PERMISSION",
+            "DO_NOT_PROMOTE_RESTORE_AUTHORITY",
+            "DO_NOT_EMIT_OR_USE_FRESH_EVIDENCE_AS_PROMOTION_AUTHORIZATION"
+          ],
+          "completed_M0_3_finalization_rollback_claim": "FORBIDDEN",
+          "SecretHandoff_authority_mutation": "FORBIDDEN",
+          "SecretHandoff_authority_role": "PREREQUISITE_GATE_ONLY_DOES_NOT_AUTHORIZE_M0.3_FINALIZE",
+          "new_M0_3_PREPARE": "FORBIDDEN",
+          "M0_3_ABORT": "FORBIDDEN"
+        },
+        "NOOP_ALREADY_CURRENT": {
+          "applicable_fences": [
+            "INITIAL_STAGE_2",
+            "FINAL_PROMOTION"
+          ],
+          "PRE_INSTALL": "NOT_APPLICABLE_NO_INSTALL_OCCURS",
+          "existing_gates": "normal lifecycle Stage-2, Stage-3, and M0.3 gates still apply",
+          "final_success_rule": "fresh FINAL_PROMOTION observation of EVERY SecretHandoff descriptor before successful return or readiness",
+          "local_equality_effect": "grants no freshness and does not make an earlier external observation permanently authoritative",
+          "FINAL_PROMOTION_prerequisite": "current live StateStore freshly verified; no installation or installed-store reopen required",
+          "existing_external_M0_3_PREPARED_sequence": [
+            "INITIAL_STAGE_2",
+            "fresh FINAL_PROMOTION invocation immediately before M0.3 recovery/finalization",
+            "fresh FINAL_PROMOTION invocation again after successful finalization and immediately before successful NOOP return or readiness"
+          ],
+          "prepared_path_fence_type_rule": "same FINAL_PROMOTION fence TYPE invoked twice; no fourth fence TYPE"
+        },
+        "read_only_side_effect_boundary": {
+          "every_fence": "READ_ONLY",
+          "forbidden_calls": [
+            "begin()",
+            "cleanup()"
+          ],
+          "forbidden_effects": [
+            "advance SecretHandoff lifecycle",
+            "write SecretHandoff records",
+            "retry initial mutation",
+            "retry cleanup",
+            "mint M0.3 authority",
+            "repair candidate state"
+          ],
+          "observation_requires_mutation_to_establish_truth": "RESTORE_REJECTED"
+        },
+        "path_applicability_matrix": {
+          "INSTALLING_RESTORE": {
+            "applicable_fences": [
+              "INITIAL_STAGE_2",
+              "PRE_INSTALL",
+              "FINAL_PROMOTION"
+            ],
+            "FINAL_PROMOTION_prerequisites": [
+              "atomic StateStore install has completed",
+              "installed StateStore has been reopened and verified"
+            ]
+          },
+          "NOOP_ALREADY_CURRENT": {
+            "applicable_fences": [
+              "INITIAL_STAGE_2",
+              "FINAL_PROMOTION"
+            ],
+            "PRE_INSTALL": "NOT_APPLICABLE_NO_INSTALL_OCCURS",
+            "FINAL_PROMOTION_prerequisites": [
+              "current live StateStore has been freshly verified",
+              "no installation or installed-store reopen is required"
+            ]
+          },
+          "REJECTED_BEFORE_INSTALL": {
+            "applicable_fences": "ONLY_FENCES_REACHED_BEFORE_REJECTION",
+            "later_fences": "NOT_MANUFACTURED_AND_NOT_CONSIDERED_PASSED"
+          }
+        }
       }
     },
     "ordered_stage_responsibilities": {
