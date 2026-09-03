@@ -22,7 +22,11 @@ from .migration_execution import (
 )
 from .migration_execution_engine import MigrationExecutionCoordinator
 from .migration_completion import DurableMigrationCompletionCoordinator
-from .secret_handoff import SecretHandoffCoordinator, SecretHandoffRecord
+from .secret_handoff import (
+    DurableSecretHandoffExecutionCoordinator,
+    SecretHandoffCoordinator,
+    SecretHandoffRecord,
+)
 
 __all__ = [
     "PersistenceRecord",
@@ -49,5 +53,6 @@ __all__ = [
     "MigrationSqlOperation",
     "sqlite_schema_fingerprint",
     "SecretHandoffCoordinator",
+    "DurableSecretHandoffExecutionCoordinator",
     "SecretHandoffRecord",
 ]
