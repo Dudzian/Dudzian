@@ -14,6 +14,12 @@ MACHINE_PATH = (
 )
 MACHINE = json.loads(MACHINE_PATH.read_text())
 CONTRACT = MACHINE["backup_contract"]["restore_lifecycle_authority_contract"]
+EXPECTED_RESTORE_STAGES = [
+    "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION",
+    "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+    "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+    "M0_3_RESTORE_FRESHNESS",
+]
 
 
 def test_bundle_is_pre_existing_process_local_and_never_candidate_derived() -> None:
@@ -222,16 +228,10 @@ def test_secret_missing_unavailable_unknown_or_mismatched_authority_fails_closed
 
 def test_restore_stage_order_and_responsibilities_remain_exact() -> None:
     stages = CONTRACT["ordered_stage_responsibilities"]
-    expected = [
-        "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION",
-        "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
-        "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
-        "M0_3_RESTORE_FRESHNESS",
-    ]
-    assert stages["ordered_stages"] == expected
+    assert stages["ordered_stages"] == EXPECTED_RESTORE_STAGES
     assert (
         MACHINE["backup_contract"]["restore_candidate_revalidation_orchestration"]["ordered_stages"]
-        == expected
+        == EXPECTED_RESTORE_STAGES
     )
     assert stages["stage_2_authority_reconstructed_from_stage_1"] is False
     assert "final restore freshness owner" in stages["M0_3_RESTORE_FRESHNESS"]
@@ -258,7 +258,88 @@ def test_stage_2_forbids_business_mutation_and_authority_minting() -> None:
 
 def test_noop_corrupt_and_prepared_paths_cannot_bypass_authority_gates() -> None:
     paths = CONTRACT["path_invariants"]
-    assert "MUST execute lifecycle semantic authority revalidation" in paths["NOOP_ALREADY_CURRENT"]
+    assert (
+        paths[
+            "NO_RESTORE_PATH_MAY_REACH_M0_3_RESTORE_FRESHNESS_BEFORE_M0_11_LIFECYCLE_STAGE_2_AND_STAGE_3"
+        ]
+        is True
+    )
+    noop = paths["NOOP_ALREADY_CURRENT"]
+    assert "lifecycle semantic authority revalidation" in noop
+    assert "current relational revalidation" in noop
+    assert "M0.3 freshness" in noop
     assert "corrupt store supplies no lifecycle authority" in paths["CORRUPT_OR_UNREADABLE"]
     assert "precede existing protected FINALIZE recovery" in paths["EXTERNALLY_PREPARED_M0_3"]
     assert "cannot authorize FINALIZE" in paths["EXTERNALLY_PREPARED_M0_3"]
+
+
+def test_future_restore_sequence_preserves_semantic_stage_order() -> None:
+    sequence = MACHINE["backup_contract"]["descriptor_preservation_contract"][
+        "future_restore_sequence"
+    ]
+    stage_2 = "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION"
+    stage_3 = "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION"
+    freshness = "apply pre-existing external M0.3 restore freshness gate"
+
+    assert sequence.count(stage_2) == 1
+    assert sequence.count(stage_3) == 1
+    assert sequence.count(freshness) == 1
+    assert sequence.index(stage_2) < sequence.index(stage_3) < sequence.index(freshness)
+    assert sequence.index("verify full chain and local candidate") < sequence.index(stage_2)
+
+
+def test_promotion_gates_preserve_authority_order() -> None:
+    gates = MACHINE["restore_contract"]["promotion_gates"]
+    ordered_gates = [
+        "canonical IDs/history consistency",
+        "M0.11 lifecycle aspect-specific semantic authority revalidation",
+        "M0.11 current-designation relational revalidation",
+        "external M0.3 current membership",
+        "protected authority available, well-formed, current and non-retired",
+    ]
+
+    assert gates.count(ordered_gates[1]) == 1
+    assert gates.count(ordered_gates[2]) == 1
+    assert [gates.index(gate) for gate in ordered_gates] == sorted(
+        gates.index(gate) for gate in ordered_gates
+    )
+
+
+def test_all_complete_restore_surfaces_put_stage_2_and_3_before_freshness() -> None:
+    orchestration = MACHINE["backup_contract"]["restore_candidate_revalidation_orchestration"][
+        "ordered_stages"
+    ]
+    responsibilities = CONTRACT["ordered_stage_responsibilities"]["ordered_stages"]
+    future = MACHINE["backup_contract"]["descriptor_preservation_contract"][
+        "future_restore_sequence"
+    ]
+    gates = MACHINE["restore_contract"]["promotion_gates"]
+    surface_markers = [
+        (
+            orchestration,
+            "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+            "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+            "M0_3_RESTORE_FRESHNESS",
+        ),
+        (
+            responsibilities,
+            "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+            "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+            "M0_3_RESTORE_FRESHNESS",
+        ),
+        (
+            future,
+            "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+            "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+            "apply pre-existing external M0.3 restore freshness gate",
+        ),
+        (
+            gates,
+            "M0.11 lifecycle aspect-specific semantic authority revalidation",
+            "M0.11 current-designation relational revalidation",
+            "external M0.3 current membership",
+        ),
+    ]
+
+    for surface, stage_2, stage_3, freshness in surface_markers:
+        assert surface.index(stage_2) < surface.index(stage_3) < surface.index(freshness)
