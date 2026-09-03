@@ -20,6 +20,7 @@ EXPECTED_RESTORE_STAGES = [
     "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
     "M0_3_RESTORE_FRESHNESS",
 ]
+FRESHNESS = CONTRACT["secret_handoff_restore_authority"]["freshness_and_fencing_contract"]
 
 
 def test_bundle_is_pre_existing_process_local_and_never_candidate_derived() -> None:
@@ -224,6 +225,124 @@ def test_secret_missing_unavailable_unknown_or_mismatched_authority_fails_closed
         CONTRACT["secret_handoff_restore_authority"]["local_relations_establish_external_authority"]
         is False
     )
+
+
+def test_secret_restore_requires_current_authoritative_observation() -> None:
+    semantics = FRESHNESS["observation_semantics"]
+    assert semantics == {
+        "required_result": "CURRENT_AUTHORITATIVE_OBSERVATION_AT_CALL_TIME",
+        "prohibited_substitutes": [
+            "cached previous observation",
+            "BackupEnvelope-carried observation",
+            "StateStore-carried observation",
+            "caller-provided observation",
+            "stale process-local accepted observation",
+        ],
+        "current_authority_unavailable": "RESTORE_REJECTED",
+        "durable_observation_record": "FORBIDDEN",
+        "authority_revision": "FORBIDDEN",
+    }
+
+
+def test_secret_restore_has_exactly_three_defined_fence_types() -> None:
+    fences = FRESHNESS["required_restore_time_fences"]
+    assert fences["exact_count"] == 3
+    assert fences["ordered_names"] == [
+        "INITIAL_STAGE_2",
+        "PRE_INSTALL",
+        "FINAL_PROMOTION",
+    ]
+    assert fences["exact_count_semantics"] == (
+        "EXACTLY_THREE_DEFINED_FENCE_TYPES; not a maximum invocation count; a fence "
+        "TYPE may be invoked more than once on one restore path when multiple "
+        "authority-sensitive boundaries require a current observation"
+    )
+
+
+def test_secret_restore_fence_family_applicability_is_exact() -> None:
+    applicability = FRESHNESS["family_applicability"]
+    assert applicability["zero_SecretHandoff_family_records"] == (
+        "ALL_SECRET_HANDOFF_FENCES_NOT_APPLICABLE; SecretHandoffRestoreAuthorityPort not required"
+    )
+    assert applicability["one_or_more_SecretHandoff_family_records"] == {
+        "descriptor_coverage": (
+            "every fence APPLICABLE_TO_CURRENT_RESTORE_PATH must observe EVERY descriptor"
+        ),
+        "skip_policy": "NO_APPLICABLE_FENCE_MAY_BE_SKIPPED",
+        "absent_path_operation": ("operation-specific fence is NOT_APPLICABLE, not satisfied"),
+    }
+
+
+def test_installing_restore_fence_mapping_is_exact() -> None:
+    installing = FRESHNESS["path_applicability_matrix"]["INSTALLING_RESTORE"]
+    assert installing == {
+        "applicable_fences": ["INITIAL_STAGE_2", "PRE_INSTALL", "FINAL_PROMOTION"],
+        "FINAL_PROMOTION_prerequisites": [
+            "atomic StateStore install has completed",
+            "installed StateStore has been reopened and verified",
+        ],
+    }
+
+
+def test_noop_restore_fence_surfaces_remain_aligned() -> None:
+    matrix_noop = FRESHNESS["path_applicability_matrix"]["NOOP_ALREADY_CURRENT"]
+    contract_noop = FRESHNESS["NOOP_ALREADY_CURRENT"]
+    expected_fences = ["INITIAL_STAGE_2", "FINAL_PROMOTION"]
+    expected_pre_install = "NOT_APPLICABLE_NO_INSTALL_OCCURS"
+
+    assert matrix_noop == {
+        "applicable_fences": expected_fences,
+        "PRE_INSTALL": expected_pre_install,
+        "FINAL_PROMOTION_prerequisites": [
+            "current live StateStore has been freshly verified",
+            "no installation or installed-store reopen is required",
+        ],
+    }
+    assert contract_noop["applicable_fences"] == matrix_noop["applicable_fences"]
+    assert contract_noop["PRE_INSTALL"] == matrix_noop["PRE_INSTALL"]
+    assert contract_noop["FINAL_PROMOTION_prerequisite"] == (
+        "current live StateStore freshly verified; no installation or installed-store "
+        "reopen required"
+    )
+
+
+def test_generic_final_promotion_fails_closed_without_protected_outcomes() -> None:
+    final_promotion = FRESHNESS["required_restore_time_fences"]["FINAL_PROMOTION"]
+    assert final_promotion == {
+        "timing": (
+            "immediately before granting final restore promotion, LIVE readiness, "
+            "business-resume permission, or usable fresh evidence"
+        ),
+        "action": (
+            "freshly observe EVERY candidate SecretHandoff descriptor with current "
+            "authoritative observations"
+        ),
+        "incompatible_or_unavailable": "FAIL_CLOSED",
+        "must_not_gain": [
+            "LIVE readiness",
+            "business-resume permission",
+            "restore authority promotion",
+            "fresh evidence usable to authorize protected finalization/promotion",
+        ],
+        "external_secret_system_mutation": "FORBIDDEN",
+    }
+
+
+def test_secret_restore_fences_preserve_the_read_only_boundary() -> None:
+    boundary = FRESHNESS["read_only_side_effect_boundary"]
+    assert boundary == {
+        "every_fence": "READ_ONLY",
+        "forbidden_calls": ["begin()", "cleanup()"],
+        "forbidden_effects": [
+            "advance SecretHandoff lifecycle",
+            "write SecretHandoff records",
+            "retry initial mutation",
+            "retry cleanup",
+            "mint M0.3 authority",
+            "repair candidate state",
+        ],
+        "observation_requires_mutation_to_establish_truth": "RESTORE_REJECTED",
+    }
 
 
 def test_restore_stage_order_and_responsibilities_remain_exact() -> None:
