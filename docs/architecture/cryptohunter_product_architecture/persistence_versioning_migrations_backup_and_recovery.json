@@ -8866,6 +8866,340 @@
       "stage_1": "intrinsic carrier validity only",
       "stage_2": "candidate historical evidence revalidated against lifecycle, scope, and external SecretHandoff reconciliation state",
       "restorable_authority": false
+    },
+    "restore_lifecycle_authority_contract": {
+      "status": "ARCHITECTURE_CLOSED_PRODUCTION_INTEGRATION_DEFERRED_FOR_PHYSICAL_ARTIFACT",
+      "bundle": {
+        "name": "RestoreLifecycleAuthorityBundle",
+        "classification": "PROCESS-LOCAL / PRE-EXISTING TRUSTED INPUT",
+        "contains": [
+          "migration_restore_authority",
+          "secret_handoff_restore_authority"
+        ],
+        "not": [
+          "PersistenceRecord",
+          "BackupEnvelope",
+          "durable StateStore state",
+          "candidate-derived",
+          "restore result",
+          "M0.3 authority"
+        ],
+        "candidate_may_populate": false,
+        "family_presence_policy": {
+          "records_absent_and_corresponding_authority_absent": "ALLOWED_GATE_NOT_APPLICABLE",
+          "any_corresponding_records_present_and_authority_absent": "RESTORE_REJECTED",
+          "any_corresponding_records_present_and_authority_unavailable": "RESTORE_REJECTED"
+        }
+      },
+      "migration_restore_authority": {
+        "classification": "PRE-EXISTING SEALED RUNTIME / BUILD CONFIGURATION",
+        "required_components": [
+          "MigrationDefinition",
+          "MigrationExecutionAuthority",
+          "trusted deterministic planner"
+        ],
+        "MigrationExecutionAuthority": {
+          "classification": "EXACT IMMUTABLE PRE-EXISTING NON-DURABLE AUTHORITY",
+          "fields": [
+            "migration_id",
+            "source_schema_version",
+            "target_schema_version",
+            "ordered_path",
+            "rollback_policy",
+            "migration_definition_fingerprint_sha256",
+            "operation_plan_fingerprint_sha256",
+            "pre_sqlite_schema_fingerprint_sha256",
+            "target_sqlite_schema_fingerprint_sha256"
+          ],
+          "exact_operations_required_in_authority": false,
+          "operation_binding": "sealed operation_plan_fingerprint_sha256 is sufficient only because declaration intrinsic validation recomputes the fingerprint over exact ordered operations and restore requires exact equality with this independently pre-existing value",
+          "excluded_from": [
+            "PersistenceRecord",
+            "BackupEnvelope",
+            "StateStore",
+            "restore candidate"
+          ],
+          "hash_possession_grants_authority": false
+        },
+        "future_registry_contract": {
+          "per_migration_id": [
+            "MigrationDefinition",
+            "MigrationExecutionAuthority",
+            "trusted deterministic planner"
+          ],
+          "planner_may_inspect": "verified source snapshot for runtime preconditions",
+          "planner_result_gate": "exact match to sealed MigrationExecutionAuthority before M0.3 PREPARE, local migration SQL, or declaration persistence",
+          "candidate_specific_plan_without_sealed_match": "NOT_RESTORE_AUTHORIZABLE"
+        },
+        "declaration_authority_boundary": {
+          "candidate_operations_are_independent_authority": false,
+          "candidate_reconstructed_plan_is_authority": false,
+          "assert_matches_definition_and_candidate_reconstructed_plan_proves_only": [
+            "declaration intrinsic consistency",
+            "static MigrationDefinition equality"
+          ],
+          "required_conjunctive_bindings": [
+            "intrinsic declaration validation",
+            "exact MigrationDefinition",
+            "exact MigrationExecutionAuthority",
+            "migration_id",
+            "source_schema_version",
+            "target_schema_version",
+            "ordered_path",
+            "rollback_policy",
+            "migration_definition_fingerprint_sha256",
+            "operation_plan_fingerprint_sha256",
+            "pre_sqlite_schema_fingerprint_sha256",
+            "target_sqlite_schema_fingerprint_sha256",
+            "account_id",
+            "device_installation_id",
+            "environment",
+            "StateStore identity",
+            "expected generation",
+            "target generation",
+            "descriptor edge",
+            "declaration carrier"
+          ],
+          "unknown_migration_id": "RESTORE_REJECTED",
+          "known_definition_missing_execution_authority": "RESTORE_REJECTED",
+          "execution_authority_declaration_mismatch": "RESTORE_REJECTED"
+        },
+        "declaration_cardinality_by_current_state": {
+          "PREPARED": {
+            "allowed_counts": [
+              0
+            ]
+          },
+          "APPLYING": {
+            "allowed_counts": [
+              0,
+              1
+            ],
+            "meanings": {
+              "0": "structural transaction not durable",
+              "1": "structural transaction durable"
+            }
+          },
+          "DURABLE_MIGRATED": {
+            "allowed_counts": [
+              1
+            ]
+          },
+          "COMPLETED": {
+            "allowed_counts": [
+              1
+            ]
+          },
+          "FAILED": {
+            "by_predecessor": {
+              "PREPARED": [
+                0
+              ],
+              "APPLYING": [
+                0,
+                1
+              ],
+              "DURABLE_MIGRATED": [
+                1
+              ]
+            }
+          }
+        },
+        "cardinality_failures": {
+          "more_than_one_for_migration_id": "RESTORE_REJECTED",
+          "declaration_without_corresponding_lifecycle": "RESTORE_REJECTED",
+          "required_declaration_absent": "RESTORE_REJECTED"
+        },
+        "local_relational_requirements": [
+          "exactly one semantic current slot per migration_id",
+          "contiguous revisions beginning at 1",
+          "exact migration_id identity",
+          "exact previous_state chain",
+          "exact legal transitions",
+          "exact transition fingerprints",
+          "exact current fingerprint",
+          "current revision equals history tail revision",
+          "current state equals history tail state",
+          "current protected generation and authoritative state observation bound to history tail",
+          "no conflicting same revision",
+          "no revision gaps"
+        ],
+        "local_relations_are_sufficient_authority": false,
+        "MigrationRecord": {
+          "durability": "EPHEMERAL ONLY",
+          "restore_authority": false,
+          "BackupEnvelope_membership": false
+        }
+      },
+      "physical_sqlite_restore_prerequisite": {
+        "current_BackupEnvelope_preserves": [
+          "StateStore metadata",
+          "canonical durable records",
+          "immutable recovery history",
+          "StateStoreTransactionDescriptor chain"
+        ],
+        "current_BackupEnvelope_preserves_complete_physical_SQLite_database_image": false,
+        "migration_execution_effect_kinds": [
+          "DDL",
+          "DML"
+        ],
+        "invariants": [
+          "POST_STRUCTURAL_MIGRATION_RESTORE_REQUIRES_TRUSTED_PHYSICAL_STATE_ARTIFACT",
+          "BACKUP_ENVELOPE_ALONE_CANNOT_RECONSTRUCT_ARBITRARY_MIGRATION_DDL_DML_EFFECTS",
+          "RESTORE_MUST_NOT_REPLAY_MIGRATION_SQL_TO_MANUFACTURE_MATERIALIZATION"
+        ],
+        "pre_structural_semantic_revalidation_possible_states": [
+          "PREPARED",
+          "APPLYING_WITH_ZERO_DECLARATIONS"
+        ],
+        "candidate_with_declaration_additionally_requires": "trusted physical StateStore materialization proof",
+        "production_stage_2_status": "INTENTIONALLY_BLOCKED_FOR_POST_STRUCTURAL_MIGRATION_CANDIDATES",
+        "deferred_to": "NEXT_SEPARATE_ARCHITECTURE_CORRECTIVE",
+        "partial_production_restore_integration_permitted": false,
+        "future_artifact_scope": "physical SQLite backup artifact contract"
+      },
+      "secret_handoff_restore_authority": {
+        "port": {
+          "name": "SecretHandoffRestoreAuthorityPort",
+          "owner": "EXTERNAL PROTECTED SECURE-STORE / SECRET-RESOURCE AUTHORITY BOUNDARY",
+          "method": "observe(descriptor) -> SecretHandoffRestoreObservation",
+          "properties": [
+            "READ_ONLY",
+            "SIDE_EFFECT_FREE",
+            "NO_RETRY_OF_BUSINESS_MUTATION",
+            "NO_BEGIN",
+            "NO_CLEANUP",
+            "NO_LIFECYCLE_WRITE",
+            "NO_M0.3_ACTION"
+          ],
+          "not": [
+            "SecretHandoffRecord",
+            "SecretExternalResourcePort mutation API",
+            "BackupEnvelope data",
+            "StateStore data",
+            "M0.3 authority"
+          ]
+        },
+        "observation": {
+          "name": "SecretHandoffRestoreObservation",
+          "exact_fields": [
+            "handoff_id",
+            "scope",
+            "operation_fingerprint_sha256",
+            "metadata_fingerprint_sha256",
+            "external_state"
+          ],
+          "external_state_registry": [
+            "NOT_STARTED",
+            "COMMITTED",
+            "UNRESOLVED",
+            "CLEANUP_ACCEPTED_OR_SATISFIED"
+          ],
+          "intrinsic_validation": [
+            "exact field set",
+            "canonical handoff_id",
+            "canonical account/device scope",
+            "lowercase SHA-256 operation fingerprint",
+            "lowercase SHA-256 metadata fingerprint",
+            "closed external_state"
+          ],
+          "candidate_may_carry_or_mint": false
+        },
+        "state_relation_matrix": {
+          "PREPARED": [
+            "NOT_STARTED",
+            "COMMITTED",
+            "UNRESOLVED"
+          ],
+          "COMMITTED": [
+            "COMMITTED",
+            "CLEANUP_ACCEPTED_OR_SATISFIED"
+          ],
+          "CLEANUP_PENDING": [
+            "CLEANUP_ACCEPTED_OR_SATISFIED"
+          ],
+          "UNKNOWN_RECONCILIATION": [
+            "UNRESOLVED"
+          ]
+        },
+        "relation_reasoning": {
+          "PREPARED": "before dispatch, committed outcome not yet durably recorded, or unresolved outcome; restore never begins or retries",
+          "COMMITTED_CLEANUP_ACCEPTED_OR_SATISFIED": "legal crash window after external cleanup acceptance and before durable CLEANUP_PENDING"
+        },
+        "required_exact_bindings": [
+          "observation handoff_id equals descriptor",
+          "observation scope equals descriptor and StateStore account/device",
+          "observation operation fingerprint equals descriptor",
+          "observation metadata fingerprint equals descriptor"
+        ],
+        "any_other_state_pair": "RESTORE_REJECTED",
+        "local_relational_requirements": [
+          "exactly one immutable descriptor for each lifecycle identity",
+          "no lifecycle without descriptor",
+          "no duplicate or conflicting descriptor",
+          "exact descriptor handoff_id",
+          "descriptor scope equals StateStore account/device",
+          "descriptor metadata fingerprint recomputes",
+          "descriptor operation fingerprint recomputes",
+          "descriptor contains no raw secret payload",
+          "contiguous lifecycle revisions",
+          "exact legal transition graph",
+          "every transition operation fingerprint equals descriptor",
+          "every transition metadata fingerprint equals descriptor",
+          "current operation fingerprint equals descriptor",
+          "current equals history tail"
+        ],
+        "local_relations_establish_external_authority": false,
+        "availability_policy": {
+          "no_family_records_and_no_port": "ALLOWED_GATE_NOT_APPLICABLE",
+          "any_family_record_and_missing_port": "RESTORE_REJECTED",
+          "authority_call_unavailable_or_error": "RESTORE_REJECTED",
+          "unknown_handoff": "RESTORE_REJECTED",
+          "scope_or_fingerprint_mismatch": "RESTORE_REJECTED",
+          "fallback_to_SecretExternalResourcePort_reconcile": "FORBIDDEN"
+        }
+      },
+      "ordered_stage_responsibilities": {
+        "ordered_stages": [
+          "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION",
+          "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+          "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
+          "M0_3_RESTORE_FRESHNESS"
+        ],
+        "STRUCTURAL_PERSISTENCE_RECORD_VALIDATION": "intrinsic carriers and envelope only",
+        "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION": [
+          "pre-existing sealed Migration authority",
+          "pre-existing read-only SecretHandoff external authority"
+        ],
+        "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION": "candidate lifecycle/current/history relational consistency",
+        "M0_3_RESTORE_FRESHNESS": "existing external M0.3 restore freshness; final restore freshness owner",
+        "stage_2_authority_reconstructed_from_stage_1": false
+      },
+      "assessment_side_effect_boundary": {
+        "permitted": [
+          "read-only static plan comparison",
+          "read-only SecretHandoff observation"
+        ],
+        "forbidden": [
+          "execute migration SQL",
+          "call MigrationExecutionCoordinator.execute()",
+          "call DurableMigrationCompletionCoordinator.resume_to_completion()",
+          "invoke migration planner as a mutating path",
+          "call SecretHandoff begin()",
+          "call SecretHandoff cleanup()",
+          "advance SecretHandoff lifecycle",
+          "advance Migration lifecycle",
+          "create M0.3 PREPARE",
+          "ABORT M0.3",
+          "mint authority",
+          "repair candidate history"
+        ]
+      },
+      "path_invariants": {
+        "NOOP_ALREADY_CURRENT": "MUST execute lifecycle semantic authority revalidation, current relational revalidation, and M0.3 freshness; local equality never creates authority",
+        "CORRUPT_OR_UNREADABLE": "candidate Stage-1 and Stage-2 are independent of corrupt live store; corrupt store supplies no lifecycle authority; no install before every candidate authority gate",
+        "EXTERNALLY_PREPARED_M0_3": "lifecycle Stage-2 and relational validation precede existing protected FINALIZE recovery; lifecycle evidence cannot authorize FINALIZE"
+      }
     }
   },
   "restore_contract": {
