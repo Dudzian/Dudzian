@@ -8943,6 +8943,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "validate PersistenceRecords",
       "validate every complete descriptor",
       "verify full chain and local candidate",
+      "ASPECT_SPECIFIC_SEMANTIC_AUTHORITY_REVALIDATION",
+      "CURRENT_DESIGNATION_RELATIONAL_REVALIDATION",
       "apply pre-existing external M0.3 restore freshness gate"
     ],
     "external_restore_freshness_owner": "EXTERNAL_PRODUCT_PROTECTED_STATE_BOUNDARY",
@@ -9292,6 +9294,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       ]
     },
     "path_invariants": {
+      "NO_RESTORE_PATH_MAY_REACH_M0_3_RESTORE_FRESHNESS_BEFORE_M0_11_LIFECYCLE_STAGE_2_AND_STAGE_3": true,
       "NOOP_ALREADY_CURRENT": "MUST execute lifecycle semantic authority revalidation, current relational revalidation, and M0.3 freshness; local equality never creates authority",
       "CORRUPT_OR_UNREADABLE": "candidate Stage-1 and Stage-2 are independent of corrupt live store; corrupt store supplies no lifecycle authority; no install before every candidate authority gate",
       "EXTERNALLY_PREPARED_M0_3": "lifecycle Stage-2 and relational validation precede existing protected FINALIZE recovery; lifecycle evidence cannot authorize FINALIZE"
@@ -9310,6 +9313,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "exact scope",
     "exact environment",
     "canonical IDs/history consistency",
+    "M0.11 lifecycle aspect-specific semantic authority revalidation",
+    "M0.11 current-designation relational revalidation",
     "external M0.3 current membership",
     "protected authority available, well-formed, current and non-retired",
     "generation/state fingerprint comparison",
