@@ -259,6 +259,97 @@ def test_secret_restore_has_exactly_three_defined_fence_types() -> None:
     )
 
 
+def test_prepared_m0_3_reuses_the_final_promotion_fence_type() -> None:
+    prepared = FRESHNESS["existing_external_M0_3_PREPARED_finalize_gate"]
+    assert prepared["fence_type"] == "FINAL_PROMOTION"
+    assert prepared["fourth_restore_time_fence_created"] is False
+    assert prepared["mapping"] == (
+        "REPEATED_INVOCATION_OF_THE_SAME_FINAL_PROMOTION_FENCE_TYPE_AT_TWO_"
+        "AUTHORITY_SENSITIVE_BOUNDARIES"
+    )
+
+
+def test_prepared_m0_3_final_promotion_sequence_is_exact() -> None:
+    prepared = FRESHNESS["existing_external_M0_3_PREPARED_finalize_gate"]
+    assert prepared["required_sequence"] == [
+        (
+            "fresh FINAL_PROMOTION-type observation of EVERY descriptor immediately "
+            "before existing M0.3 recovery/finalization"
+        ),
+        "perform existing M0.3 recovery/finalization",
+        (
+            "after successful finalization, freshly invoke FINAL_PROMOTION again "
+            "immediately before actual restore promotion, readiness, or evidence release"
+        ),
+    ]
+
+
+def test_prepared_m0_3_forbids_pre_finalization_observation_reuse() -> None:
+    prepared = FRESHNESS["existing_external_M0_3_PREPARED_finalize_gate"]
+    assert prepared["pre_finalization_observation_reuse"] == (
+        "FORBIDDEN_AS_PROOF_OF_CURRENT_SECRET_HANDOFF_AUTHORITY_AFTER_M0.3_FINALIZATION"
+    )
+    assert prepared["reason"] == (
+        "SecretHandoff external authority is mutable and no frozen cross-resource ACID "
+        "transaction spans SecretHandoff authority and M0.3 finalization"
+    )
+
+
+def test_prepared_m0_3_pre_finalization_failure_fails_closed() -> None:
+    prepared = FRESHNESS["existing_external_M0_3_PREPARED_finalize_gate"]
+    assert prepared["pre_finalization_observation_failure"] == [
+        "DO_NOT_PERFORM_M0.3_FINALIZATION",
+        "FAIL_CLOSED",
+    ]
+
+
+def test_prepared_m0_3_post_finalization_failure_fails_closed_without_rollback() -> None:
+    prepared = FRESHNESS["existing_external_M0_3_PREPARED_finalize_gate"]
+    assert prepared["post_finalization_pre_promotion_observation_failure"] == [
+        "DO_NOT_GRANT_LIVE_READINESS",
+        "DO_NOT_GRANT_BUSINESS_RESUME_PERMISSION",
+        "DO_NOT_PROMOTE_RESTORE_AUTHORITY",
+        "DO_NOT_EMIT_OR_USE_FRESH_EVIDENCE_AS_PROMOTION_AUTHORIZATION",
+    ]
+    assert prepared["completed_M0_3_finalization_rollback_claim"] == "FORBIDDEN"
+    assert prepared["SecretHandoff_authority_mutation"] == "FORBIDDEN"
+
+
+def test_prepared_m0_3_secret_handoff_is_only_a_prerequisite_gate() -> None:
+    prepared = FRESHNESS["existing_external_M0_3_PREPARED_finalize_gate"]
+    assert prepared["SecretHandoff_authority_role"] == (
+        "PREREQUISITE_GATE_ONLY_DOES_NOT_AUTHORIZE_M0.3_FINALIZE"
+    )
+    assert prepared["new_M0_3_PREPARE"] == "FORBIDDEN"
+    assert prepared["M0_3_ABORT"] == "FORBIDDEN"
+
+
+def test_noop_prepared_m0_3_uses_final_promotion_twice_without_a_new_fence() -> None:
+    noop = FRESHNESS["NOOP_ALREADY_CURRENT"]
+    assert noop["PRE_INSTALL"] == "NOT_APPLICABLE_NO_INSTALL_OCCURS"
+    assert noop["existing_external_M0_3_PREPARED_sequence"] == [
+        "INITIAL_STAGE_2",
+        "fresh FINAL_PROMOTION invocation immediately before M0.3 recovery/finalization",
+        (
+            "fresh FINAL_PROMOTION invocation again after successful finalization and "
+            "immediately before successful NOOP return or readiness"
+        ),
+    ]
+    assert noop["prepared_path_fence_type_rule"] == (
+        "same FINAL_PROMOTION fence TYPE invoked twice; no fourth fence TYPE"
+    )
+
+    fences = FRESHNESS["required_restore_time_fences"]
+    assert fences["exact_count"] == 3
+    assert fences["ordered_names"] == [
+        "INITIAL_STAGE_2",
+        "PRE_INSTALL",
+        "FINAL_PROMOTION",
+    ]
+    prepared = FRESHNESS["existing_external_M0_3_PREPARED_finalize_gate"]
+    assert prepared["fence_type"] == "FINAL_PROMOTION"
+
+
 def test_secret_restore_fence_family_applicability_is_exact() -> None:
     applicability = FRESHNESS["family_applicability"]
     assert applicability["zero_SecretHandoff_family_records"] == (
