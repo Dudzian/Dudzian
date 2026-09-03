@@ -32,8 +32,10 @@ MANIFEST_FIELDS = [
 ]
 
 
-def test_trust_root_audit_freezes_precise_blocker_without_inventing_a_key() -> None:
-    assert CONTRACT["status"] == "PHYSICAL_ARTIFACT_AUTHENTICATION_TRUST_ROOT_STILL_BLOCKED"
+def test_trust_root_audit_is_historical_and_implementation_remains_pending() -> None:
+    assert CONTRACT["status"] == (
+        "BACKUP_ARTIFACT_AUTHENTICATION_AUTHORITY_ARCHITECTURE_DEFINED_IMPLEMENTATION_PENDING"
+    )
     audit = CONTRACT["trust_root_audit"]
     assert audit["decision"] == "NO_SUITABLE_EXISTING_INDEPENDENT_TRUST_ROOT"
     assert audit["reuse_decision"].startswith("NONE;")
@@ -61,7 +63,9 @@ def test_verification_authority_is_external_to_four_component_candidate_bundle()
     )
     assert boundary["authentication_proof"]["candidate_carried"] is True
     capability = boundary["verification_capability"]
-    assert capability["classification"] == "FUTURE PRE-EXISTING EXTERNAL VALIDATION INPUT"
+    assert capability["classification"] == (
+        "PRE_EXISTING_EXTERNAL_LOCAL_SECURITY_AUTHORITY_CAPABILITY"
+    )
     assert capability["production_exists"] is False
     assert capability["process_local"] is True
     assert capability["pre_existing"] is True
@@ -514,9 +518,12 @@ def test_backup_creation_is_same_point_and_all_or_nothing() -> None:
         "obtain one physical image with SQLITE_CONSISTENT_SNAPSHOT_PRIMITIVE",
         "derive BackupEnvelope from the same represented durable consistency point or prove exact generation/state/transaction identity",
         "compute physical_artifact_sha256 and byte length",
-        "build canonical immutable manifest",
-        "authenticate manifest through independent trusted authority",
-        "output bundle only after every component succeeds",
+        "build canonical immutable PhysicalSQLiteArtifactManifest",
+        "compute manifest_fingerprint_sha256",
+        "obtain authenticate capability for exact trusted authority scope",
+        "HMAC exact domain-separated canonical manifest payload with current ACTIVE key",
+        "build PhysicalArtifactAuthenticationProof",
+        "output TrustedPhysicalBackupArtifact only after every component succeeds",
     ]
     assert creation["mixed_generation_output_valid"] is False
     assert creation["authentication_authority_missing_or_unavailable"] == "BACKUP_CREATION_FAILED"

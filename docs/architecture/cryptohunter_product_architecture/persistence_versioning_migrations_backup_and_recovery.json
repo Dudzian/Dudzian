@@ -9367,8 +9367,8 @@
     }
   },
   "physical_sqlite_restore_artifact_contract": {
-    "status": "PHYSICAL_ARTIFACT_AUTHENTICATION_TRUST_ROOT_STILL_BLOCKED",
-    "architecture_scope": "NON_CRYPTOGRAPHIC_ARTIFACT_AND_RESTORE_SEMANTICS_FROZEN; PRODUCTION_AUTHENTICITY_GATE_NOT_CLOSED",
+    "status": "BACKUP_ARTIFACT_AUTHENTICATION_AUTHORITY_ARCHITECTURE_DEFINED_IMPLEMENTATION_PENDING",
+    "architecture_scope": "PHYSICAL_ARTIFACT_AND_AUTHENTICATION_AUTHORITY_ARCHITECTURE_FROZEN; PRODUCTION_IMPLEMENTATION_PENDING",
     "trust_root_audit": {
       "decision": "NO_SUITABLE_EXISTING_INDEPENDENT_TRUST_ROOT",
       "findings": [
@@ -9395,7 +9395,7 @@
           "NO_RAW_KEY_EXPOSURE",
           "PURPOSE_SEPARATED"
         ],
-        "until_closed": "POST_STRUCTURAL_PHYSICAL_BACKUP_CREATION_AND_RESTORE_ARE_NOT_PRODUCTION_READY"
+        "until_closed": "AUTHORITY_ARCHITECTURE_NOW_DEFINED; PRODUCTION_IMPLEMENTATION_REMAINS_PENDING"
       },
       "forbidden_shortcuts": [
         "candidate self-authentication",
@@ -9403,7 +9403,8 @@
         "invented signing or MAC key",
         "treating M0.3 as backup authentication authority",
         "treating generic secret references as an authenticate/verify API"
-      ]
+      ],
+      "historical_finding_retained": true
     },
     "artifact_model": {
       "bundle_name": "TrustedPhysicalBackupArtifact",
@@ -9417,9 +9418,11 @@
       "raw_sqlite_bytes_are_PersistenceRecord": false,
       "physical_artifact_is_M0_3_authority": false,
       "candidate_only": true,
-      "production_use_blocked_until_authentication_prerequisite_closed": true,
       "contains_candidate_carried_data_and_proof_only": true,
-      "may_carry_trust_authority_or_capability": false
+      "may_carry_trust_authority_or_capability": false,
+      "production_use_blocked_until_authentication_authority_implemented": true,
+      "architecture_prerequisite_defined": true,
+      "production_authentication_capability_exists": false
     },
     "verification_input_boundary": {
       "candidate_bundle": {
@@ -9437,7 +9440,7 @@
       },
       "verification_capability": {
         "name": "BackupArtifactAuthenticationAuthorityCapability",
-        "classification": "FUTURE PRE-EXISTING EXTERNAL VALIDATION INPUT",
+        "classification": "PRE_EXISTING_EXTERNAL_LOCAL_SECURITY_AUTHORITY_CAPABILITY",
         "production_exists": false,
         "process_local": true,
         "pre_existing": true,
@@ -9448,7 +9451,9 @@
         "permitted_in_StateStore": false,
         "acquisition": "INDEPENDENTLY_FROM_RESTORE_CANDIDATE",
         "unavailable": "RESTORE_REJECTED",
-        "raw_key_exposed": false
+        "raw_key_exposed": false,
+        "architecture_defined": true,
+        "operation": "BackupArtifactAuthenticationAuthorityCapability.verify"
       },
       "invariant": "RESTORE_CANDIDATE_MAY_CARRY_AUTHENTICATION_PROOF_BUT_NEVER_AUTHENTICATION_AUTHORITY"
     },
@@ -9491,7 +9496,9 @@
         {
           "step": "EXTERNAL_PROOF_VERIFICATION",
           "actions": [
-            "verify PhysicalArtifactAuthenticationProof using pre-existing external process-local BackupArtifactAuthenticationAuthorityCapability"
+            "intrinsically validate exact PhysicalArtifactAuthenticationProof format",
+            "invoke BackupArtifactAuthenticationAuthorityCapability.verify for exact validated scope and canonical manifest bytes",
+            "accept only VERIFIED"
           ],
           "opens_SQLite_database": false,
           "candidate_self_authentication": false
@@ -9540,7 +9547,9 @@
         "classification": "AUTHENTICATED_CANDIDATE_INTRINSIC_PHYSICAL_VALIDATION",
         "authority": false,
         "establishes_current_authorization": false
-      }
+      },
+      "authority_contract_pointer": "/backup_artifact_authentication_authority_contract/capabilities/verify",
+      "accepted_verification_status": "VERIFIED"
     },
     "manifest": {
       "name": "PhysicalSQLiteArtifactManifest",
@@ -9581,7 +9590,7 @@
       },
       "bindings": "exactly binds BackupEnvelope scope, store identity/schema, generation/state/transaction consistency point, envelope fingerprint, physical bytes/length, and SQLite schema",
       "timestamp_authority": false,
-      "authentication_payload_requirement": "future independent proof MUST authenticate the exact manifest canonical payload or an unambiguous canonical payload transitively committing manifest_fingerprint_sha256, physical_artifact_sha256, and backup_envelope_fingerprint_sha256"
+      "authentication_payload_requirement": "UTF8(\"CRYPTOHUNTER_M0_11_PHYSICAL_BACKUP_AUTH_V1\") + 0x00 + CANONICAL_MANIFEST_UTF8"
     },
     "consistent_snapshot": {
       "required_class": "SQLITE_CONSISTENT_SNAPSHOT_PRIMITIVE",
@@ -9864,13 +9873,18 @@
         "obtain one physical image with SQLITE_CONSISTENT_SNAPSHOT_PRIMITIVE",
         "derive BackupEnvelope from the same represented durable consistency point or prove exact generation/state/transaction identity",
         "compute physical_artifact_sha256 and byte length",
-        "build canonical immutable manifest",
-        "authenticate manifest through independent trusted authority",
-        "output bundle only after every component succeeds"
+        "build canonical immutable PhysicalSQLiteArtifactManifest",
+        "compute manifest_fingerprint_sha256",
+        "obtain authenticate capability for exact trusted authority scope",
+        "HMAC exact domain-separated canonical manifest payload with current ACTIVE key",
+        "build PhysicalArtifactAuthenticationProof",
+        "output TrustedPhysicalBackupArtifact only after every component succeeds"
       ],
       "mixed_generation_output_valid": false,
       "authentication_authority_missing_or_unavailable": "BACKUP_CREATION_FAILED",
-      "mutate_business_state_solely_to_create_backup": false
+      "mutate_business_state_solely_to_create_backup": false,
+      "authority_operation": "BackupArtifactAuthenticationAuthorityCapability.authenticate",
+      "authority_failures": "BACKUP_CREATION_FAILED_NO_TRUSTED_ARTIFACT_PUBLISHED"
     },
     "failure_policy": {
       "outcome": "RESTORE_REJECTED",
@@ -12230,5 +12244,897 @@
     "representation_registry": "65/65 structured, zero true upstream semantic gaps, no synthetic record kinds",
     "immutable_upstream_provenance": "ALL_WRAPPERS_DIRECT_OR_LOSSLESS_COMPOSITE_SOURCE_DERIVED",
     "immutable_history_wrapper_count": 14
+  },
+  "backup_artifact_authentication_authority_contract": {
+    "name": "BackupArtifactAuthenticationAuthority",
+    "classification": "PRE_EXISTING_EXTERNAL_LOCAL_SECURITY_AUTHORITY",
+    "architecture_status": "BACKUP_ARTIFACT_AUTHENTICATION_AUTHORITY_ARCHITECTURE_DEFINED_IMPLEMENTATION_PENDING",
+    "production_implementation_exists": false,
+    "ownership_and_scope": {
+      "authority_for": "BACKUP_ARTIFACT_AUTHENTICATION_ONLY",
+      "exact_scope": [
+        "account_id",
+        "device_installation_id",
+        "environment",
+        "purpose"
+      ],
+      "purpose": "CRYPTOHUNTER_M0_11_PHYSICAL_BACKUP_AUTH_V1",
+      "scope_source": "validated manifest candidate scope plus independently resolved trusted authority key ring",
+      "separation": [
+        "account",
+        "device installation",
+        "environment",
+        "cryptographic purpose"
+      ],
+      "cross_scope_fallback": false,
+      "not": [
+        "PersistenceRecord",
+        "BackupEnvelope field",
+        "StateStore record",
+        "M0.3 authority",
+        "lifecycle authority",
+        "restore authority",
+        "SecretHandoff lifecycle authority",
+        "migration authority"
+      ],
+      "existence_precedes_authenticated_candidate_use": true
+    },
+    "cryptography": {
+      "algorithm": "HMAC-SHA-256",
+      "custom_cryptography": false,
+      "rationale": [
+        "same trusted local authority creates and verifies backups",
+        "no current third-party or public verification requirement",
+        "symmetric authentication avoids an unnecessary public-key trust hierarchy",
+        "HMAC provides authenticity and integrity while the key remains external to candidate state"
+      ],
+      "authentication_payload": {
+        "exact_expression": "UTF8(\"CRYPTOHUNTER_M0_11_PHYSICAL_BACKUP_AUTH_V1\") + 0x00 + CANONICAL_MANIFEST_UTF8",
+        "domain_separator_utf8": "CRYPTOHUNTER_M0_11_PHYSICAL_BACKUP_AUTH_V1",
+        "separator_byte_hex": "00",
+        "canonical_manifest": "exact canonical JSON serialization of complete PhysicalSQLiteArtifactManifest including manifest_fingerprint_sha256",
+        "canonical_json": {
+          "encoding": "UTF-8",
+          "sort_keys": true,
+          "separators": [
+            ",",
+            ":"
+          ],
+          "ensure_ascii": false,
+          "allow_nan": false
+        },
+        "alternate_serialization_accepted": false,
+        "transitive_binding": [
+          "manifest",
+          "BackupEnvelope fingerprint",
+          "physical artifact hash",
+          "physical SQLite bytes"
+        ],
+        "physical_hash_only_sufficient": false
+      },
+      "constant_time_tag_comparison": true
+    },
+    "key_material": {
+      "logical_name": "BACKUP_AUTHENTICATION_KEY",
+      "bits": 256,
+      "generation": "CRYPTOGRAPHICALLY_SECURE_RANDOM_GENERATOR",
+      "generated_only_by": "BackupArtifactAuthenticationAuthority",
+      "candidate_derived": false,
+      "deterministically_identifier_derived": false,
+      "derivation_forbidden": [
+        "passwords",
+        "PINs",
+        "PIN verifiers",
+        "exchange API keys or secrets",
+        "StateStore contents",
+        "BackupEnvelope contents",
+        "M0.3 state or fingerprints",
+        "previous hashes"
+      ],
+      "raw_material_policy": [
+        "secret",
+        "non-exportable through product/application APIs",
+        "never serialized into BackupEnvelope",
+        "never serialized into TrustedPhysicalBackupArtifact",
+        "never stored in StateStore",
+        "never logged",
+        "never emitted to telemetry",
+        "never included in exceptions"
+      ],
+      "backend_internal_bytes": "AUTHORITY_INTERNAL_CUSTODY_ONLY_NOT_APPLICATION_LEVEL_REPRESENTATION"
+    },
+    "secure_custody": {
+      "name": "BackupArtifactAuthenticationSecureCustody",
+      "decision": "DISTINCT_PURPOSE_SEPARATED_SECURE_CUSTODY_NAMESPACE_AND_BACKEND_INTERFACE_REQUIRED",
+      "audit_result": "Existing SecretStorage is a generic string storage interface, but SecretManager and SecretPayload are exchange-credential typed and application-exporting; custody mechanics may be adapted behind a distinct interface, but exchange credential semantics are forbidden.",
+      "external_to": [
+        "StateStore",
+        "BackupEnvelope",
+        "TrustedPhysicalBackupArtifact"
+      ],
+      "durably_owns": [
+        "secret HMAC key material",
+        "authority-owned key identifiers",
+        "current lifecycle/status metadata"
+      ],
+      "candidate_cannot": [
+        "create or replace trusted key entry",
+        "change key status",
+        "roll key forward or backward",
+        "mark revoked key active",
+        "select arbitrary secret reference as trusted authority",
+        "register authority_key_id"
+      ],
+      "backend_unavailable": "FAIL_CLOSED",
+      "embedded_configuration_fallback": false,
+      "cloud_or_KMS_dependency": false,
+      "required_consistency_semantics": [
+        "atomic committed per-scope snapshot read",
+        "revision-fenced scope update",
+        "immutable key-material staging",
+        "durable key-material persistence before committed snapshot reference",
+        "committed metadata visibility",
+        "no torn authoritative scope state"
+      ],
+      "implementation_independent": true,
+      "mandated_mechanisms": []
+    },
+    "authority_key_id": {
+      "opaque": true,
+      "authority_generated": true,
+      "secret": false,
+      "stable_for_key_lifetime": true,
+      "unique_within_authority_namespace": true,
+      "candidate_role": "SELECTOR_REQUEST_ONLY",
+      "possession_grants_authority": false,
+      "candidate_can_register": false,
+      "resolution": [
+        "validated scope",
+        "authority_key_id"
+      ],
+      "unknown": "UNKNOWN_KEY",
+      "try_arbitrary_external_secrets": false
+    },
+    "lifecycle": {
+      "exact_states": [
+        "ACTIVE",
+        "VERIFY_ONLY",
+        "REVOKED"
+      ],
+      "permissions": {
+        "ACTIVE": {
+          "authenticate": true,
+          "verify": true
+        },
+        "VERIFY_ONLY": {
+          "authenticate": false,
+          "verify": true
+        },
+        "REVOKED": {
+          "authenticate": false,
+          "verify": false
+        }
+      },
+      "revocation": {
+        "allowed_transitions": [
+          "ACTIVE -> REVOKED",
+          "VERIFY_ONLY -> REVOKED"
+        ],
+        "terminal": true,
+        "candidate_override": false,
+        "fallback_to_another_key": false,
+        "historical_proofs": "INTENTIONALLY_UNVERIFIABLE",
+        "restore": "RESTORE_REJECTED",
+        "sole_ACTIVE_transition_result": "PROVISIONED_WITHOUT_ACTIVE",
+        "automatic_replacement": false,
+        "revocation_implies_rotation": false,
+        "post_sole_ACTIVE_revocation": {
+          "backup_creation": "NO_ACTIVE_KEY",
+          "revoked_key_proof": "REVOKED_KEY",
+          "other_VERIFY_ONLY_proofs": "MAY_VERIFY_INDEPENDENTLY"
+        }
+      },
+      "rotation": {
+        "owner": "AUTHORITY_ONLY",
+        "atomic_steps": [
+          "generate new 256-bit cryptographically random key",
+          "allocate new authority_key_id",
+          "store new key in secure custody",
+          "make new key ACTIVE",
+          "demote previous ACTIVE to VERIFY_ONLY"
+        ],
+        "failure_before_commit": "PREVIOUS_ACTIVE_REMAINS_AUTHORITATIVE",
+        "half_rotated_key_use": false,
+        "rewrites_historical_artifacts": false,
+        "historical_VERIFY_ONLY_verification": true,
+        "candidate_or_restore_can_trigger": false,
+        "precondition": "PROVISIONED_WITH_ACTIVE",
+        "committed_active_cardinality": 1,
+        "externally_visible_two_ACTIVE_state": false
+      },
+      "retention": {
+        "ordinary_rotation_destroys_old_key": false,
+        "VERIFY_ONLY_retained": "for product-policy lifetime of dependent restorable backups",
+        "removal": "EXPLICIT_AUTHORITY_OPERATION",
+        "removal_invariant": "KEY_REMOVAL_IS_SECURITY_DESTRUCTIVE_AND_NOT_RECOVERABLE_FROM_BACKUP_CANDIDATE",
+        "missing_material_result": "UNKNOWN_KEY",
+        "additional_absence_state": false
+      },
+      "active_cardinality": {
+        "minimum": 0,
+        "maximum": 1,
+        "meaning": "AT_MOST_ONE_ACTIVE_KEY_PER_PROVISIONED_SCOPE",
+        "multiple_ACTIVE": "AUTHORITY_STATE_INVALID_FAIL_CLOSED",
+        "zero_ACTIVE_allowed_after": [
+          "revocation of sole ACTIVE key",
+          "explicit destructive removal of active key material",
+          "administrative security response"
+        ],
+        "zero_ACTIVE_is_unprovisioned": false
+      },
+      "scope_conditions": {
+        "classification": "AUTHORITY_SCOPE_CONDITIONS_NOT_KEY_STATES",
+        "exact_conditions": [
+          "UNPROVISIONED_SCOPE",
+          "PROVISIONED_WITH_ACTIVE",
+          "PROVISIONED_WITHOUT_ACTIVE"
+        ],
+        "UNPROVISIONED_SCOPE": {
+          "key_ring_exists": false
+        },
+        "PROVISIONED_WITH_ACTIVE": {
+          "key_ring_exists": true,
+          "ACTIVE_key_count": 1
+        },
+        "PROVISIONED_WITHOUT_ACTIVE": {
+          "key_ring_exists": true,
+          "ACTIVE_key_count": 0,
+          "may_contain": [
+            "VERIFY_ONLY",
+            "REVOKED"
+          ]
+        },
+        "candidate_carried": false,
+        "lifecycle_records": false,
+        "restore_authority": false
+      },
+      "multiple_active_corruption": {
+        "invariant": "MULTIPLE_ACTIVE_KEYS_FOR_ONE_SCOPE = AUTHORITY_STATE_INVALID_FAIL_CLOSED",
+        "authenticate": "AUTHORITY_STATE_INVALID_FAIL_CLOSED",
+        "verify": "AUTHORITY_UNAVAILABLE",
+        "verification_result_mapping": "AUTHORITY_UNAVAILABLE",
+        "winner_selection": false,
+        "forbidden_selection": [
+          "arbitrary",
+          "lexicographic authority_key_id",
+          "latest authority_key_id",
+          "candidate-selected"
+        ],
+        "repair": "TRUSTED_ADMINISTRATION_OUTSIDE_RESTORE"
+      },
+      "rekey": {
+        "operation": "rekey(scope)",
+        "precondition": "PROVISIONED_WITHOUT_ACTIVE",
+        "authority_admin_only": true,
+        "steps": [
+          "generate new independent 256-bit cryptographically random key",
+          "allocate new authority_key_id",
+          "persist new key securely",
+          "atomically make new key the sole ACTIVE key"
+        ],
+        "postcondition": "PROVISIONED_WITH_ACTIVE",
+        "existing_VERIFY_ONLY_unchanged": true,
+        "existing_REVOKED_unchanged": true,
+        "resurrects_REVOKED": false,
+        "validates_historical_REVOKED_proofs": false,
+        "derives_from_old_material": false,
+        "candidate_or_restore_can_trigger": false,
+        "first_use_provisioning": false,
+        "recovers_old_authority_material": false,
+        "effect": "FUTURE_BACKUP_AUTHENTICATION_ONLY"
+      }
+    },
+    "recovery": {
+      "invariant": "BACKUP_CANDIDATE_CANNOT_RECOVER_BACKUP_AUTHENTICATION_AUTHORITY",
+      "model": "SAME_TRUST_DOMAIN_RECOVERY_ONLY",
+      "authority_loss_effect": [
+        "old artifacts cannot be authenticated",
+        "restore rejects",
+        "newly provisioned key does not validate historical proofs",
+        "candidate hashes, proof, and key ID cannot reconstruct trust"
+      ],
+      "self_contained_full_device_disaster_recovery": false,
+      "future_cross_device_recovery": "REQUIRES_SEPARATE_TRUSTED_BOOTSTRAP_OR_RECOVERY_ARCHITECTURE",
+      "new_active_after_loss_or_reset": "FUTURE_BACKUPS_ONLY",
+      "new_authority_key_id_validates_destroyed_key_proofs": false,
+      "candidate_reconstructs_lost_secret": false
+    },
+    "provisioning": {
+      "first_key_state": "ACTIVE",
+      "path": "AUTHORITY_OWN_TRUSTED_SECURE_CUSTODY_PATH",
+      "candidate_dependent": false,
+      "allowed_triggers": [
+        "explicit initialization",
+        "backup-creation path before first authenticated backup"
+      ],
+      "verify_may_auto_provision": false,
+      "verify_without_authority": "AUTHORITY_NOT_PROVISIONED",
+      "restore_without_authority": "RESTORE_REJECTED_AUTHORITY_NOT_PROVISIONED",
+      "precondition": "UNPROVISIONED_SCOPE",
+      "already_provisioned_scope": "REJECTED_USE_REKEY_OR_ROTATE_AS_APPLICABLE"
+    },
+    "capabilities": {
+      "name": "BackupArtifactAuthenticationAuthorityCapability",
+      "acquisition": "PROCESS_LOCAL_AND_INDEPENDENT_OF_RESTORE_CANDIDATE",
+      "backup_creation": "AUTHENTICATE_ONLY_CAPABILITY",
+      "restore": "VERIFY_ONLY_CAPABILITY",
+      "least_privilege": true,
+      "authenticate": {
+        "signature": "authenticate(scope, canonical_manifest_bytes) -> PhysicalArtifactAuthenticationProof",
+        "requires_state": "EXACTLY_ONE_ACTIVE_KEY_AT_CALL_TIME",
+        "resolves_scope_independently": true,
+        "returns_raw_key": false,
+        "failures": [
+          "AUTHORITY_UNAVAILABLE",
+          "AUTHORITY_NOT_PROVISIONED",
+          "NO_ACTIVE_KEY"
+        ],
+        "VERIFY_ONLY_or_REVOKED_selection": false,
+        "scope_condition_outcomes": {
+          "UNPROVISIONED_SCOPE": "AUTHORITY_NOT_PROVISIONED",
+          "PROVISIONED_WITHOUT_ACTIVE": "NO_ACTIVE_KEY",
+          "PROVISIONED_WITH_ACTIVE": "AUTHENTICATE_WITH_SOLE_ACTIVE_KEY",
+          "MULTIPLE_ACTIVE_KEYS": "AUTHORITY_STATE_INVALID_FAIL_CLOSED"
+        },
+        "silent_winner_selection": false
+      },
+      "verify": {
+        "signature": "verify(scope, canonical_manifest_bytes, proof) -> BackupArtifactVerificationResult",
+        "ordered_steps": [
+          "validate proof structure intrinsically",
+          "require exact algorithm and purpose",
+          "require proof manifest fingerprint equals manifest being verified",
+          "resolve trusted key by validated scope plus authority_key_id",
+          "read one fresh internally consistent committed authority scope snapshot at the invocation linearization point",
+          "reject unknown, unavailable, or REVOKED key",
+          "allow ACTIVE or VERIFY_ONLY key",
+          "recompute HMAC over exact canonical authentication payload",
+          "compare tag in constant time",
+          "return structured verification status"
+        ],
+        "mutates_authority": false,
+        "forbidden_side_effects": [
+          "provisioning",
+          "rotation",
+          "revocation",
+          "key promotion",
+          "key resurrection"
+        ],
+        "cached_status_sufficient": false,
+        "requires_ACTIVE_key_in_scope": false,
+        "zero_ACTIVE_with_retained_VERIFY_ONLY": "VERIFY_ALLOWED_FOR_EXACT_VERIFY_ONLY_KEY",
+        "scope_invariant_violation": "AUTHORITY_UNAVAILABLE",
+        "current_status_semantics": "STATUS_FROM_FRESH_LINEARIZABLE_COMMITTED_SNAPSHOT_PER_INVOCATION"
+      },
+      "administration": {
+        "separate_surface": true,
+        "operations": [
+          "provision(scope)",
+          "rotate(scope)",
+          "rekey(scope)",
+          "revoke(scope, authority_key_id)"
+        ],
+        "exposed_to_restore": false,
+        "operation_preconditions": {
+          "provision(scope)": "UNPROVISIONED_SCOPE",
+          "rotate(scope)": "PROVISIONED_WITH_ACTIVE",
+          "rekey(scope)": "PROVISIONED_WITHOUT_ACTIVE"
+        },
+        "candidate_selects_operation": false
+      }
+    },
+    "proof": {
+      "name": "PhysicalArtifactAuthenticationProof",
+      "immutable": true,
+      "candidate_carried": true,
+      "authority": false,
+      "additional_fields": false,
+      "exact_fields": [
+        "proof_version",
+        "algorithm",
+        "purpose",
+        "authority_key_id",
+        "manifest_fingerprint_sha256",
+        "authentication_tag_hex"
+      ],
+      "constants": {
+        "proof_version": 1,
+        "algorithm": "HMAC-SHA-256",
+        "purpose": "CRYPTOHUNTER_M0_11_PHYSICAL_BACKUP_AUTH_V1"
+      },
+      "authentication_tag_hex": {
+        "encoding": "lowercase hexadecimal",
+        "pattern": "^[0-9a-f]{64}$",
+        "length": 64,
+        "bytes": 32
+      },
+      "contains": [
+        "selector and authentication output only"
+      ],
+      "excludes": [
+        "raw key",
+        "secret reference",
+        "recovery secret",
+        "candidate trust root",
+        "second proof fingerprint"
+      ],
+      "copying_grants_authority": false
+    },
+    "verification_result": {
+      "name": "BackupArtifactVerificationResult",
+      "exact_statuses": [
+        "VERIFIED",
+        "INVALID_PROOF",
+        "UNKNOWN_KEY",
+        "REVOKED_KEY",
+        "AUTHORITY_UNAVAILABLE",
+        "AUTHORITY_NOT_PROVISIONED"
+      ],
+      "passes_authenticity_gate": [
+        "VERIFIED"
+      ],
+      "all_other_outcome": "RESTORE_REJECTED",
+      "durable": false,
+      "ephemeral_process_local": true,
+      "authority": false,
+      "current_status_read_at_call_time": true
+    },
+    "failure_behavior": {
+      "backup_authority_unavailable_unprovisioned_or_no_active_key": "BACKUP_CREATION_FAILED_NO_TRUSTED_ARTIFACT_PUBLISHED",
+      "unsigned_artifact_may_be_labeled_trusted": false,
+      "restore_non_VERIFIED": "RESTORE_REJECTED",
+      "fallback": false
+    },
+    "secret_separation": {
+      "key_is_not": [
+        "exchange API key",
+        "exchange API secret",
+        "user PIN",
+        "PIN verifier",
+        "M0.3 key or reference",
+        "SecretHandoff old_reference or new_reference",
+        "StateStore encryption key",
+        "candidate-carried secret"
+      ],
+      "SecretHandoff_rotates_authority": false
+    },
+    "cross_scope_rejection": {
+      "source_example": [
+        "account A",
+        "device D1",
+        "LIVE"
+      ],
+      "reject_under": [
+        "account B",
+        "device D2",
+        "TESTNET",
+        "PAPER"
+      ],
+      "lookup_scope_bound": true,
+      "cross_environment_or_install_fallback": false
+    },
+    "representation_classification": {
+      "BackupArtifactAuthenticationAuthority": {
+        "durable": true,
+        "candidate_carried": false,
+        "authority": true,
+        "restorable_authority": false,
+        "contains_raw_secret": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "process_local": false,
+        "external_secure_custody": true
+      },
+      "BackupArtifactAuthenticationAuthorityCapability": {
+        "durable": false,
+        "candidate_carried": false,
+        "authority": true,
+        "restorable_authority": false,
+        "contains_raw_secret": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "process_local": true,
+        "external_secure_custody": false
+      },
+      "BackupArtifactAuthenticationSecureCustody": {
+        "durable": true,
+        "candidate_carried": false,
+        "authority": true,
+        "restorable_authority": false,
+        "contains_raw_secret": true,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "process_local": false,
+        "external_secure_custody": true
+      },
+      "BackupAuthenticationKey": {
+        "durable": true,
+        "candidate_carried": false,
+        "authority": true,
+        "restorable_authority": false,
+        "contains_raw_secret": true,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "process_local": false,
+        "external_secure_custody": true
+      },
+      "BackupAuthenticationKeyMetadata": {
+        "durable": true,
+        "candidate_carried": false,
+        "authority": true,
+        "restorable_authority": false,
+        "contains_raw_secret": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "process_local": false,
+        "external_secure_custody": true
+      },
+      "PhysicalArtifactAuthenticationProof": {
+        "durable": true,
+        "candidate_carried": true,
+        "authority": false,
+        "restorable_authority": false,
+        "contains_raw_secret": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "process_local": false,
+        "external_secure_custody": false
+      },
+      "BackupArtifactVerificationResult": {
+        "durable": false,
+        "candidate_carried": false,
+        "authority": false,
+        "restorable_authority": false,
+        "contains_raw_secret": false,
+        "permitted_in_BackupEnvelope": false,
+        "permitted_in_StateStore": false,
+        "process_local": true,
+        "external_secure_custody": false
+      }
+    },
+    "candidate_secret_accounting": {
+      "raw_secret_payload_field_count": 0,
+      "authority_internal_secret_custody_is_backup_payload_field": false
+    },
+    "consistency_and_concurrency": {
+      "invariant": "AUTHORITY_OPERATIONS_ARE_LINEARIZABLE_PER_EXACT_AUTHORITY_SCOPE",
+      "serialization_scope": "EXACT_AUTHORITY_SCOPE",
+      "exact_scope": [
+        "account_id",
+        "device_installation_id",
+        "environment",
+        "purpose"
+      ],
+      "same_scope_rule": "ONE_SERIALIZED_AUTHORITATIVE_ORDER",
+      "different_scopes_may_proceed_independently": true,
+      "global_product_lock_required": false,
+      "covered_operations": [
+        "provision",
+        "rotate",
+        "rekey",
+        "revoke",
+        "explicit destructive key removal",
+        "authenticate authority-state read",
+        "verify authority-state read"
+      ],
+      "scope_snapshot": {
+        "name": "BackupAuthenticationAuthorityScopeSnapshot",
+        "classification": "EXTERNAL_SECURE_CUSTODY_AUTHORITY_METADATA",
+        "atomic_committed_view": true,
+        "one_committed_snapshot_per_scope": true,
+        "determines": [
+          "exact authority scope",
+          "authority_revision",
+          "whether key ring exists",
+          "all authority_key_id entries relevant to scope",
+          "current lifecycle state of each known key",
+          "exact ACTIVE cardinality",
+          "authority-internal key-material availability"
+        ],
+        "raw_secret_bytes_duplicated": false,
+        "authority_internal_material_identity_allowed": true,
+        "product_level_raw_key_reference_exposed": false,
+        "StateStore_data": false,
+        "BackupEnvelope_data": false,
+        "candidate_carried": false,
+        "restore_authority": false,
+        "lifecycle_restore_record": false,
+        "bootstrap_existence_semantics": {
+          "UNPROVISIONED_SCOPE": "NO_COMMITTED_SCOPE_SNAPSHOT",
+          "PROVISIONED_SCOPE": "EXACTLY_ONE_CURRENT_COMMITTED_SCOPE_SNAPSHOT",
+          "historical_internal_revisions_may_be_retained_for_audit": true,
+          "historical_revision_is_current_authority": false
+        }
+      },
+      "authority_revision": {
+        "field": "authority_revision",
+        "type": "positive integer",
+        "bool_allowed": false,
+        "first_successful_provision": "ABSENT_TO_REVISION_1",
+        "monotonic": "STRICTLY_INCREASES_ON_EACH_SUCCESSFUL_MUTATION",
+        "may_decrease": false,
+        "unprovisioned_scope_revision": null,
+        "candidate_carried": false,
+        "BackupEnvelope_field": false,
+        "PhysicalArtifactAuthenticationProof_field": false,
+        "PhysicalSQLiteArtifactManifest_field": false,
+        "cryptographic_proof_field": false,
+        "restore_authority": false,
+        "M0_3_generation": false,
+        "migration_revision": false,
+        "StateStore_generation": false,
+        "subsequent_successful_admin_mutation": "EXACTLY_R_TO_R_PLUS_1",
+        "subsequent_revision_precondition": "R >= 1",
+        "numeric_zero_for_unprovisioned": false,
+        "null_plus_one_arithmetic": false
+      },
+      "atomic_mutation": {
+        "primitive": "ATOMIC_COMPARE_AND_SWAP_SCOPE_SNAPSHOT",
+        "flow": [
+          "read one committed scope snapshot at revision R",
+          "validate operation precondition against that snapshot",
+          "construct intended R+1 snapshot",
+          "durably persist newly generated immutable staged secret key material when needed",
+          "atomically commit the new authoritative snapshot only if current revision remains R",
+          "otherwise reject stale or concurrent mutation"
+        ],
+        "stale_outcome": "STALE_AUTHORITY_REVISION",
+        "automatic_reread_and_reapply": false,
+        "successful_snapshot_must_satisfy": "0 <= ACTIVE_count <= 1",
+        "torn_authoritative_state": false,
+        "mutation_linearization_point": "SUCCESSFUL_ATOMIC_SCOPE_SNAPSHOT_COMMIT",
+        "read_linearization_point": "ATOMIC_COMMITTED_SCOPE_SNAPSHOT_READ",
+        "applies_only_when": "NUMERIC_COMMITTED_AUTHORITY_REVISION_R_EXISTS",
+        "covered_operations": [
+          "rotate",
+          "rekey",
+          "revoke",
+          "explicit destructive key removal",
+          "any future authority-state mutation"
+        ],
+        "excludes_first_provision": true,
+        "numeric_revision_precondition": "R >= 1"
+      },
+      "active_cardinality_prevention": {
+        "invariant": "EVERY_SUCCESSFUL_ADMIN_MUTATION_COMMITS_0_OR_1_ACTIVE_KEYS",
+        "normal_rotate_single_transition": [
+          "old ACTIVE -> VERIFY_ONLY",
+          "new key -> ACTIVE"
+        ],
+        "authoritative_intermediate_two_ACTIVE_snapshot": false,
+        "textual_preparation_steps_are_separate_commits": false
+      },
+      "staged_key_material": {
+        "invariant": "STAGED_KEY_MATERIAL_IS_NON_AUTHORITATIVE_UNTIL_REFERENCED_BY_SUCCESSFULLY_COMMITTED_SCOPE_SNAPSHOT",
+        "before_commit_authority": false,
+        "may_authenticate": false,
+        "may_verify": false,
+        "crash_before_snapshot_commit": "ORPHAN_NON_AUTHORITATIVE_CUSTODY_OBJECT",
+        "trusted_custody_garbage_collection_may_remove": true,
+        "changes_scope_condition_or_ACTIVE_cardinality": false,
+        "candidate_can_discover_select_or_promote": false,
+        "restore_may_repair_or_adopt": false,
+        "durability_invariant": "COMMITTED_SCOPE_SNAPSHOT_MUST_NEVER_REFERENCE_NEW_KEY_MATERIAL_THAT_WAS_NOT_DURABLY_PERSISTED_BEFORE_THE_SNAPSHOT_COMMIT",
+        "key_producing_operations": [
+          "provision",
+          "rotate",
+          "rekey"
+        ],
+        "required_order": [
+          "generate key",
+          "durably persist immutable staged key material",
+          "commit authoritative scope snapshot referencing that key"
+        ],
+        "durable_persistence_failure": "DO_NOT_COMMIT_SCOPE_SNAPSHOT",
+        "durability_failure_outcomes": {
+          "provision": "UNPROVISIONED_SCOPE",
+          "rotate": "PREVIOUS_ACTIVE_REMAINS_ACTIVE",
+          "rekey": "PROVISIONED_WITHOUT_ACTIVE"
+        },
+        "post_commit_new_key_is_durably_available": true,
+        "volatile_only_key_may_be_committed": false,
+        "orphan_gc": {
+          "delete_only_if": [
+            "not referenced by any committed authority scope snapshot",
+            "not required by an in-progress authority mutation that may still commit"
+          ],
+          "may_delete_committed_ACTIVE_or_VERIFY_ONLY_material": false,
+          "must_coordinate_with_in_progress_commit_eligibility": true,
+          "specific_mechanism_mandated": false
+        }
+      },
+      "crash_before_commit": {
+        "rule": "PREVIOUS_COMMITTED_SCOPE_SNAPSHOT_REMAINS_EXACTLY_AUTHORITATIVE",
+        "operations": [
+          "provision",
+          "rotate",
+          "rekey",
+          "revoke",
+          "explicit destructive key removal"
+        ],
+        "outcomes": {
+          "provision": "UNPROVISIONED_SCOPE",
+          "rotate": "PREVIOUS_ACTIVE_REMAINS_ACTIVE",
+          "rekey": "PROVISIONED_WITHOUT_ACTIVE",
+          "revoke": "TARGET_KEY_RETAINS_PRIOR_LIFECYCLE_STATE",
+          "explicit destructive key removal": "PRIOR_METADATA_AND_KEY_MATERIAL_REMAIN_AUTHORITATIVE"
+        },
+        "partial_authority_transition": false
+      },
+      "commit_succeeded_response_lost": {
+        "rule": "SUCCESSFULLY_COMMITTED_AUTHORITY_TRANSITION_REMAINS_AUTHORITATIVE",
+        "caller_may_assume_failure": false,
+        "invariant": "UNKNOWN_ADMIN_MUTATION_OUTCOME_NO_BLIND_RETRY",
+        "blind_retry_forbidden": [
+          "rotate",
+          "rekey",
+          "provision",
+          "revoke",
+          "explicit destructive key removal"
+        ],
+        "required_next_action": "READ_COMMITTED_SCOPE_SNAPSHOT_AND_RECONCILE_REVISION_AND_STATE",
+        "uncertain_rotate_or_rekey_may_create_second_key": false,
+        "uncertain_first_provision": {
+          "required": "FRESH_EXACT_SCOPE_AUTHORITY_STATE_READ_AND_RECONCILIATION",
+          "if_revision_1_exists": "TREAT_AS_PROVISIONED_AND_RECONCILE",
+          "if_scope_absent": "NEW_PROVISION_MAY_BE_CONSIDERED_ONLY_AFTER_FRESH_RECONCILIATION",
+          "blind_repeat_original_command": false
+        },
+        "first_provision_committed_response_lost": {
+          "committed_transition": "ABSENT_TO_REVISION_1",
+          "authoritative_result": "REVISION_1_REMAINS_AUTHORITATIVE",
+          "caller_may_assume_provision_failed": false,
+          "reconciliation": "FRESH_EXACT_SCOPE_RECONCILIATION_REQUIRED",
+          "blind_repeat": false
+        },
+        "subsequent_mutation_committed_response_lost": {
+          "committed_transition": "R_TO_R_PLUS_1",
+          "authoritative_result": "R_PLUS_1_REMAINS_AUTHORITATIVE",
+          "reconciliation": "FRESH_EXACT_SCOPE_RECONCILIATION_REQUIRED",
+          "blind_repeat": false
+        }
+      },
+      "retry_policy": {
+        "known_pre_commit_failure": "MAY_RETRY_FROM_FRESH_COMMITTED_SNAPSHOT",
+        "stale_revision": "FRESH_READ_AND_REEVALUATION_REQUIRED",
+        "unknown_post_commit_outcome": "STATE_RECONCILIATION_REQUIRED_BEFORE_ANOTHER_MUTATION",
+        "blind_at_least_once_retry": false,
+        "candidate_visible_mutation_id": false,
+        "administration_mutation_id_added": false
+      },
+      "concurrent_administration": {
+        "rotate_vs_rotate": {
+          "same_start_revision": "AT_MOST_ONE_COMMITS_R_TO_R_PLUS_1",
+          "loser": "STALE_AUTHORITY_REVISION",
+          "reinterpret_against_R_plus_1": false
+        },
+        "rekey_vs_rekey": {
+          "same_zero_active_revision": "AT_MOST_ONE_COMMITS_R_TO_R_PLUS_1",
+          "loser": "STALE_AUTHORITY_REVISION",
+          "loser_staged_key": "NON_AUTHORITATIVE",
+          "second_ACTIVE_commit": false
+        },
+        "provision_vs_provision": {
+          "winner": "ESTABLISHES_REVISION_1",
+          "loser": "ALREADY_PROVISIONED_OR_STALE_FAIL_CLOSED",
+          "last_writer_wins": false,
+          "winner_replaced": false,
+          "commit_cardinality": "AT_MOST_ONE_ABSENT_TO_REVISION_1_COMMIT",
+          "loser_cannot": [
+            "overwrite winner",
+            "create revision 2 by automatic reinterpretation",
+            "convert command into rotate",
+            "replace winner ACTIVE key",
+            "automatically retry against newly provisioned scope"
+          ]
+        },
+        "rotate_vs_revoke": {
+          "rotate_first": "new key ACTIVE; old key VERIFY_ONLY; later revoke evaluates exact target against new committed snapshot",
+          "sole_ACTIVE_revoke_first": "scope PROVISIONED_WITHOUT_ACTIVE; stale rotate rejected; deliberate rekey required for future ACTIVE",
+          "stale_rotate_undoes_revocation": false
+        },
+        "stale_rekey_revoke_or_other_admin_cannot": [
+          "resurrect revoked keys",
+          "overwrite newer ACTIVE",
+          "change newer lifecycle decisions",
+          "roll authority state backward"
+        ]
+      },
+      "authenticate_linearization": {
+        "snapshot": "ONE_INTERNALLY_CONSISTENT_COMMITTED_SCOPE_SNAPSHOT",
+        "linearization_point": "ATOMIC_COMMITTED_SCOPE_SNAPSHOT_READ_DURING_INVOCATION",
+        "outcomes": {
+          "PROVISIONED_WITH_ACTIVE": "USE_EXACT_SOLE_ACTIVE_KEY",
+          "PROVISIONED_WITHOUT_ACTIVE": "NO_ACTIVE_KEY",
+          "UNPROVISIONED_SCOPE": "AUTHORITY_NOT_PROVISIONED",
+          "MORE_THAN_ONE_ACTIVE": "AUTHORITY_STATE_INVALID_FAIL_CLOSED"
+        },
+        "later_admin_commit_retroactively_invalidates_operation": false,
+        "later_revocation_may_make_proof_unverifiable": true,
+        "cross_resource_ACID_with_backup_publication": false
+      },
+      "verify_linearization": {
+        "snapshot": "ONE_FRESH_INTERNALLY_CONSISTENT_COMMITTED_SCOPE_SNAPSHOT_PER_INVOCATION",
+        "linearization_point": "ATOMIC_COMMITTED_SCOPE_SNAPSHOT_READ_DURING_INVOCATION",
+        "revocation_before_read": "REVOKED_KEY",
+        "verify_read_before_revocation_commit": "MAY_COMPLETE_USING_PRIOR_ACTIVE_OR_VERIFY_ONLY_STATUS",
+        "later_invocations_after_revocation": "MUST_OBSERVE_REVOKED",
+        "cached_previous_invocation_status_sufficient": false,
+        "rotation_before_or_after_read": "OLD_KEY_ACTIVE_OR_VERIFY_ONLY_MAY_VERIFY",
+        "wall_clock_atomicity_across_in_flight_call_claimed": false
+      },
+      "key_material_read_consistency": {
+        "ACTIVE_or_VERIFY_ONLY_requires_readable_authority_owned_material": true,
+        "metadata_valid_but_material_missing": "AUTHORITY_UNAVAILABLE",
+        "unknown_key_id": "UNKNOWN_KEY",
+        "fallback_to_another_key": false,
+        "hash_or_key_id_possession_sufficient": false
+      },
+      "destructive_key_removal": {
+        "trusted_administration_only": true,
+        "revision_fenced_serialized_mutation": true,
+        "safe_order": [
+          "atomically commit R+1 metadata transition marking the key REVOKED and authority-internally non-usable",
+          "only after that commit physically destroy secret bytes"
+        ],
+        "crash_before_metadata_commit": "PRIOR_SNAPSHOT_AND_BYTES_REMAIN_AUTHORITATIVE",
+        "crash_after_metadata_commit_before_byte_destruction": "BYTES_MAY_REMAIN_BUT_REVOKED_METADATA_MAKES_THEM_NON_AUTHORITATIVE",
+        "committed_usable_entry_may_reference_already_destroyed_material": false,
+        "destroyed_material_resurrection": false,
+        "candidate_or_restore_access": false
+      },
+      "first_provision_atomic_create": {
+        "operation": "provision(scope)",
+        "precondition": "UNPROVISIONED_SCOPE",
+        "primitive": "ATOMIC_CREATE_SCOPE_SNAPSHOT_IF_ABSENT",
+        "equivalent_name": "COMPARE_ABSENT_AND_CREATE_REVISION_1",
+        "implementation_independent": true,
+        "flow": [
+          "read one authoritative scope-absence view proving no committed key ring or scope snapshot exists for exact scope",
+          "validate UNPROVISIONED_SCOPE provision precondition",
+          "generate new 256-bit key material and authority_key_id",
+          "durably persist immutable staged key material in secure custody",
+          "construct first snapshot with authority_revision 1 and exactly one ACTIVE key",
+          "atomically create snapshot only if scope remains unprovisioned and committed snapshot remains absent",
+          "otherwise fail closed because another provision won"
+        ],
+        "linearization_point": "SUCCESSFUL_ATOMIC_FIRST_SCOPE_SNAPSHOT_CREATE",
+        "numeric_R_plus_1_used": false,
+        "result_revision": 1,
+        "result_ACTIVE_count": 1,
+        "stale_outcome": "ALREADY_PROVISIONED_OR_STALE_FAIL_CLOSED"
+      },
+      "commit_success_key_durability": {
+        "rule": "EVERY_NEWLY_REFERENCED_USABLE_KEY_IS_DURABLY_AVAILABLE_BEFORE_SNAPSHOT_COMMIT",
+        "applies_to": [
+          "provision",
+          "rotate",
+          "rekey"
+        ],
+        "crash_immediately_after_commit": "COMMITTED_METADATA_AND_REFERENCED_KEY_MATERIAL_REMAIN_DURABLE",
+        "normal_success_can_produce_committed_metadata_with_volatile_only_missing_key": false,
+        "separate_from": [
+          "later explicit destructive removal",
+          "genuine secure-custody loss"
+        ]
+      },
+      "candidate_visibility": {
+        "authority_revision": false,
+        "bootstrap_absence_token": false,
+        "CAS_expected_revision": false,
+        "staged_key_identity": false,
+        "administration_mutation_token": false
+      }
+    }
   }
 }
