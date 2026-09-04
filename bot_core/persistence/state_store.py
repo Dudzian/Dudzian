@@ -260,6 +260,49 @@ class SQLiteStateStore:
 
         return sqlite_schema_fingerprint(self._connection)
 
+    def capture_verified_physical_snapshot(
+        self, destination: str | Path
+    ) -> StateStoreSnapshot:
+        """Capture semantic state and its Online Backup image at one read snapshot."""
+        target = Path(destination).resolve()
+        if target == self._path:
+            raise StateStoreError("physical backup destination must differ from live store")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        destination_connection: sqlite3.Connection | None = None
+        try:
+            # The first read pins the WAL snapshot; backup() copies that same
+            # snapshot while independent writers remain free to commit.
+            self._connection.execute("BEGIN")
+            snapshot = self._snapshot_inside_transaction()
+            if snapshot is None:
+                raise StateStoreError("physical backup requires initialized StateStore")
+            self.verify_snapshot(snapshot)
+            destination_connection = sqlite3.connect(target, isolation_level=None)
+            self._connection.backup(destination_connection)
+            destination_connection.close()
+            destination_connection = None
+            self._connection.execute("COMMIT")
+            return snapshot
+        except BaseException:
+            if destination_connection is not None:
+                destination_connection.close()
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+
+    @classmethod
+    def read_isolated_verified_snapshot(cls, path: str | Path) -> StateStoreSnapshot | None:
+        """Read an authenticated candidate without registering or mutating it."""
+        candidate = Path(path).resolve()
+        connection = sqlite3.connect(f"file:{candidate}?mode=ro&immutable=1", uri=True)
+        reader = object.__new__(cls)
+        reader._path, reader._closed, reader._connection = candidate, False, connection
+        try:
+            return reader.read_verified_snapshot()
+        finally:
+            connection.close()
+            reader._closed = True
+
     @classmethod
     @contextmanager
     def installation_gate(cls, live_path: str | Path) -> Iterator[None]:

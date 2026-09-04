@@ -218,6 +218,21 @@ class PhysicalSQLiteArtifactManifest:
             _canonical_json(self.projection(include_fingerprint=False))
         ).hexdigest()
 
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, object]) -> PhysicalSQLiteArtifactManifest:
+        expected = {field.name for field in fields(cls)}
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise ValueError("manifest mapping must contain the exact fourteen fields")
+        return cls(**{name: value[name] for name in expected})  # type: ignore[arg-type]
+
+    @classmethod
+    def create(cls, **values: object) -> PhysicalSQLiteArtifactManifest:
+        expected = {field.name for field in fields(cls)} - {"manifest_fingerprint_sha256"}
+        if set(values) != expected:
+            raise ValueError("manifest creation requires the exact thirteen source fields")
+        fingerprint = hashlib.sha256(_canonical_json(values)).hexdigest()
+        return cls(**values, manifest_fingerprint_sha256=fingerprint)  # type: ignore[arg-type]
+
 
 def _canonical_json(value: Mapping[str, object]) -> bytes:
     return json.dumps(
